@@ -7,6 +7,15 @@
     <link rel="shortcut icon" href="/png/favicon.ico">
     <!-- Codicons - VS Code icon set -->
     <link rel="stylesheet" href="/css/codicon.css">
+    <!-- Highlight.js for code syntax highlighting -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/yaml.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/ini.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/django.min.js"></script>
     <!-- Authentication -->
     <script src="/css/auth.js"></script>
     <!-- js-yaml for YAML validation (offline) -->
@@ -351,8 +360,24 @@
         }
         /* Highlight.js theme override for better contrast */
         #markdown-preview pre code.hljs {
-            background: transparent;
-            padding: 0;
+            background: transparent !important;
+            padding: 0 !important;
+        }
+        #markdown-preview .hljs {
+            background: transparent !important;
+        }
+        /* Ensure code blocks in preview have proper styling */
+        #markdown-preview pre {
+            position: relative;
+        }
+        #markdown-preview pre::before {
+            content: attr(data-lang);
+            position: absolute;
+            top: 0;
+            right: 8px;
+            font-size: 10px;
+            color: #666;
+            text-transform: uppercase;
         }
         #markdown-preview ul, #markdown-preview ol {
             padding-left: 20px;
@@ -866,16 +891,8 @@
     <!-- Monaco Editor (offline) -->
     <script src="/monaco/vs/loader.js"></script>
     
-    <!-- Markdown Preview with Syntax Highlighting -->
+    <!-- Markdown Preview -->
     <script src="/css/marked.min.js"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/yaml.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/ini.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/jinja2.min.js"></script>
     
     <script>
         // Check authentication - admin only page
@@ -1726,22 +1743,35 @@
             
             const content = state.editor ? state.editor.getValue() : '';
             if (typeof marked !== 'undefined') {
-                // Configure marked to use highlight.js
-                marked.setOptions({
-                    highlight: function(code, lang) {
-                        if (typeof hljs !== 'undefined') {
-                            const language = hljs.getLanguage(lang) ? lang : 'plaintext';
-                            return hljs.highlight(code, { language }).value;
-                        }
-                        return code;
-                    },
-                    langPrefix: 'hljs language-'
-                });
                 preview.innerHTML = marked.parse(content);
-                // Re-highlight any code blocks that marked didn't catch
+                // Apply syntax highlighting to all code blocks
                 if (typeof hljs !== 'undefined') {
                     preview.querySelectorAll('pre code').forEach((block) => {
-                        hljs.highlightElement(block);
+                        try {
+                            // Try to detect language from class
+                            const classes = block.className.split(' ');
+                            let lang = null;
+                            for (const cls of classes) {
+                                if (cls.startsWith('language-')) {
+                                    lang = cls.replace('language-', '');
+                                    break;
+                                }
+                            }
+                            // Map jinja2 to django (highlight.js naming)
+                            if (lang === 'jinja2' || lang === 'jinja') lang = 'django';
+                            
+                            const code = block.textContent;
+                            if (lang && hljs.getLanguage(lang)) {
+                                block.innerHTML = hljs.highlight(code, { language: lang }).value;
+                            } else {
+                                // Auto-detect language
+                                const result = hljs.highlightAuto(code, ['yaml', 'bash', 'python', 'json', 'ini', 'django']);
+                                block.innerHTML = result.value;
+                            }
+                            block.classList.add('hljs');
+                        } catch (e) {
+                            console.warn('Highlight error:', e);
+                        }
                     });
                 }
             } else {
