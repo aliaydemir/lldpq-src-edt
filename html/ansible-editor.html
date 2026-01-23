@@ -497,36 +497,85 @@
             color: #fff;
         }
         
-        .host-select {
+        .host-dropdown {
+            position: relative;
+            display: inline-block;
+        }
+        
+        .host-dropdown-trigger {
             background: #333;
             border: 1px solid #404040;
             color: #ccc;
-            padding: 2px;
+            padding: 8px 12px;
             border-radius: 4px;
-            min-width: 160px;
-            max-height: 80px;
-            font-size: 11px;
-            overflow-y: auto;
-        }
-        
-        .host-select option {
-            padding: 4px 8px;
+            min-width: 150px;
             cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            font-size: 13px;
         }
         
-        .host-select option:checked {
+        .host-dropdown-trigger:hover {
+            border-color: #555;
+        }
+        
+        .host-dropdown-trigger .arrow {
+            font-size: 10px;
+            color: #888;
+        }
+        
+        .host-dropdown-menu {
+            display: none;
+            position: absolute;
+            bottom: 100%;
+            left: 0;
+            background: #2d2d2d;
+            border: 1px solid #404040;
+            border-radius: 4px;
+            min-width: 200px;
+            max-height: 250px;
+            overflow-y: auto;
+            z-index: 1000;
+            margin-bottom: 5px;
+            box-shadow: 0 -4px 15px rgba(0,0,0,0.3);
+        }
+        
+        .host-dropdown-menu.show {
+            display: block;
+        }
+        
+        .host-dropdown-item {
+            padding: 8px 12px;
+            cursor: pointer;
+            color: #ccc;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .host-dropdown-item:hover {
+            background: #404040;
+        }
+        
+        .host-dropdown-item.selected {
             background: linear-gradient(0deg, #76b900 0%, #5a8c00 100%);
             color: white;
         }
         
-        .host-select option:hover {
-            background: #404040;
+        .host-dropdown-group {
+            padding: 6px 12px;
+            color: #888;
+            font-size: 11px;
+            font-weight: bold;
+            text-transform: uppercase;
+            border-top: 1px solid #404040;
         }
         
-        .host-select optgroup {
-            color: #888;
-            font-weight: bold;
-            font-style: normal;
+        .host-dropdown-group:first-child {
+            border-top: none;
         }
         
         /* Validation indicator */
@@ -784,8 +833,13 @@
                 Generate Configs
             </button>
             <label style="font-size: 13px; color: #888;">Target:</label>
-            <select id="host-select" class="host-select" multiple size="4">
-            </select>
+            <div class="host-dropdown">
+                <div class="host-dropdown-trigger" onclick="toggleHostDropdown()">
+                    <span id="host-dropdown-text">Select hosts...</span>
+                    <span class="arrow">▼</span>
+                </div>
+                <div id="host-dropdown-menu" class="host-dropdown-menu"></div>
+            </div>
             <button id="btn-diff" class="btn btn-secondary" onclick="runDiff()">
                 Diff
             </button>
@@ -1156,44 +1210,108 @@
         }
         
         // Get selected hosts as comma-separated string
+        // Selected hosts state
+        let selectedHosts = [];
+        
         function getSelectedHosts() {
-            const select = document.getElementById('host-select');
-            const selectedOptions = Array.from(select.selectedOptions);
-            const values = selectedOptions.map(opt => opt.value);
-            return values.join(',');
+            return selectedHosts.join(',');
         }
         
-        // Populate host select dropdown
+        function toggleHostDropdown() {
+            const menu = document.getElementById('host-dropdown-menu');
+            menu.classList.toggle('show');
+        }
+        
+        function toggleHostSelection(host) {
+            const index = selectedHosts.indexOf(host);
+            if (index === -1) {
+                selectedHosts.push(host);
+            } else {
+                selectedHosts.splice(index, 1);
+            }
+            updateHostDropdownUI();
+        }
+        
+        function updateHostDropdownUI() {
+            // Update trigger text
+            const text = document.getElementById('host-dropdown-text');
+            if (selectedHosts.length === 0) {
+                text.textContent = 'Select hosts...';
+            } else if (selectedHosts.length === 1) {
+                text.textContent = selectedHosts[0];
+            } else {
+                text.textContent = selectedHosts.length + ' hosts selected';
+            }
+            
+            // Update item selection styling
+            document.querySelectorAll('.host-dropdown-item').forEach(item => {
+                if (selectedHosts.includes(item.dataset.value)) {
+                    item.classList.add('selected');
+                } else {
+                    item.classList.remove('selected');
+                }
+            });
+        }
+        
+        function clearHostSelection() {
+            selectedHosts = [];
+            updateHostDropdownUI();
+        }
+        
+        // Populate host dropdown menu
         function populateHostSelect() {
-            const select = document.getElementById('host-select');
-            select.innerHTML = '<option value="all">-- ALL HOSTS --</option>';
+            const menu = document.getElementById('host-dropdown-menu');
+            menu.innerHTML = '';
+            
+            // Add "ALL HOSTS" option
+            const allItem = document.createElement('div');
+            allItem.className = 'host-dropdown-item';
+            allItem.dataset.value = 'all';
+            allItem.textContent = '-- ALL HOSTS --';
+            allItem.onclick = () => toggleHostSelection('all');
+            menu.appendChild(allItem);
             
             // Add groups section
             if (state.groups && state.groups.length > 0) {
-                const groupLabel = document.createElement('optgroup');
-                groupLabel.label = 'GROUPS';
+                const groupLabel = document.createElement('div');
+                groupLabel.className = 'host-dropdown-group';
+                groupLabel.textContent = 'Groups';
+                menu.appendChild(groupLabel);
+                
                 state.groups.forEach(group => {
-                    const option = document.createElement('option');
-                    option.value = group;
-                    option.textContent = group;
-                    groupLabel.appendChild(option);
+                    const item = document.createElement('div');
+                    item.className = 'host-dropdown-item';
+                    item.dataset.value = group;
+                    item.textContent = group;
+                    item.onclick = () => toggleHostSelection(group);
+                    menu.appendChild(item);
                 });
-                select.appendChild(groupLabel);
             }
             
             // Add individual hosts section
             if (state.hosts && state.hosts.length > 0) {
-                const hostLabel = document.createElement('optgroup');
-                hostLabel.label = 'HOSTS';
+                const hostLabel = document.createElement('div');
+                hostLabel.className = 'host-dropdown-group';
+                hostLabel.textContent = 'Hosts';
+                menu.appendChild(hostLabel);
+                
                 state.hosts.forEach(host => {
-                    const option = document.createElement('option');
-                    option.value = host;
-                    option.textContent = host;
-                    hostLabel.appendChild(option);
+                    const item = document.createElement('div');
+                    item.className = 'host-dropdown-item';
+                    item.dataset.value = host;
+                    item.textContent = host;
+                    item.onclick = () => toggleHostSelection(host);
+                    menu.appendChild(item);
                 });
-                select.appendChild(hostLabel);
             }
         }
+        
+        // Close dropdown when clicking outside
+        document.addEventListener('click', function(e) {
+            if (!e.target.closest('.host-dropdown')) {
+                document.getElementById('host-dropdown-menu').classList.remove('show');
+            }
+        });
         
         // Open file
         async function openFile(path) {
