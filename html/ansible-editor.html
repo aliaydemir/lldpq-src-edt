@@ -362,6 +362,34 @@
         #markdown-preview .token {
             background: none !important;
         }
+        /* YAML-specific token colors (VS Code style) */
+        #markdown-preview .token.key,
+        #markdown-preview .token.atrule {
+            color: #9cdcfe !important;  /* Light blue for keys */
+        }
+        #markdown-preview .token.scalar,
+        #markdown-preview .token.string {
+            color: #ce9178 !important;  /* Orange for string values */
+        }
+        #markdown-preview .token.number,
+        #markdown-preview .token.datetime {
+            color: #b5cea8 !important;  /* Light green for numbers */
+        }
+        #markdown-preview .token.boolean,
+        #markdown-preview .token.null,
+        #markdown-preview .token.important {
+            color: #569cd6 !important;  /* Blue for boolean/null */
+        }
+        #markdown-preview .token.comment {
+            color: #6a9955 !important;  /* Green for comments */
+            font-style: italic;
+        }
+        #markdown-preview .token.punctuation {
+            color: #d4d4d4 !important;  /* Light gray for punctuation */
+        }
+        #markdown-preview .token.tag {
+            color: #569cd6 !important;  /* Blue for tags */
+        }
         #markdown-preview ul, #markdown-preview ol {
             padding-left: 20px;
         }
