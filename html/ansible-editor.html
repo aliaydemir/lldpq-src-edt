@@ -177,6 +177,8 @@
         }
         
         .file-item .codicon-file-code { color: #6997d5; }
+        .file-item .codicon-symbol-file { color: #8db9e8; }
+        .file-item .codicon-bracket { color: #e5a84b; }
         .file-item .codicon-markdown { color: #519aba; }
         .file-item .codicon-note { color: #a8a8a8; }
         .file-item .codicon-file-media { color: #c586c0; }
@@ -1051,7 +1053,9 @@
                         if (fileName === '.gitignore') iconClass = 'codicon-git-commit';
                         else if (fileName === 'hosts') iconClass = 'codicon-server';
                         // Then by extension
-                        else if (['yaml', 'yml'].includes(ext)) iconClass = 'codicon-file-code';
+                        else if (ext === 'yaml') iconClass = 'codicon-file-code';
+                        else if (ext === 'yml') iconClass = 'codicon-symbol-file';
+                        else if (ext === 'j2') iconClass = 'codicon-bracket';
                         else if (['md'].includes(ext)) iconClass = 'codicon-markdown';
                         else if (['txt', 'log'].includes(ext)) iconClass = 'codicon-note';
                         else if (['png', 'jpg', 'jpeg', 'gif', 'svg'].includes(ext)) iconClass = 'codicon-file-media';
