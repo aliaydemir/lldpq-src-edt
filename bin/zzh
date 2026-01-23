@@ -1650,7 +1650,7 @@ class Connections:
                     DevicesConfig = yaml.safe_load(DevFile)
                     if DevicesConfig and 'devices' in DevicesConfig:
                         DefaultUser = DevicesConfig.get('defaults', {}).get('username', 'cumulus')
-                        DeviceNum = 1
+                        DeviceCount = 0
                         for IpAddr, DevInfo in DevicesConfig['devices'].items():
                             # Handle both formats:
                             # 10.0.0.1: Hostname  OR  10.0.0.1: {hostname: X, username: Y}
@@ -1663,17 +1663,16 @@ class Connections:
                             else:
                                 continue
                             
-                            # Create nccm-compatible entry with sorted prefix
-                            FriendlyName = '{:02d}-{}'.format(DeviceNum, Hostname)
-                            self.LoadedServersDict[FriendlyName] = {
+                            # Create nccm-compatible entry (hostname as key, no prefix)
+                            self.LoadedServersDict[Hostname] = {
                                 'address': str(IpAddr),
                                 'user': Username,
                                 'comment': Hostname,
                                 'identity': '~/.ssh/id_rsa',
                                 'customargs': '-o StrictHostKeyChecking=no'
                             }
-                            DeviceNum += 1
-                        LogWrite.debug('Loaded {} devices from devices.yaml'.format(DeviceNum - 1))
+                            DeviceCount += 1
+                        LogWrite.debug('Loaded {} devices from devices.yaml'.format(DeviceCount))
             except Exception as Exc:
                 LogWrite.warning('Error loading devices.yaml: {}'.format(Exc))
         else:
@@ -2144,7 +2143,7 @@ class Connections:
             Line = ('{:<{ServerXSNumWidth}}    {:<{FriendlyNameWidth}}    '
                 '{:<{UserAddrWidth}}    {:<{CommentWidth}}'
                  .format(
-                    FSL.ServerXSNum,
+                    FSL.ServerXSNum + 1,  # LLDPq: 1-based numbering
                     FSL.FriendlyName,
                     FSL.UserAddr,
                     FSL.Comment,
@@ -2898,9 +2897,11 @@ def MainCursesFunction(stdscr):
             and ActiveWindow == ConnBox
             and ConnBox.Text):
                 LogWrite.debug('Handle Enter key in ConnBox ...')
-                if (int(ConnBox.Text) >= 0
-                    and int(ConnBox.Text) <= (len(ConnectionsList.FullServersList) -1)):
-                        CommandInfo = ConnectionsList.GetCommandLine(ConnBox.Text)
+                # LLDPq: 1-based numbering - user enters 1 for first item
+                UserNum = int(ConnBox.Text)
+                if (UserNum >= 1
+                    and UserNum <= len(ConnectionsList.FullServersList)):
+                        CommandInfo = ConnectionsList.GetCommandLine(str(UserNum - 1))
                         break
 
         # Enter key in FilterBox:
