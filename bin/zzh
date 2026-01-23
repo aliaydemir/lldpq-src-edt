@@ -1344,32 +1344,28 @@ class Connections:
         global SecureLogging
         ImportNccmD = False     # Whether to import yml files from /etc/nccm.d/
 
-        for FileLooper in GlobalConfig.ConfigFilePath:
-            if pathlib.Path(FileLooper).exists():
+        # Try to load nccm.yml (optional - defaults will be used if not found)
+        # LLDPq modification: nccm.yml is optional, devices.yaml is primary source
+        FileLooper = None
+        for FilePath in GlobalConfig.ConfigFilePath:
+            if pathlib.Path(FilePath).exists():
+                FileLooper = FilePath
                 break
-        LogWrite.debug('Found config file: FileLooper == {}'.format(FileLooper))
-
-        try:
-            with open (FileLooper, 'r') as ConfigFileToRead:
-                self.LoadedServersDict = yaml.safe_load(ConfigFileToRead)
-                    # ^ yaml.load is not safe
-                # ^ Now we have the nccm.yml file loaded into self.LoadedServersDict.
-                #   This is both the ssh connections details as well as the
-                #   nccm_config_* items - all in the same dict.
-
-        except OSError as Exc:
-            # ^ This exception should be matched for all failures. The more generic one is backup.
-            curses.endwin()     # De-initialize and return terminal to normal status
-            print('\nError loading:  nccm.yml  from any of the following paths:\n{}\n\n'
-                'Tip: check if file exists in one of these locations, permissions, selinux context, etc.\n\n'
-                'Reraising exception for further debugging info and to initiate screen restore...\n\n'
-                .format(GlobalConfig.ConfigFilePath))
-            raise Exc
-
-        except:
-            curses.endwin()     # De-initialize and return terminal to normal status
-            print('Error loading nccm.yml\n\n')
-            raise Exc
+        
+        if FileLooper:
+            LogWrite.debug('Found config file: FileLooper == {}'.format(FileLooper))
+            try:
+                with open (FileLooper, 'r') as ConfigFileToRead:
+                    self.LoadedServersDict = yaml.safe_load(ConfigFileToRead)
+                    if self.LoadedServersDict is None:
+                        self.LoadedServersDict = {}
+            except Exception as Exc:
+                LogWrite.warning('Error loading nccm.yml, using defaults: {}'.format(Exc))
+                self.LoadedServersDict = {}
+        else:
+            # nccm.yml not found - this is OK for LLDPq, we'll load from devices.yaml
+            LogWrite.debug('No nccm.yml found, using defaults and loading from devices.yaml')
+            self.LoadedServersDict = {}
 
         LogWrite.debug( {
             'unsafe':   'self.LoadedServersDict (contains prog settings + conn details) == {}'
@@ -1570,18 +1566,44 @@ class Connections:
         LogWrite.debug('Loaded {} config item:  self.KeyboardBindings == {}'
             .format(GlobalConfig.ConfigFile, self.KeyboardBindings))
 
-        # Check if self.KeyboardBindings exists. If it's False we can assume that
-        # the user is running an older version of nccm.yml and needs to update it.
-        # Now that nccm supports keyboard bindings the code expects these to be
-        # present and is not backward compatible with older nccm.yml versions:
+        # LLDPq modification: If keyboard bindings not found, use defaults
+        # This allows zzh to work without nccm.yml
         if not self.KeyboardBindings:
-            LogWrite.error('Cannot find nccm_keybindings: self.KeyboardBindings == {} . '
-                'nccm.yml is an older version than supported. '
-                'Please update it to latest format.'
-                    .format(self.KeyboardBindings))
-            raise Exception('Cannot find nccm_keybindings settings. '
-                'nccm.yml is an older version than supported. '
-                'Please update it to the latest format.')
+            LogWrite.debug('No nccm_keybindings found, using defaults')
+            self.KeyboardBindings = {
+                'nccm_key_backspace': [127, 263],
+                'nccm_key_ctrl_c': [3],
+                'nccm_key_ctrl_d': [4],
+                'nccm_key_ctrl_h': [8],
+                'nccm_key_ctrl_k': [11],
+                'nccm_key_ctrl_q': [17],
+                'nccm_key_ctrl_u': [21],
+                'nccm_key_exc': [33],
+                'nccm_key_at': [64],
+                'nccm_key_hash': [35],
+                'nccm_key_dollar': [36],
+                'nccm_key_percent': [37],
+                'nccm_key_shift_up': [337],
+                'nccm_key_shift_down': [336],
+                'nccm_key_shift_left': [393],
+                'nccm_key_shift_right': [402],
+                'nccm_key_up': [259],
+                'nccm_key_down': [258],
+                'nccm_key_left': [260],
+                'nccm_key_right': [261],
+                'nccm_key_pgup': [339],
+                'nccm_key_pgdn': [338],
+                'nccm_key_home': [262],
+                'nccm_key_end': [360],
+                'nccm_key_f1': [265],
+                'nccm_key_f2': [266],
+                'nccm_key_f3': [267],
+                'nccm_key_f4': [268],
+                'nccm_key_f5': [269],
+                'nccm_key_enter': [10, 13],
+                'nccm_key_tab': [9],
+                'nccm_key_space': [32],
+            }
 
         # ^ All the config items nccm_config_* have been removed with pop from
         # self.LoadedServersDict , leaving us with only the ssh connection
