@@ -7,12 +7,6 @@
     <link rel="shortcut icon" href="/png/favicon.ico">
     <!-- Codicons - VS Code icon set -->
     <link rel="stylesheet" href="/css/codicon.css">
-    <!-- Select2 for multi-select dropdown -->
-    <link rel="stylesheet" href="/css/select2.min.css">
-    <!-- jQuery (required for Select2) -->
-    <script src="/css/jquery-3.5.1.min.js"></script>
-    <!-- Select2 -->
-    <script src="/css/select2.min.js"></script>
     <!-- Authentication -->
     <script src="/css/auth.js"></script>
     <!-- js-yaml for YAML validation (offline) -->
@@ -503,70 +497,43 @@
             color: #fff;
         }
         
-        /* Select2 Dark Theme */
-        .select2-container--default .select2-selection--multiple {
+        .host-select {
             background: #333;
             border: 1px solid #404040;
+            color: #ccc;
+            padding: 8px 12px;
             border-radius: 4px;
-            min-height: 34px;
-            min-width: 200px;
+            min-width: 150px;
         }
         
-        .select2-container--default .select2-selection--multiple .select2-selection__choice {
+        .selected-hosts {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-left: 10px;
+            align-items: center;
+        }
+        
+        .host-tag {
             background: linear-gradient(0deg, #76b900 0%, #5a8c00 100%);
-            border: none;
             color: white;
-            border-radius: 3px;
-            padding: 2px 8px;
+            padding: 4px 8px;
+            border-radius: 4px;
             font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
         }
         
-        .select2-container--default .select2-selection--multiple .select2-selection__choice__remove {
-            color: white;
-            margin-right: 5px;
-        }
-        
-        .select2-container--default .select2-selection--multiple .select2-selection__choice__remove:hover {
-            color: #ff6b6b;
-        }
-        
-        .select2-dropdown {
-            background: #2d2d2d;
-            border: 1px solid #404040;
-        }
-        
-        .select2-container--default .select2-results__option {
-            color: #ccc;
-            padding: 6px 10px;
-        }
-        
-        .select2-container--default .select2-results__option--highlighted[aria-selected] {
-            background: #76b900;
-            color: white;
-        }
-        
-        .select2-container--default .select2-results__option[aria-selected=true] {
-            background: #404040;
-        }
-        
-        .select2-container--default .select2-results__group {
-            color: #888;
+        .host-tag .remove {
+            cursor: pointer;
             font-weight: bold;
-            padding: 6px 10px;
+            opacity: 0.8;
         }
         
-        .select2-container--default .select2-search--dropdown .select2-search__field {
-            background: #333;
-            border: 1px solid #404040;
-            color: #ccc;
-        }
-        
-        .select2-container--default .select2-selection--multiple .select2-selection__rendered {
-            padding: 2px 5px;
-        }
-        
-        .select2-container {
-            min-width: 200px;
+        .host-tag .remove:hover {
+            opacity: 1;
+            color: #ff6b6b;
         }
         
         /* Validation indicator */
@@ -824,8 +791,10 @@
                 Generate Configs
             </button>
             <label style="font-size: 13px; color: #888;">Target:</label>
-            <select id="host-select" class="host-select" multiple>
+            <select id="host-select" class="host-select" onchange="addHostToSelection()">
+                <option value="">Select host...</option>
             </select>
+            <div id="selected-hosts" class="selected-hosts"></div>
             <button id="btn-diff" class="btn btn-secondary" onclick="runDiff()">
                 Diff
             </button>
@@ -1038,12 +1007,6 @@
                     state.groups = result.groups || [];
                     state.hosts = result.hosts || [];
                     populateHostSelect();
-                    // Initialize Select2 for multi-select
-                    $('#host-select').select2({
-                        placeholder: 'Select hosts...',
-                        allowClear: true,
-                        width: '250px'
-                    });
                 } else {
                     showOutput('Error loading files: ' + result.error, 'error');
                 }
@@ -1202,16 +1165,45 @@
         }
         
         // Get selected hosts as comma-separated string
+        // Track selected hosts
+        let selectedHostsList = [];
+        
         function getSelectedHosts() {
-            // Use Select2's val() method which returns an array
-            const selected = $('#host-select').val() || [];
-            return selected.join(',');
+            return selectedHostsList.join(',');
+        }
+        
+        function addHostToSelection() {
+            const select = document.getElementById('host-select');
+            const value = select.value;
+            if (value && !selectedHostsList.includes(value)) {
+                selectedHostsList.push(value);
+                renderSelectedHosts();
+            }
+            select.value = ''; // Reset dropdown
+        }
+        
+        function removeHostFromSelection(host) {
+            selectedHostsList = selectedHostsList.filter(h => h !== host);
+            renderSelectedHosts();
+        }
+        
+        function renderSelectedHosts() {
+            const container = document.getElementById('selected-hosts');
+            container.innerHTML = selectedHostsList.map(host => 
+                `<span class="host-tag">${host}<span class="remove" onclick="removeHostFromSelection('${host}')">&times;</span></span>`
+            ).join('');
+        }
+        
+        function clearSelectedHosts() {
+            selectedHostsList = [];
+            renderSelectedHosts();
         }
         
         // Populate host select dropdown
         function populateHostSelect() {
             const select = document.getElementById('host-select');
-            select.innerHTML = '<option value="all">-- ALL HOSTS --</option>';
+            select.innerHTML = '<option value="">Select host to add...</option>';
+            select.innerHTML += '<option value="all">-- ALL HOSTS --</option>';
             
             // Add groups section
             if (state.groups && state.groups.length > 0) {
