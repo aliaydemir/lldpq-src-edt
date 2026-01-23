@@ -53,10 +53,6 @@ graph "ACME" {
 "Switch1":"swp50" -- "Core2":"swp1"
 "Switch2":"swp49" -- "Core1":"swp2"
 "Switch2":"swp50" -- "Core2":"swp2"
-"Switch3":"swp49" -- "Core1":"swp3"
-"Switch3":"swp50" -- "Core2":"swp3"
-"Switch4":"swp49" -- "Core1":"swp4"
-"Switch4":"swp50" -- "Core2":"swp4"
 
 # OOB-Spine to OOB-FW
 
@@ -79,8 +75,6 @@ graph "ACME" {
 
 "Border1":"swp31" -- "inband-fw":"swp1"
 "Border2":"swp31" -- "inband-fw":"swp2"
-
-# TAN-Leaf to TAN-Leaf
 
 # TAN-Leaf to TAN-Spine
 
@@ -119,41 +113,5 @@ graph "ACME" {
 "Leaf2":"swp61s1" -- "Spine2":"swp7s1"
 "Leaf2":"swp62s0" -- "Spine2":"swp8s0"
 "Leaf2":"swp62s1" -- "Spine2":"swp8s1"
-
-"Leaf3":"swp55s0" -- "Spine1":"swp9s0"
-"Leaf3":"swp55s1" -- "Spine1":"swp9s1"
-"Leaf3":"swp56s0" -- "Spine1":"swp10s0"
-"Leaf3":"swp56s1" -- "Spine1":"swp10s1"
-"Leaf3":"swp57s0" -- "Spine1":"swp11s0"
-"Leaf3":"swp57s1" -- "Spine1":"swp11s1"
-"Leaf3":"swp58s0" -- "Spine1":"swp12s0"
-"Leaf3":"swp58s1" -- "Spine1":"swp12s1"
-
-"Leaf3":"swp59s0" -- "Spine2":"swp9s0"
-"Leaf3":"swp59s1" -- "Spine2":"swp9s1"
-"Leaf3":"swp60s0" -- "Spine2":"swp10s0"
-"Leaf3":"swp60s1" -- "Spine2":"swp10s1"
-"Leaf3":"swp61s0" -- "Spine2":"swp11s0"
-"Leaf3":"swp61s1" -- "Spine2":"swp11s1"
-"Leaf3":"swp62s0" -- "Spine2":"swp12s0"
-"Leaf3":"swp62s1" -- "Spine2":"swp12s1"
-
-"Leaf4":"swp55s0" -- "Spine1":"swp13s0"
-"Leaf4":"swp55s1" -- "Spine1":"swp13s1"
-"Leaf4":"swp56s0" -- "Spine1":"swp14s0"
-"Leaf4":"swp56s1" -- "Spine1":"swp14s1"
-"Leaf4":"swp57s0" -- "Spine1":"swp15s0"
-"Leaf4":"swp57s1" -- "Spine1":"swp15s1"
-"Leaf4":"swp58s0" -- "Spine1":"swp16s0"
-"Leaf4":"swp58s1" -- "Spine1":"swp16s1"
-
-"Leaf4":"swp59s0" -- "Spine2":"swp13s0"
-"Leaf4":"swp59s1" -- "Spine2":"swp13s1"
-"Leaf4":"swp60s0" -- "Spine2":"swp14s0"
-"Leaf4":"swp60s1" -- "Spine2":"swp14s1"
-"Leaf4":"swp61s0" -- "Spine2":"swp15s0"
-"Leaf4":"swp61s1" -- "Spine2":"swp15s1"
-"Leaf4":"swp62s0" -- "Spine2":"swp16s0"
-"Leaf4":"swp62s1" -- "Spine2":"swp16s1"
 
 }

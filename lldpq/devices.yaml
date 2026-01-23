@@ -6,28 +6,25 @@
 # =======================================================
 #
 # PURPOSE:
-#   Clean YAML-based device configuration for LLDPq monitoring.
+#   Central device configuration for LLDPq. Used by pping, zzh, send-cmd, get-conf.
 #
-# STRUCTURE:
-#   defaults:
-#     username: Default SSH username for all devices
-#   
-#   devices:
-#     IP_ADDRESS: HOSTNAME              # Uses default username  
-#     IP_ADDRESS:                       # Override username
-#       hostname: HOSTNAME
-#       username: CUSTOM_USERNAME
+# FORMAT:
+#   IP: Hostname                    # simple
+#   IP: Hostname @role              # with role (for filtering)
+#   IP:                             # extended format
+#     hostname: Hostname
+#     username: custom_user
+#     role: role_name
 #
-# EXAMPLES:
-#   10.101.100.1: BorderLeaf01          # Uses 'cumulus' username
-#   192.168.1.10:                       # Custom username
-#     hostname: AdminSwitch01
-#     username: admin
+# ROLES:
+#   Optional tags for grouping devices. Use with:
+#   - zzh: filter by typing role name
+#   - parse_devices.py -r spine: filter by role
+#   - send-cmd (future): target specific roles
 #
 # SSH REQUIREMENTS:
-#   - SSH key-based authentication configured. You can use send-keys.sh to send the key to the devices.
-#   - User must have sudo privileges on devices. You can use sudo-fix.sh to fix the sudoers file.
-#   - Network connectivity to management IPs
+#   - SSH key auth configured (use send-keys.sh)
+#   - Sudo privileges on devices (use sudo-fix.sh)
 #
 # =======================================================
 
@@ -35,24 +32,22 @@ defaults:
   username: cumulus
 
 devices:
-  10.10.100.101: Border1
-  10.10.100.102: Border2
-  10.10.100.252: Core1
-  10.10.100.253: Core2
-  10.10.100.10: Spine1
-  10.10.100.11: Spine2
-  10.10.100.12: Leaf1
-  10.10.100.13: Leaf2
-  10.10.100.14: Leaf3
-  10.10.100.15: Leaf4
-  10.10.100.20: Switch1
-  10.10.100.21: Switch2
-  10.10.100.22: Switch3
-  10.10.100.23: Switch4
-  10.10.100.210: inband-fw
-  10.10.100.212: oob-fw
+
+  10.10.100.101: Border1 @border
+  10.10.100.102: Border2 @border
+  10.10.100.252: Core1 @core
+  10.10.100.253: Core2 @core
+  10.10.100.10: Spine1 @spine
+  10.10.100.11: Spine2 @spine
+  10.10.100.12: Leaf1 @leaf
+  10.10.100.13: Leaf2 @leaf
+  10.10.100.20: Switch1 @access
+  10.10.100.21: Switch2 @access
+  10.10.100.210: inband-fw @firewall
+  10.10.100.212: oob-fw @firewall
 
   # Example: Custom username override
   # 192.168.1.10:
   #   hostname: AdminSwitch01
   #   username: admin
+  #   role: mgmt

@@ -39,34 +39,34 @@ device_categories:
   - pattern: "inband-fw"
     layer: 1
     icon: "firewall"
-    
+
   - pattern: "border"
     layer: 2
     icon: "switch"
-    
+
   - pattern: "spine"
     layer: 3
     icon: "switch"
-    
+
   - pattern: "leaf"
     layer: 4
     icon: "switch"
-    
+
   - pattern: "oob-fw"
     layer: 5
     icon: "firewall"
-    
+
   - pattern: "core"
     layer: 6
     icon: "switch"
-    
+
   - pattern: "switch"
     layer: 7
     icon: "switch"
 
 # Default category for unmatched devices
 default:
-  layer: 19
+  layer: 9
   icon: "server"
 
 # Special conditional rules for devices with complex logic

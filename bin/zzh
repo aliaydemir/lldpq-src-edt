@@ -795,6 +795,7 @@ import logging
 import logging.handlers
 import operator
 import os
+import re
 import pathlib
 import platform
 import pydoc
@@ -1652,22 +1653,34 @@ class Connections:
                         DefaultUser = DevicesConfig.get('defaults', {}).get('username', 'cumulus')
                         DeviceCount = 0
                         for IpAddr, DevInfo in DevicesConfig['devices'].items():
-                            # Handle both formats:
-                            # 10.0.0.1: Hostname  OR  10.0.0.1: {hostname: X, username: Y}
+                            # Handle formats:
+                            # 10.0.0.1: Hostname
+                            # 10.0.0.1: Hostname @role
+                            # 10.0.0.1: {hostname: X, username: Y, role: Z}
+                            Role = None
                             if isinstance(DevInfo, str):
-                                Hostname = DevInfo
+                                # Parse "Hostname @role" format
+                                RoleMatch = re.match(r'^(.+?)\s+@(\w+)$', DevInfo.strip())
+                                if RoleMatch:
+                                    Hostname = RoleMatch.group(1).strip()
+                                    Role = RoleMatch.group(2).lower()
+                                else:
+                                    Hostname = DevInfo.strip()
                                 Username = DefaultUser
                             elif isinstance(DevInfo, dict):
                                 Hostname = DevInfo.get('hostname', str(IpAddr))
                                 Username = DevInfo.get('username', DefaultUser)
+                                Role = DevInfo.get('role', None)
                             else:
                                 continue
                             
                             # Create nccm-compatible entry (hostname as key, no prefix)
+                            # Include role in comment for filtering
+                            Comment = '{} @{}'.format(Hostname, Role) if Role else Hostname
                             self.LoadedServersDict[Hostname] = {
                                 'address': str(IpAddr),
                                 'user': Username,
-                                'comment': Hostname,
+                                'comment': Comment,
                                 'identity': '~/.ssh/id_rsa',
                                 'customargs': '-o StrictHostKeyChecking=no'
                             }

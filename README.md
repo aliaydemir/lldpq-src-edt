@@ -60,6 +60,25 @@ edit these files:
 ~/lldpq/commands                 # optional: commands for send-cmd
 ```
 
+### devices.yaml format
+
+```yaml
+defaults:
+  username: cumulus
+
+devices:
+  10.10.100.10: Spine1            # simple: IP: Hostname
+  10.10.100.11: Spine2 @spine     # with role: IP: Hostname @role
+  10.10.100.12:                   # extended format
+    hostname: Leaf1
+    username: admin
+    role: leaf
+```
+
+roles are optional tags for grouping. filter by role:
+- **zzh**: type `@spine` to show only spine devices
+- **parse_devices.py**: `python3 parse_devices.py -r spine`
+
 ## [04] cron jobs (auto setup)
 
 ```
@@ -132,6 +151,7 @@ send-cmd -h                        # show help
 # ssh manager (ncurses UI)
 zzh                                # interactive ssh manager
 zzh spine                          # filter: show only "spine" in name
+zzh @leaf                          # filter by role (from devices.yaml)
 zzh -h                             # show help
 
 # config backup
