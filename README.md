@@ -110,7 +110,24 @@ setup passwordless sudo on all switches:
 cd ~/lldpq && ./sudo-fix.sh   # configures passwordless sudo for cumulus user
 ```
 
-## [09] commands reference
+## [09] cli tools
+
+```bash
+pping                              # parallel ping all devices (from devices.yaml)
+pping -f hosts.txt                 # ping custom host list
+pping -v mgmt                      # ping via VRF
+
+send-cmd                           # run commands from ~/lldpq/commands file
+send-cmd -c "nv show system"       # run single command on all devices
+send-cmd -c "uptime" -c "hostname" # run multiple commands
+send-cmd -e                        # edit commands file
+send-cmd -l                        # list commands file
+
+get-conf                           # backup configs from all devices
+zzh                                # ssh manager (uses /etc/nccm.yml)
+```
+
+## [10] ssh commands reference
 
 see all commands executed on devices:
 
@@ -118,7 +135,7 @@ see all commands executed on devices:
 cat COMMANDS.md     # complete list of ssh commands, sudo requirements, security notes
 ```
 
-## [10] authentication
+## [11] authentication
 
 web interface is protected with session-based authentication:
 
@@ -148,7 +165,7 @@ operator / operator   # limited access (no Ansible)
 
 **important**: change default passwords after installation!
 
-## [11] alerts & notifications
+## [12] alerts & notifications
 
 get real-time alerts for network issues via Slack:
 
@@ -178,7 +195,7 @@ python3 test_alerts.py                               # test configuration
 
 alerts automatically start working once webhooks are configured. check `~/lldpq/alert-states/` for alert history.
 
-## [12] troubleshooting
+## [13] troubleshooting
 
 ```
 # check if cron is running
@@ -191,7 +208,7 @@ cd ~/lldpq && ./assets.sh && ./check-lldp.sh && ./monitor.sh
 ls -la /var/www/html/monitor-results/
 ```
 
-## [13] license
+## [14] license
 
 This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
 

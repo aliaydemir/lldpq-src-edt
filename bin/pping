@@ -33,6 +33,9 @@ find_lldpq_dir() {
     LLDPQ_DIR="${LLDPQ_DIR:-$HOME/lldpq}"
 }
 
+# Initialize LLDPQ_DIR early for help message
+find_lldpq_dir
+
 show_usage() {
     echo -e "\e[95m┌─────────────────────────────────────────────┐\e[0m"
     echo -e "\e[95m│\e[0m            \e[93mPPING v11.0\e[0m                      \e[95m│\e[0m"
@@ -48,7 +51,7 @@ show_usage() {
     echo -e "  \e[33m-h, --help\e[0m    Show this help message"
     echo ""
     echo -e "\e[96mDEFAULT:\e[0m"
-    echo -e "  Uses devices.yaml from ~/lldpq or LLDPQ_DIR"
+    echo -e "  Uses \e[33m$LLDPQ_DIR/devices.yaml\e[0m"
     echo ""
     echo -e "\e[96mCUSTOM FILE FORMAT (-f):\e[0m"
     echo -e "  Each line: \e[33mhostname ip_address\e[0m  or just  \e[33mip_address\e[0m"

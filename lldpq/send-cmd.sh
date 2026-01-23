@@ -11,9 +11,10 @@ LLDPq Send Commands - Execute commands on network devices
 Usage: send-cmd.sh [options]
 
 Options:
-  -h    Show this help message
-  -l    List available commands (from commands file)
-  -e    Edit commands file
+  -c <cmd>  Execute command on all devices (can use multiple times)
+  -h        Show this help message
+  -l        List available commands (from commands file)
+  -e        Edit commands file
 
 Description:
   Reads commands from '$SCRIPT_DIR/commands' file.
@@ -21,18 +22,22 @@ Description:
   Executes uncommented commands on all devices in devices.yaml.
 
 Examples:
-  send-cmd           # Run all uncommented commands
-  send-cmd -l        # List commands in file
-  send-cmd -e        # Edit commands file
+  send-cmd                           # Run all uncommented commands from file
+  send-cmd -c "nv show system"       # Run single command on all devices
+  send-cmd -c "uptime" -c "hostname" # Run multiple commands
+  send-cmd -l                        # List commands in file
+  send-cmd -e                        # Edit commands file
 
 EOF
     exit 0
 }
 
 # Parse arguments
-while getopts "hle" opt; do
+cli_commands=()
+while getopts "hlec:" opt; do
     case $opt in
         h) show_help ;;
+        c) cli_commands+=("$OPTARG") ;;
         l) 
             echo "Commands file: $SCRIPT_DIR/commands"
             echo ""
@@ -56,24 +61,31 @@ if [[ ${#devices[@]} -eq 0 ]]; then
     exit 1
 fi
 
-# Read commands from file (skip comments and empty lines)
-COMMANDS_FILE="$SCRIPT_DIR/commands"
-if [[ ! -f "$COMMANDS_FILE" ]]; then
-    echo "ERROR: Commands file not found: $COMMANDS_FILE"
-    exit 1
-fi
-
+# Use CLI commands if provided, otherwise read from file
 commands=()
-while IFS= read -r line; do
-    # Skip comments and empty lines
-    [[ "$line" =~ ^[[:space:]]*# ]] && continue
-    [[ -z "${line// }" ]] && continue
-    commands+=("$line")
-done < "$COMMANDS_FILE"
+if [[ ${#cli_commands[@]} -gt 0 ]]; then
+    commands=("${cli_commands[@]}")
+    echo -e "\e[0;36mUsing command-line arguments\e[0m"
+else
+    # Read commands from file (skip comments and empty lines)
+    COMMANDS_FILE="$SCRIPT_DIR/commands"
+    if [[ ! -f "$COMMANDS_FILE" ]]; then
+        echo "ERROR: Commands file not found: $COMMANDS_FILE"
+        exit 1
+    fi
 
-if [[ ${#commands[@]} -eq 0 ]]; then
-    echo "No commands to execute. Edit $COMMANDS_FILE and uncomment commands."
-    exit 0
+    while IFS= read -r line; do
+        # Skip comments and empty lines
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "${line// }" ]] && continue
+        commands+=("$line")
+    done < "$COMMANDS_FILE"
+
+    if [[ ${#commands[@]} -eq 0 ]]; then
+        echo "No commands to execute. Edit $COMMANDS_FILE and uncomment commands."
+        echo "Or use: send-cmd -c \"your command\""
+        exit 0
+    fi
 fi
 
 echo ""
