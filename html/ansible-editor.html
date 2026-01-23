@@ -8,7 +8,7 @@
     <!-- Codicons - VS Code icon set -->
     <link rel="stylesheet" href="/css/codicon.css">
     <!-- Highlight.js for code syntax highlighting -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/yaml.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
@@ -338,46 +338,32 @@
         #markdown-preview h2 { font-size: 1.4em; }
         #markdown-preview h3 { font-size: 1.2em; }
         #markdown-preview p { line-height: 1.6; margin: 10px 0; }
-        #markdown-preview code {
+        #markdown-preview code:not(.hljs) {
             background: #2d2d2d;
             padding: 2px 6px;
             border-radius: 3px;
-            font-family: 'Cascadia Code', monospace;
+            font-family: 'Cascadia Code', Consolas, monospace;
         }
         #markdown-preview pre {
-            background: #282c34;
-            padding: 12px;
+            background: #0d1117 !important;
+            padding: 16px;
             border-radius: 6px;
             overflow-x: auto;
             margin: 12px 0;
-            border: 1px solid #3e4451;
+            border: 1px solid #30363d;
         }
         #markdown-preview pre code {
-            background: none;
-            padding: 0;
+            background: transparent !important;
+            padding: 0 !important;
             font-size: 13px;
-            line-height: 1.5;
+            line-height: 1.6;
+            font-family: 'Cascadia Code', Consolas, 'Courier New', monospace;
         }
-        /* Highlight.js theme override for better contrast */
+        /* Let highlight.js colors show through */
         #markdown-preview pre code.hljs {
             background: transparent !important;
             padding: 0 !important;
-        }
-        #markdown-preview .hljs {
-            background: transparent !important;
-        }
-        /* Ensure code blocks in preview have proper styling */
-        #markdown-preview pre {
-            position: relative;
-        }
-        #markdown-preview pre::before {
-            content: attr(data-lang);
-            position: absolute;
-            top: 0;
-            right: 8px;
-            font-size: 10px;
-            color: #666;
-            text-transform: uppercase;
+            color: inherit;
         }
         #markdown-preview ul, #markdown-preview ol {
             padding-left: 20px;
