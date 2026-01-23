@@ -32,8 +32,10 @@ parse_query() {
     ACTION=$(echo "$query" | sed -n 's/.*action=\([^&]*\).*/\1/p')
     # Extract file parameter
     FILE=$(echo "$query" | sed -n 's/.*file=\([^&]*\).*/\1/p' | python3 -c "import sys, urllib.parse; print(urllib.parse.unquote(sys.stdin.read().strip()))")
-    # Extract host parameter
+    # Extract host parameter and URL-decode it
     HOST=$(echo "$query" | sed -n 's/.*host=\([^&]*\).*/\1/p')
+    # URL decode (handle %2C for comma, etc.)
+    HOST=$(echo "$HOST" | python3 -c "import sys, urllib.parse; print(urllib.parse.unquote(sys.stdin.read().strip()))")
 }
 
 # Output JSON response
@@ -237,7 +239,7 @@ run_diff() {
     fi
     
     # Sanitize host name
-    host=$(echo "$host" | tr -cd '[:alnum:]-_')
+    host=$(echo "$host" | tr -cd '[:alnum:]-_,')
     
     cd "$ANSIBLE_DIR" || {
         json_response '{"success": false, "error": "Cannot access ansible directory"}'
@@ -269,7 +271,7 @@ run_deploy() {
     fi
     
     # Sanitize host name
-    host=$(echo "$host" | tr -cd '[:alnum:]-_')
+    host=$(echo "$host" | tr -cd '[:alnum:]-_,')
     
     cd "$ANSIBLE_DIR" || {
         json_response '{"success": false, "error": "Cannot access ansible directory"}'
@@ -304,7 +306,7 @@ run_generate() {
     local output
     if [ -n "$host" ] && [ "$host" != "all" ]; then
         # Sanitize host name
-        host=$(echo "$host" | tr -cd '[:alnum:]-_')
+        host=$(echo "$host" | tr -cd '[:alnum:]-_,')
         output=$(ANSIBLE_FORCE_COLOR=true ansible-playbook playbooks/generate_switch_nvue_yaml_configs.yaml -l "$host" 2>&1)
     else
         output=$(ANSIBLE_FORCE_COLOR=true ansible-playbook playbooks/generate_switch_nvue_yaml_configs.yaml 2>&1)

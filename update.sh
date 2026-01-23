@@ -4,11 +4,26 @@
 # 
 # Copyright (c) 2024 LLDPq Project
 # Licensed under MIT License - see LICENSE file for details
+#
+# Usage: ./update.sh [-y]
+#   -y  Auto-yes to all prompts (non-interactive mode)
 
 set -e
 
+# Parse arguments
+AUTO_YES=false
+while getopts "y" opt; do
+    case $opt in
+        y) AUTO_YES=true ;;
+        *) ;;
+    esac
+done
+
 echo "🔄 LLDPq Update Script"
 echo "======================"
+if [[ "$AUTO_YES" == "true" ]]; then
+    echo "   Running in non-interactive mode (-y)"
+fi
 
 # Check if running via sudo from non-root user (causes $HOME issues)
 if [[ $EUID -eq 0 ]] && [[ -n "$SUDO_USER" ]] && [[ "$SUDO_USER" != "root" ]]; then
@@ -36,15 +51,19 @@ WEB_ROOT="${WEB_ROOT:-/var/www/html}"
 echo ""
 echo "[01] Backup existing lldpq directory?"
 if [[ -d "$HOME/lldpq" ]]; then
-    read -p "Create backup of existing lldpq? [y/N]: " -n 1 -r
-    echo ""
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        backup_dir="$HOME/lldpq.backup.$(date +%Y%m%d_%H%M%S)"
-        echo "   Backing up $HOME/lldpq to $backup_dir"
-        cp -r "$HOME/lldpq" "$backup_dir"
-        echo "Backup created: $backup_dir"
+    if [[ "$AUTO_YES" == "true" ]]; then
+        echo "   Skipping backup (auto-yes mode)"
     else
-        echo "   Skipping backup as requested"
+        read -p "Create backup of existing lldpq? [y/N]: " -n 1 -r
+        echo ""
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            backup_dir="$HOME/lldpq.backup.$(date +%Y%m%d_%H%M%S)"
+            echo "   Backing up $HOME/lldpq to $backup_dir"
+            cp -r "$HOME/lldpq" "$backup_dir"
+            echo "Backup created: $backup_dir"
+        else
+            echo "   Skipping backup as requested"
+        fi
     fi
 else
     echo "   No existing lldpq directory found, skipping backup"
@@ -224,8 +243,12 @@ if [[ -d "$HOME/lldpq/monitor-results" ]] || [[ -d "$HOME/lldpq/lldp-results" ]]
     [[ -d "$HOME/lldpq/lldp-results" ]] && echo "     • lldp-results/ (contains LLDP topology data)"
     [[ -d "$HOME/lldpq/alert-states" ]] && echo "     • alert-states/ (contains alert history and state tracking)"
     echo ""
-    read -p "Backup and preserve monitoring data? [Y/n]: " -n 1 -r
-    echo ""
+    if [[ "$AUTO_YES" == "true" ]]; then
+        REPLY="y"
+    else
+        read -p "Backup and preserve monitoring data? [Y/n]: " -n 1 -r
+        echo ""
+    fi
     if [[ $REPLY =~ ^[Nn]$ ]]; then
         echo "   ⚠️  Monitoring data will be LOST during update!"
     else
@@ -286,8 +309,12 @@ if [[ -d "$HOME/lldpq" ]]; then
     if pgrep -f "$HOME/lldpq/monitor.sh" >/dev/null 2>&1 || pgrep -f "/usr/local/bin/lldpq-trigger" >/dev/null 2>&1; then
         echo ""
         echo "   ⚠️  WARNING: LLDPq processes are currently running!"
-        read -p "   Stop processes and continue? [Y/n]: " -n 1 -r
-        echo ""
+        if [[ "$AUTO_YES" == "true" ]]; then
+            REPLY="y"
+        else
+            read -p "   Stop processes and continue? [Y/n]: " -n 1 -r
+            echo ""
+        fi
         if [[ ! $REPLY =~ ^[Nn]$ ]]; then
             echo "   Stopping lldpq processes..."
             pkill -f "$HOME/lldpq/monitor.sh" 2>/dev/null || true
