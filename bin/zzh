@@ -1090,6 +1090,23 @@ class GlobalConfig:
     ConfigFilePath.append('/etc/' + ConfigFile)
         # ^ /etc/nccm.yml
 
+    # LLDPq devices.yaml integration
+    # devices.yaml is the primary source of connections for LLDPq
+    DevicesYamlPath = []
+    # Try to get LLDPQ_DIR from /etc/lldpq.conf
+    LldpqDir = str(pathlib.Path.home()) + '/lldpq'  # default
+    if pathlib.Path('/etc/lldpq.conf').exists():
+        try:
+            with open('/etc/lldpq.conf', 'r') as f:
+                for line in f:
+                    if line.startswith('LLDPQ_DIR='):
+                        LldpqDir = line.split('=', 1)[1].strip().strip('"').strip("'")
+                        break
+        except:
+            pass
+    DevicesYamlPath.append(LldpqDir + '/devices.yaml')
+    DevicesYamlPath.append(str(pathlib.Path.home()) + '/lldpq/devices.yaml')
+
     # These vars remember the marker position after disconnecting from ssh
     #   so that the marker can be placed at the same position that was
     #   used to make the connection. After returning to nccm the Connections
@@ -1258,32 +1275,27 @@ class Connections:
         global SecureLogging
         ImportNccmD = False     # Whether to import yml files from /etc/nccm.d/
 
-        for FileLooper in GlobalConfig.ConfigFilePath:
-            if pathlib.Path(FileLooper).exists():
+        # Try to load nccm.yml (optional - defaults will be used if not found)
+        FileLooper = None
+        for FilePath in GlobalConfig.ConfigFilePath:
+            if pathlib.Path(FilePath).exists():
+                FileLooper = FilePath
                 break
-        LogWrite.debug('Found config file: FileLooper == {}'.format(FileLooper))
-
-        try:
-            with open (FileLooper, 'r') as ConfigFileToRead:
-                self.LoadedServersDict = yaml.safe_load(ConfigFileToRead)
-                    # ^ yaml.load is not safe
-                # ^ Now we have the nccm.yml file loaded into self.LoadedServersDict.
-                #   This is both the ssh connections details as well as the
-                #   nccm_config_* items - all in the same dict.
-
-        except OSError as Exc:
-            # ^ This exception should be matched for all failures. The more generic one is backup.
-            curses.endwin()     # De-initialize and return terminal to normal status
-            print('\nError loading:  nccm.yml  from any of the following paths:\n{}\n\n'
-                'Tip: check if file exists in one of these locations, permissions, selinux context, etc.\n\n'
-                'Reraising exception for further debugging info and to initiate screen restore...\n\n'
-                .format(GlobalConfig.ConfigFilePath))
-            raise Exc
-
-        except:
-            curses.endwin()     # De-initialize and return terminal to normal status
-            print('Error loading nccm.yml\n\n')
-            raise Exc
+        
+        if FileLooper:
+            LogWrite.debug('Found config file: FileLooper == {}'.format(FileLooper))
+            try:
+                with open (FileLooper, 'r') as ConfigFileToRead:
+                    self.LoadedServersDict = yaml.safe_load(ConfigFileToRead)
+                    if self.LoadedServersDict is None:
+                        self.LoadedServersDict = {}
+            except Exception as Exc:
+                LogWrite.warning('Error loading nccm.yml, using defaults: {}'.format(Exc))
+                self.LoadedServersDict = {}
+        else:
+            # nccm.yml not found - this is OK, we'll load from devices.yaml
+            LogWrite.debug('No nccm.yml found, using defaults and loading from devices.yaml')
+            self.LoadedServersDict = {}
 
         LogWrite.debug( {
             'unsafe':   'self.LoadedServersDict (contains prog settings + conn details) == {}'
@@ -1525,6 +1537,49 @@ class Connections:
             LogWrite.debug('ImportNccmD == {} - not attempting to import connection details '
                 'from {}'
                     .format(ImportNccmD, GlobalConfig.ConfigFileIncDir))
+
+        # LLDPq devices.yaml integration - import connections from devices.yaml
+        DevicesYamlFile = None
+        for DevPath in GlobalConfig.DevicesYamlPath:
+            if pathlib.Path(DevPath).exists():
+                DevicesYamlFile = DevPath
+                break
+        
+        if DevicesYamlFile:
+            LogWrite.debug('Loading devices from: {}'.format(DevicesYamlFile))
+            try:
+                with open(DevicesYamlFile, 'r') as DevFile:
+                    DevicesConfig = yaml.safe_load(DevFile)
+                    if DevicesConfig and 'devices' in DevicesConfig:
+                        DefaultUser = DevicesConfig.get('defaults', {}).get('username', 'cumulus')
+                        DeviceNum = 1
+                        for IpAddr, DevInfo in DevicesConfig['devices'].items():
+                            # Handle both formats:
+                            # 10.0.0.1: Hostname  OR  10.0.0.1: {hostname: X, username: Y}
+                            if isinstance(DevInfo, str):
+                                Hostname = DevInfo
+                                Username = DefaultUser
+                            elif isinstance(DevInfo, dict):
+                                Hostname = DevInfo.get('hostname', str(IpAddr))
+                                Username = DevInfo.get('username', DefaultUser)
+                            else:
+                                continue
+                            
+                            # Create nccm-compatible entry with sorted prefix
+                            FriendlyName = '{:02d}-{}'.format(DeviceNum, Hostname)
+                            self.LoadedServersDict[FriendlyName] = {
+                                'address': str(IpAddr),
+                                'user': Username,
+                                'comment': Hostname,
+                                'identity': '~/.ssh/id_rsa',
+                                'customargs': '-o StrictHostKeyChecking=no'
+                            }
+                            DeviceNum += 1
+                        LogWrite.debug('Loaded {} devices from devices.yaml'.format(DeviceNum - 1))
+            except Exception as Exc:
+                LogWrite.warning('Error loading devices.yaml: {}'.format(Exc))
+        else:
+            LogWrite.debug('No devices.yaml found in: {}'.format(GlobalConfig.DevicesYamlPath))
 
         # This code is needed because FriendlyName connections without any
         # config items have a value of None. I need to replace it with {} for
@@ -2780,8 +2835,9 @@ def ParseArgs():
     global SecureLogging
 
     parser = argparse.ArgumentParser(
-        description = 'NCurses Connection Manager by Kenneth Aaron',
-        epilog = 'Thank you for using nccm',
+        description = 'LLDPq SSH Connection Manager (based on nccm by Kenneth Aaron). '
+                      'Automatically loads devices from ~/lldpq/devices.yaml',
+        epilog = 'Connections are loaded from devices.yaml - no nccm.yml needed!',
         #add_help = False )
             # ^ Bypass the built in argparse help generator and release
             #   the -h and --help args for our own use.

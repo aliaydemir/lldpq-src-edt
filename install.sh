@@ -341,7 +341,7 @@ echo "   You need to manually edit these files with your network details:"
 echo ""
 echo "   1. nano ~/lldpq/devices.yaml           # Define your network devices (required)"
 echo "   2. nano ~/lldpq/topology.dot           # Define your network topology"
-echo "   3. sudo nano /etc/nccm.yml             # Configure SSH connection details (zzh)"
+echo "   Note: zzh (SSH manager) automatically loads devices from devices.yaml"
 echo ""
 echo "   See README.md for examples of each file format"
 

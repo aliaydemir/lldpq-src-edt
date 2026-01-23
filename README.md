@@ -52,12 +52,11 @@ cd lldpq-src
 edit these 7 files:
 
 ```
-~/lldpq/devices.yaml             # add your switches (ip + username + hostname) - used by pping, lldpq, get-conf
+~/lldpq/devices.yaml             # add your switches (ip + username + hostname) - used by all tools
 ~/lldpq/topology.dot             # expected cable connections
 ~/lldpq/topology_config.yaml     # optional: customize device layers/icons (supports regex patterns)
 ~/lldpq/notifications.yaml       # optional: slack alerts + thresholds
-~/lldpq/hosts.ini                # optional: extra hostnames for topology  
-/etc/nccm.yml                      # optional: ssh manager [zzh]
+~/lldpq/hosts.ini                # optional: extra hostnames for topology
 ```
 
 ## [04] cron jobs (auto setup)
@@ -81,7 +80,7 @@ git pull                    # get latest code
 ### what gets preserved:
 - **config files**: devices.yaml, hosts.ini, topology.dot, topology_config.yaml
 - **monitoring data**: monitor-results/, lldp-results/ (optional backup)
-- **system configs**: /etc/nccm.yml  
+- **system configs**: /etc/lldpq.conf  
 
 update.sh will ask if you want to backup existing monitoring data before updating. choose 'y' to keep all your historical analysis results, hardware health data, and network topology information.
 
@@ -124,7 +123,7 @@ send-cmd -e                        # edit commands file
 send-cmd -l                        # list commands file
 
 get-conf                           # backup configs from all devices
-zzh                                # ssh manager (uses /etc/nccm.yml)
+zzh                                # ssh manager (uses devices.yaml)
 ```
 
 ## [10] ssh commands reference

@@ -75,14 +75,14 @@ echo "[02] Updating system files..."
 # Backup user's system config files before overwriting
 echo "   - Backing up user system configs..."
 system_config_backup=$(mktemp -d)
-[[ -f "/etc/nccm.yml" ]] && cp "/etc/nccm.yml" "$system_config_backup/" && echo "     • /etc/nccm.yml backed up"
+# nccm.yml no longer needed - zzh loads from devices.yaml
 
 echo "   - Updating etc/* to /etc/"
 sudo cp -r etc/* /etc/
 
 # Restore user's system config files
 echo "   - Restoring user system configs..."
-[[ -f "$system_config_backup/nccm.yml" ]] && sudo cp "$system_config_backup/nccm.yml" "/etc/" && echo "     • /etc/nccm.yml restored"
+# nccm.yml no longer needed - zzh loads from devices.yaml
 
 # Clean up backup
 rm -rf "$system_config_backup"
@@ -362,7 +362,7 @@ echo ""
 echo "[06] Data preservation summary:"
 echo "   The following files/directories were preserved:"
 echo "   Configuration files:"
-echo "     • /etc/nccm.yml"
+# nccm.yml removed - zzh uses devices.yaml
 echo "     • ~/lldpq/devices.yaml"
 echo "     • ~/lldpq/hosts.ini"
 echo "     • $WEB_ROOT/topology.dot (web-editable, symlinked from ~/lldpq)"
