@@ -183,6 +183,8 @@
         .file-item .codicon-terminal { color: #4ec9b0; }
         .file-item .codicon-json { color: #ce9178; }
         .file-item .codicon-settings-gear { color: #888; }
+        .file-item .codicon-git-commit { color: #f14e32; }
+        .file-item .codicon-server { color: #4ec9b0; }
         
         .folder.collapsed .folder-contents {
             display: none;
@@ -1040,10 +1042,16 @@
                         fileEl.style.paddingLeft = (depth * 0 + 25) + 'px';
                         fileEl.dataset.path = file.path;
                         
-                        // Get file icon based on extension
+                        // Get file icon based on filename or extension
                         const ext = file.name.split('.').pop().toLowerCase();
+                        const fileName = file.name.toLowerCase();
                         let iconClass = 'codicon-file';
-                        if (['yaml', 'yml'].includes(ext)) iconClass = 'codicon-file-code';
+                        
+                        // Special filenames first
+                        if (fileName === '.gitignore') iconClass = 'codicon-git-commit';
+                        else if (fileName === 'hosts') iconClass = 'codicon-server';
+                        // Then by extension
+                        else if (['yaml', 'yml'].includes(ext)) iconClass = 'codicon-file-code';
                         else if (['md'].includes(ext)) iconClass = 'codicon-markdown';
                         else if (['txt', 'log'].includes(ext)) iconClass = 'codicon-note';
                         else if (['png', 'jpg', 'jpeg', 'gif', 'svg'].includes(ext)) iconClass = 'codicon-file-media';
