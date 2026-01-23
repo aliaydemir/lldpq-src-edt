@@ -336,13 +336,22 @@
             font-family: 'Cascadia Code', monospace;
         }
         #markdown-preview pre {
-            background: #2d2d2d;
+            background: #282c34;
             padding: 12px;
-            border-radius: 4px;
+            border-radius: 6px;
             overflow-x: auto;
+            margin: 12px 0;
+            border: 1px solid #3e4451;
         }
         #markdown-preview pre code {
             background: none;
+            padding: 0;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+        /* Highlight.js theme override for better contrast */
+        #markdown-preview pre code.hljs {
+            background: transparent;
             padding: 0;
         }
         #markdown-preview ul, #markdown-preview ol {
@@ -857,8 +866,16 @@
     <!-- Monaco Editor (offline) -->
     <script src="/monaco/vs/loader.js"></script>
     
-    <!-- Markdown Preview -->
+    <!-- Markdown Preview with Syntax Highlighting -->
     <script src="/css/marked.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/yaml.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/ini.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/jinja2.min.js"></script>
     
     <script>
         // Check authentication - admin only page
@@ -1709,7 +1726,24 @@
             
             const content = state.editor ? state.editor.getValue() : '';
             if (typeof marked !== 'undefined') {
+                // Configure marked to use highlight.js
+                marked.setOptions({
+                    highlight: function(code, lang) {
+                        if (typeof hljs !== 'undefined') {
+                            const language = hljs.getLanguage(lang) ? lang : 'plaintext';
+                            return hljs.highlight(code, { language }).value;
+                        }
+                        return code;
+                    },
+                    langPrefix: 'hljs language-'
+                });
                 preview.innerHTML = marked.parse(content);
+                // Re-highlight any code blocks that marked didn't catch
+                if (typeof hljs !== 'undefined') {
+                    preview.querySelectorAll('pre code').forEach((block) => {
+                        hljs.highlightElement(block);
+                    });
+                }
             } else {
                 preview.innerHTML = simpleMarkdown(content);
             }
