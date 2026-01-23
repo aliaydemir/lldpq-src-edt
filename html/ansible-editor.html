@@ -501,39 +501,32 @@
             background: #333;
             border: 1px solid #404040;
             color: #ccc;
-            padding: 8px 12px;
+            padding: 2px;
             border-radius: 4px;
-            min-width: 150px;
+            min-width: 160px;
+            max-height: 80px;
+            font-size: 11px;
+            overflow-y: auto;
         }
         
-        .selected-hosts {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 5px;
-            margin-left: 10px;
-            align-items: center;
+        .host-select option {
+            padding: 4px 8px;
+            cursor: pointer;
         }
         
-        .host-tag {
+        .host-select option:checked {
             background: linear-gradient(0deg, #76b900 0%, #5a8c00 100%);
             color: white;
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 12px;
-            display: flex;
-            align-items: center;
-            gap: 5px;
         }
         
-        .host-tag .remove {
-            cursor: pointer;
+        .host-select option:hover {
+            background: #404040;
+        }
+        
+        .host-select optgroup {
+            color: #888;
             font-weight: bold;
-            opacity: 0.8;
-        }
-        
-        .host-tag .remove:hover {
-            opacity: 1;
-            color: #ff6b6b;
+            font-style: normal;
         }
         
         /* Validation indicator */
@@ -791,10 +784,8 @@
                 Generate Configs
             </button>
             <label style="font-size: 13px; color: #888;">Target:</label>
-            <select id="host-select" class="host-select" onchange="addHostToSelection()">
-                <option value="">Select host...</option>
+            <select id="host-select" class="host-select" multiple size="4">
             </select>
-            <div id="selected-hosts" class="selected-hosts"></div>
             <button id="btn-diff" class="btn btn-secondary" onclick="runDiff()">
                 Diff
             </button>
@@ -1165,45 +1156,17 @@
         }
         
         // Get selected hosts as comma-separated string
-        // Track selected hosts
-        let selectedHostsList = [];
-        
         function getSelectedHosts() {
-            return selectedHostsList.join(',');
-        }
-        
-        function addHostToSelection() {
             const select = document.getElementById('host-select');
-            const value = select.value;
-            if (value && !selectedHostsList.includes(value)) {
-                selectedHostsList.push(value);
-                renderSelectedHosts();
-            }
-            select.value = ''; // Reset dropdown
-        }
-        
-        function removeHostFromSelection(host) {
-            selectedHostsList = selectedHostsList.filter(h => h !== host);
-            renderSelectedHosts();
-        }
-        
-        function renderSelectedHosts() {
-            const container = document.getElementById('selected-hosts');
-            container.innerHTML = selectedHostsList.map(host => 
-                `<span class="host-tag">${host}<span class="remove" onclick="removeHostFromSelection('${host}')">&times;</span></span>`
-            ).join('');
-        }
-        
-        function clearSelectedHosts() {
-            selectedHostsList = [];
-            renderSelectedHosts();
+            const selectedOptions = Array.from(select.selectedOptions);
+            const values = selectedOptions.map(opt => opt.value);
+            return values.join(',');
         }
         
         // Populate host select dropdown
         function populateHostSelect() {
             const select = document.getElementById('host-select');
-            select.innerHTML = '<option value="">Select host to add...</option>';
-            select.innerHTML += '<option value="all">-- ALL HOSTS --</option>';
+            select.innerHTML = '<option value="all">-- ALL HOSTS --</option>';
             
             // Add groups section
             if (state.groups && state.groups.length > 0) {
