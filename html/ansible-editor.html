@@ -1721,6 +1721,9 @@
                 .replace(/</g, '&lt;')
                 .replace(/>/g, '&gt;');
             
+            // Wrap in span to handle orphan closing tags
+            html = '<span>' + html + '</span>';
+            
             // ANSI color map
             const colors = {
                 '30': '#000', '31': '#e74c3c', '32': '#2ecc71', '33': '#f1c40f',
@@ -1730,22 +1733,34 @@
             };
             
             // Replace ANSI codes with spans
-            html = html.replace(/\x1b\[([0-9;]+)m/g, (match, codes) => {
+            html = html.replace(/\u001b\[([0-9;]+)m/g, (match, codes) => {
                 const codeList = codes.split(';');
                 let style = '';
+                let isReset = false;
+                
                 for (const code of codeList) {
-                    if (code === '0') return '</span>';
+                    if (code === '0' || code === '') {
+                        isReset = true;
+                        continue; // Don't return, process other codes
+                    }
                     if (code === '1') style += 'font-weight:bold;';
-                    if (code === '4') style += 'text-decoration:underline;';
-                    if (colors[code]) style += `color:${colors[code]};`;
-                    // Background colors (40-47, 100-107)
-                    const bg = parseInt(code);
-                    if (bg >= 40 && bg <= 47) {
-                        const fgCode = String(bg - 10);
-                        if (colors[fgCode]) style += `background:${colors[fgCode]};`;
+                    else if (code === '4') style += 'text-decoration:underline;';
+                    else if (colors[code]) style += `color:${colors[code]};`;
+                    else {
+                        // Background colors (40-47, 100-107)
+                        const bg = parseInt(code);
+                        if (bg >= 40 && bg <= 47) {
+                            const fgCode = String(bg - 10);
+                            if (colors[fgCode]) style += `background:${colors[fgCode]};`;
+                        }
                     }
                 }
-                return style ? `<span style="${style}">` : '';
+                
+                // If only reset with no other style, close span
+                if (isReset && !style) return '</span>';
+                // If has style, close previous and open new
+                if (style) return `</span><span style="${style}">`;
+                return '';
             });
             
             return html;
@@ -1756,7 +1771,7 @@
             const content = document.getElementById('output-content');
             
             // Check if text contains ANSI codes - if so, don't apply success/error class
-            const hasAnsi = /\x1b\[/.test(text);
+            const hasAnsi = /\u001b\[/.test(text);
             content.innerHTML = ansiToHtml(text);
             content.className = 'output-content' + (hasAnsi ? '' : ' ' + type);
             panel.classList.add('visible');
