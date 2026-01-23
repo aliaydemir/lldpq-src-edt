@@ -1,0 +1,1981 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>..::LLDPQ::..</title>
+    <link rel="shortcut icon" href="/png/favicon.ico">
+    <!-- Codicons - VS Code icon set -->
+    <link rel="stylesheet" href="/css/codicon.css">
+    <!-- Authentication -->
+    <script src="/css/auth.js"></script>
+    <!-- js-yaml for YAML validation (offline) -->
+    <script src="/css/js-yaml.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        /* Header */
+        .header {
+            background: linear-gradient(135deg, #2d2d2d 0%, #3a3a3a 100%);
+            padding: 12px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid #404040;
+        }
+        
+        .header h1 {
+            font-size: 18px;
+            font-weight: 500;
+            color: #76b900;
+        }
+        
+        .header-actions {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+        
+        .editor-toolbar {
+            display: flex;
+            gap: 2px;
+            align-items: center;
+            background: #252526;
+            padding: 4px 8px;
+            border-bottom: 1px solid #3c3c3c;
+        }
+        
+        .toolbar-btn {
+            background: transparent;
+            border: none;
+            color: #888;
+            padding: 4px 6px;
+            cursor: pointer;
+            border-radius: 3px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .toolbar-btn:hover {
+            background: #3d3d3d;
+            color: #fff;
+        }
+        
+        .toolbar-btn .codicon {
+            font-size: 14px;
+        }
+        
+        .toolbar-separator {
+            width: 1px;
+            height: 16px;
+            background: #444;
+            margin: 0 4px;
+        }
+        
+        .status {
+            font-size: 12px;
+            padding: 4px 10px;
+            border-radius: 4px;
+            background: #333;
+        }
+        
+        .status.saved { color: #4ec9b0; }
+        .status.modified { color: #dcdcaa; }
+        .status.error { color: #f44747; }
+        .status.valid { color: #4ec9b0; }
+        .status.invalid { color: #f44747; }
+        
+        /* Main container */
+        .main-container {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+        
+        /* Sidebar - File Tree */
+        .sidebar {
+            width: 250px;
+            background: #252526;
+            border-right: 1px solid #404040;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        
+        .sidebar-header {
+            padding: 10px 15px;
+            background: #333;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #888;
+        }
+        
+        .file-tree {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px 0;
+        }
+        
+        .folder {
+            cursor: pointer;
+            user-select: none;
+        }
+        
+        .folder-header {
+            display: flex;
+            align-items: center;
+            padding: 6px 15px;
+            color: #ccc;
+            font-size: 13px;
+            cursor: pointer;
+        }
+        
+        .folder-header:hover {
+            background: #2a2d2e;
+        }
+        
+        .folder-chevron {
+            margin-right: 4px;
+            font-size: 14px;
+            transition: transform 0.15s;
+            color: #888;
+        }
+        
+        .folder-icon {
+            margin-right: 6px;
+            font-size: 14px;
+            color: #dcb67a;
+        }
+        
+        .folder.collapsed .folder-chevron {
+            transform: rotate(0deg);
+        }
+        
+        .folder:not(.collapsed) .folder-chevron {
+            transform: rotate(90deg);
+        }
+        
+        .file-icon {
+            margin-right: 6px;
+            font-size: 14px;
+            color: #888;
+        }
+        
+        .file-item .codicon-file-code { color: #6997d5; }
+        .file-item .codicon-markdown { color: #519aba; }
+        .file-item .codicon-note { color: #a8a8a8; }
+        .file-item .codicon-file-media { color: #c586c0; }
+        .file-item .codicon-terminal { color: #4ec9b0; }
+        .file-item .codicon-json { color: #ce9178; }
+        .file-item .codicon-settings-gear { color: #888; }
+        
+        .folder.collapsed .folder-contents {
+            display: none;
+        }
+        
+        .folder-contents {
+            padding-left: 15px;
+        }
+        
+        .file-item {
+            display: flex;
+            align-items: center;
+            padding: 5px 15px 5px 25px;
+            cursor: pointer;
+            font-size: 13px;
+            color: #aaa;
+        }
+        
+        .file-item:hover {
+            background: #2a2d2e;
+        }
+        
+        .file-item.active {
+            background: #37373d;
+            color: #fff;
+        }
+        
+        .file-item.modified::after {
+            content: '●';
+            margin-left: 8px;
+            color: #dcdcaa;
+            font-size: 10px;
+        }
+        
+        .file-icon {
+            margin-right: 8px;
+            color: #e8ab53;
+        }
+        
+        /* Editor area */
+        .editor-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        
+        .editor-tabs {
+            display: flex;
+            background: #252526;
+            border-bottom: 1px solid #404040;
+            overflow-x: auto;
+        }
+        
+        .editor-tab {
+            padding: 8px 15px;
+            font-size: 13px;
+            color: #888;
+            cursor: pointer;
+            border-right: 1px solid #404040;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            white-space: nowrap;
+        }
+        
+        .editor-tab:hover {
+            background: #2d2d2d;
+        }
+        
+        .editor-tab.active {
+            background: #1e1e1e;
+            color: #fff;
+            border-bottom: 2px solid #76b900;
+        }
+        
+        .editor-tab.modified::before {
+            content: '●';
+            color: #dcdcaa;
+            font-size: 10px;
+        }
+        
+        .tab-close {
+            opacity: 0;
+            font-size: 14px;
+            color: #888;
+        }
+        
+        .editor-tab:hover .tab-close {
+            opacity: 1;
+        }
+        
+        .tab-close:hover {
+            color: #fff;
+        }
+        
+        #editor-container {
+            flex: 1;
+            overflow: hidden;
+        }
+        
+        #markdown-preview {
+            display: none;
+            flex: 1;
+            overflow: auto;
+            padding: 20px;
+            background: #1e1e1e;
+            border-left: 1px solid #3c3c3c;
+        }
+        
+        #markdown-preview.visible {
+            display: block;
+        }
+        
+        .editor-preview-split {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+        
+        .editor-preview-split #editor-container {
+            flex: 1;
+        }
+        
+        .editor-preview-split #markdown-preview {
+            flex: 1;
+        }
+        
+        /* Markdown preview styles */
+        #markdown-preview h1, #markdown-preview h2, #markdown-preview h3 {
+            color: #569cd6;
+            border-bottom: 1px solid #3c3c3c;
+            padding-bottom: 8px;
+            margin-top: 10px;
+            margin-bottom: 12px;
+        }
+        #markdown-preview h1 { font-size: 1.8em; }
+        #markdown-preview h2 { font-size: 1.4em; }
+        #markdown-preview h3 { font-size: 1.2em; }
+        #markdown-preview p { line-height: 1.6; margin: 10px 0; }
+        #markdown-preview code {
+            background: #2d2d2d;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Cascadia Code', monospace;
+        }
+        #markdown-preview pre {
+            background: #2d2d2d;
+            padding: 12px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+        #markdown-preview pre code {
+            background: none;
+            padding: 0;
+        }
+        #markdown-preview ul, #markdown-preview ol {
+            padding-left: 20px;
+        }
+        #markdown-preview li { margin: 5px 0; }
+        #markdown-preview a { color: #4ec9b0; }
+        #markdown-preview blockquote {
+            border-left: 3px solid #569cd6;
+            margin: 10px 0;
+            padding-left: 15px;
+            color: #888;
+        }
+        #markdown-preview table {
+            border-collapse: collapse;
+            margin: 10px 0;
+        }
+        #markdown-preview th, #markdown-preview td {
+            border: 1px solid #3c3c3c;
+            padding: 8px 12px;
+        }
+        #markdown-preview th {
+            background: #2d2d2d;
+        }
+        
+        .no-file-open {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #666;
+            font-size: 14px;
+        }
+        
+        /* Bottom bar */
+        .bottom-bar {
+            background: linear-gradient(135deg, #2d2d2d 0%, #3a3a3a 100%);
+            padding: 12px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-top: 1px solid #404040;
+        }
+        
+        .bottom-left {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .bottom-right {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            font-size: 13px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s;
+        }
+        
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .btn-primary {
+            background: #76b900;
+            color: #fff;
+        }
+        
+        .btn-primary:hover:not(:disabled) {
+            background: #8ed100;
+        }
+        
+        .btn-secondary {
+            background: #404040;
+            color: #ccc;
+        }
+        
+        .btn-secondary:hover:not(:disabled) {
+            background: #505050;
+        }
+        
+        .btn-warning {
+            background: #b8860b;
+            color: #fff;
+        }
+        
+        .btn-warning:hover:not(:disabled) {
+            background: #daa520;
+        }
+        
+        .btn-danger {
+            background: #c53030;
+            color: #fff;
+        }
+        
+        .btn-danger:hover:not(:disabled) {
+            background: #e53e3e;
+        }
+        
+        /* Dropdown menu */
+        .dropdown {
+            position: relative;
+        }
+        
+        .dropdown-toggle::after {
+            margin-left: 4px;
+        }
+        
+        .dropdown-menu {
+            display: none;
+            position: absolute;
+            bottom: 100%;
+            left: 0;
+            background: #2d2d2d;
+            border: 1px solid #404040;
+            border-radius: 4px;
+            min-width: 150px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            margin-bottom: 5px;
+            z-index: 1000;
+        }
+        
+        .dropdown-menu.show {
+            display: block;
+        }
+        
+        .dropdown-menu a {
+            display: block;
+            padding: 8px 12px;
+            color: #ccc;
+            text-decoration: none;
+            font-size: 13px;
+            border-bottom: 1px solid #404040;
+        }
+        
+        .dropdown-menu a:last-child {
+            border-bottom: none;
+        }
+        
+        .dropdown-menu a:hover {
+            background: #3a3a3a;
+            color: #fff;
+        }
+        
+        .host-select {
+            background: #333;
+            border: 1px solid #404040;
+            color: #ccc;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 13px;
+            min-width: 150px;
+        }
+        
+        /* Validation indicator */
+        .validation-indicator {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            padding: 4px 10px;
+            border-radius: 4px;
+            background: #333;
+        }
+        
+        .validation-indicator.valid {
+            color: #4ec9b0;
+        }
+        
+        .validation-indicator.invalid {
+            color: #f44747;
+        }
+        
+        .validation-indicator .icon {
+            font-size: 14px;
+        }
+        
+        /* Output panel */
+        .output-panel {
+            display: none;
+            background: #1a1a1a;
+            border-top: 1px solid #404040;
+            max-height: 250px;
+            overflow-y: auto;
+        }
+        
+        .output-panel.visible {
+            display: block;
+        }
+        
+        .output-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 15px;
+            background: #252526;
+            border-bottom: 1px solid #404040;
+            position: sticky;
+            top: 0;
+        }
+        
+        .output-header span {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #888;
+        }
+        
+        .output-content {
+            padding: 10px 15px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+            color: #ccc;
+        }
+        
+        .output-content.error {
+            color: #f44747;
+        }
+        
+        .output-content.success {
+            color: #4ec9b0;
+        }
+        
+        /* Loading overlay */
+        .loading-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.7);
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            flex-direction: column;
+            gap: 15px;
+        }
+        
+        .loading-overlay.visible {
+            display: flex;
+        }
+        
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid #333;
+            border-top-color: #76b900;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        .loading-text {
+            color: #888;
+            font-size: 14px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        /* Error markers in editor */
+        .yaml-error-decoration {
+            background: rgba(255, 0, 0, 0.3);
+        }
+        
+        .yaml-error-glyph {
+            background: #f44747;
+            border-radius: 50%;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Ansible Config Editor</h1>
+        <div class="header-actions">
+            <div id="yaml-validation" class="validation-indicator valid" style="display: none;">
+                <span class="icon">✓</span>
+                <span class="text">YAML Valid</span>
+            </div>
+            <span id="status" class="status saved">Ready</span>
+        </div>
+    </div>
+    
+    <div class="main-container">
+        <div class="sidebar">
+            <div class="sidebar-header">Explorer</div>
+            <div id="file-tree" class="file-tree">
+                <!-- File tree will be populated by JavaScript -->
+            </div>
+        </div>
+        
+        <div class="editor-area">
+            <div class="editor-toolbar">
+                <button class="toolbar-btn" onclick="editorAction('find')" title="Find (Ctrl+F)">
+                    <span class="codicon codicon-search"></span>
+                </button>
+                <button class="toolbar-btn" onclick="editorAction('replace')" title="Find & Replace (Ctrl+H)">
+                    <span class="codicon codicon-find-replace"></span>
+                </button>
+                <span class="toolbar-separator"></span>
+                <button class="toolbar-btn" onclick="editorAction('toggleComment')" title="Toggle Comment (Ctrl+/)">
+                    <span class="codicon codicon-comment"></span>
+                </button>
+                <button class="toolbar-btn" onclick="editorAction('format')" title="Format Document">
+                    <span class="codicon codicon-list-tree"></span>
+                </button>
+                <span class="toolbar-separator"></span>
+                <button class="toolbar-btn" onclick="editorAction('undo')" title="Undo (Ctrl+Z)">
+                    <span class="codicon codicon-discard"></span>
+                </button>
+                <button class="toolbar-btn" onclick="editorAction('redo')" title="Redo (Ctrl+Shift+Z)">
+                    <span class="codicon codicon-redo"></span>
+                </button>
+                <span class="toolbar-separator"></span>
+                <button class="toolbar-btn" onclick="editorAction('foldAll')" title="Fold All">
+                    <span class="codicon codicon-fold"></span>
+                </button>
+                <button class="toolbar-btn" onclick="editorAction('unfoldAll')" title="Unfold All">
+                    <span class="codicon codicon-unfold"></span>
+                </button>
+                <span class="toolbar-separator"></span>
+                <button class="toolbar-btn" onclick="editorAction('gotoLine')" title="Go to Line (Ctrl+G)">
+                    <span class="codicon codicon-go-to-file"></span>
+                </button>
+                <button class="toolbar-btn" onclick="editorAction('wordWrap')" title="Toggle Word Wrap">
+                    <span class="codicon codicon-word-wrap"></span>
+                </button>
+                <button class="toolbar-btn" onclick="editorAction('minimap')" title="Toggle Minimap">
+                    <span class="codicon codicon-layout-sidebar-right"></span>
+                </button>
+                <span class="toolbar-separator"></span>
+                <button class="toolbar-btn" onclick="closeAllTabs()" title="Close All Tabs">
+                    <span class="codicon codicon-close-all"></span>
+                </button>
+                <button class="toolbar-btn" onclick="editorAction('commandPalette')" title="Command Palette (F1)">
+                    <span class="codicon codicon-terminal"></span>
+                </button>
+                <span class="toolbar-separator"></span>
+                <button class="toolbar-btn" id="btn-preview" onclick="toggleMarkdownPreview()" title="Preview Markdown">
+                    MD
+                </button>
+            </div>
+            <div id="editor-tabs" class="editor-tabs">
+                <!-- Tabs will be added dynamically -->
+            </div>
+            <div id="editor-preview-wrapper" class="editor-preview-split">
+                <div id="editor-container">
+                    <div class="no-file-open" id="no-file-message">
+                        <span id="loading-text">Loading editor...</span>
+                    </div>
+                </div>
+                <div id="markdown-preview"></div>
+            </div>
+        </div>
+    </div>
+    
+    <div id="output-panel" class="output-panel">
+        <div class="output-header">
+            <button class="btn btn-secondary" onclick="hideOutput()" style="padding: 4px 8px; font-size: 11px;">✕</button>
+            <span>Output</span>
+        </div>
+        <div id="output-content" class="output-content"></div>
+    </div>
+    
+    <div class="bottom-bar">
+        <div class="bottom-left">
+            <button id="btn-new" class="btn btn-secondary" onclick="createNewFile()">
+                + New
+            </button>
+            <button id="btn-save" class="btn btn-secondary" onclick="saveCurrentFile()" disabled>
+                Save
+            </button>
+            <button id="btn-save-all" class="btn btn-secondary" onclick="saveAllFiles()" disabled>
+                Save All
+            </button>
+            <button id="btn-delete" class="btn btn-danger" onclick="deleteCurrentFile()" disabled>
+                Delete
+            </button>
+            <button id="btn-rename" class="btn btn-secondary" onclick="renameCurrentFile()" disabled>
+                Rename
+            </button>
+            <button id="btn-validate" class="btn btn-secondary" onclick="validateCurrentFile()">
+                Validate YAML
+            </button>
+            <span style="margin: 0 10px; border-left: 1px solid #444; height: 24px; display: inline-block;"></span>
+            <button id="btn-commit" class="btn btn-primary" onclick="gitCommitPush()">
+                Commit & Push
+            </button>
+            <button id="btn-pull" class="btn btn-secondary" onclick="gitPull()">
+                Pull
+            </button>
+            <div class="dropdown" style="display: inline-block;">
+                <button class="btn btn-secondary dropdown-toggle" onclick="toggleGitMenu()">
+                    Git ▼
+                </button>
+                <div id="git-menu" class="dropdown-menu">
+                    <a href="#" onclick="gitStatus(); return false;">View Changes</a>
+                    <a href="#" onclick="gitLog(); return false;">History</a>
+                    <a href="#" onclick="gitDiff(); return false;">Show Diff</a>
+                </div>
+            </div>
+        </div>
+        <div class="bottom-right">
+            <button id="btn-generate" class="btn btn-warning" onclick="runGenerate()">
+                Generate Configs
+            </button>
+            <label style="font-size: 13px; color: #888;">Target:</label>
+            <select id="host-select" class="host-select">
+                <option value="">Select host...</option>
+            </select>
+            <button id="btn-diff" class="btn btn-secondary" onclick="runDiff()">
+                Diff
+            </button>
+            <button id="btn-deploy" class="btn btn-primary" onclick="runDeploy()">
+                Deploy
+            </button>
+        </div>
+    </div>
+    
+    <div id="loading" class="loading-overlay">
+        <div class="loading-spinner"></div>
+        <div id="loading-text" class="loading-text">Loading...</div>
+    </div>
+
+    <!-- Monaco Editor (offline) -->
+    <script src="/monaco/vs/loader.js"></script>
+    
+    <!-- Markdown Preview -->
+    <script src="/css/marked.min.js"></script>
+    
+    <script>
+        // Check authentication - admin only page
+        (async function checkAuth() {
+            try {
+                const response = await fetch('/auth-api?action=check');
+                const data = await response.json();
+                if (!data.authenticated) {
+                    window.location.href = '/login.html';
+                    return;
+                }
+                if (data.role !== 'admin') {
+                    alert('Access denied. Admin privileges required.');
+                    window.location.href = '/';
+                    return;
+                }
+            } catch (e) {
+                window.location.href = '/login.html';
+            }
+        })();
+        
+        // State management
+        const state = {
+            files: {},           // { path: { content, originalContent, modified, valid } }
+            currentFile: null,
+            lastFolder: '',      // Last opened folder (for new file creation)
+            editor: null,
+            groups: [],          // Ansible groups
+            hosts: [],           // Individual hosts
+            decorations: [],     // For error markers
+            previewListener: null // For markdown preview updates
+        };
+        
+        // Check if js-yaml is loaded
+        const hasJsYaml = typeof jsyaml !== 'undefined';
+        
+        // Initialize Monaco Editor (offline)
+        require.config({ paths: { vs: '/monaco/vs' } });
+        
+        require(['vs/editor/editor.main'], function() {
+            // Create editor instance
+            state.editor = monaco.editor.create(document.getElementById('editor-container'), {
+                value: '',
+                language: 'yaml',
+                theme: 'vs-dark',
+                automaticLayout: true,
+                minimap: { enabled: true },
+                fontSize: 14,
+                lineNumbers: 'on',
+                scrollBeyondLastLine: false,
+                wordWrap: 'on',
+                tabSize: 2,
+                insertSpaces: true,
+                renderWhitespace: 'selection',
+                bracketPairColorization: { enabled: true }
+            });
+            
+            // Track changes
+            state.editor.onDidChangeModelContent(() => {
+                if (state.currentFile && state.files[state.currentFile]) {
+                    const file = state.files[state.currentFile];
+                    file.content = state.editor.getValue();
+                    file.modified = file.content !== file.originalContent;
+                    
+                    // Validate YAML on change (debounced)
+                    clearTimeout(state.validateTimeout);
+                    state.validateTimeout = setTimeout(() => validateCurrentFile(true), 500);
+                    
+                    updateUI();
+                }
+            });
+            
+            // Keyboard shortcuts
+            state.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+                saveCurrentFile();
+            });
+            
+            // Hide editor initially
+            document.getElementById('editor-container').style.display = 'none';
+            
+            // Update loading message
+            document.getElementById('loading-text').textContent = 'Loading files...';
+            
+            // Load file tree
+            loadFileTree().then(() => {
+                document.getElementById('loading-text').textContent = 'Select a file from the sidebar to edit';
+            });
+        });
+        
+        // YAML Validation
+        function validateYaml(content) {
+            if (!hasJsYaml) {
+                return { valid: true, error: null };
+            }
+            
+            try {
+                jsyaml.load(content);
+                return { valid: true, error: null };
+            } catch (e) {
+                return { 
+                    valid: false, 
+                    error: e.message,
+                    line: e.mark ? e.mark.line + 1 : null,
+                    column: e.mark ? e.mark.column + 1 : null
+                };
+            }
+        }
+        
+        function validateCurrentFile(silent = false) {
+            if (!state.currentFile || !state.files[state.currentFile]) {
+                return true; // No file to validate
+            }
+            
+            // Only validate YAML files
+            const isYaml = state.currentFile.endsWith('.yaml') || state.currentFile.endsWith('.yml');
+            const indicator = document.getElementById('yaml-validation');
+            
+            if (!isYaml) {
+                // Hide validation indicator for non-YAML files
+                indicator.style.display = 'none';
+                state.decorations = state.editor.deltaDecorations(state.decorations, []);
+                return true; // Non-YAML files are always valid
+            }
+            
+            const file = state.files[state.currentFile];
+            const result = validateYaml(file.content);
+            file.valid = result.valid;
+            
+            // Update validation indicator
+            indicator.style.display = 'flex';
+            
+            if (result.valid) {
+                indicator.className = 'validation-indicator valid';
+                indicator.innerHTML = '<span class="icon">✓</span><span class="text">YAML Valid</span>';
+                
+                // Clear error decorations
+                state.decorations = state.editor.deltaDecorations(state.decorations, []);
+                
+                if (!silent) {
+                    showOutput('YAML syntax is valid!', 'success');
+                }
+            } else {
+                indicator.className = 'validation-indicator invalid';
+                indicator.innerHTML = `<span class="icon">✗</span><span class="text">Line ${result.line || '?'}</span>`;
+                
+                // Add error decoration
+                if (result.line) {
+                    state.decorations = state.editor.deltaDecorations(state.decorations, [
+                        {
+                            range: new monaco.Range(result.line, 1, result.line, 1000),
+                            options: {
+                                isWholeLine: true,
+                                className: 'yaml-error-decoration',
+                                glyphMarginClassName: 'yaml-error-glyph',
+                                hoverMessage: { value: result.error }
+                            }
+                        }
+                    ]);
+                    
+                    // Scroll to error line
+                    if (!silent) {
+                        state.editor.revealLineInCenter(result.line);
+                    }
+                }
+                
+                if (!silent) {
+                    showOutput('YAML Error: ' + result.error, 'error');
+                }
+            }
+            
+            return result.valid;
+        }
+        
+        // API calls
+        async function apiCall(action, data = {}) {
+            const response = await fetch('/ansible-api?' + new URLSearchParams({ action, ...data }), {
+                method: data.content !== undefined ? 'POST' : 'GET',
+                headers: data.content !== undefined ? { 'Content-Type': 'application/json' } : {},
+                body: data.content !== undefined ? JSON.stringify({ content: data.content }) : undefined
+            });
+            return response.json();
+        }
+        
+        // Load file tree
+        async function loadFileTree() {
+            showLoading(true, 'Loading files...');
+            try {
+                const result = await apiCall('list');
+                if (result.success) {
+                    renderFileTree(result.files);
+                    state.groups = result.groups || [];
+                    state.hosts = result.hosts || [];
+                    populateHostSelect();
+                } else {
+                    showOutput('Error loading files: ' + result.error, 'error');
+                }
+            } catch (e) {
+                showOutput('Error: ' + e.message, 'error');
+            }
+            showLoading(false);
+        }
+        
+        // Render file tree (nested structure)
+        function renderFileTree(files) {
+            const tree = document.getElementById('file-tree');
+            tree.innerHTML = '';
+            
+            // Build tree structure
+            const root = {};
+            files.forEach(file => {
+                const parts = file.split('/');
+                let current = root;
+                
+                // Build nested structure
+                parts.forEach((part, idx) => {
+                    if (idx === parts.length - 1) {
+                        // File
+                        if (!current._files) current._files = [];
+                        current._files.push({ name: part, path: file });
+                    } else {
+                        // Folder
+                        if (!current[part]) current[part] = {};
+                        current = current[part];
+                    }
+                });
+            });
+            
+            // Render tree recursively
+            function renderNode(node, parentEl, depth = 0, currentPath = '') {
+                const entries = Object.keys(node).filter(k => k !== '_files').sort();
+                
+                // Render folders
+                entries.forEach(folderName => {
+                    const folderPath = currentPath ? currentPath + '/' + folderName : folderName;
+                    const folderEl = document.createElement('div');
+                    folderEl.className = 'folder collapsed';  // Start collapsed
+                    folderEl.style.paddingLeft = (depth * 0) + 'px';
+                    folderEl.dataset.path = folderPath;
+                    
+                    folderEl.innerHTML = `
+                        <div class="folder-header" onclick="toggleFolder(this.parentElement)">
+                            <span class="codicon codicon-chevron-right folder-chevron"></span>
+                            <span class="codicon codicon-folder folder-icon"></span>
+                            ${folderName}
+                        </div>
+                        <div class="folder-contents"></div>
+                    `;
+                    
+                    const contents = folderEl.querySelector('.folder-contents');
+                    renderNode(node[folderName], contents, depth + 1, folderPath);
+                    
+                    parentEl.appendChild(folderEl);
+                });
+                
+                // Render files
+                if (node._files) {
+                    node._files.sort((a, b) => a.name.localeCompare(b.name)).forEach(file => {
+                        const fileEl = document.createElement('div');
+                        fileEl.className = 'file-item';
+                        fileEl.style.paddingLeft = (depth * 0 + 25) + 'px';
+                        fileEl.dataset.path = file.path;
+                        
+                        // Get file icon based on extension
+                        const ext = file.name.split('.').pop().toLowerCase();
+                        let iconClass = 'codicon-file';
+                        if (['yaml', 'yml'].includes(ext)) iconClass = 'codicon-file-code';
+                        else if (['md'].includes(ext)) iconClass = 'codicon-markdown';
+                        else if (['txt', 'log'].includes(ext)) iconClass = 'codicon-note';
+                        else if (['png', 'jpg', 'jpeg', 'gif', 'svg'].includes(ext)) iconClass = 'codicon-file-media';
+                        else if (['sh', 'bash'].includes(ext)) iconClass = 'codicon-terminal';
+                        else if (['json'].includes(ext)) iconClass = 'codicon-json';
+                        else if (['py'].includes(ext)) iconClass = 'codicon-symbol-method';
+                        else if (['cfg', 'conf', 'ini'].includes(ext)) iconClass = 'codicon-settings-gear';
+                        
+                        fileEl.innerHTML = `<span class="codicon ${iconClass} file-icon"></span>${file.name}`;
+                        fileEl.onclick = () => openFile(file.path);
+                        parentEl.appendChild(fileEl);
+                    });
+                }
+            }
+            
+            renderNode(root, tree, 0);
+        }
+        
+        // Editor toolbar actions
+        function editorAction(action) {
+            if (!state.editor) return;
+            
+            switch(action) {
+                case 'find':
+                    state.editor.trigger('toolbar', 'actions.find');
+                    break;
+                case 'replace':
+                    state.editor.trigger('toolbar', 'editor.action.startFindReplaceAction');
+                    break;
+                case 'toggleComment':
+                    state.editor.trigger('toolbar', 'editor.action.commentLine');
+                    break;
+                case 'format':
+                    state.editor.trigger('toolbar', 'editor.action.formatDocument');
+                    break;
+                case 'undo':
+                    state.editor.trigger('toolbar', 'undo');
+                    break;
+                case 'redo':
+                    state.editor.trigger('toolbar', 'redo');
+                    break;
+                case 'foldAll':
+                    state.editor.trigger('toolbar', 'editor.foldAll');
+                    break;
+                case 'unfoldAll':
+                    state.editor.trigger('toolbar', 'editor.unfoldAll');
+                    break;
+                case 'gotoLine':
+                    state.editor.focus();
+                    setTimeout(() => state.editor.trigger('keyboard', 'editor.action.gotoLine'), 50);
+                    return;
+                case 'wordWrap':
+                    const currentWrap = state.editor.getOption(monaco.editor.EditorOption.wordWrap);
+                    state.editor.updateOptions({ wordWrap: currentWrap === 'on' ? 'off' : 'on' });
+                    break;
+                case 'minimap':
+                    const currentMinimap = state.editor.getOption(monaco.editor.EditorOption.minimap);
+                    state.editor.updateOptions({ minimap: { enabled: !currentMinimap.enabled } });
+                    break;
+                case 'commandPalette':
+                    state.editor.focus();
+                    setTimeout(() => state.editor.trigger('keyboard', 'editor.action.quickCommand'), 50);
+                    return;
+            }
+            state.editor.focus();
+        }
+        
+        function toggleFolder(folder) {
+            folder.classList.toggle('collapsed');
+            // Update lastFolder when clicking on a folder
+            if (folder.dataset.path) {
+                state.lastFolder = folder.dataset.path;
+            }
+        }
+        
+        // Populate host select dropdown
+        function populateHostSelect() {
+            const select = document.getElementById('host-select');
+            select.innerHTML = '<option value="">Select host...</option>';
+            select.innerHTML += '<option value="all">-- ALL HOSTS --</option>';
+            
+            // Add groups section
+            if (state.groups && state.groups.length > 0) {
+                const groupLabel = document.createElement('optgroup');
+                groupLabel.label = 'GROUPS';
+                state.groups.forEach(group => {
+                    const option = document.createElement('option');
+                    option.value = group;
+                    option.textContent = group;
+                    groupLabel.appendChild(option);
+                });
+                select.appendChild(groupLabel);
+            }
+            
+            // Add individual hosts section
+            if (state.hosts && state.hosts.length > 0) {
+                const hostLabel = document.createElement('optgroup');
+                hostLabel.label = 'HOSTS';
+                state.hosts.forEach(host => {
+                    const option = document.createElement('option');
+                    option.value = host;
+                    option.textContent = host;
+                    hostLabel.appendChild(option);
+                });
+                select.appendChild(hostLabel);
+            }
+        }
+        
+        // Open file
+        async function openFile(path) {
+            showLoading(true, 'Loading ' + path.split('/').pop() + '...');
+            
+            // Update lastFolder based on the file path
+            const pathParts = path.split('/');
+            if (pathParts.length > 1) {
+                pathParts.pop();
+                state.lastFolder = pathParts.join('/');
+            } else {
+                state.lastFolder = '';
+            }
+            
+            try {
+                // Load file if not already loaded
+                if (!state.files[path]) {
+                    const result = await apiCall('read', { file: path });
+                    if (result.success) {
+                        state.files[path] = {
+                            content: result.content,
+                            originalContent: result.content,
+                            modified: false,
+                            valid: true
+                        };
+                    } else {
+                        showOutput('Error loading file: ' + result.error, 'error');
+                        showLoading(false);
+                        return;
+                    }
+                }
+                
+                // Switch to file
+                state.currentFile = path;
+                
+                // Show editor
+                document.getElementById('no-file-message').style.display = 'none';
+                document.getElementById('editor-container').style.display = 'block';
+                
+                // Set editor content
+                state.editor.setValue(state.files[path].content);
+                state.editor.setScrollTop(0);
+                
+                // Validate
+                validateCurrentFile(true);
+                
+                updateUI();
+                
+                // Auto-show preview for markdown files
+                if (path.endsWith('.md')) {
+                    showMarkdownPreview();
+                } else {
+                    hideMarkdownPreview();
+                }
+            } catch (e) {
+                showOutput('Error: ' + e.message, 'error');
+            }
+            
+            showLoading(false);
+        }
+        
+        // Update UI based on state
+        function updateUI() {
+            // Update tabs
+            const tabsContainer = document.getElementById('editor-tabs');
+            tabsContainer.innerHTML = '';
+            
+            Object.keys(state.files).forEach(path => {
+                const file = state.files[path];
+                const tab = document.createElement('div');
+                tab.className = 'editor-tab' + (path === state.currentFile ? ' active' : '') + (file.modified ? ' modified' : '');
+                
+                const filename = path.split('/').pop();
+                tab.innerHTML = `
+                    ${filename}
+                    <span class="tab-close" onclick="closeFile('${path}', event)">×</span>
+                `;
+                tab.onclick = (e) => {
+                    if (!e.target.classList.contains('tab-close')) {
+                        switchToFile(path);
+                    }
+                };
+                tabsContainer.appendChild(tab);
+            });
+            
+            // Update file tree active state
+            document.querySelectorAll('.file-item').forEach(el => {
+                el.classList.remove('active');
+                if (el.dataset.path === state.currentFile) {
+                    el.classList.add('active');
+                }
+                const file = state.files[el.dataset.path];
+                if (file && file.modified) {
+                    el.classList.add('modified');
+                } else {
+                    el.classList.remove('modified');
+                }
+            });
+            
+            // Update buttons
+            const hasModified = Object.values(state.files).some(f => f.modified);
+            const currentModified = state.currentFile && state.files[state.currentFile]?.modified;
+            const hasCurrentFile = !!state.currentFile;
+            
+            document.getElementById('btn-save').disabled = !currentModified;
+            document.getElementById('btn-save-all').disabled = !hasModified;
+            document.getElementById('btn-delete').disabled = !hasCurrentFile;
+            document.getElementById('btn-rename').disabled = !hasCurrentFile;
+            
+            // Show preview button only for markdown files
+            const isMarkdown = state.currentFile && state.currentFile.toLowerCase().endsWith('.md');
+            document.getElementById('btn-preview').style.display = isMarkdown ? 'inline-flex' : 'none';
+            if (!isMarkdown) hideMarkdownPreview();
+            
+            // Update status
+            const status = document.getElementById('status');
+            if (hasModified) {
+                status.textContent = 'Modified';
+                status.className = 'status modified';
+            } else {
+                status.textContent = 'Ready';
+                status.className = 'status saved';
+            }
+        }
+        
+        // Switch to file
+        function switchToFile(path) {
+            if (state.files[path]) {
+                state.currentFile = path;
+                state.editor.setValue(state.files[path].content);
+                state.editor.setScrollTop(0);
+                validateCurrentFile(true);
+                updateUI();
+                
+                // Auto-show/hide preview for markdown files
+                if (path.endsWith('.md')) {
+                    showMarkdownPreview();
+                } else {
+                    hideMarkdownPreview();
+                }
+            }
+        }
+        
+        // Close file
+        function closeFile(path, event) {
+            event.stopPropagation();
+            
+            const file = state.files[path];
+            if (file.modified) {
+                if (!confirm(`${path.split('/').pop()} has unsaved changes. Close anyway?`)) {
+                    return;
+                }
+            }
+            
+            delete state.files[path];
+            
+            // Switch to another file or show placeholder
+            const remainingFiles = Object.keys(state.files);
+            if (remainingFiles.length > 0) {
+                switchToFile(remainingFiles[0]);
+            } else {
+                state.currentFile = null;
+                document.getElementById('no-file-message').style.display = 'flex';
+                document.getElementById('editor-container').style.display = 'none';
+                document.getElementById('yaml-validation').style.display = 'none';
+            }
+            
+            updateUI();
+        }
+        
+        function closeAllTabs() {
+            const modifiedFiles = Object.entries(state.files).filter(([_, f]) => f.modified);
+            if (modifiedFiles.length > 0) {
+                const names = modifiedFiles.map(([p, _]) => p.split('/').pop()).join(', ');
+                if (!confirm(`${modifiedFiles.length} file(s) have unsaved changes: ${names}\n\nClose all anyway?`)) {
+                    return;
+                }
+            }
+            
+            state.files = {};
+            state.currentFile = null;
+            document.getElementById('no-file-message').style.display = 'flex';
+            document.getElementById('editor-container').style.display = 'none';
+            document.getElementById('yaml-validation').style.display = 'none';
+            hideMarkdownPreview();
+            updateUI();
+        }
+        
+        // Markdown Preview
+        function toggleMarkdownPreview() {
+            const preview = document.getElementById('markdown-preview');
+            if (preview.classList.contains('visible')) {
+                hideMarkdownPreview();
+            } else {
+                showMarkdownPreview();
+            }
+        }
+        
+        function showMarkdownPreview() {
+            const preview = document.getElementById('markdown-preview');
+            preview.classList.add('visible');
+            updateMarkdownPreview();
+            
+            // Listen for editor changes
+            if (state.editor && !state.previewListener) {
+                state.previewListener = state.editor.onDidChangeModelContent(() => {
+                    updateMarkdownPreview();
+                });
+            }
+        }
+        
+        function hideMarkdownPreview() {
+            const preview = document.getElementById('markdown-preview');
+            preview.classList.remove('visible');
+            
+            // Remove listener
+            if (state.previewListener) {
+                state.previewListener.dispose();
+                state.previewListener = null;
+            }
+        }
+        
+        function copyCode(btn) {
+            const codeBlock = btn.closest('div').nextElementSibling.querySelector('code');
+            const text = codeBlock.textContent;
+            navigator.clipboard.writeText(text).then(() => {
+                btn.textContent = 'Copied!';
+                btn.style.color = '#4ec9b0';
+                setTimeout(() => {
+                    btn.textContent = 'Copy';
+                    btn.style.color = '#888';
+                }, 2000);
+            });
+        }
+        
+        function openLinkedFile(relativePath) {
+            // Resolve relative path from current file
+            let basePath = '';
+            if (state.currentFile) {
+                const parts = state.currentFile.split('/');
+                parts.pop(); // Remove filename
+                basePath = parts.join('/');
+            }
+            
+            // Handle relative paths
+            let fullPath = relativePath;
+            if (!relativePath.startsWith('/')) {
+                if (basePath) {
+                    fullPath = basePath + '/' + relativePath;
+                }
+            }
+            
+            // Clean up path (remove ./ and resolve ../)
+            fullPath = fullPath.replace(/^\.\//, '');
+            
+            // Open the file
+            openFile(fullPath);
+        }
+        
+        function simpleMarkdown(text) {
+            // Process code blocks first (```code```)
+            text = text.replace(/```(\w*)\n([\s\S]*?)```/g, function(match, lang, code) {
+                const trimmed = code.trim();
+                const id = 'code-' + Math.random().toString(36).substr(2, 9);
+                
+                // Syntax highlight line by line
+                const lines = trimmed.split('\n').map(line => {
+                    // Escape HTML first
+                    let escaped = line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                    
+                    // Apply highlighting
+                    if (escaped.trim().startsWith('#')) {
+                        // Comment line
+                        return '[[GREEN]]' + escaped + '[[/GREEN]]';
+                    }
+                    // Highlight strings
+                    escaped = escaped.replace(/(&quot;[^&]*&quot;|"[^"]*")/g, '[[ORANGE]]$1[[/ORANGE]]');
+                    // Highlight flags
+                    escaped = escaped.replace(/(--[\w-]+)/g, '[[CYAN]]$1[[/CYAN]]');
+                    // Highlight commands
+                    escaped = escaped.replace(/^(\s*)(ansible-playbook|ansible|sudo|cd|git|npm|pip|python3?|bash|sh)\b/g, '$1[[BLUE]]$2[[/BLUE]]');
+                    return escaped;
+                }).join('\n');
+                
+                // Replace placeholders with spans
+                const highlighted = lines
+                    .replace(/\[\[GREEN\]\]/g, '<span style="color:#7ee787;">')
+                    .replace(/\[\[\/GREEN\]\]/g, '</span>')
+                    .replace(/\[\[ORANGE\]\]/g, '<span style="color:#a5d6ff;">')
+                    .replace(/\[\[\/ORANGE\]\]/g, '</span>')
+                    .replace(/\[\[CYAN\]\]/g, '<span style="color:#79c0ff;">')
+                    .replace(/\[\[\/CYAN\]\]/g, '</span>')
+                    .replace(/\[\[BLUE\]\]/g, '<span style="color:#ff7b72;">')
+                    .replace(/\[\[\/BLUE\]\]/g, '</span>');
+                
+                return '<div style="position: relative; margin: 10px 0;">' +
+                    '<div style="background: #0d1117; border: 1px solid #30363d; border-radius: 6px; overflow: hidden;">' +
+                    '<div style="background: #161b22; padding: 8px 16px; border-bottom: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center;">' +
+                    '<span style="color: #8b949e; font-size: 12px; font-weight: 500;">' + (lang || 'code') + '</span>' +
+                    '<button onclick="navigator.clipboard.writeText(document.getElementById(\'' + id + '\').textContent);this.textContent=\'Copied!\';setTimeout(()=>this.textContent=\'Copy\',2000)" style="background: #21262d; border: 1px solid #30363d; color: #c9d1d9; padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;">Copy</button>' +
+                    '</div>' +
+                    '<pre id="' + id + '" style="margin: 0; padding: 16px; overflow-x: auto; background: #0d1117; color: #c9d1d9;"><code style="font-family: ui-monospace, SFMono-Regular, monospace; font-size: 13px; line-height: 1.5;">' + highlighted + '</code></pre>' +
+                    '</div></div>';
+            });
+            
+            // Process tables
+            const lines = text.split('\n');
+            let result = [];
+            let inTable = false;
+            let tableRows = [];
+            
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                if (line.match(/^\|.*\|$/)) {
+                    if (!inTable) {
+                        inTable = true;
+                        tableRows = [];
+                    }
+                    // Skip separator row
+                    if (!line.match(/^\|[\s\-\|:]+\|$/)) {
+                        tableRows.push(line);
+                    }
+                } else {
+                    if (inTable) {
+                        result.push(renderTable(tableRows));
+                        inTable = false;
+                        tableRows = [];
+                    }
+                    result.push(line);
+                }
+            }
+            if (inTable) {
+                result.push(renderTable(tableRows));
+            }
+            
+            text = result.join('\n');
+            
+            return text
+                .replace(/^### (.*$)/gm, '<h3>$1</h3>')
+                .replace(/^## (.*$)/gm, '<h2>$1</h2>')
+                .replace(/^# (.*$)/gm, '<h1>$1</h1>')
+                .replace(/^---$/gm, '<hr style="border: none; border-top: 1px solid #30363d; margin: 20px 0;">')
+                .replace(/^> (.*$)/gm, '<blockquote style="border-left: 3px solid #569cd6; margin: 10px 0; padding-left: 15px; color: #888;">$1</blockquote>')
+                .replace(/!\[(.*?)\]\((.*?)\)/g, '<img src="/ansible-api?action=image&file=$2" alt="$1" style="max-width: 100%;">')
+                .replace(/\[(.*?)\]\((.*?)\)/g, function(match, text, url) {
+                    if (url.match(/\.(md|yaml|yml|txt|cfg|sh|py)$/i) && !url.startsWith('http')) {
+                        return '<a href="#" onclick="openLinkedFile(\'' + url + '\'); return false;">' + text + '</a>';
+                    }
+                    return '<a href="' + url + '" target="_blank">' + text + '</a>';
+                })
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                .replace(/`(.*?)`/g, '<code style="background: #2d2d2d; padding: 2px 6px; border-radius: 3px;">$1</code>')
+                .replace(/^\d+\. (.*$)/gm, '<li style="list-style-type: decimal; margin-left: 20px;">$1</li>')
+                .replace(/^\- (.*$)/gm, '<li>$1</li>')
+                .replace(/^\* (.*$)/gm, '<li>$1</li>')
+                .replace(/\n{3,}/g, '<br><br>')  // Max 2 line breaks
+                .replace(/\n/g, '<br>')
+                .replace(/<br><br>(<h[123]>)/g, '$1')  // Remove breaks before headings
+                .replace(/<br>(<h[123]>)/g, '$1')
+                .replace(/(<\/h[123]>)<br><br>/g, '$1')  // Remove breaks after headings
+                .replace(/(<\/h[123]>)<br>/g, '$1')
+                .replace(/<br><br>(<hr)/g, '$1')  // Remove breaks before hr
+                .replace(/<br>(<hr)/g, '$1')
+                .replace(/(<hr[^>]*>)<br><br>/g, '$1')  // Remove breaks after hr
+                .replace(/(<hr[^>]*>)<br>/g, '$1')
+                .replace(/(<\/table>)<br><br>/g, '$1')  // Remove breaks after tables
+                .replace(/(<\/table>)<br>/g, '$1');
+        }
+        
+        function renderTable(rows) {
+            if (rows.length === 0) return '';
+            let html = '<table style="border-collapse: collapse; margin: 16px 0; width: 100%; border: 1px solid #30363d; border-radius: 6px; overflow: hidden;">';
+            rows.forEach((row, idx) => {
+                const cells = row.split('|').filter(c => c.trim() !== '');
+                const isHeader = idx === 0;
+                const bgColor = isHeader ? '#161b22' : (idx % 2 === 0 ? '#0d1117' : '#161b22');
+                html += '<tr style="background: ' + bgColor + ';">';
+                cells.forEach(cell => {
+                    const tag = isHeader ? 'th' : 'td';
+                    const style = isHeader 
+                        ? 'padding: 8px 16px; text-align: left; font-weight: 600; color: #c9d1d9; border-bottom: 1px solid #30363d;'
+                        : 'padding: 8px 16px; text-align: left; color: #c9d1d9; border-bottom: 1px solid #21262d;';
+                    html += '<' + tag + ' style="' + style + '">' + cell.trim() + '</' + tag + '>';
+                });
+                html += '</tr>';
+            });
+            html += '</table>';
+            return html;
+        }
+        
+        function updateMarkdownPreview() {
+            const preview = document.getElementById('markdown-preview');
+            if (!preview.classList.contains('visible')) return;
+            
+            const content = state.editor ? state.editor.getValue() : '';
+            if (typeof marked !== 'undefined') {
+                preview.innerHTML = marked.parse(content);
+            } else {
+                preview.innerHTML = simpleMarkdown(content);
+            }
+        }
+        
+        // Save current file
+        async function saveCurrentFile() {
+            if (!state.currentFile || !state.files[state.currentFile]?.modified) return;
+            
+            // Validate before saving
+            if (!validateCurrentFile()) {
+                if (!confirm('YAML has syntax errors. Save anyway?')) {
+                    return;
+                }
+            }
+            
+            showLoading(true, 'Saving...');
+            try {
+                const file = state.files[state.currentFile];
+                const result = await fetch('/ansible-api?action=write&file=' + encodeURIComponent(state.currentFile), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content: file.content })
+                }).then(r => r.json());
+                
+                if (result.success) {
+                    const wasNewFile = !file.originalContent;
+                    file.originalContent = file.content;
+                    file.modified = false;
+                    showOutput('Saved: ' + state.currentFile, 'success');
+                    updateUI();
+                    
+                    // Refresh file tree if this was a new file
+                    if (wasNewFile) {
+                        await loadFileTree();
+                    }
+                } else {
+                    showOutput('Error saving: ' + result.error, 'error');
+                }
+            } catch (e) {
+                showOutput('Error: ' + e.message, 'error');
+            }
+            showLoading(false);
+        }
+        
+        // Save all files
+        async function saveAllFiles() {
+            const modifiedFiles = Object.entries(state.files).filter(([_, f]) => f.modified);
+            if (modifiedFiles.length === 0) return;
+            
+            // Check for validation errors
+            const invalidFiles = modifiedFiles.filter(([_, f]) => !validateYaml(f.content).valid);
+            if (invalidFiles.length > 0) {
+                if (!confirm(`${invalidFiles.length} file(s) have YAML errors. Save anyway?`)) {
+                    return;
+                }
+            }
+            
+            showLoading(true, 'Saving all files...');
+            let saved = 0;
+            
+            for (const [path, file] of modifiedFiles) {
+                try {
+                    const result = await fetch('/ansible-api?action=write&file=' + encodeURIComponent(path), {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ content: file.content })
+                    }).then(r => r.json());
+                    
+                    if (result.success) {
+                        file.originalContent = file.content;
+                        file.modified = false;
+                        saved++;
+                    }
+                } catch (e) {
+                    console.error('Error saving ' + path, e);
+                }
+            }
+            
+            showOutput(`Saved ${saved}/${modifiedFiles.length} files`, saved === modifiedFiles.length ? 'success' : 'error');
+            updateUI();
+            
+            // Refresh file tree in case new files were created
+            if (saved > 0) {
+                await loadFileTree();
+            }
+            showLoading(false);
+        }
+        
+        // Run generate configs
+        async function runGenerate() {
+            const host = document.getElementById('host-select').value;
+            
+            // Note: confirm() removed as browsers block it
+            const targetMsg = host ? ` for ${host}` : ' for all hosts';
+            
+            showLoading(true, 'Generating configs' + targetMsg + '...');
+            try {
+                const result = await apiCall('generate', { host: host || '' });
+                showOutput(result.output || result.error, result.success ? 'success' : 'error');
+            } catch (e) {
+                showOutput('Error: ' + e.message, 'error');
+            }
+            showLoading(false);
+        }
+        
+        // Run diff
+        async function runDiff() {
+            const host = document.getElementById('host-select').value;
+            if (!host) {
+                showOutput('Please select a host first', 'error');
+                return;
+            }
+            
+            showLoading(true, 'Running diff for ' + host + '...');
+            try {
+                const result = await apiCall('diff', { host });
+                showOutput(result.output || result.error, result.success ? '' : 'error');
+            } catch (e) {
+                showOutput('Error: ' + e.message, 'error');
+            }
+            showLoading(false);
+        }
+        
+        // Run deploy
+        async function runDeploy() {
+            const host = document.getElementById('host-select').value;
+            if (!host) {
+                showOutput('Please select a target host/group first', 'error');
+                return;
+            }
+            
+            // Note: confirm() removed as browsers block it
+            showLoading(true, 'Deploying to ' + host + '...');
+            try {
+                const result = await apiCall('deploy', { host });
+                showOutput(result.output || result.error, result.success ? 'success' : 'error');
+            } catch (e) {
+                showOutput('Error: ' + e.message, 'error');
+            }
+            showLoading(false);
+        }
+        
+        // UI helpers
+        function showLoading(show, text = 'Loading...') {
+            document.getElementById('loading').classList.toggle('visible', show);
+            document.getElementById('loading-text').textContent = text;
+        }
+        
+        function showOutput(text, type = '') {
+            const panel = document.getElementById('output-panel');
+            const content = document.getElementById('output-content');
+            content.textContent = text;
+            content.className = 'output-content ' + type;
+            panel.classList.add('visible');
+        }
+        
+        function hideOutput() {
+            document.getElementById('output-panel').classList.remove('visible');
+        }
+        
+        // Git functions
+        function toggleGitMenu() {
+            const menu = document.getElementById('git-menu');
+            menu.classList.toggle('show');
+            
+            // Close menu when clicking outside
+            if (menu.classList.contains('show')) {
+                setTimeout(() => {
+                    document.addEventListener('click', closeGitMenu);
+                }, 0);
+            }
+        }
+        
+        function closeGitMenu(e) {
+            const menu = document.getElementById('git-menu');
+            const dropdown = menu.parentElement;
+            if (!dropdown.contains(e.target)) {
+                menu.classList.remove('show');
+                document.removeEventListener('click', closeGitMenu);
+            }
+        }
+        
+        async function createNewFile() {
+            // Use lastFolder (set when opening files/folders)
+            let folder = state.lastFolder || '';
+            
+            // Ask for filename
+            const folderDisplay = folder || '(root)';
+            const userInput = prompt(`New filename (in ${folderDisplay}):`, 'new-file.yaml');
+            
+            if (!userInput) {
+                return; // User cancelled
+            }
+            
+            const fileName = (folder ? folder + '/' : '') + userInput;
+            
+            // Check if file already exists
+            if (state.files[fileName]) {
+                showOutput('File already exists: ' + fileName, 'error');
+                return;
+            }
+            
+            // Create new file in state
+            state.files[fileName] = {
+                content: '# ' + userInput + '\n\n',
+                originalContent: '',
+                modified: true,
+                valid: true
+            };
+            
+            // Switch to the new file
+            state.currentFile = fileName;
+            document.getElementById('no-file-message').style.display = 'none';
+            document.getElementById('editor-container').style.display = 'block';
+            state.editor.setValue(state.files[fileName].content);
+            state.editor.setScrollTop(0);
+            
+            updateUI();
+            showOutput('New file: ' + fileName + ' | Press Save to create', 'success');
+        }
+        
+        async function renameCurrentFile() {
+            if (!state.currentFile) return;
+            
+            const oldPath = state.currentFile;
+            const oldName = oldPath.split('/').pop();
+            const folder = oldPath.includes('/') ? oldPath.substring(0, oldPath.lastIndexOf('/')) : '';
+            
+            // Since prompt may be blocked, use a simple approach:
+            // Get new name from first line of file if it's a comment with filename
+            const content = state.files[oldPath]?.content || '';
+            const firstLine = content.split('\n')[0];
+            let newName = oldName;
+            
+            // Check if first line has a filename hint: # filename: newname.yaml
+            const match = firstLine.match(/^#\s*filename:\s*(.+)/i);
+            if (match) {
+                newName = match[1].trim();
+            } else {
+                // Try prompt (may be blocked)
+                const input = window.prompt ? prompt('New filename:', oldName) : null;
+                if (input) {
+                    newName = input;
+                } else {
+                    showOutput('To rename: edit "# filename: newname.yaml" in first line, then click Rename', 'info');
+                    return;
+                }
+            }
+            
+            if (newName === oldName) {
+                showOutput('Filename unchanged', 'info');
+                return;
+            }
+            
+            const newPath = folder ? folder + '/' + newName : newName;
+            
+            showLoading(true, 'Renaming file...');
+            try {
+                // Save content to new path
+                const saveResult = await fetch('/ansible-api?action=write&file=' + encodeURIComponent(newPath), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content: content.replace(/^#\s*filename:.*\n?/i, '') })
+                }).then(r => r.json());
+                
+                if (!saveResult.success) {
+                    showOutput('Error creating new file: ' + saveResult.error, 'error');
+                    showLoading(false);
+                    return;
+                }
+                
+                // Delete old file
+                const deleteResult = await apiCall('delete', { file: oldPath });
+                if (!deleteResult.success) {
+                    showOutput('Warning: new file created but old file not deleted', 'error');
+                }
+                
+                // Update state
+                delete state.files[oldPath];
+                state.files[newPath] = {
+                    content: content.replace(/^#\s*filename:.*\n?/i, ''),
+                    originalContent: content.replace(/^#\s*filename:.*\n?/i, ''),
+                    modified: false,
+                    valid: true
+                };
+                state.currentFile = newPath;
+                
+                // Refresh
+                await loadFileTree();
+                state.editor.setValue(state.files[newPath].content);
+                updateUI();
+                
+                showOutput('Renamed: ' + oldName + ' → ' + newName, 'success');
+            } catch (e) {
+                showOutput('Error: ' + e.message, 'error');
+            }
+            showLoading(false);
+        }
+        
+        async function deleteCurrentFile() {
+            if (!state.currentFile) return;
+            
+            const file = state.files[state.currentFile];
+            const isNewFile = file && !file.originalContent;
+            
+            // If file was never saved, just remove from state
+            if (isNewFile) {
+                delete state.files[state.currentFile];
+                state.currentFile = null;
+                
+                // Clear editor and show placeholder
+                if (state.editor) {
+                    state.editor.setValue('');
+                }
+                document.getElementById('editor-container').style.display = 'none';
+                document.getElementById('no-file-message').style.display = 'flex';
+                document.getElementById('editor-tabs').innerHTML = '';
+                document.getElementById('yaml-validation').style.display = 'none';
+                
+                updateUI();
+                showOutput('New file discarded', 'success');
+                return;
+            }
+            
+            showLoading(true, 'Deleting file...');
+            try {
+                const result = await apiCall('delete', { file: state.currentFile });
+                if (result.success) {
+                    // Remove from state
+                    delete state.files[state.currentFile];
+                    state.currentFile = null;
+                    
+                    // Reload file list
+                    await loadFileTree();
+                    
+                    // Clear editor and show placeholder
+                    if (state.editor) {
+                        state.editor.setValue('');
+                    }
+                    document.getElementById('editor-container').style.display = 'none';
+                    document.getElementById('no-file-message').style.display = 'flex';
+                    document.getElementById('editor-tabs').innerHTML = '';
+                    document.getElementById('yaml-validation').style.display = 'none';
+                    
+                    showOutput('File deleted successfully', 'success');
+                } else {
+                    showOutput(result.error || 'Failed to delete file', 'error');
+                }
+            } catch (e) {
+                showOutput('Error: ' + e.message, 'error');
+            }
+            showLoading(false);
+            updateUI();
+        }
+        
+        async function gitCommitPush() {
+            // Note: prompt() removed as some browsers block it
+            // Using timestamp-based commit message
+            const now = new Date();
+            const message = 'Update ' + now.toISOString().slice(0, 16).replace('T', ' ');
+            
+            showLoading(true, 'Committing and pushing...');
+            try {
+                // Send action in URL, message in POST body
+                const response = await fetch('/ansible-api?action=git-commit', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: 'message=' + encodeURIComponent(message)
+                });
+                const result = await response.json();
+                showOutput(result.output || result.error, result.success ? 'success' : 'error');
+            } catch (e) {
+                showOutput('Error: ' + e.message, 'error');
+            }
+            showLoading(false);
+        }
+        
+        async function gitPull() {
+            // Note: confirm() removed as some browsers block it
+            
+            showLoading(true, 'Pulling from remote...');
+            try {
+                const result = await apiCall('git-pull');
+                showOutput(result.output || result.error, result.success ? 'success' : 'error');
+                if (result.success) {
+                    // Reload file list
+                    setTimeout(() => loadFileTree(), 1000);
+                }
+            } catch (e) {
+                showOutput('Error: ' + e.message, 'error');
+            }
+            showLoading(false);
+        }
+        
+        async function gitStatus() {
+            showLoading(true, 'Checking status...');
+            try {
+                const result = await apiCall('git-status');
+                showOutput(result.output || result.error, result.success ? '' : 'error');
+            } catch (e) {
+                showOutput('Error: ' + e.message, 'error');
+            }
+            showLoading(false);
+        }
+        
+        async function gitLog() {
+            showLoading(true, 'Loading history...');
+            try {
+                const result = await apiCall('git-log');
+                showOutput(result.output || result.error, result.success ? '' : 'error');
+            } catch (e) {
+                showOutput('Error: ' + e.message, 'error');
+            }
+            showLoading(false);
+        }
+        
+        async function gitDiff() {
+            showLoading(true, 'Loading diff...');
+            try {
+                const result = await apiCall('git-diff');
+                showOutput(result.output || result.error, result.success ? '' : 'error');
+            } catch (e) {
+                showOutput('Error: ' + e.message, 'error');
+            }
+            showLoading(false);
+        }
+    </script>
+</body>
+</html>
