@@ -295,6 +295,7 @@ echo "# LLDPq Configuration" | sudo tee /etc/lldpq.conf > /dev/null
 echo "LLDPQ_DIR=$HOME/lldpq" | sudo tee -a /etc/lldpq.conf > /dev/null
 echo "WEB_ROOT=$WEB_ROOT" | sudo tee -a /etc/lldpq.conf > /dev/null
 echo "ANSIBLE_DIR=$ANSIBLE_DIR" | sudo tee -a /etc/lldpq.conf > /dev/null
+sudo chmod 644 /etc/lldpq.conf
 echo "   Configuration saved to /etc/lldpq.conf"
 echo "Files copied successfully"
 
