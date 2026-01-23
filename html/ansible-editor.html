@@ -1754,8 +1754,11 @@
         function showOutput(text, type = '') {
             const panel = document.getElementById('output-panel');
             const content = document.getElementById('output-content');
+            
+            // Check if text contains ANSI codes - if so, don't apply success/error class
+            const hasAnsi = /\x1b\[/.test(text);
             content.innerHTML = ansiToHtml(text);
-            content.className = 'output-content ' + type;
+            content.className = 'output-content' + (hasAnsi ? '' : ' ' + type);
             panel.classList.add('visible');
         }
         
