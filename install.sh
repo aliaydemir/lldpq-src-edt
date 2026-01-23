@@ -327,9 +327,11 @@ echo "nginx and fcgiwrap configured and restarted"
 echo ""
 echo "[05b] Setting up authentication..."
 
-# Create sessions directory
+# Create sessions directory (parent dir must also be accessible by www-data)
 sudo mkdir -p /var/lib/lldpq/sessions
+sudo chown www-data:www-data /var/lib/lldpq
 sudo chown www-data:www-data /var/lib/lldpq/sessions
+sudo chmod 755 /var/lib/lldpq
 sudo chmod 700 /var/lib/lldpq/sessions
 echo "   - Sessions directory created"
 

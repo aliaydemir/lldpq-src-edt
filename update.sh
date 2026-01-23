@@ -79,8 +79,11 @@ sudo chmod 644 "$WEB_ROOT/VERSION"
 sudo chmod +x "$WEB_ROOT"/*.sh
 
 # Ensure auth sessions directory exists with correct permissions
+# Parent dir must also be accessible by www-data
 sudo mkdir -p /var/lib/lldpq/sessions
+sudo chown www-data:www-data /var/lib/lldpq
 sudo chown www-data:www-data /var/lib/lldpq/sessions
+sudo chmod 755 /var/lib/lldpq
 sudo chmod 700 /var/lib/lldpq/sessions
 echo "   - Sessions directory configured"
 
