@@ -501,8 +501,26 @@
             background: #333;
             border: 1px solid #404040;
             color: #ccc;
-            padding: 8px 12px;
+            padding: 4px 8px;
             border-radius: 4px;
+            min-width: 150px;
+            max-height: 120px;
+            font-size: 12px;
+        }
+        
+        .host-select option {
+            padding: 4px 8px;
+        }
+        
+        .host-select option:checked {
+            background: linear-gradient(0deg, #76b900 0%, #5a8c00 100%);
+            color: white;
+        }
+        
+        .host-select optgroup {
+            font-weight: bold;
+            color: #888;
+            font-style: normal;
             font-size: 13px;
             min-width: 150px;
         }
@@ -762,8 +780,7 @@
                 Generate Configs
             </button>
             <label style="font-size: 13px; color: #888;">Target:</label>
-            <select id="host-select" class="host-select">
-                <option value="">Select host...</option>
+            <select id="host-select" class="host-select" multiple title="Ctrl+click to select multiple">
             </select>
             <button id="btn-diff" class="btn btn-secondary" onclick="runDiff()">
                 Diff
@@ -1134,11 +1151,17 @@
             }
         }
         
+        // Get selected hosts as comma-separated string
+        function getSelectedHosts() {
+            const select = document.getElementById('host-select');
+            const selected = Array.from(select.selectedOptions).map(opt => opt.value);
+            return selected.join(',');
+        }
+        
         // Populate host select dropdown
         function populateHostSelect() {
             const select = document.getElementById('host-select');
-            select.innerHTML = '<option value="">Select host...</option>';
-            select.innerHTML += '<option value="all">-- ALL HOSTS --</option>';
+            select.innerHTML = '<option value="all">-- ALL HOSTS --</option>';
             
             // Add groups section
             if (state.groups && state.groups.length > 0) {
@@ -1655,7 +1678,7 @@
         
         // Run generate configs
         async function runGenerate() {
-            const host = document.getElementById('host-select').value;
+            const host = getSelectedHosts();
             
             // Note: confirm() removed as browsers block it
             const targetMsg = host ? ` for ${host}` : ' for all hosts';
@@ -1672,9 +1695,9 @@
         
         // Run diff
         async function runDiff() {
-            const host = document.getElementById('host-select').value;
+            const host = getSelectedHosts();
             if (!host) {
-                showOutput('Please select a host first', 'error');
+                showOutput('Please select at least one host', 'error');
                 return;
             }
             
@@ -1690,9 +1713,9 @@
         
         // Run deploy
         async function runDeploy() {
-            const host = document.getElementById('host-select').value;
+            const host = getSelectedHosts();
             if (!host) {
-                showOutput('Please select a target host/group first', 'error');
+                showOutput('Please select at least one target host/group', 'error');
                 return;
             }
             
