@@ -49,14 +49,15 @@ cd lldpq-src
 
 ## [03] configuration files
 
-edit these 7 files:
+edit these files:
 
 ```
-~/lldpq/devices.yaml             # add your switches (ip + username + hostname) - used by all tools
+~/lldpq/devices.yaml             # add your switches (required) - used by pping, zzh, send-cmd, get-conf
 ~/lldpq/topology.dot             # expected cable connections
 ~/lldpq/topology_config.yaml     # optional: customize device layers/icons (supports regex patterns)
 ~/lldpq/notifications.yaml       # optional: slack alerts + thresholds
 ~/lldpq/hosts.ini                # optional: extra hostnames for topology
+~/lldpq/commands                 # optional: commands for send-cmd
 ```
 
 ## [04] cron jobs (auto setup)
@@ -111,19 +112,30 @@ cd ~/lldpq && ./sudo-fix.sh   # configures passwordless sudo for cumulus user
 
 ## [09] cli tools
 
+all tools use `devices.yaml` as the single source of device information.
+
 ```bash
-pping                              # parallel ping all devices (from devices.yaml)
+# parallel ping
+pping                              # ping all devices from devices.yaml
 pping -f hosts.txt                 # ping custom host list
 pping -v mgmt                      # ping via VRF
+pping -h                           # show help with file format
 
+# send commands to all devices
 send-cmd                           # run commands from ~/lldpq/commands file
 send-cmd -c "nv show system"       # run single command on all devices
 send-cmd -c "uptime" -c "hostname" # run multiple commands
 send-cmd -e                        # edit commands file
 send-cmd -l                        # list commands file
+send-cmd -h                        # show help
 
+# ssh manager (ncurses UI)
+zzh                                # interactive ssh manager
+zzh spine                          # filter: show only "spine" in name
+zzh -h                             # show help
+
+# config backup
 get-conf                           # backup configs from all devices
-zzh                                # ssh manager (uses devices.yaml)
 ```
 
 ## [10] ssh commands reference
