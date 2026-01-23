@@ -7,8 +7,8 @@
     <link rel="shortcut icon" href="/png/favicon.ico">
     <!-- Codicons - VS Code icon set -->
     <link rel="stylesheet" href="/css/codicon.css">
-    <!-- Prism.js for code syntax highlighting (Solarized Dark theme - offline) -->
-    <link rel="stylesheet" href="/css/prism-solarized-dark.css">
+    <!-- Prism.js for code syntax highlighting (VS Code Dark theme - offline) -->
+    <link rel="stylesheet" href="/css/prism-vsc-dark.css">
     <script src="/css/prism.min.js"></script>
     <script src="/css/prism-yaml.min.js"></script>
     <script src="/css/prism-bash.min.js"></script>
@@ -346,14 +346,21 @@
             color: #e6db74;
         }
         #markdown-preview pre[class*="language-"] {
+            background: #1e1e1e !important;
             border-radius: 6px !important;
             margin: 12px 0 !important;
+            padding: 16px !important;
             border: 1px solid #3e4451 !important;
         }
         #markdown-preview pre code {
+            background: transparent !important;
             font-size: 13px !important;
             line-height: 1.6 !important;
             font-family: 'Cascadia Code', Consolas, 'Courier New', monospace !important;
+        }
+        /* Remove background from all tokens */
+        #markdown-preview .token {
+            background: none !important;
         }
         #markdown-preview ul, #markdown-preview ol {
             padding-left: 20px;
