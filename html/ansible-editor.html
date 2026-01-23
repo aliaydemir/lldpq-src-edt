@@ -1756,7 +1756,7 @@
             if (typeof marked !== 'undefined') {
                 preview.innerHTML = marked.parse(content);
                 // Apply syntax highlighting with Prism.js
-                if (typeof Prism !== 'undefined') {
+                if (typeof Prism !== 'undefined' && Prism.languages) {
                     preview.querySelectorAll('pre code').forEach((block) => {
                         try {
                             // Get language from class
@@ -1769,12 +1769,14 @@
                                 }
                             }
                             
-                            // Ensure the class is set for Prism
-                            block.className = 'language-' + lang;
-                            block.parentElement.className = 'language-' + lang;
-                            
-                            // Highlight with Prism
-                            Prism.highlightElement(block);
+                            // Check if language grammar exists
+                            const grammar = Prism.languages[lang] || Prism.languages.yaml;
+                            if (grammar) {
+                                const code = block.textContent;
+                                block.innerHTML = Prism.highlight(code, grammar, lang);
+                                block.className = 'language-' + lang;
+                                block.parentElement.className = 'language-' + lang;
+                            }
                         } catch (e) {
                             console.warn('Prism highlight error:', e);
                         }
