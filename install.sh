@@ -3,11 +3,26 @@
 # 
 # Copyright (c) 2024 LLDPq Project  
 # Licensed under MIT License - see LICENSE file for details
+#
+# Usage: ./install.sh [-y]
+#   -y  Auto-yes to all prompts (non-interactive mode, uses defaults)
 
 set -e
 
+# Parse arguments
+AUTO_YES=false
+while getopts "y" opt; do
+    case $opt in
+        y) AUTO_YES=true ;;
+        *) ;;
+    esac
+done
+
 echo "🚀 LLDPq Installation Script"
 echo "=================================="
+if [[ "$AUTO_YES" == "true" ]]; then
+    echo "   Running in non-interactive mode (-y)"
+fi
 
 # Check if running via sudo from non-root user (causes $HOME issues)
 if [[ $EUID -eq 0 ]] && [[ -n "$SUDO_USER" ]] && [[ "$SUDO_USER" != "root" ]]; then
@@ -48,7 +63,12 @@ if [[ -f /etc/lldpq.conf ]] || [[ -f /etc/lldpq-users.conf ]] || [[ -d /var/lib/
     echo "   1. Clean install - remove old files and start fresh (recommended if broken)"
     echo "   2. Keep existing - preserve user credentials and continue"
     echo ""
-    read -p "   Clean install? [y/N]: " clean_response
+    if [[ "$AUTO_YES" == "true" ]]; then
+        clean_response="n"
+        echo "   Keeping existing files (auto-yes mode)"
+    else
+        read -p "   Clean install? [y/N]: " clean_response
+    fi
     if [[ "$clean_response" =~ ^[Yy]$ ]]; then
         echo "   🧹 Cleaning existing installation..."
         sudo rm -f /etc/lldpq.conf
@@ -75,7 +95,12 @@ if systemctl is-active --quiet apache2 2>/dev/null; then
     echo "   1. Stop Apache2 (recommended for LLDPq)"
     echo "   2. Exit and resolve manually"
     echo ""
-    read -p "   Stop and disable Apache2? [Y/n]: " response
+    if [[ "$AUTO_YES" == "true" ]]; then
+        response="y"
+        echo "   Stopping Apache2 (auto-yes mode)"
+    else
+        read -p "   Stop and disable Apache2? [Y/n]: " response
+    fi
     if [[ ! "$response" =~ ^[Nn]$ ]]; then
         sudo systemctl stop apache2
         sudo systemctl disable apache2
@@ -227,32 +252,43 @@ fi
 
 # Ask user for Ansible directory
 echo ""
-if [[ -n "$ANSIBLE_DIR" ]]; then
-    read -p "   Use detected Ansible directory? [Y/n] or enter custom path: " response
-    if [[ "$response" =~ ^[Nn]$ ]]; then
-        read -p "   Enter Ansible directory path (or 'skip' to skip Ansible): " custom_path
-        if [[ "$custom_path" == "skip" ]] || [[ -z "$custom_path" ]]; then
-            ANSIBLE_DIR=""
-            echo "   Skipping Ansible configuration"
-        else
-            ANSIBLE_DIR="$custom_path"
+if [[ "$AUTO_YES" == "true" ]]; then
+    # In auto-yes mode, use detected dir or default
+    if [[ -n "$ANSIBLE_DIR" ]]; then
+        echo "   Using detected Ansible directory: $ANSIBLE_DIR (auto-yes mode)"
+    else
+        ANSIBLE_DIR="$HOME/ansible"
+        echo "   Using default Ansible directory: $ANSIBLE_DIR (auto-yes mode)"
+    fi
+else
+    # Interactive mode
+    if [[ -n "$ANSIBLE_DIR" ]]; then
+        read -p "   Use detected Ansible directory? [Y/n] or enter custom path: " response
+        if [[ "$response" =~ ^[Nn]$ ]]; then
+            read -p "   Enter Ansible directory path (or 'skip' to skip Ansible): " custom_path
+            if [[ "$custom_path" == "skip" ]] || [[ -z "$custom_path" ]]; then
+                ANSIBLE_DIR=""
+                echo "   Skipping Ansible configuration"
+            else
+                ANSIBLE_DIR="$custom_path"
+            fi
+        elif [[ -n "$response" ]] && [[ ! "$response" =~ ^[Yy]$ ]]; then
+            # User entered a custom path
+            if [[ "$response" == "skip" ]]; then
+                ANSIBLE_DIR=""
+                echo "   Skipping Ansible configuration"
+            else
+                ANSIBLE_DIR="$response"
+            fi
         fi
-    elif [[ -n "$response" ]] && [[ ! "$response" =~ ^[Yy]$ ]]; then
-        # User entered a custom path
+    else
+        read -p "   Enter Ansible directory path (or press Enter to use ~/ansible, or 'skip'): " response
         if [[ "$response" == "skip" ]]; then
             ANSIBLE_DIR=""
             echo "   Skipping Ansible configuration"
         else
-            ANSIBLE_DIR="$response"
+            ANSIBLE_DIR="${response:-$HOME/ansible}"
         fi
-    fi
-else
-    read -p "   Enter Ansible directory path (or press Enter to use ~/ansible, or 'skip'): " response
-    if [[ "$response" == "skip" ]]; then
-        ANSIBLE_DIR=""
-        echo "   Skipping Ansible configuration"
-    else
-        ANSIBLE_DIR="${response:-$HOME/ansible}"
     fi
 fi
 
