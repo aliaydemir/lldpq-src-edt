@@ -76,8 +76,9 @@ devices:
 ```
 
 roles are optional tags for grouping. filter by role:
-- **zzh**: type `@spine` to show only spine devices
-- **parse_devices.py**: `python3 parse_devices.py -r spine`
+- **zzh**: type `@spine` to filter interactively
+- **send-cmd**: `send-cmd -r spine -c "uptime"` to target specific roles
+- **send-cmd**: `send-cmd --roles` to list available roles
 
 ## [04] cron jobs (auto setup)
 
@@ -136,14 +137,19 @@ all tools use `devices.yaml` as the single source of device information.
 ```bash
 # parallel ping
 pping                              # ping all devices from devices.yaml
+pping -r spine                     # ping only @spine devices
+pping -r leaf -v mgmt              # ping @leaf via mgmt VRF
+pping --roles                      # list available roles
 pping -f hosts.txt                 # ping custom host list
-pping -v mgmt                      # ping via VRF
 pping -h                           # show help with file format
 
-# send commands to all devices
+# send commands to devices
 send-cmd                           # run commands from ~/lldpq/commands file
 send-cmd -c "nv show system"       # run single command on all devices
 send-cmd -c "uptime" -c "hostname" # run multiple commands
+send-cmd -r spine -c "uptime"      # run only on @spine devices
+send-cmd -r leaf -c "nv show bgp"  # run only on @leaf devices
+send-cmd --roles                   # list available roles
 send-cmd -e                        # edit commands file
 send-cmd -l                        # list commands file
 send-cmd -h                        # show help

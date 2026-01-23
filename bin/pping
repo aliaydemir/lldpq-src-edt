@@ -38,7 +38,7 @@ find_lldpq_dir
 
 show_usage() {
     echo -e "\e[95m┌─────────────────────────────────────────────┐\e[0m"
-    echo -e "\e[95m│\e[0m            \e[93mPPING v11.0\e[0m                      \e[95m│\e[0m"
+    echo -e "\e[95m│\e[0m            \e[93mPPING v12.0\e[0m                      \e[95m│\e[0m"
     echo -e "\e[95m│\e[0m      \e[92mParallel Ping Utility\e[0m                  \e[95m│\e[0m"
     echo -e "\e[95m└─────────────────────────────────────────────┘\e[0m"
     echo ""
@@ -46,37 +46,34 @@ show_usage() {
     echo -e "  \e[32mpping\e[0m [\e[33mOPTIONS\e[0m]"
     echo ""
     echo -e "\e[96mOPTIONS:\e[0m"
+    echo -e "  \e[33m-r <role>\e[0m     Filter by role (e.g., spine, leaf, border)"
     echo -e "  \e[33m-f <file>\e[0m     Use custom IP list file instead of devices.yaml"
     echo -e "  \e[33m-v <vrf>\e[0m      Use VRF for ping commands"
+    echo -e "  \e[33m--roles\e[0m       List available roles from devices.yaml"
     echo -e "  \e[33m-h, --help\e[0m    Show this help message"
     echo ""
     echo -e "\e[96mDEFAULT:\e[0m"
     echo -e "  Uses \e[33m$LLDPQ_DIR/devices.yaml\e[0m"
     echo ""
+    echo -e "\e[96mROLES:\e[0m"
+    echo -e "  Add @role in devices.yaml:  \e[33m10.10.100.10: Spine1 @spine\e[0m"
+    echo -e "  Then filter:                \e[33mpping -r spine\e[0m"
+    echo ""
     echo -e "\e[96mCUSTOM FILE FORMAT (-f):\e[0m"
     echo -e "  Each line: \e[33mhostname ip_address\e[0m  or just  \e[33mip_address\e[0m"
     echo -e "  Lines starting with # are ignored (comments)"
     echo ""
-    echo -e "  \e[90mExample file content:\e[0m"
-    echo -e "  \e[90m# My servers\e[0m"
-    echo -e "  \e[90mswitch1 10.0.0.1\e[0m"
-    echo -e "  \e[90mswitch2 10.0.0.2\e[0m"
-    echo -e "  \e[90m192.168.1.1\e[0m"
-    echo ""
     echo -e "\e[96mEXAMPLES:\e[0m"
-    echo -e "  \e[32mpping\e[0m                    # Use devices.yaml (default)"
+    echo -e "  \e[32mpping\e[0m                    # Ping all devices"
+    echo -e "  \e[32mpping -r spine\e[0m           # Ping only @spine devices"
+    echo -e "  \e[32mpping -r leaf -v mgmt\e[0m    # Ping @leaf via mgmt VRF"
+    echo -e "  \e[32mpping --roles\e[0m            # List available roles"
     echo -e "  \e[32mpping -f custom.txt\e[0m      # Use custom file"
-    echo -e "  \e[32mpping -v mgmt\e[0m            # Use mgmt VRF"
-    echo ""
-    echo -e "\e[96mFEATURES:\e[0m"
-    echo -e "  • \e[92mParallel execution\e[0m for faster results"
-    echo -e "  • \e[92m300ms timeout\e[0m per ping (3 retries)"
-    echo -e "  • \e[92mColor-coded output\e[0m for easy reading"
-    echo -e "  • \e[92mInteractive mode\e[0m with repeat option"
     echo ""
 }
 
 load_from_devices_yaml() {
+    local role_filter="$1"
     find_lldpq_dir
     local parser="$LLDPQ_DIR/parse_devices.py"
     local yaml_file="$LLDPQ_DIR/devices.yaml"
@@ -93,7 +90,12 @@ load_from_devices_yaml() {
     fi
     
     # Parse devices.yaml and convert to ip_list format
-    eval "$(python3 "$parser")"
+    if [[ -n "$role_filter" ]]; then
+        echo -e "\e[35mFiltering by role: @$role_filter\e[0m"
+        eval "$(python3 "$parser" -r "$role_filter")" || exit 1
+    else
+        eval "$(python3 "$parser")"
+    fi
     
     if [[ ${#devices[@]} -eq 0 ]]; then
         echo -e "\e[91mError: No devices found in devices.yaml\e[0m"
@@ -266,20 +268,27 @@ main_loop() {
 }
 
 main() {
-    # Handle --help first
+    # Handle --help and --roles first
     for arg in "$@"; do
         if [[ "$arg" == "--help" ]]; then
             show_usage
             exit 0
         fi
+        if [[ "$arg" == "--roles" ]]; then
+            find_lldpq_dir
+            python3 "$LLDPQ_DIR/parse_devices.py" --list-roles
+            exit 0
+        fi
     done
     
     local file_path=""
+    local role_filter=""
     
-    while getopts ":v:f:h" opt; do
+    while getopts ":v:f:r:h" opt; do
         case $opt in
             v) vrf_name="$OPTARG" ;;
             f) file_path="$OPTARG" ;;
+            r) role_filter="$OPTARG" ;;
             h) show_usage; exit 0 ;;
             \?) echo -e "\e[91mInvalid option: -$OPTARG\e[0m" >&2
                 echo -e "\e[91mUse: \e[32mpping -h\e[0m for help" >&2
@@ -289,9 +298,12 @@ main() {
     
     # Load hosts: custom file if specified, otherwise devices.yaml
     if [[ -n "$file_path" ]]; then
+        if [[ -n "$role_filter" ]]; then
+            echo -e "\e[93mWarning: -r ignored when using -f (custom file)\e[0m"
+        fi
         load_ip_list "$file_path"
     else
-        load_from_devices_yaml
+        load_from_devices_yaml "$role_filter"
     fi
     
     full_ping

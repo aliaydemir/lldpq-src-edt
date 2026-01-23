@@ -16,11 +16,16 @@
 #     username: custom_user
 #     role: role_name
 #
-# ROLES:
-#   Optional tags for grouping devices. Use with:
-#   - zzh: filter by typing role name
-#   - parse_devices.py -r spine: filter by role
-#   - send-cmd (future): target specific roles
+# ROLES (optional):
+#   Add @role to group devices. Examples:
+#     10.10.100.10: Spine1 @spine
+#     10.10.100.12: Leaf1 @leaf
+#
+#   Usage:
+#     zzh               → type "@spine" to filter
+#     pping -r spine    → ping only @spine devices
+#     send-cmd -r spine → execute on @spine devices only
+#     --roles           → list all available roles (pping/send-cmd)
 #
 # SSH REQUIREMENTS:
 #   - SSH key auth configured (use send-keys.sh)

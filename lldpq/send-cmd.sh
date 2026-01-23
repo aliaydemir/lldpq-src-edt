@@ -8,25 +8,33 @@ show_help() {
     cat << EOF
 LLDPq Send Commands - Execute commands on network devices
 
-Usage: send-cmd.sh [options]
+Usage: send-cmd [options]
 
 Options:
-  -c <cmd>  Execute command on all devices (can use multiple times)
-  -h        Show this help message
-  -l        List available commands (from commands file)
-  -e        Edit commands file
+  -c <cmd>   Execute command (can use multiple times)
+  -r <role>  Filter devices by role (e.g., spine, leaf, border)
+  -h         Show this help message
+  -l         List available commands (from commands file)
+  -e         Edit commands file
+  --roles    List available roles from devices.yaml
 
 Description:
   Reads commands from '$SCRIPT_DIR/commands' file.
   Lines starting with # are ignored (commented out).
-  Executes uncommented commands on all devices in devices.yaml.
+  Executes uncommented commands on all (or filtered) devices.
+
+Roles:
+  Add @role to devices.yaml:  10.10.100.10: Spine1 @spine
+  Then filter:                send-cmd -r spine -c "uptime"
 
 Examples:
-  send-cmd                           # Run all uncommented commands from file
-  send-cmd -c "nv show system"       # Run single command on all devices
-  send-cmd -c "uptime" -c "hostname" # Run multiple commands
-  send-cmd -l                        # List commands in file
-  send-cmd -e                        # Edit commands file
+  send-cmd                             # Run commands from file on all devices
+  send-cmd -c "nv show system"         # Run command on all devices
+  send-cmd -r spine -c "uptime"        # Run command only on @spine devices
+  send-cmd -r leaf -c "nv show bgp"    # Run command only on @leaf devices
+  send-cmd --roles                     # Show available roles
+  send-cmd -l                          # List commands in file
+  send-cmd -e                          # Edit commands file
 
 EOF
     exit 0
@@ -34,10 +42,19 @@ EOF
 
 # Parse arguments
 cli_commands=()
-while getopts "hlec:" opt; do
+role_filter=""
+
+# Check for --roles first
+if [[ "$1" == "--roles" ]]; then
+    python3 "$SCRIPT_DIR/parse_devices.py" --list-roles
+    exit 0
+fi
+
+while getopts "hlec:r:" opt; do
     case $opt in
         h) show_help ;;
         c) cli_commands+=("$OPTARG") ;;
+        r) role_filter="$OPTARG" ;;
         l) 
             echo "Commands file: $SCRIPT_DIR/commands"
             echo ""
@@ -53,7 +70,12 @@ while getopts "hlec:" opt; do
 done
 
 # Parse devices.yaml using Python parser (same as other lldpq scripts)
-eval "$(python3 "$SCRIPT_DIR/parse_devices.py")"
+if [[ -n "$role_filter" ]]; then
+    echo -e "\e[0;35mFiltering by role: @$role_filter\e[0m"
+    eval "$(python3 "$SCRIPT_DIR/parse_devices.py" -r "$role_filter")" || exit 1
+else
+    eval "$(python3 "$SCRIPT_DIR/parse_devices.py")"
+fi
 
 # Check if devices array is populated
 if [[ ${#devices[@]} -eq 0 ]]; then
