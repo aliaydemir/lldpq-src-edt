@@ -177,8 +177,10 @@
         }
         
         .file-item .codicon-file-code { color: #6997d5; }
-        .file-item .codicon-symbol-file { color: #8db9e8; }
+        .file-item .codicon-list-tree { color: #8db9e8; }
         .file-item .codicon-bracket { color: #e5a84b; }
+        .file-item .codicon-type-hierarchy { color: #c586c0; }
+        .file-item .codicon-symbol-namespace { color: #4b8bbe; }
         .file-item .codicon-markdown { color: #519aba; }
         .file-item .codicon-note { color: #a8a8a8; }
         .file-item .codicon-file-media { color: #c586c0; }
@@ -1054,14 +1056,15 @@
                         else if (fileName === 'hosts') iconClass = 'codicon-server';
                         // Then by extension
                         else if (ext === 'yaml') iconClass = 'codicon-file-code';
-                        else if (ext === 'yml') iconClass = 'codicon-symbol-file';
+                        else if (ext === 'yml') iconClass = 'codicon-list-tree';
                         else if (ext === 'j2') iconClass = 'codicon-bracket';
+                        else if (ext === 'dot') iconClass = 'codicon-type-hierarchy';
                         else if (['md'].includes(ext)) iconClass = 'codicon-markdown';
                         else if (['txt', 'log'].includes(ext)) iconClass = 'codicon-note';
                         else if (['png', 'jpg', 'jpeg', 'gif', 'svg'].includes(ext)) iconClass = 'codicon-file-media';
                         else if (['sh', 'bash'].includes(ext)) iconClass = 'codicon-terminal';
                         else if (['json'].includes(ext)) iconClass = 'codicon-json';
-                        else if (['py'].includes(ext)) iconClass = 'codicon-symbol-method';
+                        else if (['py'].includes(ext)) iconClass = 'codicon-symbol-namespace';
                         else if (['cfg', 'conf', 'ini'].includes(ext)) iconClass = 'codicon-settings-gear';
                         
                         fileEl.innerHTML = `<span class="codicon ${iconClass} file-icon"></span>${file.name}`;
