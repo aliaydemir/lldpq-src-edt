@@ -75,12 +75,8 @@ sudo cp -r html/* "$WEB_ROOT/"
 echo "   - Updating VERSION to $WEB_ROOT/"
 sudo cp VERSION "$WEB_ROOT/"
 sudo chmod 644 "$WEB_ROOT/VERSION"
-sudo chmod +x "$WEB_ROOT/trigger-lldp.sh"
-sudo chmod +x "$WEB_ROOT/trigger-monitor.sh"
-sudo chmod +x "$WEB_ROOT/edit-topology.sh"
-sudo chmod +x "$WEB_ROOT/edit-config.sh"
-sudo chmod +x "$WEB_ROOT/ansible-api.sh"
-sudo chmod +x "$WEB_ROOT/auth-api.sh"
+# Make all shell scripts executable
+sudo chmod +x "$WEB_ROOT"/*.sh
 
 # Ensure auth sessions directory exists
 if [[ ! -d /var/lib/lldpq/sessions ]]; then

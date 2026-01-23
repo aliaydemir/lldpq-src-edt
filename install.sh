@@ -106,11 +106,8 @@ sudo cp -r html/* "$WEB_ROOT/"
 echo "   - Copying VERSION to $WEB_ROOT/"
 sudo cp VERSION "$WEB_ROOT/"
 sudo chmod 644 "$WEB_ROOT/VERSION"
-sudo chmod +x "$WEB_ROOT/trigger-lldp.sh"
-sudo chmod +x "$WEB_ROOT/trigger-monitor.sh"
-sudo chmod +x "$WEB_ROOT/edit-topology.sh"
-sudo chmod +x "$WEB_ROOT/edit-config.sh"
-sudo chmod +x "$WEB_ROOT/ansible-api.sh"
+# Make all shell scripts executable
+sudo chmod +x "$WEB_ROOT"/*.sh
 
 echo "   - Setting permissions on web directories"
 # Ensure /var/www is traversable (some systems restrict it)
