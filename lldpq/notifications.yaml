@@ -41,7 +41,7 @@ notifications:
   slack:
     enabled: false
     webhook: ""
-    # Example, webhook: "[h]ttps://hooks.slack.[c]om/[s]ervices/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX"
+    # Example, webhook: "https://hooks.slack.[c]om/[s]ervices/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX"
     channel: "#lldpq"
     username: "LLDPq Bot"
     icon_emoji: ":warning:"
