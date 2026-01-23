@@ -1713,10 +1713,48 @@
             document.getElementById('loading-text').textContent = text;
         }
         
+        // Convert ANSI escape codes to HTML
+        function ansiToHtml(text) {
+            // Escape HTML first
+            let html = text
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+            
+            // ANSI color map
+            const colors = {
+                '30': '#000', '31': '#e74c3c', '32': '#2ecc71', '33': '#f1c40f',
+                '34': '#3498db', '35': '#9b59b6', '36': '#1abc9c', '37': '#ecf0f1',
+                '90': '#7f8c8d', '91': '#ff6b6b', '92': '#4ec9b0', '93': '#ffd93d',
+                '94': '#6997d5', '95': '#c586c0', '96': '#56d4bc', '97': '#fff'
+            };
+            
+            // Replace ANSI codes with spans
+            html = html.replace(/\x1b\[([0-9;]+)m/g, (match, codes) => {
+                const codeList = codes.split(';');
+                let style = '';
+                for (const code of codeList) {
+                    if (code === '0') return '</span>';
+                    if (code === '1') style += 'font-weight:bold;';
+                    if (code === '4') style += 'text-decoration:underline;';
+                    if (colors[code]) style += `color:${colors[code]};`;
+                    // Background colors (40-47, 100-107)
+                    const bg = parseInt(code);
+                    if (bg >= 40 && bg <= 47) {
+                        const fgCode = String(bg - 10);
+                        if (colors[fgCode]) style += `background:${colors[fgCode]};`;
+                    }
+                }
+                return style ? `<span style="${style}">` : '';
+            });
+            
+            return html;
+        }
+        
         function showOutput(text, type = '') {
             const panel = document.getElementById('output-panel');
             const content = document.getElementById('output-content');
-            content.textContent = text;
+            content.innerHTML = ansiToHtml(text);
             content.className = 'output-content ' + type;
             panel.classList.add('visible');
         }

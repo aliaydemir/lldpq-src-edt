@@ -246,7 +246,7 @@ run_diff() {
     
     # Run diff playbook
     local output
-    output=$(ansible-playbook playbooks/diff_switch_configs.yaml -l "$host" 2>&1)
+    output=$(ANSIBLE_FORCE_COLOR=true ansible-playbook playbooks/diff_switch_configs.yaml -l "$host" 2>&1)
     local exit_code=$?
     
     # Escape output for JSON
@@ -278,7 +278,7 @@ run_deploy() {
     
     # Run deploy playbook
     local output
-    output=$(ansible-playbook playbooks/deploy_switch_configs.yaml -l "$host" 2>&1)
+    output=$(ANSIBLE_FORCE_COLOR=true ansible-playbook playbooks/deploy_switch_configs.yaml -l "$host" 2>&1)
     local exit_code=$?
     
     # Escape output for JSON
@@ -305,9 +305,9 @@ run_generate() {
     if [ -n "$host" ] && [ "$host" != "all" ]; then
         # Sanitize host name
         host=$(echo "$host" | tr -cd '[:alnum:]-_')
-        output=$(ansible-playbook playbooks/generate_switch_nvue_yaml_configs.yaml -l "$host" 2>&1)
+        output=$(ANSIBLE_FORCE_COLOR=true ansible-playbook playbooks/generate_switch_nvue_yaml_configs.yaml -l "$host" 2>&1)
     else
-        output=$(ansible-playbook playbooks/generate_switch_nvue_yaml_configs.yaml 2>&1)
+        output=$(ANSIBLE_FORCE_COLOR=true ansible-playbook playbooks/generate_switch_nvue_yaml_configs.yaml 2>&1)
     fi
     local exit_code=$?
     
