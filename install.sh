@@ -160,26 +160,42 @@ echo "   - Copying lldpq to ~/lldpq"
 cp -r lldpq ~/lldpq
 
 echo "   - Setting up topology.dot for web editing"
-# Move topology.dot to web root for www-data access (if it exists)
-if [[ -f ~/lldpq/topology.dot ]]; then
+# Handle topology.dot - may be symlink from previous install, regular file, or not exist
+if [[ -L ~/lldpq/topology.dot ]]; then
+    # Already a symlink - just ensure web root file has correct permissions
+    echo "     topology.dot symlink already exists"
+    if [[ -f "$WEB_ROOT/topology.dot" ]]; then
+        sudo chown www-data:$USER "$WEB_ROOT/topology.dot"
+        sudo chmod 664 "$WEB_ROOT/topology.dot"
+    fi
+elif [[ -f ~/lldpq/topology.dot ]]; then
+    # Regular file - move to web root and create symlink
     sudo mv ~/lldpq/topology.dot "$WEB_ROOT/topology.dot"
-    # www-data owns it (for web editing), user's group has access too
     sudo chown www-data:$USER "$WEB_ROOT/topology.dot"
     sudo chmod 664 "$WEB_ROOT/topology.dot"
-    # Create symlink so lldpq scripts can access it
     ln -sf "$WEB_ROOT/topology.dot" ~/lldpq/topology.dot
 else
-    echo "  topology.dot not found in lldpq/, will be created on first use"
-    # Create empty topology.dot in web root for web editing
-    echo "# LLDPq Topology Definition" | sudo tee "$WEB_ROOT/topology.dot" > /dev/null
+    # No file exists - create empty one in web root
+    echo "     topology.dot not found, creating empty file"
+    if [[ ! -f "$WEB_ROOT/topology.dot" ]]; then
+        echo "# LLDPq Topology Definition" | sudo tee "$WEB_ROOT/topology.dot" > /dev/null
+    fi
     sudo chown www-data:$USER "$WEB_ROOT/topology.dot"
     sudo chmod 664 "$WEB_ROOT/topology.dot"
     ln -sf "$WEB_ROOT/topology.dot" ~/lldpq/topology.dot
 fi
 
 echo "   - Setting up topology_config.yaml for web editing"
-# Move topology_config.yaml to web root for www-data access
-if [[ -f ~/lldpq/topology_config.yaml ]]; then
+# Handle topology_config.yaml - may be symlink from previous install, regular file, or not exist
+if [[ -L ~/lldpq/topology_config.yaml ]]; then
+    # Already a symlink - just ensure web root file has correct permissions
+    echo "     topology_config.yaml symlink already exists"
+    if [[ -f "$WEB_ROOT/topology_config.yaml" ]]; then
+        sudo chown www-data:$USER "$WEB_ROOT/topology_config.yaml"
+        sudo chmod 664 "$WEB_ROOT/topology_config.yaml"
+    fi
+elif [[ -f ~/lldpq/topology_config.yaml ]]; then
+    # Regular file - move to web root and create symlink
     sudo mv ~/lldpq/topology_config.yaml "$WEB_ROOT/topology_config.yaml"
     sudo chown www-data:$USER "$WEB_ROOT/topology_config.yaml"
     sudo chmod 664 "$WEB_ROOT/topology_config.yaml"
