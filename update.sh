@@ -78,13 +78,11 @@ sudo chmod 644 "$WEB_ROOT/VERSION"
 # Make all shell scripts executable
 sudo chmod +x "$WEB_ROOT"/*.sh
 
-# Ensure auth sessions directory exists
-if [[ ! -d /var/lib/lldpq/sessions ]]; then
-    sudo mkdir -p /var/lib/lldpq/sessions
-    sudo chown www-data:www-data /var/lib/lldpq/sessions
-    sudo chmod 700 /var/lib/lldpq/sessions
-    echo "   - Created sessions directory"
-fi
+# Ensure auth sessions directory exists with correct permissions
+sudo mkdir -p /var/lib/lldpq/sessions
+sudo chown www-data:www-data /var/lib/lldpq/sessions
+sudo chmod 700 /var/lib/lldpq/sessions
+echo "   - Sessions directory configured"
 
 # Create users file if it doesn't exist
 if [[ ! -f /etc/lldpq-users.conf ]]; then
@@ -92,9 +90,12 @@ if [[ ! -f /etc/lldpq-users.conf ]]; then
     OPERATOR_HASH=$(echo -n "operator" | openssl dgst -sha256 | awk '{print $2}')
     echo "admin:$ADMIN_HASH:admin" | sudo tee /etc/lldpq-users.conf > /dev/null
     echo "operator:$OPERATOR_HASH:operator" | sudo tee -a /etc/lldpq-users.conf > /dev/null
+    echo "   - Created users file with default credentials (admin/admin, operator/operator)"
+fi
+# Always ensure correct permissions on users file
+if [[ -f /etc/lldpq-users.conf ]]; then
     sudo chmod 600 /etc/lldpq-users.conf
     sudo chown www-data:www-data /etc/lldpq-users.conf
-    echo "   - Created users file with default credentials (admin/admin, operator/operator)"
 fi
 
 echo "   - Setting up topology.dot for web editing"

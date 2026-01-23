@@ -32,6 +32,38 @@ fi
 WEB_ROOT="/var/www/html"
 
 echo ""
+echo "[00] Checking for existing installation..."
+
+# Detect existing LLDPq installation
+EXISTING_INSTALL=false
+if [[ -f /etc/lldpq.conf ]] || [[ -f /etc/lldpq-users.conf ]] || [[ -d /var/lib/lldpq ]]; then
+    EXISTING_INSTALL=true
+    echo "   ⚠️  Existing LLDPq installation detected:"
+    [[ -f /etc/lldpq.conf ]] && echo "     • /etc/lldpq.conf"
+    [[ -f /etc/lldpq-users.conf ]] && echo "     • /etc/lldpq-users.conf (user credentials)"
+    [[ -d /var/lib/lldpq ]] && echo "     • /var/lib/lldpq/ (sessions)"
+    [[ -d "$HOME/lldpq" ]] && echo "     • ~/lldpq/ (scripts and configs)"
+    echo ""
+    echo "   Options:"
+    echo "   1. Clean install - remove old files and start fresh (recommended if broken)"
+    echo "   2. Keep existing - preserve user credentials and continue"
+    echo ""
+    read -p "   Clean install? [y/N]: " clean_response
+    if [[ "$clean_response" =~ ^[Yy]$ ]]; then
+        echo "   🧹 Cleaning existing installation..."
+        sudo rm -f /etc/lldpq.conf
+        sudo rm -f /etc/lldpq-users.conf
+        sudo rm -rf /var/lib/lldpq
+        # Don't remove ~/lldpq here - it has user configs like devices.yaml
+        echo "   ✅ Old installation files removed"
+    else
+        echo "   Keeping existing files"
+    fi
+else
+    echo "   No existing installation found - fresh install"
+fi
+
+echo ""
 echo "[01] Checking for conflicting services..."
 
 # Check if Apache2 is running (would conflict with nginx on port 80)
@@ -303,8 +335,6 @@ else
     echo "   - Users file already exists, keeping existing credentials"
 fi
 
-# Set permissions on auth-api.sh
-sudo chmod +x "$WEB_ROOT/auth-api.sh"
 echo "   - Authentication API configured"
 
 echo ""
