@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 # vim:set shiftwidth=4 expandtab:
 
 
@@ -9,7 +9,7 @@ NCurses ssh Connection Manager (nccm)
 
 ![](images/program_screenshot.png)
 
-Copyright (C) Kenneth Aaron.
+Copyright (C) 2021+ Kenneth Aaron.
 
 flyingrhino AT orcon DOT net DOT nz
 
@@ -46,6 +46,12 @@ About nccm
 * Secure.
 * Logs are in English - you don't need to be a developer to
     read the majority of the logs.
+* nccm has reached a stable state with no known bugs when
+    running on pure Linux (developed and tested the latest
+    stable version of Debian).
+    I will continue to fix bugs that I can recreate on
+    the latest clean-install stable version of Debian, and
+    only add features that are in the spirit of nccm.
 
 
 
@@ -65,6 +71,8 @@ Who is nccm for?
     or simply prefer to work more efficiently?
 * Need a simple tool to do its job reliably and securely
     without unnecessary features to slow you down?
+* Need an optional log that is replayable identically to
+    what you saw on your terminal?
 * If you answered 'yes' to any of the above -
     nccm is for YOU!
 
@@ -371,7 +379,7 @@ box - set this value similar to:
 and then create the target script similar to:
 
 ```
-#!/usr/bin/env bash
+#!/bin/bash
 
 scp /usr/local/lib/kenmode.sh $1:/tmp/
 ssh $1 chmod 664 /tmp/kenmode.sh
@@ -499,6 +507,8 @@ help line at the bottom of the screen.
 Command line arguments
 ======================
 
+All command line arguments are optional.
+
 * Supply initial filtering text. These are considered part
     of the Filter field and are AND'ed. Examples:
       `nccm abc xyz`
@@ -508,10 +518,10 @@ Command line arguments
     In cycle mode  `( nccm_loop_nccm == true )` - these args
     are stored in the  `Filter`  textbox for the next cycle.
 
-* -h  or --help :
+* -h  or  --help :
     Display the help message.
 
-* -d  or --debug :
+* -d  or  --debug :
     Force debug verbosity logging, ignoring any other
     logging settings everywhere else.
 
@@ -519,10 +529,16 @@ Command line arguments
     Force nccm to expose private information in syslog
     (secure by default - logs `CENSORED` instead).
 
-* -m  or --man :
+* -m  or  --man :
     Display the man page.
 
-* -v or --version :
+* -r <ROLE>  or  --role <ROLE> :
+    When this arg is supplied, a matching tag in the `roles`
+    list (a configuration item of each connection) must be
+    found for those entries to make it to the displayed
+    connections list.
+
+* -v or  --version :
     Display nccm version.
 
 
@@ -692,15 +708,30 @@ display the error code. Remember - nccm doesn't cause ssh
 to exit non-zero, all it does is expose this fact to the
 user.
 
+
+Filtered results
+----------------
+
+If you are receiving less results than in your `nccm.yml`
+file - check if you are filtering by role (or if your admin
+is enforcing this role based access for you).
+
+
+General tips
+------------
+
 If you find bugs please update to the latest version of
 nccm first (this may include updating your yaml file in
 case the format changed). If the bug persists please report
-it through the `issues` tab in github.
-I use nccm on Linux Mint and RHEL. I use it infrequently
-on Fedora too. I can easily fix any bugs that I can
-recreate on platforms that I use, but I know that nccm is
-used on many other platforms too - not all of which are
-pure Linux. If you encounter bugs that I can't recreate -
+it through the `issues` tab in github - making sure that
+you supply as much info as possible - OS name and version,
+any environment details, etc.
+I use nccm primarily on Debian latest version, and also
+infrequently on Fedora, Linux Mint and RHEL too.
+I can easily fix any bugs that I can recreate on platforms
+that I use, but I know that nccm is used on many other
+platforms too - not all of which are pure Linux.
+If you encounter bugs that I can't recreate -
 try posting as much debugging information as possible and
 I'll try to help, or one of the users may have the same
 platform as you and may be of assistance.
@@ -733,6 +764,18 @@ be considered.
 
 
 
+Known issues
+============
+
+Users have found the following problems on non-linux
+platforms:
+- Issues with nccm crashing due to missing libraries or
+missing/incomplete syslog or systemd. Solution - bring your
+system into compliance with pure Linux; this is not a bug
+in nccm. Look at old issues for decriptions and solutions.
+
+
+
 Credits
 =======
 
@@ -753,6 +796,7 @@ import logging.handlers
 import operator
 import os
 import pathlib
+import platform
 import pydoc
 import random
 import shlex
@@ -820,11 +864,11 @@ SecureLogging = True
 
 
 # Program identification strings:
-__version__     = '1.7.6'
-VersionDate     = '2024-04-28'
+__version__     = '1.8.3'
+VersionDate     = '2026-01-16'
 ProgramName     = 'NCurses ssh Connection Manager'
 AuthorName      = 'Kenneth Aaron'
-AuthorEmail     = 'flyingrhino AT orcon DOT net DOT nz'
+AuthorEmail     = 'Contact via github'
 License         = 'GPLv3'
 
 
@@ -833,9 +877,29 @@ class CustomHandler(logging.handlers.SysLogHandler):
     ''' Subclass for our custom log handler '''
 
     def __init__(self):
-        super(CustomHandler, self).__init__(address = '/dev/log')
-            # ^ Very important to send the address bit to SysLogHandler
-            #   else you won't get logging in syslog!
+        # Determine correct syslog address for the platform:
+        SysLogAddress = '/dev/log'
+
+        if platform.system() == 'Darwin':
+            SysLogAddress = '/var/run/syslog'
+
+        # Fallback logic in case the socket doesn't exist (e.g. non-standard environments):
+        if not os.path.exists(SysLogAddress):
+            # Try to connect to localhost UDP port 514 as a last resort:
+            SysLogAddress = ('localhost', 514)
+
+        try:
+            super(CustomHandler, self).__init__(address = SysLogAddress)
+        except Exception:
+            # If all fails, try to instantiate without address which defaults to localhost:514 usually
+            # or just fail gracefully.
+            try:
+                super(CustomHandler, self).__init__()
+                    # ^ Very important to send the address bit to SysLogHandler
+                    #   else you won't get logging in syslog!
+            except Exception:
+                # If logging fails effectively disable it or print to stderr:
+                print("Warning: Could not connect to syslog. Logging may be disabled.", file=sys.stderr)
 
 
     def emit(self, record):
@@ -1060,6 +1124,8 @@ class GlobalConfig:
         #       that item rather than giving the GUI back to the user.
     ForceDebugLogging = False
         # ^ Force debug logging - will be set properly shortly
+    Role = False
+        # ^ Limit results to specified role
     ScreenHeight = ScreenWidth = 0
         # ^ The terminal window dimensions
     DisplayObjects = []
@@ -1087,6 +1153,8 @@ class GlobalConfig:
         # ^ ~/.nccm.yml
     ConfigFilePath.append(str(pathlib.Path.home()) + '/' + ConfigFile)
         # ^ ~/nccm.yml
+    ConfigFilePath.append('/usr/local/etc/' + ConfigFile)
+        # ^ /usr/local/etc/nccm.yml (Common on macOS/BSD)
     ConfigFilePath.append('/etc/' + ConfigFile)
         # ^ /etc/nccm.yml
 
@@ -1094,7 +1162,7 @@ class GlobalConfig:
     # devices.yaml is the primary source of connections for LLDPq
     DevicesYamlPath = []
     # Try to get LLDPQ_DIR from /etc/lldpq.conf
-    LldpqDir = str(pathlib.Path.home()) + '/lldpq'  # default
+    LldpqDir = str(pathlib.Path.home()) + '/lldpq'  # default (stored as class attribute)
     if pathlib.Path('/etc/lldpq.conf').exists():
         try:
             with open('/etc/lldpq.conf', 'r') as f:
@@ -1105,7 +1173,8 @@ class GlobalConfig:
         except:
             pass
     DevicesYamlPath.append(LldpqDir + '/devices.yaml')
-    DevicesYamlPath.append(str(pathlib.Path.home()) + '/lldpq/devices.yaml')
+    if LldpqDir != str(pathlib.Path.home()) + '/lldpq':
+        DevicesYamlPath.append(str(pathlib.Path.home()) + '/lldpq/devices.yaml')
 
     # These vars remember the marker position after disconnecting from ssh
     #   so that the marker can be placed at the same position that was
@@ -1275,27 +1344,32 @@ class Connections:
         global SecureLogging
         ImportNccmD = False     # Whether to import yml files from /etc/nccm.d/
 
-        # Try to load nccm.yml (optional - defaults will be used if not found)
-        FileLooper = None
-        for FilePath in GlobalConfig.ConfigFilePath:
-            if pathlib.Path(FilePath).exists():
-                FileLooper = FilePath
+        for FileLooper in GlobalConfig.ConfigFilePath:
+            if pathlib.Path(FileLooper).exists():
                 break
-        
-        if FileLooper:
-            LogWrite.debug('Found config file: FileLooper == {}'.format(FileLooper))
-            try:
-                with open (FileLooper, 'r') as ConfigFileToRead:
-                    self.LoadedServersDict = yaml.safe_load(ConfigFileToRead)
-                    if self.LoadedServersDict is None:
-                        self.LoadedServersDict = {}
-            except Exception as Exc:
-                LogWrite.warning('Error loading nccm.yml, using defaults: {}'.format(Exc))
-                self.LoadedServersDict = {}
-        else:
-            # nccm.yml not found - this is OK, we'll load from devices.yaml
-            LogWrite.debug('No nccm.yml found, using defaults and loading from devices.yaml')
-            self.LoadedServersDict = {}
+        LogWrite.debug('Found config file: FileLooper == {}'.format(FileLooper))
+
+        try:
+            with open (FileLooper, 'r') as ConfigFileToRead:
+                self.LoadedServersDict = yaml.safe_load(ConfigFileToRead)
+                    # ^ yaml.load is not safe
+                # ^ Now we have the nccm.yml file loaded into self.LoadedServersDict.
+                #   This is both the ssh connections details as well as the
+                #   nccm_config_* items - all in the same dict.
+
+        except OSError as Exc:
+            # ^ This exception should be matched for all failures. The more generic one is backup.
+            curses.endwin()     # De-initialize and return terminal to normal status
+            print('\nError loading:  nccm.yml  from any of the following paths:\n{}\n\n'
+                'Tip: check if file exists in one of these locations, permissions, selinux context, etc.\n\n'
+                'Reraising exception for further debugging info and to initiate screen restore...\n\n'
+                .format(GlobalConfig.ConfigFilePath))
+            raise Exc
+
+        except:
+            curses.endwin()     # De-initialize and return terminal to normal status
+            print('Error loading nccm.yml\n\n')
+            raise Exc
 
         LogWrite.debug( {
             'unsafe':   'self.LoadedServersDict (contains prog settings + conn details) == {}'
@@ -1303,7 +1377,7 @@ class Connections:
             'safe':     'self.LoadedServersDict (contains prog settings + conn details) == {}'
                 .format('CENSORED') } )
             # ^ This dump will have program config + connection config details.
-            #   Soon we will pop out the program config items.
+            #   Soon we will pop out the program config items to remove them from the dict.
 
         # First we extract config items from self.LoadedServersDict
         # to prevent them from being read as conns later on.
@@ -1435,9 +1509,11 @@ class Connections:
         if self.LogPath:        # If supplied, validate this is a legitimate dir:
             if not pathlib.Path(self.LogPath).is_dir():
                 LogWrite.error('nccm_config_logpath == {} not found. '
-                    'nccm will not run without logging. Either fix the '
-                    'log path or disable logging'.format(self.LogPath))
-                raise Exception('Log path configured but actual path not found on filesystem')
+                    'nccm will not run if the configured logpath does not exist. '
+                    ' Either fix the log path or disable logging'.format(self.LogPath))
+                raise Exception('nccm_config_logpath == {} not found. '
+                    'nccm will not run if the configured logpath does not exist. '
+                    ' Either fix the log path or disable logging'.format(self.LogPath))
                     # ^ If you configured logging - you meant for it to work, and rely
                     #   upon it for later checkups or audit. Therefore if
                     #   it doesn't work it should be fixed or disabled.
@@ -1589,14 +1665,74 @@ class Connections:
                 self.LoadedServersDict[Looper] = {}
 
         LogWrite.debug( {
-            'unsafe':   'self.LoadedServersDict (by now it contains only conn details) == {}'
+            'unsafe':   'self.LoadedServersDict (by now it contains only connection details) == {}'
                 .format(self.LoadedServersDict),
-            'safe':     'self.LoadedServersDict (by now it contains only conn details) == {}'
+            'safe':     'self.LoadedServersDict (by now it contains only connection details) == {}'
                 .format('CENSORED') } )
             # ^ Now we have all the imported connection details too, and the
             #   program configs are gone because we pop'ed them out earlier.
 
-        LogWrite.debug('Next we load the connections details ...')
+        # If nccm was started with the roles argument - loop over the full list of connections
+        #   and remove all items that dont match the role name supplied.
+        # This code ensures that there will not be any leaks of connection items that the
+        #   role is not allowed to access:
+        LogWrite.debug('Remove connection items if role arg was supplied...')
+
+        if GlobalConfig.Role:
+            LogWrite.debug('Role arg was supplied - process the connections list to ensure role matches...')
+
+            ConnectionsToRemove = []
+                # ^ List of connections to remove that dont match the role. Will be populated first
+                #       and removed after.
+
+            for Looper in self.LoadedServersDict.keys():
+                LogWrite.debug( {
+                    'unsafe':   'Processing Looper == {} , with connection config == {}'
+                        .format(Looper, self.LoadedServersDict[Looper]),
+                    'safe':     'Processing Looper == CENSORED' } )
+
+                if 'roles' in self.LoadedServersDict[Looper]:
+                    LogWrite.debug('This connection has a role, checking role match next...')
+
+                    if not self.LoadedServersDict[Looper]['roles']:
+                        LogWrite.debug('Empty roles list found - removing from connections list...')
+                        ConnectionsToRemove.append(Looper)
+                        continue
+
+                    if len(self.LoadedServersDict[Looper]['roles']) < 1:
+                        # ^ Probably identical to the check above and should never match
+                        #       but added here to cover all options.
+                        LogWrite.debug('Empty roles list found - removing from connections list...')
+                        ConnectionsToRemove.append(Looper)
+                        continue
+
+                    if GlobalConfig.Role not in self.LoadedServersDict[Looper]['roles']:
+                        LogWrite.debug('Role not in approved roles list - removing from connections list...')
+                        ConnectionsToRemove.append(Looper)
+                        continue
+
+                    LogWrite.debug('Role arg matches - connection will be allowed in connections list')
+
+                else:
+                    LogWrite.debug('This connection does not have a role. '
+                        'No further checks required and connection will be removed from connections list...')
+                    ConnectionsToRemove.append(Looper)
+
+            LogWrite.debug('Connection role check loop completed')
+            LogWrite.debug( {
+                'unsafe':       'ConnectionsToRemove == {}'
+                    .format(ConnectionsToRemove),
+                'safe':         'ConnectionsToRemove == CENSORED' } )
+
+            # Now remove all the entries without a matching role so that they dont appear as connections in the list:
+            for Looper in ConnectionsToRemove:
+                self.LoadedServersDict.pop(Looper)
+            LogWrite.debug('Connections not allowed by role removed')
+
+        else:
+            LogWrite.debug('Role arg not supplied, we did not filter the connections list.')
+
+        LogWrite.debug('Next we load the connections details...')
 
         # Populate the FullServersList (list of config items as lists,
         # even unconfigured items):
@@ -2197,6 +2333,7 @@ def LogGlobalConfig():
             'GlobalConfig.FilterTextArg == {}\n'
             'GlobalConfig.AutoConnect == {}\n'
             'GlobalConfig.ForceDebugLogging == {}\n'
+            'GlobalConfig.Role == {}\n'
             'GlobalConfig.ScreenHeight == {}\n'
             'GlobalConfig.ScreenWidth == {}\n'
             'GlobalConfig.DisplayObjects: total == {} , details == {}\n'
@@ -2214,6 +2351,7 @@ def LogGlobalConfig():
                     GlobalConfig.FilterTextArg,
                     GlobalConfig.AutoConnect,
                     GlobalConfig.ForceDebugLogging,
+                    GlobalConfig.Role,
                     GlobalConfig.ScreenHeight,
                     GlobalConfig.ScreenWidth,
                     len(GlobalConfig.DisplayObjects), GlobalConfig.DisplayObjects,
@@ -2231,6 +2369,7 @@ def LogGlobalConfig():
             'GlobalConfig.FilterTextArg == {}\n'
             'GlobalConfig.AutoConnect == {}\n'
             'GlobalConfig.ForceDebugLogging == {}\n'
+            'GlobalConfig.Role == {}\n'
             'GlobalConfig.ScreenHeight == {}\n'
             'GlobalConfig.ScreenWidth == {}\n'
             'GlobalConfig.DisplayObjects: total == {} , details == {}\n'
@@ -2246,9 +2385,9 @@ def LogGlobalConfig():
                     GlobalConfig.PromptOnUnknownUser,
                     GlobalConfig.LoopNccm,
                     'CENSORED',
-                    'CENSORED',
                     GlobalConfig.AutoConnect,
                     GlobalConfig.ForceDebugLogging,
+                    'CENSORED',
                     GlobalConfig.ScreenHeight,
                     GlobalConfig.ScreenWidth,
                     len(GlobalConfig.DisplayObjects), GlobalConfig.DisplayObjects,
@@ -2836,8 +2975,8 @@ def ParseArgs():
 
     parser = argparse.ArgumentParser(
         description = 'LLDPq SSH Connection Manager (based on nccm by Kenneth Aaron). '
-                      'Automatically loads devices from ~/lldpq/devices.yaml',
-        epilog = 'Connections are loaded from devices.yaml - no nccm.yml needed!',
+                      'Automatically loads devices from {}/devices.yaml'.format(GlobalConfig.LldpqDir),
+        epilog = 'Connections loaded from: {}/devices.yaml'.format(GlobalConfig.LldpqDir),
         #add_help = False )
             # ^ Bypass the built in argparse help generator and release
             #   the -h and --help args for our own use.
@@ -2850,6 +2989,9 @@ def ParseArgs():
     parser.add_argument('-m', '--man',
         help='display nccm man page and exit',
         action='store_true' )
+
+    parser.add_argument('-r', '--role',
+        help = 'limit displayed results to specified role')
 
     parser.add_argument('-v', '--version',
         help='show version and exit',
@@ -2879,6 +3021,12 @@ def ParseArgs():
         GlobalConfig.ForceDebugLogging = True
         LogWrite.debug('Received command line arg --debug forcing nccm '
             'to run in debug mode')
+
+    if args.role:
+        LogWrite.debug( {
+            'unsafe':   'role == "{}"'.format(args.role),
+            'safe':     'role == CENSORED' } )
+        GlobalConfig.Role = args.role.rstrip()
 
     LogWrite.debug('parser object = {}'.format(parser))
     LogWrite.debug( {
@@ -3045,4 +3193,5 @@ if __name__ == '__main__':
 
     LogWrite.info('{} exiting. Program run time: {:.3f} seconds'
         .format(ProgramName, time.time() - ScriptStartTime))
+
 
