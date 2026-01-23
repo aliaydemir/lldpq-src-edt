@@ -61,7 +61,7 @@ validate_path() {
     fi
     
     # Block system files
-    if [[ "$file" =~ ^\.git/ ]] || [[ "$file" =~ ^\.vscode/ ]] || [[ "$file" =~ __pycache__/ ]]; then
+    if [[ "$file" =~ ^\.git/ ]] || [[ "$file" =~ ^\.vscode/ ]] || [[ "$file" =~ ^\.crossnote/ ]] || [[ "$file" =~ __pycache__/ ]]; then
         return 1
     fi
     
@@ -84,6 +84,7 @@ list_files() {
             files_json=$(find "$ANSIBLE_DIR" -type f \
                 ! -path "*/.git/*" \
                 ! -path "*/.vscode/*" \
+                ! -path "*/.crossnote/*" \
                 ! -path "*/__pycache__/*" \
                 ! -path "*/.ansible/*" \
                 ! -name "*.pyc" \
