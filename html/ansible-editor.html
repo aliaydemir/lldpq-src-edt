@@ -7,15 +7,15 @@
     <link rel="shortcut icon" href="/png/favicon.ico">
     <!-- Codicons - VS Code icon set -->
     <link rel="stylesheet" href="/css/codicon.css">
-    <!-- Highlight.js for code syntax highlighting -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/yaml.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/ini.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/django.min.js"></script>
+    <!-- Prism.js for code syntax highlighting (better YAML support) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-yaml.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-ini.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-jinja2.min.js"></script>
     <!-- Authentication -->
     <script src="/css/auth.js"></script>
     <!-- js-yaml for YAML validation (offline) -->
@@ -338,32 +338,48 @@
         #markdown-preview h2 { font-size: 1.4em; }
         #markdown-preview h3 { font-size: 1.2em; }
         #markdown-preview p { line-height: 1.6; margin: 10px 0; }
-        #markdown-preview code:not(.hljs) {
+        #markdown-preview code:not([class*="language-"]) {
             background: #2d2d2d;
             padding: 2px 6px;
             border-radius: 3px;
             font-family: 'Cascadia Code', Consolas, monospace;
+            color: #e6db74;
         }
-        #markdown-preview pre {
-            background: #0d1117 !important;
-            padding: 16px;
-            border-radius: 6px;
+        #markdown-preview pre[class*="language-"] {
+            background: #2d2d2d !important;
+            padding: 16px !important;
+            border-radius: 6px !important;
             overflow-x: auto;
-            margin: 12px 0;
-            border: 1px solid #30363d;
+            margin: 12px 0 !important;
+            border: 1px solid #3e4451 !important;
         }
         #markdown-preview pre code {
             background: transparent !important;
             padding: 0 !important;
-            font-size: 13px;
-            line-height: 1.6;
-            font-family: 'Cascadia Code', Consolas, 'Courier New', monospace;
+            font-size: 13px !important;
+            line-height: 1.6 !important;
+            font-family: 'Cascadia Code', Consolas, 'Courier New', monospace !important;
         }
-        /* Let highlight.js colors show through */
-        #markdown-preview pre code.hljs {
-            background: transparent !important;
-            padding: 0 !important;
-            color: inherit;
+        /* Prism.js token colors for better YAML */
+        #markdown-preview .token.key,
+        #markdown-preview .token.atrule {
+            color: #f92672 !important;
+        }
+        #markdown-preview .token.string {
+            color: #a6e22e !important;
+        }
+        #markdown-preview .token.number {
+            color: #ae81ff !important;
+        }
+        #markdown-preview .token.boolean {
+            color: #ae81ff !important;
+        }
+        #markdown-preview .token.punctuation {
+            color: #f8f8f2 !important;
+        }
+        #markdown-preview .token.comment {
+            color: #75715e !important;
+            font-style: italic;
         }
         #markdown-preview ul, #markdown-preview ol {
             padding-left: 20px;
@@ -1730,33 +1746,28 @@
             const content = state.editor ? state.editor.getValue() : '';
             if (typeof marked !== 'undefined') {
                 preview.innerHTML = marked.parse(content);
-                // Apply syntax highlighting to all code blocks
-                if (typeof hljs !== 'undefined') {
+                // Apply syntax highlighting with Prism.js
+                if (typeof Prism !== 'undefined') {
                     preview.querySelectorAll('pre code').forEach((block) => {
                         try {
-                            // Try to detect language from class
+                            // Get language from class
                             const classes = block.className.split(' ');
-                            let lang = null;
+                            let lang = 'yaml'; // default to yaml
                             for (const cls of classes) {
                                 if (cls.startsWith('language-')) {
                                     lang = cls.replace('language-', '');
                                     break;
                                 }
                             }
-                            // Map jinja2 to django (highlight.js naming)
-                            if (lang === 'jinja2' || lang === 'jinja') lang = 'django';
                             
-                            const code = block.textContent;
-                            if (lang && hljs.getLanguage(lang)) {
-                                block.innerHTML = hljs.highlight(code, { language: lang }).value;
-                            } else {
-                                // Auto-detect language
-                                const result = hljs.highlightAuto(code, ['yaml', 'bash', 'python', 'json', 'ini', 'django']);
-                                block.innerHTML = result.value;
-                            }
-                            block.classList.add('hljs');
+                            // Ensure the class is set for Prism
+                            block.className = 'language-' + lang;
+                            block.parentElement.className = 'language-' + lang;
+                            
+                            // Highlight with Prism
+                            Prism.highlightElement(block);
                         } catch (e) {
-                            console.warn('Highlight error:', e);
+                            console.warn('Prism highlight error:', e);
                         }
                     });
                 }
