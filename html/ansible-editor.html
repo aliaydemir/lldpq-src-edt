@@ -819,11 +819,8 @@
                     <span class="codicon codicon-terminal"></span>
                 </button>
                 <span class="toolbar-separator"></span>
-                <button class="toolbar-btn" id="btn-preview" onclick="toggleMarkdownMode()" title="Toggle Edit/Preview Mode" style="display: none;">
+                <button class="toolbar-btn" id="btn-preview" onclick="toggleMarkdownMode()" title="Toggle Mode" style="display: none;">
                     MD
-                </button>
-                <button class="toolbar-btn" id="btn-fullscreen" onclick="toggleFullScreen()" title="Toggle Full Screen" style="display: none;">
-                    <span class="codicon codicon-screen-full"></span>
                 </button>
             </div>
             <div id="editor-tabs" class="editor-tabs">
@@ -1558,11 +1555,11 @@
             updateUI();
         }
         
-        // Markdown Preview - 3 modes: Full Preview, Split View, Editor Only
+        // Markdown Preview - 3 modes cycle: Full Preview → Split → Editor Only → Full Preview
         // State: 'full-preview' | 'split' | 'editor-only'
         state.markdownMode = 'full-preview';
         
-        // MD button: cycle through modes (Full Preview → Split → Editor Only → Full Preview)
+        // MD button: cycle through modes
         function toggleMarkdownMode() {
             const preview = document.getElementById('markdown-preview');
             const editor = document.getElementById('editor-container');
@@ -1590,50 +1587,16 @@
             updateMarkdownButtons();
         }
         
-        // Fullscreen button: toggle between current mode and full version
-        function toggleFullScreen() {
-            const preview = document.getElementById('markdown-preview');
-            const editor = document.getElementById('editor-container');
-            
-            if (state.markdownMode === 'split') {
-                // Split → Full Preview
-                state.markdownMode = 'full-preview';
-                preview.classList.add('full-preview');
-                editor.style.display = 'none';
-            } else if (state.markdownMode === 'full-preview') {
-                // Full Preview → Editor Only
-                state.markdownMode = 'editor-only';
-                preview.classList.remove('visible');
-                preview.classList.remove('full-preview');
-                editor.style.display = 'block';
-            } else {
-                // Editor Only → Split
-                state.markdownMode = 'split';
-                preview.classList.add('visible');
-                preview.classList.remove('full-preview');
-                editor.style.display = 'block';
-                updateMarkdownPreview();
-            }
-            updateMarkdownButtons();
-        }
-        
         function updateMarkdownButtons() {
             const btnMD = document.getElementById('btn-preview');
-            const btnFull = document.getElementById('btn-fullscreen');
             
-            // Update icons based on current mode
+            // Update tooltip based on next mode
             if (state.markdownMode === 'full-preview') {
-                btnMD.title = 'Split View';
-                btnFull.innerHTML = '<span class="codicon codicon-edit"></span>';
-                btnFull.title = 'Editor Only';
+                btnMD.title = 'Split View (MD + Editor)';
             } else if (state.markdownMode === 'split') {
                 btnMD.title = 'Editor Only';
-                btnFull.innerHTML = '<span class="codicon codicon-screen-full"></span>';
-                btnFull.title = 'Full Preview';
             } else {
-                btnMD.title = 'Full Preview';
-                btnFull.innerHTML = '<span class="codicon codicon-open-preview"></span>';
-                btnFull.title = 'Split View';
+                btnMD.title = 'Preview Only';
             }
         }
         
@@ -1647,9 +1610,8 @@
             preview.classList.add('full-preview');
             editor.style.display = 'none';
             
-            // Show buttons
+            // Show MD button
             document.getElementById('btn-preview').style.display = 'inline-flex';
-            document.getElementById('btn-fullscreen').style.display = 'inline-flex';
             
             updateMarkdownPreview();
             updateMarkdownButtons();
@@ -1667,9 +1629,8 @@
             preview.classList.remove('visible');
             preview.classList.remove('full-preview');
             
-            // Hide buttons
+            // Hide MD button
             document.getElementById('btn-preview').style.display = 'none';
-            document.getElementById('btn-fullscreen').style.display = 'none';
             
             // Show editor
             document.getElementById('editor-container').style.display = 'block';
