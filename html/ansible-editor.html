@@ -1562,6 +1562,7 @@
         // State: 'full-preview' | 'split' | 'editor-only'
         state.markdownMode = 'full-preview';
         
+        // MD button: cycle through modes (Full Preview → Split → Editor Only → Full Preview)
         function toggleMarkdownMode() {
             const preview = document.getElementById('markdown-preview');
             const editor = document.getElementById('editor-container');
@@ -1570,27 +1571,16 @@
                 // Full Preview → Split View
                 state.markdownMode = 'split';
                 preview.classList.remove('full-preview');
+                preview.classList.add('visible');
                 editor.style.display = 'block';
             } else if (state.markdownMode === 'split') {
-                // Split View → Full Preview
-                state.markdownMode = 'full-preview';
-                preview.classList.add('full-preview');
-                editor.style.display = 'none';
-            }
-            updateMarkdownButtons();
-        }
-        
-        function toggleFullScreen() {
-            const preview = document.getElementById('markdown-preview');
-            const editor = document.getElementById('editor-container');
-            
-            if (state.markdownMode === 'full-preview') {
-                // Full Preview → Split View
-                state.markdownMode = 'split';
+                // Split View → Editor Only
+                state.markdownMode = 'editor-only';
+                preview.classList.remove('visible');
                 preview.classList.remove('full-preview');
                 editor.style.display = 'block';
             } else {
-                // Split/Editor → Full Preview
+                // Editor Only → Full Preview
                 state.markdownMode = 'full-preview';
                 preview.classList.add('visible');
                 preview.classList.add('full-preview');
@@ -1600,16 +1590,50 @@
             updateMarkdownButtons();
         }
         
+        // Fullscreen button: toggle between current mode and full version
+        function toggleFullScreen() {
+            const preview = document.getElementById('markdown-preview');
+            const editor = document.getElementById('editor-container');
+            
+            if (state.markdownMode === 'split') {
+                // Split → Full Preview
+                state.markdownMode = 'full-preview';
+                preview.classList.add('full-preview');
+                editor.style.display = 'none';
+            } else if (state.markdownMode === 'full-preview') {
+                // Full Preview → Editor Only
+                state.markdownMode = 'editor-only';
+                preview.classList.remove('visible');
+                preview.classList.remove('full-preview');
+                editor.style.display = 'block';
+            } else {
+                // Editor Only → Split
+                state.markdownMode = 'split';
+                preview.classList.add('visible');
+                preview.classList.remove('full-preview');
+                editor.style.display = 'block';
+                updateMarkdownPreview();
+            }
+            updateMarkdownButtons();
+        }
+        
         function updateMarkdownButtons() {
             const btnMD = document.getElementById('btn-preview');
             const btnFull = document.getElementById('btn-fullscreen');
             
+            // Update icons based on current mode
             if (state.markdownMode === 'full-preview') {
-                btnFull.innerHTML = '<span class="codicon codicon-screen-normal"></span>';
-                btnFull.title = 'Split View (Show Editor)';
-            } else {
+                btnMD.title = 'Split View';
+                btnFull.innerHTML = '<span class="codicon codicon-edit"></span>';
+                btnFull.title = 'Editor Only';
+            } else if (state.markdownMode === 'split') {
+                btnMD.title = 'Editor Only';
                 btnFull.innerHTML = '<span class="codicon codicon-screen-full"></span>';
-                btnFull.title = 'Full Preview (Hide Editor)';
+                btnFull.title = 'Full Preview';
+            } else {
+                btnMD.title = 'Full Preview';
+                btnFull.innerHTML = '<span class="codicon codicon-open-preview"></span>';
+                btnFull.title = 'Split View';
             }
         }
         
