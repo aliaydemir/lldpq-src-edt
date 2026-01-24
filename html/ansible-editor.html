@@ -1776,16 +1776,21 @@
                     el.removeAttribute('style');
                 });
                 
-                // Triple-check: Clean all code blocks to pure text
+                // Fix code blocks: normalize line breaks
                 preview.querySelectorAll('pre code').forEach(codeBlock => {
-                    let plainText = codeBlock.textContent;
-                    // Remove leading empty lines AND leading whitespace on first line
-                    plainText = plainText.replace(/^[\n\r]+/, '');  // Remove leading newlines
-                    codeBlock.textContent = plainText;  // Direct assignment strips all HTML
+                    // Get HTML and convert <br> to \n
+                    let html = codeBlock.innerHTML;
+                    // Replace <br>, <br/>, <br /> with newline
+                    html = html.replace(/<br\s*\/?>/gi, '\n');
+                    // Strip all other HTML tags
+                    const temp = document.createElement('div');
+                    temp.innerHTML = html;
+                    let plainText = temp.textContent || temp.innerText;
+                    // Trim leading/trailing empty lines but keep internal structure
+                    plainText = plainText.replace(/^\n+/, '').replace(/\n+$/, '');
+                    // Set as plain text
+                    codeBlock.textContent = plainText;
                 });
-                
-                // Also remove <br> elements inside code blocks
-                preview.querySelectorAll('pre code br').forEach(br => br.remove());
             } else {
                 preview.innerHTML = simpleMarkdown(content);
             }
