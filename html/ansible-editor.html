@@ -1699,6 +1699,9 @@
             text = result.join('\n');
             
             return text
+                .replace(/^###### (.*$)/gm, '<h6>$1</h6>')
+                .replace(/^##### (.*$)/gm, '<h5>$1</h5>')
+                .replace(/^#### (.*$)/gm, '<h4>$1</h4>')
                 .replace(/^### (.*$)/gm, '<h3>$1</h3>')
                 .replace(/^## (.*$)/gm, '<h2>$1</h2>')
                 .replace(/^# (.*$)/gm, '<h1>$1</h1>')
@@ -1719,9 +1722,9 @@
                 .replace(/^\* (.*$)/gm, '<li>$1</li>')
                 .replace(/\n{3,}/g, '<br><br>')  // Max 2 line breaks
                 .replace(/\n/g, '<br>')
-                .replace(/<br><br>(<h[123]>)/g, '$1')  // Remove breaks before headings
-                .replace(/<br>(<h[123]>)/g, '$1')
-                .replace(/(<\/h[123]>)<br><br>/g, '$1')  // Remove breaks after headings
+                .replace(/<br><br>(<h[1-6]>)/g, '$1')  // Remove breaks before headings
+                .replace(/<br>(<h[1-6]>)/g, '$1')
+                .replace(/(<\/h[1-6]>)<br><br>/g, '$1')  // Remove breaks after headings
                 .replace(/(<\/h[123]>)<br>/g, '$1')
                 .replace(/<br><br>(<hr)/g, '$1')  // Remove breaks before hr
                 .replace(/<br>(<hr)/g, '$1')
