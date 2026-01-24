@@ -341,8 +341,9 @@
             background: #2d2d2d;
             padding: 2px 6px;
             border-radius: 3px;
-            font-family: 'Cascadia Code', Consolas, monospace;
+            font-family: 'Menlo', 'DejaVu Sans Mono', 'Liberation Mono', 'Consolas', monospace;
             color: #e6db74;
+            font-size: 13px;
         }
         #markdown-preview pre {
             border-radius: 4px !important;
@@ -352,8 +353,8 @@
             background: #282c34 !important;  /* Atom One Dark bg */
         }
         #markdown-preview pre code {
-            font-size: 14px !important;
-            line-height: 1.45 !important;
+            font-size: 12.8px !important;  /* Slightly smaller for better character alignment */
+            line-height: 1.6 !important;
             /* Use exact same font stack as GitLab */
             font-family: 'Menlo', 'DejaVu Sans Mono', 'Liberation Mono', 'Consolas', 'Ubuntu Mono', 'Courier New', 'andale mono', 'lucida console', monospace !important;
             white-space: pre !important;
@@ -363,8 +364,22 @@
             margin: 0 !important;
             background: transparent !important;
             display: block !important;
+            /* Fix font rendering for better alignment */
+            letter-spacing: normal !important;
+            word-spacing: normal !important;
+            font-variant-ligatures: none !important;  /* Disable ligatures */
+            -webkit-font-smoothing: antialiased !important;
+            -moz-osx-font-smoothing: grayscale !important;
+            text-rendering: optimizeLegibility !important;
         }
-        /* Highlight.js uses its own color scheme - just ensure proper monospace */
+        /* Highlight.js token fixes */
+        #markdown-preview pre code .hljs,
+        #markdown-preview pre code span {
+            font-family: inherit !important;
+            font-size: inherit !important;
+            letter-spacing: inherit !important;
+            line-height: inherit !important;
+        }
         #markdown-preview ul, #markdown-preview ol {
             padding-left: 20px;
         }
