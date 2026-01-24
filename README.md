@@ -189,10 +189,14 @@ operator / operator   # limited access (no Ansible)
 - **password management**: admin can change both passwords via UI
 
 ### roles:
-| Role | Dashboard | Topology | Configs | Ansible Editor |
-|------|-----------|----------|---------|----------------|
-| admin | Yes | Yes | Yes | Yes |
-| operator | Yes | Yes | Yes | No |
+| Role | Dashboard | Topology View | Topology Edit | Configs | Ansible Editor |
+|------|-----------|---------------|---------------|---------|----------------|
+| admin | Yes | Yes | Yes | Yes | Yes |
+| operator | Yes | Yes | No | Yes | No |
+
+**Operator restrictions:**
+- Cannot edit `topology.dot` or `topology_config.yaml`
+- Cannot access Ansible Config Editor
 
 ### change passwords:
 1. login as admin
