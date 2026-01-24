@@ -345,17 +345,15 @@
             font-family: 'Cascadia Code', Consolas, monospace;
             color: #e6db74;
         }
-        #markdown-preview pre[class*="language-"] {
+        #markdown-preview pre {
             background: #1d1f21 !important;  /* GitLab dark bg */
             border-radius: 6px !important;
             margin: 12px 0 !important;
             padding: 16px !important;
             border: 1px solid #373b41 !important;
         }
-        #markdown-preview code[class*="language-"] {
-            color: #c5c8c6 !important;  /* GitLab dark text */
-        }
         #markdown-preview pre code {
+            color: #c5c8c6 !important;  /* GitLab dark text - default */
             background: transparent !important;
             font-size: 13px !important;
             line-height: 1.6 !important;
@@ -1795,7 +1793,7 @@
                         try {
                             // Get language from class
                             const classes = block.className.split(' ');
-                            let lang = 'yaml'; // default to yaml
+                            let lang = null;
                             for (const cls of classes) {
                                 if (cls.startsWith('language-')) {
                                     lang = cls.replace('language-', '');
@@ -1803,13 +1801,16 @@
                                 }
                             }
                             
-                            // Check if language grammar exists
-                            const grammar = Prism.languages[lang] || Prism.languages.yaml;
-                            if (grammar) {
-                                const code = block.textContent;
-                                block.innerHTML = Prism.highlight(code, grammar, lang);
-                                block.className = 'language-' + lang;
-                                block.parentElement.className = 'language-' + lang;
+                            // Only highlight if a specific language is specified and grammar exists
+                            // Don't default to yaml - leave plain text as-is
+                            if (lang && lang !== 'code' && lang !== 'text' && lang !== 'plaintext') {
+                                const grammar = Prism.languages[lang];
+                                if (grammar) {
+                                    const code = block.textContent;
+                                    block.innerHTML = Prism.highlight(code, grammar, lang);
+                                    block.className = 'language-' + lang;
+                                    block.parentElement.className = 'language-' + lang;
+                                }
                             }
                         } catch (e) {
                             console.warn('Prism highlight error:', e);
