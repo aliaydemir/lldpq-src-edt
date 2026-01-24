@@ -7,12 +7,7 @@
     <link rel="shortcut icon" href="/png/favicon.ico">
     <!-- Codicons - VS Code icon set -->
     <link rel="stylesheet" href="/css/codicon.css">
-    <!-- Highlight.js for code syntax highlighting (like GitLab) -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/yaml.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+    <!-- No syntax highlighting - it breaks monospace alignment for ASCII art -->
     <!-- Authentication -->
     <script src="/css/auth.js"></script>
     <!-- js-yaml for YAML validation (offline) -->
@@ -391,29 +386,7 @@
         #markdown-preview pre code {
             display: block !important;
         }
-        /* Override ALL highlight.js spans - force exact monospace */
-        #markdown-preview pre code .hljs,
-        #markdown-preview pre code span,
-        #markdown-preview pre code span.hljs-operator,
-        #markdown-preview pre code span.hljs-punctuation,
-        #markdown-preview pre code span.hljs-string,
-        #markdown-preview pre code span.hljs-comment,
-        #markdown-preview pre code span.hljs-keyword,
-        #markdown-preview pre code span.hljs-number {
-            font-family: 'Menlo', 'DejaVu Sans Mono', 'Liberation Mono', 'Consolas', monospace !important;
-            font-size: 13px !important;
-            line-height: 1.5 !important;
-            letter-spacing: 0 !important;
-            word-spacing: 0 !important;
-            font-weight: normal !important;
-            font-style: normal !important;
-            text-decoration: none !important;
-            background: none !important;
-            padding: 0 !important;
-            margin: 0 !important;
-            border: none !important;
-            display: inline !important;
-        }
+        /* No highlight.js - removed to preserve monospace alignment */
         #markdown-preview ul, #markdown-preview ol {
             padding-left: 20px;
         }
@@ -1779,37 +1752,8 @@
             const content = state.editor ? state.editor.getValue() : '';
             if (typeof marked !== 'undefined') {
                 preview.innerHTML = marked.parse(content);
-                // Apply syntax highlighting with highlight.js (like GitLab)
-                if (typeof hljs !== 'undefined') {
-                    // Disable auto-detection globally
-                    hljs.configure({
-                        ignoreUnescapedHTML: true,
-                        languages: ['yaml', 'bash', 'python', 'json', 'ini']
-                    });
-                    
-                    preview.querySelectorAll('pre code').forEach((block) => {
-                        try {
-                            // Get language from class
-                            const classes = block.className.split(' ');
-                            let lang = null;
-                            for (const cls of classes) {
-                                if (cls.startsWith('language-')) {
-                                    lang = cls.replace('language-', '');
-                                    break;
-                                }
-                            }
-                            
-                            // ONLY highlight if language is explicitly specified and supported
-                            // This prevents auto-detection from breaking ASCII art
-                            if (lang && ['yaml', 'bash', 'python', 'json', 'ini', 'shell', 'sh'].includes(lang)) {
-                                hljs.highlightElement(block);
-                            }
-                            // Otherwise leave it as plain monospace text
-                        } catch (e) {
-                            console.warn('Highlight.js error:', e);
-                        }
-                    });
-                }
+                // DON'T use syntax highlighting - it breaks monospace alignment
+                // Just ensure all code blocks use consistent monospace font
             } else {
                 preview.innerHTML = simpleMarkdown(content);
             }
