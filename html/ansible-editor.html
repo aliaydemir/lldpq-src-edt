@@ -1780,15 +1780,20 @@
                 preview.querySelectorAll('pre code').forEach(codeBlock => {
                     // Get HTML and convert <br> to \n
                     let html = codeBlock.innerHTML;
-                    // Replace <br>, <br/>, <br /> with newline
                     html = html.replace(/<br\s*\/?>/gi, '\n');
                     // Strip all other HTML tags
                     const temp = document.createElement('div');
                     temp.innerHTML = html;
                     let plainText = temp.textContent || temp.innerText;
-                    // Trim leading/trailing empty lines but keep internal structure
+                    // Trim leading/trailing empty lines
                     plainText = plainText.replace(/^\n+/, '').replace(/\n+$/, '');
-                    // Set as plain text
+                    
+                    // Fix: If first line has only box-drawing chars, add invisible char
+                    const firstLine = plainText.split('\n')[0];
+                    if (firstLine && /^[\s\|\-\+\<\>\=\_\[\]\/\\]+$/.test(firstLine)) {
+                        plainText = '\u200B' + plainText;  // Add zero-width space
+                    }
+                    
                     codeBlock.textContent = plainText;
                 });
             } else {
