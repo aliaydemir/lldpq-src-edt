@@ -1751,9 +1751,25 @@
             
             const content = state.editor ? state.editor.getValue() : '';
             if (typeof marked !== 'undefined') {
+                // Configure marked to NOT render HTML - keep it as plain text
+                marked.setOptions({
+                    mangle: false,
+                    headerIds: false,
+                    breaks: true
+                });
                 preview.innerHTML = marked.parse(content);
-                // DON'T use syntax highlighting - it breaks monospace alignment
-                // Just ensure all code blocks use consistent monospace font
+                
+                // Remove any inline styles that might have been added
+                preview.querySelectorAll('[style]').forEach(el => {
+                    el.removeAttribute('style');
+                });
+                preview.querySelectorAll('span, div').forEach(el => {
+                    // Remove wrapper spans/divs inside code blocks
+                    if (el.closest('pre code')) {
+                        const text = el.textContent;
+                        el.replaceWith(document.createTextNode(text));
+                    }
+                });
             } else {
                 preview.innerHTML = simpleMarkdown(content);
             }
