@@ -795,6 +795,16 @@
                     <span class="codicon codicon-redo"></span>
                 </button>
                 <span class="toolbar-separator"></span>
+                <button class="toolbar-btn" onclick="editorAction('zoomIn')" title="Zoom In (Ctrl++)">
+                    <span class="codicon codicon-zoom-in"></span>
+                </button>
+                <button class="toolbar-btn" onclick="editorAction('zoomReset')" title="Reset Zoom">
+                    <span class="codicon codicon-screen-normal"></span>
+                </button>
+                <button class="toolbar-btn" onclick="editorAction('zoomOut')" title="Zoom Out (Ctrl+-)">
+                    <span class="codicon codicon-zoom-out"></span>
+                </button>
+                <span class="toolbar-separator"></span>
                 <button class="toolbar-btn" onclick="editorAction('foldAll')" title="Fold All">
                     <span class="codicon codicon-fold"></span>
                 </button>
@@ -1229,6 +1239,15 @@
                     break;
                 case 'redo':
                     state.editor.trigger('toolbar', 'redo');
+                    break;
+                case 'zoomIn':
+                    state.editor.trigger('toolbar', 'editor.action.fontZoomIn');
+                    break;
+                case 'zoomOut':
+                    state.editor.trigger('toolbar', 'editor.action.fontZoomOut');
+                    break;
+                case 'zoomReset':
+                    state.editor.trigger('toolbar', 'editor.action.fontZoomReset');
                     break;
                 case 'foldAll':
                     state.editor.trigger('toolbar', 'editor.foldAll');
