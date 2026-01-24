@@ -2040,7 +2040,7 @@
                         <button onclick="this.closest('#diff-popup-modal').remove()" style="background: none; border: none; color: ${headerText}; font-size: 24px; cursor: pointer; padding: 0; line-height: 1;">&times;</button>
                     </div>
                     <div style="padding: 20px; max-height: 60vh; overflow: auto;">
-                        <pre style="margin: 0; white-space: pre-wrap; font-family: 'Consolas', 'Monaco', monospace; font-size: 13px; line-height: 1.5; color: #d4d4d4;">${escapeHtml(content)}</pre>
+                        <pre style="margin: 0; white-space: pre-wrap; font-family: 'Consolas', 'Monaco', monospace; font-size: 13px; line-height: 1.5; color: #d4d4d4;">${ansiToHtml(content)}</pre>
                     </div>
                     <div style="padding: 15px 20px; background: #252526; text-align: right; border-top: 1px solid #404040;">
                         <button onclick="this.closest('#diff-popup-modal').remove()" style="background: #404040; color: white; border: none; padding: 8px 20px; border-radius: 4px; cursor: pointer; margin-right: 10px;">Close</button>
