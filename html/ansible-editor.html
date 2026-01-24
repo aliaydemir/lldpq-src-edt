@@ -1533,6 +1533,10 @@
                 document.getElementById('editor-container').style.display = 'none';
                 document.getElementById('yaml-validation').style.display = 'none';
                 hideMarkdownPreview();
+                // Clear editor content
+                if (state.editor) {
+                    state.editor.setValue('');
+                }
             }
             
             updateUI();
@@ -1553,6 +1557,10 @@
             document.getElementById('editor-container').style.display = 'none';
             document.getElementById('yaml-validation').style.display = 'none';
             hideMarkdownPreview();
+            // Clear editor content
+            if (state.editor) {
+                state.editor.setValue('');
+            }
             hideMarkdownPreview();
             updateUI();
         }
