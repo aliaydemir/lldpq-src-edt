@@ -1278,6 +1278,21 @@
         }
         
         function toggleHostSelection(host) {
+            // If "all" is selected, clear everything else and close menu
+            if (host === 'all') {
+                selectedHosts = ['all'];
+                updateHostDropdownUI();
+                // Close the dropdown
+                document.getElementById('host-dropdown-menu').classList.remove('show');
+                return;
+            }
+            
+            // If selecting something other than "all", remove "all" if it was selected
+            const allIndex = selectedHosts.indexOf('all');
+            if (allIndex !== -1) {
+                selectedHosts.splice(allIndex, 1);
+            }
+            
             const index = selectedHosts.indexOf(host);
             if (index === -1) {
                 selectedHosts.push(host);
@@ -1292,6 +1307,8 @@
             const text = document.getElementById('host-dropdown-text');
             if (selectedHosts.length === 0) {
                 text.textContent = 'Select hosts...';
+            } else if (selectedHosts.length === 1 && selectedHosts[0] === 'all') {
+                text.textContent = 'ALL HOSTS';
             } else if (selectedHosts.length === 1) {
                 text.textContent = selectedHosts[0];
             } else {
