@@ -1794,31 +1794,6 @@
             
             const content = state.editor ? state.editor.getValue() : '';
             if (typeof marked !== 'undefined') {
-                // Configure marked with custom renderer for code blocks
-                const renderer = new marked.Renderer();
-                
-                // Custom code block renderer - preserve exact content
-                renderer.code = function(code, language) {
-                    const lang = language || '';
-                    const langClass = lang ? 'language-' + lang : '';
-                    // Escape HTML to prevent any interpretation
-                    const escaped = code
-                        .replace(/&/g, '&amp;')
-                        .replace(/</g, '&lt;')
-                        .replace(/>/g, '&gt;')
-                        .replace(/"/g, '&quot;')
-                        .replace(/'/g, '&#039;');
-                    return '<pre class="' + langClass + '"><code class="' + langClass + '">' + escaped + '</code></pre>';
-                };
-                
-                marked.setOptions({
-                    renderer: renderer,
-                    gfm: true,
-                    breaks: false,
-                    pedantic: false,
-                    smartLists: true,
-                    smartypants: false
-                });
                 preview.innerHTML = marked.parse(content);
                 // Apply syntax highlighting with Prism.js
                 if (typeof Prism !== 'undefined' && Prism.languages) {
