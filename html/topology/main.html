@@ -403,8 +403,8 @@
 <body>
     <div class="toolbar">
         <button onclick="runLLDPCheck()" id="runLLDPCheck">▶ Run LLDPq</button>
-        <button onclick="openTopologyEditor()" id="btn-edit-topology">✎ Edit Topology</button>
-        <button onclick="openConfigEditor()" id="btn-edit-order">⚙ Edit Order</button>
+        <button onclick="openTopologyEditor()" id="btn-edit-topology" style="display: none;">✎ Edit Topology</button>
+        <button onclick="openConfigEditor()" id="btn-edit-order" style="display: none;">⚙ Edit Order</button>
         <button onclick="location.reload()">↻ Refresh</button>
         <button onclick="setLayout('dagre-lr')" id="btn-hlr">→ Horizontal</button>
         <button onclick="setLayout('dagre-tb')" id="btn-hud" class="active">↓ Vertical</button>
@@ -562,14 +562,14 @@
         </div>
     </div>
     
-    <!-- Hide edit buttons for operators -->
+    <!-- Show edit buttons only for admin -->
     <script>
         (async function() {
             await LLDPqAuth.checkAuth();
-            if (LLDPqAuth.isOperator()) {
-                // Hide topology and config edit buttons
-                document.getElementById('btn-edit-topology').style.display = 'none';
-                document.getElementById('btn-edit-order').style.display = 'none';
+            if (LLDPqAuth.isAdmin()) {
+                // Show topology and config edit buttons for admin only
+                document.getElementById('btn-edit-topology').style.display = '';
+                document.getElementById('btn-edit-order').style.display = '';
             }
         })();
     </script>
