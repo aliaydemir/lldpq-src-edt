@@ -355,25 +355,34 @@
         #markdown-preview pre code,
         #markdown-preview pre code.hljs,
         #markdown-preview pre code *,
-        #markdown-preview pre code .hljs * {
-            font-size: 12.8px !important;  /* Slightly smaller for better character alignment */
-            line-height: 1.6 !important;
+        #markdown-preview pre code .hljs *,
+        #markdown-preview pre code span {
+            font-size: 13px !important;
+            line-height: 1.5 !important;
             /* Use exact same font stack as GitLab */
-            font-family: 'Menlo', 'DejaVu Sans Mono', 'Liberation Mono', 'Consolas', 'Ubuntu Mono', 'Courier New', 'andale mono', 'lucida console', monospace !important;
+            font-family: 'Menlo', 'DejaVu Sans Mono', 'Liberation Mono', 'Consolas', 'Ubuntu Mono', 'Courier New', monospace !important;
             white-space: pre !important;
-            tab-size: 8 !important;  /* GitLab uses tab-width-8 */
+            tab-size: 8 !important;
             -moz-tab-size: 8 !important;
             padding: 0 !important;
             margin: 0 !important;
             background: transparent !important;
+            border: none !important;
             display: inline !important;
-            /* Fix font rendering for better alignment */
-            letter-spacing: normal !important;
-            word-spacing: normal !important;
-            font-variant-ligatures: none !important;  /* Disable ligatures */
-            -webkit-font-smoothing: antialiased !important;
-            -moz-osx-font-smoothing: grayscale !important;
-            text-rendering: optimizeLegibility !important;
+            /* Critical: Force all characters to exact same width */
+            letter-spacing: 0 !important;
+            word-spacing: 0 !important;
+            font-variant-ligatures: none !important;
+            font-variant-numeric: tabular-nums !important;  /* Equal-width numbers */
+            font-feature-settings: "liga" 0, "calt" 0 !important;  /* Disable all ligatures */
+            -webkit-font-smoothing: subpixel-antialiased !important;
+            -moz-osx-font-smoothing: auto !important;
+            text-rendering: geometricPrecision !important;  /* More precise than optimizeLegibility */
+            /* Prevent any inline formatting from breaking alignment */
+            font-weight: inherit !important;
+            font-style: inherit !important;
+            text-decoration: none !important;
+            vertical-align: baseline !important;
         }
         #markdown-preview pre code {
             display: block !important;
