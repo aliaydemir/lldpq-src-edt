@@ -1760,7 +1760,9 @@
                 
                 // Triple-check: Clean all code blocks to pure text
                 preview.querySelectorAll('pre code').forEach(codeBlock => {
-                    const plainText = codeBlock.textContent;
+                    let plainText = codeBlock.textContent;
+                    // Remove leading empty lines that cause first line shift
+                    plainText = plainText.replace(/^\n+/, '');
                     codeBlock.innerHTML = '';
                     codeBlock.appendChild(document.createTextNode(plainText));
                 });
