@@ -346,10 +346,17 @@
             padding: 12px 16px !important;
             overflow-x: auto !important;
             background: #282c34 !important;
-            /* Force strict monospace rendering */
             word-break: normal !important;
             overflow-wrap: normal !important;
             word-wrap: normal !important;
+            /* Fix first line issues */
+            text-align: left !important;
+            direction: ltr !important;
+        }
+        #markdown-preview pre::before,
+        #markdown-preview pre::after {
+            content: none !important;
+            display: none !important;
         }
         #markdown-preview pre code {
             display: block !important;
@@ -367,9 +374,20 @@
             word-spacing: 0 !important;
             font-variant-ligatures: none !important;
             text-rendering: geometricPrecision !important;
-            /* Fix: Prevent first line from shifting */
             text-indent: 0 !important;
             vertical-align: top !important;
+            /* Fix first line shift */
+            float: none !important;
+            position: static !important;
+        }
+        #markdown-preview pre code::first-line {
+            text-indent: 0 !important;
+            margin-left: 0 !important;
+            padding-left: 0 !important;
+        }
+        #markdown-preview pre code::before {
+            content: none !important;
+            display: none !important;
         }
         /* No highlight.js - removed to preserve monospace alignment */
         #markdown-preview ul, #markdown-preview ol {
@@ -1761,11 +1779,13 @@
                 // Triple-check: Clean all code blocks to pure text
                 preview.querySelectorAll('pre code').forEach(codeBlock => {
                     let plainText = codeBlock.textContent;
-                    // Remove leading empty lines that cause first line shift
-                    plainText = plainText.replace(/^\n+/, '');
-                    codeBlock.innerHTML = '';
-                    codeBlock.appendChild(document.createTextNode(plainText));
+                    // Remove leading empty lines AND leading whitespace on first line
+                    plainText = plainText.replace(/^[\n\r]+/, '');  // Remove leading newlines
+                    codeBlock.textContent = plainText;  // Direct assignment strips all HTML
                 });
+                
+                // Also remove <br> elements inside code blocks
+                preview.querySelectorAll('pre code br').forEach(br => br.remove());
             } else {
                 preview.innerHTML = simpleMarkdown(content);
             }
