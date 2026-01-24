@@ -1271,7 +1271,7 @@
     <!-- Show edit button only for admin -->
     <script>
         (async function() {
-            await LLDPqAuth.checkAuth();
+            await LLDPqAuth.check();
             if (LLDPqAuth.isAdmin()) {
                 document.getElementById('edit-topology').style.display = 'flex';
             }

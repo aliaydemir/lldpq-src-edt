@@ -565,7 +565,7 @@
     <!-- Show edit buttons only for admin -->
     <script>
         (async function() {
-            await LLDPqAuth.checkAuth();
+            await LLDPqAuth.check();
             if (LLDPqAuth.isAdmin()) {
                 // Show topology and config edit buttons for admin only
                 document.getElementById('btn-edit-topology').style.display = '';
