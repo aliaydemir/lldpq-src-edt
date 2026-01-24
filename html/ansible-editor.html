@@ -1781,6 +1781,12 @@
                 preview.innerHTML = marked.parse(content);
                 // Apply syntax highlighting with highlight.js (like GitLab)
                 if (typeof hljs !== 'undefined') {
+                    // Disable auto-detection globally
+                    hljs.configure({
+                        ignoreUnescapedHTML: true,
+                        languages: ['yaml', 'bash', 'python', 'json', 'ini']
+                    });
+                    
                     preview.querySelectorAll('pre code').forEach((block) => {
                         try {
                             // Get language from class
@@ -1793,11 +1799,12 @@
                                 }
                             }
                             
-                            // Only highlight if a specific language is specified
-                            // Don't highlight plain text/code blocks
-                            if (lang && lang !== 'code' && lang !== 'text' && lang !== 'plaintext') {
+                            // ONLY highlight if language is explicitly specified and supported
+                            // This prevents auto-detection from breaking ASCII art
+                            if (lang && ['yaml', 'bash', 'python', 'json', 'ini', 'shell', 'sh'].includes(lang)) {
                                 hljs.highlightElement(block);
                             }
+                            // Otherwise leave it as plain monospace text
                         } catch (e) {
                             console.warn('Highlight.js error:', e);
                         }
