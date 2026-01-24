@@ -1623,7 +1623,8 @@
         function simpleMarkdown(text) {
             // Process code blocks first (```code```)
             text = text.replace(/```(\w*)\n([\s\S]*?)```/g, function(match, lang, code) {
-                const trimmed = code.trim();
+                // Only remove leading/trailing empty lines, preserve spaces
+                const trimmed = code.replace(/^\n+|\n+$/g, '');
                 const id = 'code-' + Math.random().toString(36).substr(2, 9);
                 
                 // Syntax highlight line by line
