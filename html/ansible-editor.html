@@ -1532,6 +1532,7 @@
                 document.getElementById('no-file-message').style.display = 'flex';
                 document.getElementById('editor-container').style.display = 'none';
                 document.getElementById('yaml-validation').style.display = 'none';
+                hideMarkdownPreview();
             }
             
             updateUI();
@@ -1551,6 +1552,7 @@
             document.getElementById('no-file-message').style.display = 'flex';
             document.getElementById('editor-container').style.display = 'none';
             document.getElementById('yaml-validation').style.display = 'none';
+            hideMarkdownPreview();
             hideMarkdownPreview();
             updateUI();
         }
@@ -1628,12 +1630,16 @@
             const preview = document.getElementById('markdown-preview');
             preview.classList.remove('visible');
             preview.classList.remove('full-preview');
+            preview.innerHTML = ''; // Clear content
             
             // Hide MD button
             document.getElementById('btn-preview').style.display = 'none';
             
             // Show editor
             document.getElementById('editor-container').style.display = 'block';
+            
+            // Reset mode
+            state.markdownMode = 'full-preview';
             
             // Remove listener
             if (state.previewListener) {
