@@ -1751,21 +1751,32 @@
             
             const content = state.editor ? state.editor.getValue() : '';
             if (typeof marked !== 'undefined') {
-                // Configure marked to NOT render HTML - keep it as plain text
+                // Strip ALL HTML from markdown content first
+                const strippedContent = content
+                    .replace(/<span[^>]*style="[^"]*"[^>]*>/g, '') // Remove opening span tags with style
+                    .replace(/<\/span>/g, '')                       // Remove closing span tags
+                    .replace(/<div[^>]*style="[^"]*"[^>]*>/g, '')  // Remove opening div tags with style
+                    .replace(/<\/div>/g, '');                       // Remove closing div tags
+                
+                // Configure marked with strict settings
                 marked.setOptions({
                     mangle: false,
                     headerIds: false,
-                    breaks: true
+                    breaks: true,
+                    gfm: true
                 });
-                preview.innerHTML = marked.parse(content);
                 
-                // AGGRESSIVE cleanup: Replace ALL code block content with plain text
+                preview.innerHTML = marked.parse(strippedContent);
+                
+                // Double-check: Remove any remaining inline styles
+                preview.querySelectorAll('[style]').forEach(el => {
+                    el.removeAttribute('style');
+                });
+                
+                // Triple-check: Clean all code blocks to pure text
                 preview.querySelectorAll('pre code').forEach(codeBlock => {
-                    // Get pure text content (strips all HTML)
                     const plainText = codeBlock.textContent;
-                    // Clear the block
                     codeBlock.innerHTML = '';
-                    // Add back as pure text node (no HTML)
                     codeBlock.appendChild(document.createTextNode(plainText));
                 });
             } else {
