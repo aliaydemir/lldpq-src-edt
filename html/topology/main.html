@@ -9,6 +9,9 @@
     <!-- Icon font -->
     <link rel="stylesheet" href="next-icons.css">
 
+    <!-- Auth -->
+    <script src="/css/auth.js"></script>
+
     <!-- Cytoscape.js (local) -->
     <script src="cytoscape.min.js"></script>
     <script src="dagre.min.js"></script>
@@ -400,8 +403,8 @@
 <body>
     <div class="toolbar">
         <button onclick="runLLDPCheck()" id="runLLDPCheck">▶ Run LLDPq</button>
-        <button onclick="openTopologyEditor()">✎ Edit Topology</button>
-        <button onclick="openConfigEditor()">⚙ Edit Order</button>
+        <button onclick="openTopologyEditor()" id="btn-edit-topology">✎ Edit Topology</button>
+        <button onclick="openConfigEditor()" id="btn-edit-order">⚙ Edit Order</button>
         <button onclick="location.reload()">↻ Refresh</button>
         <button onclick="setLayout('dagre-lr')" id="btn-hlr">→ Horizontal</button>
         <button onclick="setLayout('dagre-tb')" id="btn-hud" class="active">↓ Vertical</button>
@@ -558,5 +561,17 @@
             </div>
         </div>
     </div>
+    
+    <!-- Hide edit buttons for operators -->
+    <script>
+        (async function() {
+            await LLDPqAuth.checkAuth();
+            if (LLDPqAuth.isOperator()) {
+                // Hide topology and config edit buttons
+                document.getElementById('btn-edit-topology').style.display = 'none';
+                document.getElementById('btn-edit-order').style.display = 'none';
+            }
+        })();
+    </script>
 </body>
 </html>
