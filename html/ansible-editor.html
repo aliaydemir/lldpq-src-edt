@@ -1759,16 +1759,14 @@
                 });
                 preview.innerHTML = marked.parse(content);
                 
-                // Remove any inline styles that might have been added
-                preview.querySelectorAll('[style]').forEach(el => {
-                    el.removeAttribute('style');
-                });
-                preview.querySelectorAll('span, div').forEach(el => {
-                    // Remove wrapper spans/divs inside code blocks
-                    if (el.closest('pre code')) {
-                        const text = el.textContent;
-                        el.replaceWith(document.createTextNode(text));
-                    }
+                // AGGRESSIVE cleanup: Replace ALL code block content with plain text
+                preview.querySelectorAll('pre code').forEach(codeBlock => {
+                    // Get pure text content (strips all HTML)
+                    const plainText = codeBlock.textContent;
+                    // Clear the block
+                    codeBlock.innerHTML = '';
+                    // Add back as pure text node (no HTML)
+                    codeBlock.appendChild(document.createTextNode(plainText));
                 });
             } else {
                 preview.innerHTML = simpleMarkdown(content);
