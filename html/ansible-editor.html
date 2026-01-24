@@ -1418,9 +1418,9 @@
                 
                 updateUI();
                 
-                // Auto-show preview for markdown files
+                // Auto-show preview for markdown files (read-only mode by default)
                 if (path.endsWith('.md')) {
-                    showMarkdownPreview();
+                    showMarkdownPreviewOnly();
                 } else {
                     hideMarkdownPreview();
                 }
@@ -1504,9 +1504,9 @@
                 validateCurrentFile(true);
                 updateUI();
                 
-                // Auto-show/hide preview for markdown files
+                // Auto-show/hide preview for markdown files (read-only mode by default)
                 if (path.endsWith('.md')) {
-                    showMarkdownPreview();
+                    showMarkdownPreviewOnly();
                 } else {
                     hideMarkdownPreview();
                 }
@@ -1575,6 +1575,31 @@
             
             // Show full preview button
             document.getElementById('btn-fullpreview').style.display = 'inline-flex';
+            
+            // Listen for editor changes
+            if (state.editor && !state.previewListener) {
+                state.previewListener = state.editor.onDidChangeModelContent(() => {
+                    updateMarkdownPreview();
+                });
+            }
+        }
+        
+        // Show only preview (read-only mode) - hides editor
+        function showMarkdownPreviewOnly() {
+            const preview = document.getElementById('markdown-preview');
+            const editor = document.getElementById('editor-container');
+            const btn = document.getElementById('btn-fullpreview');
+            
+            preview.classList.add('visible');
+            preview.classList.add('full-preview');
+            editor.style.display = 'none';
+            
+            // Update button to show "Edit" mode
+            btn.style.display = 'inline-flex';
+            btn.innerHTML = '<span class="codicon codicon-edit"></span>';
+            btn.title = 'Edit Mode (Show Editor)';
+            
+            updateMarkdownPreview();
             
             // Listen for editor changes
             if (state.editor && !state.previewListener) {
