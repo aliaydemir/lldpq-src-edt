@@ -346,22 +346,26 @@
             color: #e6db74;
         }
         #markdown-preview pre {
-            background: #1d1f21 !important;  /* GitLab dark bg */
-            border-radius: 6px !important;
-            margin: 12px 0 !important;
+            background: #1d1f21 !important;
             padding: 16px !important;
+            margin: 12px 0 !important;
+            border-radius: 6px !important;
             border: 1px solid #373b41 !important;
+            overflow-x: auto !important;
         }
-        #markdown-preview pre,
         #markdown-preview pre code {
-            color: #c5c8c6 !important;  /* GitLab dark text - default */
+            color: #c5c8c6 !important;
             background: transparent !important;
             font-size: 13px !important;
             line-height: 1.45 !important;
-            /* Use fonts with good Unicode box-drawing character support */
-            font-family: 'JetBrains Mono', 'Fira Code', 'DejaVu Sans Mono', 'Ubuntu Mono', 'Consolas', 'Liberation Mono', monospace !important;
+            font-family: 'DejaVu Sans Mono', 'Liberation Mono', 'Consolas', 'Monaco', monospace !important;
             letter-spacing: 0 !important;
-            text-shadow: none !important;  /* Remove shadow that breaks alignment */
+            text-shadow: none !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            text-indent: 0 !important;
+            white-space: pre !important;  /* Preserve exact whitespace */
+            display: block !important;
         }
         /* Remove background from all tokens */
         #markdown-preview .token {
