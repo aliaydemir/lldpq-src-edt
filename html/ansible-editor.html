@@ -352,7 +352,10 @@
             overflow-x: auto !important;
             background: #282c34 !important;  /* Atom One Dark bg */
         }
-        #markdown-preview pre code {
+        #markdown-preview pre code,
+        #markdown-preview pre code.hljs,
+        #markdown-preview pre code *,
+        #markdown-preview pre code .hljs * {
             font-size: 12.8px !important;  /* Slightly smaller for better character alignment */
             line-height: 1.6 !important;
             /* Use exact same font stack as GitLab */
@@ -363,7 +366,7 @@
             padding: 0 !important;
             margin: 0 !important;
             background: transparent !important;
-            display: block !important;
+            display: inline !important;
             /* Fix font rendering for better alignment */
             letter-spacing: normal !important;
             word-spacing: normal !important;
@@ -371,6 +374,9 @@
             -webkit-font-smoothing: antialiased !important;
             -moz-osx-font-smoothing: grayscale !important;
             text-rendering: optimizeLegibility !important;
+        }
+        #markdown-preview pre code {
+            display: block !important;
         }
         /* Highlight.js token fixes */
         #markdown-preview pre code .hljs,
