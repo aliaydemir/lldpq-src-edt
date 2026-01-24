@@ -1774,7 +1774,11 @@
                     pedantic: false
                 });
                 
-                preview.innerHTML = marked.parse(strippedContent);
+                const parsed = marked.parse(strippedContent);
+                console.log('Parsed HTML sample:', parsed.substring(0, 2000));
+                // Check if h4 exists
+                console.log('Contains h4:', parsed.includes('<h4'));
+                preview.innerHTML = parsed;
                 
                 // Double-check: Remove any remaining inline styles
                 preview.querySelectorAll('[style]').forEach(el => {
