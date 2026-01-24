@@ -350,7 +350,11 @@
             margin: 16px 0 !important;
             padding: 12px 16px !important;
             overflow-x: auto !important;
-            background: #282c34 !important;  /* Atom One Dark bg */
+            background: #282c34 !important;
+            /* Force strict monospace rendering */
+            word-break: normal !important;
+            overflow-wrap: normal !important;
+            word-wrap: normal !important;
         }
         #markdown-preview pre code,
         #markdown-preview pre code.hljs,
@@ -387,13 +391,28 @@
         #markdown-preview pre code {
             display: block !important;
         }
-        /* Highlight.js token fixes */
+        /* Override ALL highlight.js spans - force exact monospace */
         #markdown-preview pre code .hljs,
-        #markdown-preview pre code span {
-            font-family: inherit !important;
-            font-size: inherit !important;
-            letter-spacing: inherit !important;
-            line-height: inherit !important;
+        #markdown-preview pre code span,
+        #markdown-preview pre code span.hljs-operator,
+        #markdown-preview pre code span.hljs-punctuation,
+        #markdown-preview pre code span.hljs-string,
+        #markdown-preview pre code span.hljs-comment,
+        #markdown-preview pre code span.hljs-keyword,
+        #markdown-preview pre code span.hljs-number {
+            font-family: 'Menlo', 'DejaVu Sans Mono', 'Liberation Mono', 'Consolas', monospace !important;
+            font-size: 13px !important;
+            line-height: 1.5 !important;
+            letter-spacing: 0 !important;
+            word-spacing: 0 !important;
+            font-weight: normal !important;
+            font-style: normal !important;
+            text-decoration: none !important;
+            background: none !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            border: none !important;
+            display: inline !important;
         }
         #markdown-preview ul, #markdown-preview ol {
             padding-left: 20px;
