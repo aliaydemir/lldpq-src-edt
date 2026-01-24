@@ -1971,11 +1971,91 @@
             showLoading(true, 'Running diff for ' + host + '...');
             try {
                 const result = await apiCall('diff', { host });
-                showOutput(result.output || result.error, result.success ? '' : 'error');
+                const output = result.output || result.error || '';
+                showOutput(output, result.success ? '' : 'error');
+                
+                // Show diff popup with summary
+                if (result.success && output.includes('DIFF SUMMARY')) {
+                    const changesMatch = output.match(/With changes:\s*(\d+)/);
+                    const changesCount = changesMatch ? parseInt(changesMatch[1]) : 0;
+                    showDiffPopup(output, changesCount);
+                }
             } catch (e) {
                 showOutput('Error: ' + e.message, 'error');
             }
             showLoading(false);
+        }
+        
+        // Show diff summary popup
+        function showDiffPopup(output, changesCount) {
+            // Extract summary section
+            const lines = output.split('\n');
+            let summaryLines = [];
+            let inSummary = false;
+            
+            for (const line of lines) {
+                // Detect start of summary
+                if (line.includes('CONFIG DIFF SUMMARY') || line.includes('DIFF SUMMARY')) {
+                    inSummary = true;
+                }
+                
+                if (inSummary) {
+                    summaryLines.push(line);
+                }
+            }
+            
+            // Create popup content
+            const popupContent = summaryLines.length > 0 
+                ? summaryLines.join('\n')
+                : changesCount > 0 
+                    ? `${changesCount} switch(es) have configuration changes.\n\nCheck the output panel for details.`
+                    : 'All switches are in sync with Ansible configurations.';
+            
+            // Show popup modal
+            showDiffModal(popupContent, changesCount);
+        }
+        
+        function showDiffModal(content, changesCount) {
+            // Remove existing modal if any
+            const existing = document.getElementById('diff-popup-modal');
+            if (existing) existing.remove();
+            
+            const hasChanges = changesCount > 0;
+            const headerBg = hasChanges ? '#c53030' : '#76b900';
+            const headerText = hasChanges ? '#ffffff' : '#000000';
+            const icon = hasChanges ? '⚠️' : '✅';
+            const title = hasChanges 
+                ? `Configuration Changes Detected (${changesCount})`
+                : 'All Switches Synchronized';
+            
+            const modal = document.createElement('div');
+            modal.id = 'diff-popup-modal';
+            modal.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 10000; display: flex; justify-content: center; align-items: center;';
+            modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+            
+            modal.innerHTML = `
+                <div style="background: #2d2d2d; border-radius: 8px; max-width: 700px; max-height: 80vh; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.5);">
+                    <div style="padding: 15px 20px; background: ${headerBg}; color: ${headerText}; display: flex; justify-content: space-between; align-items: center;">
+                        <h3 style="margin: 0; font-size: 16px;">${icon} ${title}</h3>
+                        <button onclick="this.closest('#diff-popup-modal').remove()" style="background: none; border: none; color: ${headerText}; font-size: 24px; cursor: pointer; padding: 0; line-height: 1;">&times;</button>
+                    </div>
+                    <div style="padding: 20px; max-height: 60vh; overflow: auto;">
+                        <pre style="margin: 0; white-space: pre-wrap; font-family: 'Consolas', 'Monaco', monospace; font-size: 13px; line-height: 1.5; color: #d4d4d4;">${escapeHtml(content)}</pre>
+                    </div>
+                    <div style="padding: 15px 20px; background: #252526; text-align: right; border-top: 1px solid #404040;">
+                        <button onclick="this.closest('#diff-popup-modal').remove()" style="background: #404040; color: white; border: none; padding: 8px 20px; border-radius: 4px; cursor: pointer; margin-right: 10px;">Close</button>
+                        <button onclick="this.closest('#diff-popup-modal').remove(); document.getElementById('output-section').scrollIntoView();" style="background: #76b900; color: #000; border: none; padding: 8px 20px; border-radius: 4px; cursor: pointer; font-weight: bold;">View Full Output</button>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(modal);
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
         }
         
         // Run deploy
