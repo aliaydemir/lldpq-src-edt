@@ -2110,7 +2110,19 @@
             const pre = document.getElementById('diff-popup-content');
             if (pre) {
                 const text = pre.textContent;
-                navigator.clipboard.writeText(text).then(() => {
+                
+                // Create a temporary textarea for copying (works on HTTP too)
+                const textarea = document.createElement('textarea');
+                textarea.value = text;
+                textarea.style.position = 'fixed';
+                textarea.style.left = '-9999px';
+                textarea.style.top = '0';
+                document.body.appendChild(textarea);
+                textarea.focus();
+                textarea.select();
+                
+                try {
+                    document.execCommand('copy');
                     // Show feedback
                     const originalText = btn.textContent;
                     btn.textContent = 'Copied!';
@@ -2119,10 +2131,12 @@
                         btn.textContent = originalText;
                         btn.style.background = '#76b900';
                     }, 2000);
-                }).catch(err => {
+                } catch (err) {
                     console.error('Copy failed:', err);
-                    alert('Copy failed: ' + err.message);
-                });
+                    alert('Copy failed');
+                }
+                
+                document.body.removeChild(textarea);
             }
         }
         
