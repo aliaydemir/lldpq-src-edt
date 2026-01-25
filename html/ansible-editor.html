@@ -829,6 +829,11 @@
                     <span class="codicon codicon-close-all"></span>
                 </button>
                 <span class="toolbar-separator"></span>
+                <button id="autocomplete-toggle" class="toolbar-btn" onclick="toggleAutocomplete()" title="Toggle Auto-completion (Off by default)">
+                    <span class="codicon codicon-lightbulb-autofix"></span>
+                    <span id="autocomplete-status" style="font-size: 10px; margin-left: 3px;">OFF</span>
+                </button>
+                <span class="toolbar-separator"></span>
                 <button class="toolbar-btn" id="btn-preview" onclick="toggleMarkdownMode()" title="Toggle Mode" style="display: none;">
                     MD
                 </button>
@@ -960,10 +965,396 @@
         // Check if js-yaml is loaded
         const hasJsYaml = typeof jsyaml !== 'undefined';
         
+        // Autocomplete state (OFF by default)
+        let autocompleteEnabled = false;
+        
+        // Toggle autocomplete function
+        function toggleAutocomplete() {
+            autocompleteEnabled = !autocompleteEnabled;
+            const statusEl = document.getElementById('autocomplete-status');
+            const btnEl = document.getElementById('autocomplete-toggle');
+            if (autocompleteEnabled) {
+                statusEl.textContent = 'ON';
+                btnEl.style.color = '#4EC9B0';
+            } else {
+                statusEl.textContent = 'OFF';
+                btnEl.style.color = '#858585';
+            }
+        }
+        
         // Initialize Monaco Editor (offline)
         require.config({ paths: { vs: '/monaco/vs' } });
         
         require(['vs/editor/editor.main'], function() {
+            
+            // ============================================
+            // REGISTER CUMULUS (NVUE) LANGUAGE
+            // ============================================
+            monaco.languages.register({ id: 'cumulus' });
+            monaco.languages.setMonarchTokensProvider('cumulus', {
+                tokenizer: {
+                    root: [
+                        [/^nv\b/, 'keyword.control', '@nvcommand'],
+                        [/#.*$/, 'comment'],
+                        [/\b(on|off|enable|disable|enabled|disabled|true|false|yes|no)\b/, 'constant'],
+                        [/\b\d+\.\d+\.\d+\.\d+(\/\d+)?\b/, 'number'],
+                        [/\b\d+\b/, 'number'],
+                        [/"[^"]*"/, 'string'],
+                        [/'[^']*'/, 'string'],
+                    ],
+                    nvcommand: [
+                        [/\b(set|unset|show|apply|config|action|diff)\b/, 'keyword'],
+                        [/\b(interface|router|bridge|system|vrf|mlag|platform|qos|acl|evpn|service|nve|maintenance)\b/, 'type'],
+                        [/\b(bgp|ospf|ospf6|policy|pim|igmp|pbr|static)\b/, 'type'],
+                        [/\b(swp\d+s?\d*|bond[a-zA-Z0-9_-]+|eth\d+|lo|peerlink|vlan\d+|br_default|mgmt)\b/, 'variable'],
+                        [/\b(ip|link|address|neighbor|member|domain|vni|route-map|prefix-list|autonomous-system|router-id)\b/, 'keyword'],
+                        [/\b(enable|state|mtu|speed|description|hostname|vrf|gateway)\b/, 'keyword'],
+                        [/\b(multihoming|segment|local-id|df-preference|mac-address)\b/, 'keyword'],
+                        [/\b(access|untagged|vlan)\b/, 'string'],
+                        [/\b\d+\.\d+\.\d+\.\d+(\/\d+)?\b/, 'number'],
+                        [/\b\d+\b/, 'number'],
+                        [/"[^"]*"/, 'string'],
+                        [/'[^']*'/, 'string'],
+                        [/#.*$/, 'comment'],
+                        [/$/, '', '@pop'],
+                    ]
+                }
+            });
+            
+            // ============================================
+            // REGISTER GRAPHVIZ DOT LANGUAGE
+            // ============================================
+            monaco.languages.register({ id: 'dot' });
+            monaco.languages.setMonarchTokensProvider('dot', {
+                tokenizer: {
+                    root: [
+                        [/\b(graph|digraph|subgraph|node|edge|strict)\b/, 'keyword'],
+                        [/\b(label|color|style|shape|fontsize|fontname|fillcolor|bgcolor|rankdir|rank|weight|len|dir|arrowhead|arrowtail|headlabel|taillabel|constraint|splines|overlap|compound|lhead|ltail|samehead|sametail|minlen|penwidth|width|height|margin|pad|nodesep|ranksep|size|ratio|orientation|center|layers|layersep|ordering|outputorder|page|pagedir|quantum|remincross|rotate|samplepoints|searchsize|showboxes|URL|tooltip|target|id|class|href|peripheries|regular|sides|skew|distortion|pos|rects|xlp|xlabel|headclip|tailclip)\b/, 'attribute.name'],
+                        [/->|--/, 'operator'],
+                        [/[{}[\];,=]/, 'delimiter'],
+                        [/"[^"]*"/, 'string'],
+                        [/\/\/.*$/, 'comment'],
+                        [/\/\*/, 'comment', '@comment'],
+                        [/#.*$/, 'comment'],
+                        [/\b\d+(\.\d+)?\b/, 'number'],
+                    ],
+                    comment: [
+                        [/\*\//, 'comment', '@pop'],
+                        [/./, 'comment']
+                    ]
+                }
+            });
+            
+            // ============================================
+            // REGISTER NGINX LANGUAGE
+            // ============================================
+            monaco.languages.register({ id: 'nginx' });
+            monaco.languages.setMonarchTokensProvider('nginx', {
+                tokenizer: {
+                    root: [
+                        [/#.*$/, 'comment'],
+                        [/\b(server|location|upstream|http|events|stream|mail|map|geo|types|if|else|set|return|rewrite|break|proxy_pass|fastcgi_pass|uwsgi_pass|scgi_pass|memcached_pass|grpc_pass)\b/, 'keyword'],
+                        [/\b(listen|server_name|root|index|error_page|access_log|error_log|client_max_body_size|keepalive_timeout|sendfile|tcp_nopush|tcp_nodelay|gzip|gzip_types|gzip_vary|gzip_proxied|gzip_comp_level|gzip_buffers|gzip_http_version|gzip_min_length|ssl|ssl_certificate|ssl_certificate_key|ssl_protocols|ssl_ciphers|ssl_prefer_server_ciphers|ssl_session_cache|ssl_session_timeout|add_header|expires|proxy_set_header|proxy_connect_timeout|proxy_send_timeout|proxy_read_timeout|proxy_buffer_size|proxy_buffers|proxy_busy_buffers_size|proxy_temp_file_write_size|proxy_http_version|proxy_cache|proxy_cache_valid|proxy_cache_bypass|proxy_no_cache|include|worker_processes|worker_connections|use|multi_accept|default_type|charset|log_format|try_files|alias|internal|stub_status|allow|deny|auth_basic|auth_basic_user_file|autoindex|limit_req|limit_req_zone|limit_conn|limit_conn_zone)\b/, 'type'],
+                        [/\$[a-zA-Z_][a-zA-Z0-9_]*/, 'variable'],
+                        [/[{}]/, 'delimiter.bracket'],
+                        [/[;]/, 'delimiter'],
+                        [/~\*?|=|\^~/, 'operator'],
+                        [/"[^"]*"/, 'string'],
+                        [/'[^']*'/, 'string'],
+                        [/\b\d+[kmgKMG]?\b/, 'number'],
+                        [/\b(on|off|true|false)\b/, 'constant'],
+                    ]
+                }
+            });
+            
+            // ============================================
+            // JINJA2 COMPLETION PROVIDER
+            // ============================================
+            monaco.languages.registerCompletionItemProvider('twig', {
+                triggerCharacters: ['{', '%', '|', ' '],
+                provideCompletionItems: function(model, position) {
+                    if (!autocompleteEnabled) return { suggestions: [] };
+                    const lineContent = model.getLineContent(position.lineNumber);
+                    const textUntilPosition = lineContent.substring(0, position.column - 1);
+                    const suggestions = [];
+                    const range = {
+                        startLineNumber: position.lineNumber,
+                        endLineNumber: position.lineNumber,
+                        startColumn: position.column,
+                        endColumn: position.column
+                    };
+                    
+                    if (/\{\{\s*$/.test(textUntilPosition)) {
+                        ['item', 'loop', 'loop.index', 'loop.first', 'loop.last', 'ansible_host', 'ansible_hostname', 'inventory_hostname', 'hostvars', 'groups', 'group_names'].forEach(v => {
+                            suggestions.push({ label: v, kind: monaco.languages.CompletionItemKind.Variable, insertText: v + ' }}', range: range });
+                        });
+                    }
+                    if (/\|\s*$/.test(textUntilPosition)) {
+                        ['default', 'lower', 'upper', 'title', 'capitalize', 'trim', 'length', 'first', 'last', 'join', 'sort', 'unique', 'map', 'select', 'reject', 'selectattr', 'rejectattr', 'json_query', 'to_yaml', 'to_json', 'from_yaml', 'from_json', 'regex_replace', 'regex_search', 'ipaddr', 'ipv4', 'ipv6'].forEach(f => {
+                            suggestions.push({ label: f, kind: monaco.languages.CompletionItemKind.Function, insertText: f, range: range });
+                        });
+                    }
+                    if (/\{%\s*$/.test(textUntilPosition)) {
+                        [
+                            { label: 'if', insert: 'if ${1:condition} %}\\n${2}\\n{% endif %}' },
+                            { label: 'for', insert: 'for ${1:item} in ${2:list} %}\\n${3}\\n{% endfor %}' },
+                            { label: 'block', insert: 'block ${1:name} %}\\n${2}\\n{% endblock %}' },
+                            { label: 'include', insert: "include '${1:template.j2}' %}" },
+                            { label: 'set', insert: 'set ${1:var} = ${2:value} %}' }
+                        ].forEach(b => {
+                            suggestions.push({ label: b.label, kind: monaco.languages.CompletionItemKind.Snippet, insertText: b.insert, insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, range: range });
+                        });
+                    }
+                    return { suggestions: suggestions };
+                }
+            });
+            
+            // ============================================
+            // YAML (ANSIBLE) COMPLETION PROVIDER
+            // ============================================
+            monaco.languages.registerCompletionItemProvider('yaml', {
+                triggerCharacters: [' ', ':', '-', '\n'],
+                provideCompletionItems: function(model, position) {
+                    if (!autocompleteEnabled) return { suggestions: [] };
+                    const lineContent = model.getLineContent(position.lineNumber);
+                    const textUntilPosition = lineContent.substring(0, position.column - 1);
+                    const suggestions = [];
+                    const range = { startLineNumber: position.lineNumber, endLineNumber: position.lineNumber, startColumn: position.column, endColumn: position.column };
+                    
+                    if (/^\s*-\s*$/.test(textUntilPosition)) {
+                        ['name', 'hosts', 'tasks', 'roles', 'vars', 'handlers', 'gather_facts', 'become', 'become_user', 'serial', 'connection'].forEach(k => {
+                            suggestions.push({ label: k, kind: monaco.languages.CompletionItemKind.Property, insertText: k + ': ', range: range });
+                        });
+                    }
+                    if (/^\s{4,}\w*$/.test(textUntilPosition) || /^\s+$/.test(textUntilPosition)) {
+                        const modules = ['copy', 'template', 'file', 'lineinfile', 'shell', 'command', 'apt', 'yum', 'pip', 'service', 'systemd', 'user', 'group', 'git', 'uri', 'get_url', 'debug', 'set_fact', 'include_tasks', 'include_role', 'assert', 'fail', 'wait_for', 'pause', 'nclu', 'nvidia_nvue'];
+                        modules.forEach(m => {
+                            suggestions.push({ label: m, kind: monaco.languages.CompletionItemKind.Module, insertText: m + ':\\n  ', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, range: range });
+                        });
+                        const options = ['when', 'register', 'loop', 'with_items', 'notify', 'ignore_errors', 'changed_when', 'failed_when', 'delegate_to', 'run_once', 'become', 'tags', 'block', 'rescue', 'always'];
+                        options.forEach(o => {
+                            suggestions.push({ label: o, kind: monaco.languages.CompletionItemKind.Keyword, insertText: o + ': ', range: range });
+                        });
+                    }
+                    if (/:\s*$/.test(textUntilPosition)) {
+                        ['true', 'false', 'yes', 'no'].forEach(v => {
+                            suggestions.push({ label: v, kind: monaco.languages.CompletionItemKind.Value, insertText: v, range: range });
+                        });
+                    }
+                    return { suggestions: suggestions };
+                }
+            });
+            
+            // ============================================
+            // SHELL COMPLETION PROVIDER
+            // ============================================
+            monaco.languages.registerCompletionItemProvider('shell', {
+                triggerCharacters: [' ', '$', '-'],
+                provideCompletionItems: function(model, position) {
+                    if (!autocompleteEnabled) return { suggestions: [] };
+                    const lineContent = model.getLineContent(position.lineNumber);
+                    const textUntilPosition = lineContent.substring(0, position.column - 1);
+                    const suggestions = [];
+                    const range = { startLineNumber: position.lineNumber, endLineNumber: position.lineNumber, startColumn: position.column, endColumn: position.column };
+                    
+                    if (/\$\w*$/.test(textUntilPosition)) {
+                        ['$HOME', '$USER', '$PWD', '$PATH', '$?', '$$', '$1', '$#', '$@', '${VAR}', '${VAR:-default}', '$(command)'].forEach(v => {
+                            suggestions.push({ label: v, kind: monaco.languages.CompletionItemKind.Variable, insertText: v.substring(1), range: range });
+                        });
+                    }
+                    if (/^[\s]*\w*$/.test(textUntilPosition) || /[|;&]\s*\w*$/.test(textUntilPosition)) {
+                        const commands = ['ls', 'cd', 'pwd', 'mkdir', 'rm', 'cp', 'mv', 'cat', 'grep', 'find', 'sed', 'awk', 'curl', 'wget', 'ssh', 'scp', 'rsync', 'ps', 'kill', 'sudo', 'systemctl', 'journalctl', 'df', 'du', 'tar', 'gzip', 'git', 'docker', 'nv'];
+                        commands.forEach(c => {
+                            suggestions.push({ label: c, kind: monaco.languages.CompletionItemKind.Function, insertText: c + ' ', range: range });
+                        });
+                    }
+                    return { suggestions: suggestions };
+                }
+            });
+            
+            // ============================================
+            // CUMULUS (NVUE) COMPLETION PROVIDER
+            // ============================================
+            const nvueTree = {
+                'nv': ['set', 'show', 'unset', 'config', 'action'],
+                'nv config': ['apply', 'save', 'diff', 'show', 'history', 'replace', 'patch'],
+                'nv action': ['clear', 'ping', 'traceroute', 'reboot', 'fetch', 'install', 'generate'],
+                'nv set': ['interface', 'router', 'bridge', 'system', 'vrf', 'mlag', 'platform', 'qos', 'acl', 'evpn', 'service', 'nve'],
+                'nv show': ['interface', 'router', 'bridge', 'system', 'vrf', 'mlag', 'platform', 'qos', 'acl', 'evpn', 'service', 'nve'],
+                'nv set interface': ['swp', 'bond', 'vlan', 'lo', 'eth', 'peerlink', 'br_default'],
+                'nv set interface *': ['ip', 'link', 'bridge', 'description', 'type', 'evpn', 'bond', 'router'],
+                'nv set interface * ip': ['address', 'gateway', 'vrf', 'vrr'],
+                'nv set interface * link': ['speed', 'mtu', 'fec', 'state', 'breakout'],
+                'nv set interface * bridge domain br_default': ['access', 'vlan', 'stp', 'untagged'],
+                'nv set interface * evpn multihoming': ['segment'],
+                'nv set interface * evpn multihoming segment': ['enable', 'df-preference', 'local-id', 'mac-address'],
+                'nv set router': ['bgp', 'ospf', 'policy', 'vrr', 'pim'],
+                'nv set router bgp': ['autonomous-system', 'router-id', 'neighbor', 'address-family', 'enable'],
+                'nv set router bgp neighbor': [],
+                'nv set router bgp neighbor *': ['peer-group', 'remote-as', 'type', 'address-family'],
+                'nv set router bgp address-family': ['ipv4-unicast', 'ipv6-unicast', 'l2vpn-evpn'],
+                'nv set router policy': ['route-map', 'prefix-list'],
+                'nv set bridge domain br_default': ['vlan', 'stp', 'type', 'untagged'],
+                'nv set system': ['hostname', 'timezone', 'reboot', 'ssh-server', 'aaa', 'api', 'control-plane', 'wjh', 'ntp'],
+                'nv set system hostname': [],
+                'nv set system aaa': ['user', 'role', 'class'],
+                'nv set vrf': ['default', 'mgmt'],
+                'nv set vrf *': ['router', 'evpn', 'loopback'],
+                'nv set vrf * router bgp': ['autonomous-system', 'router-id', 'neighbor', 'address-family', 'enable'],
+                'nv set mlag': ['backup', 'init-delay', 'mac-address', 'peer-ip', 'priority', 'enable'],
+                'nv set evpn': ['enable', 'multihoming', 'route-advertise'],
+                'nv set evpn multihoming': ['enable', 'startup-delay', 'segment'],
+                'nv set service': ['dhcp-relay', 'dns', 'ntp', 'ptp'],
+                'nv set nve vxlan': ['enable', 'source', 'arp-nd-suppress', 'flooding']
+            };
+            
+            monaco.languages.registerCompletionItemProvider('cumulus', {
+                triggerCharacters: [' '],
+                provideCompletionItems: function(model, position) {
+                    if (!autocompleteEnabled) return { suggestions: [] };
+                    const lineContent = model.getLineContent(position.lineNumber);
+                    const textUntilPosition = lineContent.substring(0, position.column - 1).trim();
+                    const suggestions = [];
+                    const range = { startLineNumber: position.lineNumber, endLineNumber: position.lineNumber, startColumn: position.column, endColumn: position.column };
+                    
+                    // Find best matching context
+                    let bestMatch = null;
+                    for (const key in nvueTree) {
+                        if (textUntilPosition === key || textUntilPosition.startsWith(key + ' ')) {
+                            if (!bestMatch || key.length > bestMatch.length) {
+                                bestMatch = key;
+                            }
+                        }
+                        // Handle wildcards
+                        const keyParts = key.split(' ');
+                        const textParts = textUntilPosition.split(/\s+/);
+                        if (keyParts.length <= textParts.length) {
+                            let matches = true;
+                            for (let i = 0; i < keyParts.length; i++) {
+                                if (keyParts[i] !== '*' && keyParts[i] !== textParts[i]) {
+                                    matches = false;
+                                    break;
+                                }
+                            }
+                            if (matches && (!bestMatch || key.length > bestMatch.length)) {
+                                bestMatch = key;
+                            }
+                        }
+                    }
+                    
+                    if (bestMatch && nvueTree[bestMatch]) {
+                        nvueTree[bestMatch].forEach(cmd => {
+                            suggestions.push({
+                                label: cmd,
+                                kind: monaco.languages.CompletionItemKind.Keyword,
+                                insertText: cmd + ' ',
+                                range: range
+                            });
+                        });
+                    }
+                    
+                    // General suggestions for start of line
+                    if (textUntilPosition === '' || textUntilPosition === 'n') {
+                        suggestions.push({ label: 'nv set', kind: monaco.languages.CompletionItemKind.Keyword, insertText: 'nv set ', range: range });
+                        suggestions.push({ label: 'nv show', kind: monaco.languages.CompletionItemKind.Keyword, insertText: 'nv show ', range: range });
+                        suggestions.push({ label: 'nv config apply', kind: monaco.languages.CompletionItemKind.Keyword, insertText: 'nv config apply', range: range });
+                    }
+                    
+                    return { suggestions: suggestions };
+                }
+            });
+            
+            // ============================================
+            // LANGUAGE AUTO-DETECTION
+            // ============================================
+            function detectLanguage(content) {
+                if (!content || content.trim().length === 0) return null;
+                const lines = content.split('\n').slice(0, 30);
+                const firstLines = lines.join('\n');
+                
+                // Cumulus NVUE
+                if (/^nv\s+(set|show|unset|config|action)/m.test(firstLines)) return 'cumulus';
+                
+                // Ansible playbook (YAML with specific patterns) - check before Jinja2
+                if (/^-\s*(hosts|name):/m.test(firstLines) || /^\s*tasks:/m.test(firstLines) || /^\s*roles:/m.test(firstLines) || /^\s*become:/m.test(firstLines) || /^\s*gather_facts:/m.test(firstLines)) return 'yaml';
+                
+                // YAML header
+                if (/^---/.test(firstLines) && /:\s*$/m.test(firstLines)) return 'yaml';
+                if (/^-\s*(header|set):/m.test(firstLines)) return 'yaml';
+                
+                // Jinja2 (only if not Ansible)
+                if (/\{\{|\{%|\{#/.test(firstLines) && !/^-\s*(hosts|name):/m.test(firstLines)) return 'twig';
+                
+                // Graphviz DOT
+                if (/^(strict\s+)?(di)?graph\s+/m.test(firstLines)) return 'dot';
+                
+                // Nginx
+                if (/^\s*(server|http|events|upstream)\s*\{/m.test(firstLines) || /^\s*location\s+/m.test(firstLines)) return 'nginx';
+                
+                // Shell
+                if (/^#!.*\b(bash|sh|zsh)\b/.test(firstLines) || /^\s*(if|for|while|case)\s+.*;\s*(then|do)/m.test(firstLines)) return 'shell';
+                
+                // INI (Ansible inventory)
+                if (/^\[[\w:_-]+\]/.test(firstLines)) return 'ini';
+                
+                // JSON
+                if (/^\s*[\[{]/.test(firstLines) && /[}\]]\s*$/.test(content.trim())) return 'json';
+                
+                // Markdown
+                if (/^#{1,6}\s+/.test(firstLines) || /^\*\*.*\*\*/.test(firstLines) || /^!\[/.test(firstLines)) return 'markdown';
+                
+                return null;
+            }
+            
+            // Detect language based on file extension and content
+            function detectLanguageForFile(path, content) {
+                // Get file extension
+                const ext = path.split('.').pop().toLowerCase();
+                
+                // Extension-based detection (priority)
+                const extMap = {
+                    'yaml': 'yaml', 'yml': 'yaml',
+                    'j2': 'twig', 'jinja': 'twig', 'jinja2': 'twig',
+                    'json': 'json',
+                    'md': 'markdown', 'markdown': 'markdown',
+                    'sh': 'shell', 'bash': 'shell', 'zsh': 'shell',
+                    'py': 'python',
+                    'js': 'javascript',
+                    'ts': 'typescript',
+                    'html': 'html', 'htm': 'html',
+                    'css': 'css',
+                    'xml': 'xml',
+                    'ini': 'ini', 'cfg': 'ini', 'conf': 'ini',
+                    'dot': 'dot', 'gv': 'dot',
+                    'sql': 'sql'
+                };
+                
+                // For certain extensions, check content to override
+                if (ext === 'yaml' || ext === 'yml') {
+                    // Check if it's Cumulus NVUE YAML
+                    if (/^nv\s+(set|show|unset|config|action)/m.test(content)) {
+                        return 'cumulus';
+                    }
+                    return 'yaml';
+                }
+                
+                if (ext === 'txt' || !extMap[ext]) {
+                    // For .txt or unknown extensions, use content detection
+                    const detected = detectLanguage(content);
+                    if (detected) return detected;
+                }
+                
+                // For .conf files, check if nginx or ini
+                if (ext === 'conf') {
+                    if (/^\s*(server|http|events|upstream)\s*\{/m.test(content)) {
+                        return 'nginx';
+                    }
+                    return 'ini';
+                }
+                
+                return extMap[ext] || 'plaintext';
+            }
+            
             // Create editor instance
             state.editor = monaco.editor.create(document.getElementById('editor-container'), {
                 value: '',
@@ -1446,6 +1837,10 @@
                 state.editor.setValue(state.files[path].content);
                 state.editor.setScrollTop(0);
                 
+                // Auto-detect and set language
+                const detectedLang = detectLanguageForFile(path, state.files[path].content);
+                monaco.editor.setModelLanguage(state.editor.getModel(), detectedLang);
+                
                 // Validate
                 validateCurrentFile(true);
                 
@@ -1534,6 +1929,11 @@
                 state.currentFile = path;
                 state.editor.setValue(state.files[path].content);
                 state.editor.setScrollTop(0);
+                
+                // Auto-detect and set language
+                const detectedLang = detectLanguageForFile(path, state.files[path].content);
+                monaco.editor.setModelLanguage(state.editor.getModel(), detectedLang);
+                
                 validateCurrentFile(true);
                 updateUI();
                 
