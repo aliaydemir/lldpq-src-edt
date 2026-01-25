@@ -831,7 +831,6 @@
                 <span class="toolbar-separator"></span>
                 <button id="autocomplete-toggle" class="toolbar-btn" onclick="toggleAutocomplete()" title="Toggle Auto-completion (Off by default)">
                     <span class="codicon codicon-lightbulb-autofix"></span>
-                    <span id="autocomplete-status" style="font-size: 10px; margin-left: 3px;">OFF</span>
                 </button>
                 <span class="toolbar-separator"></span>
                 <button class="toolbar-btn" id="btn-preview" onclick="toggleMarkdownMode()" title="Toggle Mode" style="display: none;">
@@ -971,15 +970,8 @@
         // Toggle autocomplete function
         function toggleAutocomplete() {
             autocompleteEnabled = !autocompleteEnabled;
-            const statusEl = document.getElementById('autocomplete-status');
             const btnEl = document.getElementById('autocomplete-toggle');
-            if (autocompleteEnabled) {
-                statusEl.textContent = 'ON';
-                btnEl.style.color = '#4EC9B0';
-            } else {
-                statusEl.textContent = 'OFF';
-                btnEl.style.color = '#858585';
-            }
+            btnEl.style.color = autocompleteEnabled ? '#4EC9B0' : '#858585';
         }
         
         // ============================================
