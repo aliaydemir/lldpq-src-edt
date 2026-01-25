@@ -2092,7 +2092,7 @@
                     </div>
                     <div style="padding: 15px 20px; background: #252526; text-align: center; border-top: 1px solid #404040;">
                         <button onclick="this.closest('#diff-popup-modal').remove()" style="background: #404040; color: white; border: none; padding: 10px 30px; border-radius: 4px; cursor: pointer; font-size: 14px; margin-right: 10px;">Close</button>
-                        <button onclick="copyDiffContent()" style="background: #76b900; color: #000; border: none; padding: 10px 30px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold;">Copy</button>
+                        <button onclick="copyDiffContent(this)" style="background: #76b900; color: #000; border: none; padding: 10px 30px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold;">Copy</button>
                     </div>
                 </div>
             `;
@@ -2106,13 +2106,12 @@
             return div.innerHTML;
         }
         
-        function copyDiffContent() {
+        function copyDiffContent(btn) {
             const pre = document.getElementById('diff-popup-content');
             if (pre) {
                 const text = pre.textContent;
                 navigator.clipboard.writeText(text).then(() => {
                     // Show feedback
-                    const btn = event.target;
                     const originalText = btn.textContent;
                     btn.textContent = 'Copied!';
                     btn.style.background = '#4ec9b0';
@@ -2122,6 +2121,7 @@
                     }, 2000);
                 }).catch(err => {
                     console.error('Copy failed:', err);
+                    alert('Copy failed: ' + err.message);
                 });
             }
         }
