@@ -59,6 +59,13 @@
             border-bottom: 1px solid #3c3c3c;
         }
         
+        .toolbar-right {
+            margin-left: auto;
+            display: flex;
+            align-items: center;
+            gap: 2px;
+        }
+        
         .toolbar-btn {
             background: transparent;
             border: none;
@@ -987,10 +994,11 @@
                 <button class="toolbar-btn" id="btn-preview" onclick="toggleMarkdownMode()" title="Toggle Mode" style="display: none;">
                     MD
                 </button>
-                <span class="toolbar-separator"></span>
-                <button class="toolbar-btn" onclick="showHelpModal()" title="Keyboard Shortcuts">
-                    <span class="codicon codicon-question"></span>
-                </button>
+                <div class="toolbar-right">
+                    <button class="toolbar-btn" onclick="showHelpModal()" title="Keyboard Shortcuts">
+                        <span class="codicon codicon-question"></span>
+                    </button>
+                </div>
             </div>
             <div id="editor-tabs" class="editor-tabs">
                 <!-- Tabs will be added dynamically -->
