@@ -982,6 +982,97 @@
             }
         }
         
+        // ============================================
+        // LANGUAGE AUTO-DETECTION (global scope)
+        // ============================================
+        function detectLanguage(content) {
+            if (!content || content.trim().length === 0) return null;
+            const lines = content.split('\n').slice(0, 30);
+            const firstLines = lines.join('\n');
+            
+            // Cumulus NVUE
+            if (/^nv\s+(set|show|unset|config|action)/m.test(firstLines)) return 'cumulus';
+            
+            // Ansible playbook (YAML with specific patterns) - check before Jinja2
+            if (/^-\s*(hosts|name):/m.test(firstLines) || /^\s*tasks:/m.test(firstLines) || /^\s*roles:/m.test(firstLines) || /^\s*become:/m.test(firstLines) || /^\s*gather_facts:/m.test(firstLines)) return 'yaml';
+            
+            // YAML header
+            if (/^---/.test(firstLines) && /:\s*$/m.test(firstLines)) return 'yaml';
+            if (/^-\s*(header|set):/m.test(firstLines)) return 'yaml';
+            
+            // Jinja2 (only if not Ansible)
+            if (/\{\{|\{%|\{#/.test(firstLines) && !/^-\s*(hosts|name):/m.test(firstLines)) return 'twig';
+            
+            // Graphviz DOT
+            if (/^(strict\s+)?(di)?graph\s+/m.test(firstLines)) return 'dot';
+            
+            // Nginx
+            if (/^\s*(server|http|events|upstream)\s*\{/m.test(firstLines) || /^\s*location\s+/m.test(firstLines)) return 'nginx';
+            
+            // Shell
+            if (/^#!.*\b(bash|sh|zsh)\b/.test(firstLines) || /^\s*(if|for|while|case)\s+.*;\s*(then|do)/m.test(firstLines)) return 'shell';
+            
+            // INI (Ansible inventory)
+            if (/^\[[\w:_-]+\]/.test(firstLines)) return 'ini';
+            
+            // JSON
+            if (/^\s*[\[{]/.test(firstLines) && /[}\]]\s*$/.test(content.trim())) return 'json';
+            
+            // Markdown
+            if (/^#{1,6}\s+/.test(firstLines) || /^\*\*.*\*\*/.test(firstLines) || /^!\[/.test(firstLines)) return 'markdown';
+            
+            return null;
+        }
+        
+        // Detect language based on file extension and content
+        function detectLanguageForFile(path, content) {
+            // Get file extension
+            const ext = path.split('.').pop().toLowerCase();
+            
+            // Extension-based detection (priority)
+            const extMap = {
+                'yaml': 'yaml', 'yml': 'yaml',
+                'j2': 'twig', 'jinja': 'twig', 'jinja2': 'twig',
+                'json': 'json',
+                'md': 'markdown', 'markdown': 'markdown',
+                'sh': 'shell', 'bash': 'shell', 'zsh': 'shell',
+                'py': 'python',
+                'js': 'javascript',
+                'ts': 'typescript',
+                'html': 'html', 'htm': 'html',
+                'css': 'css',
+                'xml': 'xml',
+                'ini': 'ini', 'cfg': 'ini', 'conf': 'ini',
+                'dot': 'dot', 'gv': 'dot',
+                'sql': 'sql'
+            };
+            
+            // For certain extensions, check content to override
+            if (ext === 'yaml' || ext === 'yml') {
+                // Check if it's Cumulus NVUE YAML
+                if (/^nv\s+(set|show|unset|config|action)/m.test(content)) {
+                    return 'cumulus';
+                }
+                return 'yaml';
+            }
+            
+            if (ext === 'txt' || !extMap[ext]) {
+                // For .txt or unknown extensions, use content detection
+                const detected = detectLanguage(content);
+                if (detected) return detected;
+            }
+            
+            // For .conf files, check if nginx or ini
+            if (ext === 'conf') {
+                if (/^\s*(server|http|events|upstream)\s*\{/m.test(content)) {
+                    return 'nginx';
+                }
+                return 'ini';
+            }
+            
+            return extMap[ext] || 'plaintext';
+        }
+        
         // Initialize Monaco Editor (offline)
         require.config({ paths: { vs: '/monaco/vs' } });
         
@@ -1263,97 +1354,6 @@
                     return { suggestions: suggestions };
                 }
             });
-            
-            // ============================================
-            // LANGUAGE AUTO-DETECTION
-            // ============================================
-            function detectLanguage(content) {
-                if (!content || content.trim().length === 0) return null;
-                const lines = content.split('\n').slice(0, 30);
-                const firstLines = lines.join('\n');
-                
-                // Cumulus NVUE
-                if (/^nv\s+(set|show|unset|config|action)/m.test(firstLines)) return 'cumulus';
-                
-                // Ansible playbook (YAML with specific patterns) - check before Jinja2
-                if (/^-\s*(hosts|name):/m.test(firstLines) || /^\s*tasks:/m.test(firstLines) || /^\s*roles:/m.test(firstLines) || /^\s*become:/m.test(firstLines) || /^\s*gather_facts:/m.test(firstLines)) return 'yaml';
-                
-                // YAML header
-                if (/^---/.test(firstLines) && /:\s*$/m.test(firstLines)) return 'yaml';
-                if (/^-\s*(header|set):/m.test(firstLines)) return 'yaml';
-                
-                // Jinja2 (only if not Ansible)
-                if (/\{\{|\{%|\{#/.test(firstLines) && !/^-\s*(hosts|name):/m.test(firstLines)) return 'twig';
-                
-                // Graphviz DOT
-                if (/^(strict\s+)?(di)?graph\s+/m.test(firstLines)) return 'dot';
-                
-                // Nginx
-                if (/^\s*(server|http|events|upstream)\s*\{/m.test(firstLines) || /^\s*location\s+/m.test(firstLines)) return 'nginx';
-                
-                // Shell
-                if (/^#!.*\b(bash|sh|zsh)\b/.test(firstLines) || /^\s*(if|for|while|case)\s+.*;\s*(then|do)/m.test(firstLines)) return 'shell';
-                
-                // INI (Ansible inventory)
-                if (/^\[[\w:_-]+\]/.test(firstLines)) return 'ini';
-                
-                // JSON
-                if (/^\s*[\[{]/.test(firstLines) && /[}\]]\s*$/.test(content.trim())) return 'json';
-                
-                // Markdown
-                if (/^#{1,6}\s+/.test(firstLines) || /^\*\*.*\*\*/.test(firstLines) || /^!\[/.test(firstLines)) return 'markdown';
-                
-                return null;
-            }
-            
-            // Detect language based on file extension and content
-            function detectLanguageForFile(path, content) {
-                // Get file extension
-                const ext = path.split('.').pop().toLowerCase();
-                
-                // Extension-based detection (priority)
-                const extMap = {
-                    'yaml': 'yaml', 'yml': 'yaml',
-                    'j2': 'twig', 'jinja': 'twig', 'jinja2': 'twig',
-                    'json': 'json',
-                    'md': 'markdown', 'markdown': 'markdown',
-                    'sh': 'shell', 'bash': 'shell', 'zsh': 'shell',
-                    'py': 'python',
-                    'js': 'javascript',
-                    'ts': 'typescript',
-                    'html': 'html', 'htm': 'html',
-                    'css': 'css',
-                    'xml': 'xml',
-                    'ini': 'ini', 'cfg': 'ini', 'conf': 'ini',
-                    'dot': 'dot', 'gv': 'dot',
-                    'sql': 'sql'
-                };
-                
-                // For certain extensions, check content to override
-                if (ext === 'yaml' || ext === 'yml') {
-                    // Check if it's Cumulus NVUE YAML
-                    if (/^nv\s+(set|show|unset|config|action)/m.test(content)) {
-                        return 'cumulus';
-                    }
-                    return 'yaml';
-                }
-                
-                if (ext === 'txt' || !extMap[ext]) {
-                    // For .txt or unknown extensions, use content detection
-                    const detected = detectLanguage(content);
-                    if (detected) return detected;
-                }
-                
-                // For .conf files, check if nginx or ini
-                if (ext === 'conf') {
-                    if (/^\s*(server|http|events|upstream)\s*\{/m.test(content)) {
-                        return 'nginx';
-                    }
-                    return 'ini';
-                }
-                
-                return extMap[ext] || 'plaintext';
-            }
             
             // Create editor instance
             state.editor = monaco.editor.create(document.getElementById('editor-container'), {
