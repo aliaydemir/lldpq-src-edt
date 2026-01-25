@@ -750,6 +750,157 @@
             background: #f44747;
             border-radius: 50%;
         }
+        
+        /* Help Modal */
+        .help-modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .help-modal-overlay.visible {
+            display: flex;
+        }
+        
+        .help-modal {
+            background: #252526;
+            border: 1px solid #3c3c3c;
+            border-radius: 8px;
+            max-width: 850px;
+            width: 90%;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+        }
+        
+        .help-modal::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        .help-modal::-webkit-scrollbar-track {
+            background: #1e1e1e;
+        }
+        
+        .help-modal::-webkit-scrollbar-thumb {
+            background: #444;
+            border-radius: 4px;
+        }
+        
+        .help-modal::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+        
+        .help-modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 20px;
+            border-bottom: 1px solid #3c3c3c;
+            position: sticky;
+            top: 0;
+            background: #252526;
+        }
+        
+        .help-modal-header h2 {
+            margin: 0;
+            font-size: 16px;
+            color: #fff;
+        }
+        
+        .help-modal-close {
+            background: none;
+            border: none;
+            color: #888;
+            cursor: pointer;
+            font-size: 20px;
+            padding: 4px 8px;
+        }
+        
+        .help-modal-close:hover {
+            color: #fff;
+        }
+        
+        .help-modal-content {
+            padding: 16px 20px;
+        }
+        
+        .help-section {
+            margin-bottom: 20px;
+        }
+        
+        .help-section h3 {
+            color: #4EC9B0;
+            font-size: 13px;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .help-table {
+            width: 100%;
+            border-collapse: collapse;
+            border: 1px solid #3c3c3c;
+        }
+        
+        .help-table th {
+            text-align: left;
+            color: #888;
+            font-size: 11px;
+            padding: 8px 12px;
+            border: 1px solid #3c3c3c;
+            background: #1e1e1e;
+        }
+        
+        .help-table td {
+            padding: 8px 12px;
+            font-size: 12px;
+            border: 1px solid #3c3c3c;
+        }
+        
+        .help-table td:first-child,
+        .help-table th:first-child {
+            color: #d4d4d4;
+            width: 180px;
+        }
+        
+        .help-table td:nth-child(2),
+        .help-table th:nth-child(2) {
+            color: #888;
+            font-family: monospace;
+            font-size: 11px;
+            width: 180px;
+        }
+        
+        .help-table td:nth-child(3),
+        .help-table th:nth-child(3) {
+            color: #888;
+            font-family: monospace;
+            font-size: 11px;
+            width: 180px;
+        }
+        
+        .help-table kbd {
+            background: #3c3c3c;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 11px;
+            color: #ddd;
+        }
+        
+        .help-footer {
+            text-align: center;
+            padding: 16px 20px;
+            border-top: 1px solid #3c3c3c;
+            color: #555;
+            font-size: 11px;
+        }
     </style>
 </head>
 <body>
@@ -835,6 +986,10 @@
                 <span class="toolbar-separator"></span>
                 <button class="toolbar-btn" id="btn-preview" onclick="toggleMarkdownMode()" title="Toggle Mode" style="display: none;">
                     MD
+                </button>
+                <span class="toolbar-separator"></span>
+                <button class="toolbar-btn" onclick="showHelpModal()" title="Keyboard Shortcuts">
+                    <span class="codicon codicon-question"></span>
                 </button>
             </div>
             <div id="editor-tabs" class="editor-tabs">
@@ -973,6 +1128,22 @@
             const btnEl = document.getElementById('autocomplete-toggle');
             btnEl.style.color = autocompleteEnabled ? '#4EC9B0' : '#858585';
         }
+        
+        // Help modal functions
+        function showHelpModal() {
+            document.getElementById('help-modal').classList.add('visible');
+        }
+        
+        function hideHelpModal() {
+            document.getElementById('help-modal').classList.remove('visible');
+        }
+        
+        // Close help modal with Escape key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape' && document.getElementById('help-modal').classList.contains('visible')) {
+                hideHelpModal();
+            }
+        });
         
         // ============================================
         // LANGUAGE AUTO-DETECTION (global scope)
@@ -2892,5 +3063,62 @@
             showLoading(false);
         }
     </script>
+    
+    <!-- Help Modal -->
+    <div id="help-modal" class="help-modal-overlay" onclick="if(event.target === this) hideHelpModal()">
+        <div class="help-modal">
+            <div class="help-modal-header">
+                <h2>Keyboard Shortcuts</h2>
+                <button class="help-modal-close" onclick="hideHelpModal()">&times;</button>
+            </div>
+            <div class="help-modal-content">
+                <div class="help-section">
+                    <h3>Editing</h3>
+                    <table class="help-table">
+                        <tr><th>Action</th><th>Windows/Linux</th><th>Mac</th></tr>
+                        <tr><td>Undo</td><td><kbd>Ctrl</kbd>+<kbd>Z</kbd></td><td><kbd>⌘</kbd>+<kbd>Z</kbd></td></tr>
+                        <tr><td>Redo</td><td><kbd>Ctrl</kbd>+<kbd>Y</kbd></td><td><kbd>⌘</kbd>+<kbd>⇧</kbd>+<kbd>Z</kbd></td></tr>
+                        <tr><td>Cut Line</td><td><kbd>Ctrl</kbd>+<kbd>X</kbd></td><td><kbd>⌘</kbd>+<kbd>X</kbd></td></tr>
+                        <tr><td>Copy Line</td><td><kbd>Ctrl</kbd>+<kbd>C</kbd></td><td><kbd>⌘</kbd>+<kbd>C</kbd></td></tr>
+                        <tr><td>Delete Line</td><td><kbd>Ctrl</kbd>+<kbd>⇧</kbd>+<kbd>K</kbd></td><td><kbd>⌘</kbd>+<kbd>⇧</kbd>+<kbd>K</kbd></td></tr>
+                        <tr><td>Duplicate Line</td><td><kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>↓</kbd></td><td><kbd>⇧</kbd>+<kbd>⌥</kbd>+<kbd>↓</kbd></td></tr>
+                        <tr><td>Move Line Up/Down</td><td><kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></td><td><kbd>⌥</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></td></tr>
+                        <tr><td>Toggle Comment</td><td><kbd>Ctrl</kbd>+<kbd>/</kbd></td><td><kbd>⌘</kbd>+<kbd>/</kbd></td></tr>
+                        <tr><td>Indent/Outdent</td><td><kbd>Tab</kbd> / <kbd>⇧</kbd>+<kbd>Tab</kbd></td><td><kbd>Tab</kbd> / <kbd>⇧</kbd>+<kbd>Tab</kbd></td></tr>
+                    </table>
+                </div>
+                
+                <div class="help-section">
+                    <h3>Selection</h3>
+                    <table class="help-table">
+                        <tr><th>Action</th><th>Windows/Linux</th><th>Mac</th></tr>
+                        <tr><td>Select All</td><td><kbd>Ctrl</kbd>+<kbd>A</kbd></td><td><kbd>⌘</kbd>+<kbd>A</kbd></td></tr>
+                        <tr><td>Select Line</td><td><kbd>Ctrl</kbd>+<kbd>L</kbd></td><td><kbd>⌘</kbd>+<kbd>L</kbd></td></tr>
+                        <tr><td>Select Word</td><td><kbd>Ctrl</kbd>+<kbd>D</kbd></td><td><kbd>⌘</kbd>+<kbd>D</kbd></td></tr>
+                        <tr><td>Select All Occurrences</td><td><kbd>Ctrl</kbd>+<kbd>⇧</kbd>+<kbd>L</kbd></td><td><kbd>⌘</kbd>+<kbd>⇧</kbd>+<kbd>L</kbd></td></tr>
+                        <tr><td>Multi-cursor (click)</td><td><kbd>Alt</kbd>+Click</td><td><kbd>⌥</kbd>+Click</td></tr>
+                        <tr><td>Multi-cursor (above/below)</td><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></td><td><kbd>⌘</kbd>+<kbd>⌥</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></td></tr>
+                        <tr><td>Column/Box Selection</td><td><kbd>Shift</kbd>+<kbd>Alt</kbd>+Drag</td><td><kbd>⇧</kbd>+<kbd>⌥</kbd>+Drag</td></tr>
+                        <tr><td>Expand Selection</td><td><kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>→</kbd></td><td><kbd>⇧</kbd>+<kbd>⌃</kbd>+<kbd>⌘</kbd>+<kbd>→</kbd></td></tr>
+                    </table>
+                </div>
+                
+                <div class="help-section">
+                    <h3>Search & Navigation</h3>
+                    <table class="help-table">
+                        <tr><th>Action</th><th>Windows/Linux</th><th>Mac</th></tr>
+                        <tr><td>Find</td><td><kbd>Ctrl</kbd>+<kbd>F</kbd></td><td><kbd>⌘</kbd>+<kbd>F</kbd></td></tr>
+                        <tr><td>Find & Replace</td><td><kbd>Ctrl</kbd>+<kbd>H</kbd></td><td><kbd>⌘</kbd>+<kbd>⌥</kbd>+<kbd>F</kbd></td></tr>
+                        <tr><td>Go to Line</td><td><kbd>Ctrl</kbd>+<kbd>G</kbd></td><td><kbd>⌃</kbd>+<kbd>G</kbd></td></tr>
+                        <tr><td>Go to Start/End</td><td><kbd>Ctrl</kbd>+<kbd>Home</kbd>/<kbd>End</kbd></td><td><kbd>⌘</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd></td></tr>
+                        <tr><td>Command Palette</td><td><kbd>F1</kbd></td><td><kbd>F1</kbd></td></tr>
+                    </table>
+                </div>
+            </div>
+            <div class="help-footer">
+                Ali Aydemir © 2024
+            </div>
+        </div>
+    </div>
 </body>
 </html>
