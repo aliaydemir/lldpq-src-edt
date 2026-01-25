@@ -768,6 +768,144 @@
             background: #3db8a0;
         }
         
+        /* Light Theme */
+        body.light-theme {
+            background: #ffffff;
+            color: #333;
+        }
+        
+        body.light-theme .header {
+            background: linear-gradient(135deg, #f0f0f0 0%, #e8e8e8 100%);
+            border-bottom-color: #d0d0d0;
+        }
+        
+        body.light-theme .header h1 {
+            color: #76b900;
+        }
+        
+        body.light-theme .editor-toolbar {
+            background: #f3f3f3;
+            border-bottom-color: #e0e0e0;
+        }
+        
+        body.light-theme .toolbar-btn {
+            color: #616161;
+        }
+        
+        body.light-theme .toolbar-btn:hover {
+            background: #e0e0e0;
+            color: #333;
+        }
+        
+        body.light-theme .toolbar-separator {
+            background: #d0d0d0;
+        }
+        
+        body.light-theme .sidebar {
+            background: #f3f3f3;
+            border-right-color: #e0e0e0;
+        }
+        
+        body.light-theme .file-tree-item {
+            color: #333;
+        }
+        
+        body.light-theme .file-tree-item:hover {
+            background: #e0e0e0;
+        }
+        
+        body.light-theme .file-tree-item.active {
+            background: #d0d0d0;
+        }
+        
+        body.light-theme .editor-tabs {
+            background: #f3f3f3;
+            border-bottom-color: #e0e0e0;
+        }
+        
+        body.light-theme .editor-tab {
+            background: #ececec;
+            color: #616161;
+            border-color: #e0e0e0;
+        }
+        
+        body.light-theme .editor-tab:hover {
+            background: #e0e0e0;
+        }
+        
+        body.light-theme .editor-tab.active {
+            background: #ffffff;
+            color: #333;
+        }
+        
+        body.light-theme .bottom-bar {
+            background: #f3f3f3;
+            border-top-color: #e0e0e0;
+        }
+        
+        body.light-theme .btn {
+            background: #e0e0e0;
+            color: #333;
+        }
+        
+        body.light-theme .btn:hover {
+            background: #d0d0d0;
+        }
+        
+        body.light-theme .btn-primary {
+            background: #76b900;
+            color: #fff;
+        }
+        
+        body.light-theme .output-panel {
+            background: #f3f3f3;
+            border-top-color: #e0e0e0;
+        }
+        
+        body.light-theme #markdown-preview {
+            background: #ffffff;
+            color: #333;
+        }
+        
+        body.light-theme .help-modal {
+            background: #ffffff;
+            border-color: #e0e0e0;
+        }
+        
+        body.light-theme .help-modal-header {
+            background: #ffffff;
+            border-bottom-color: #e0e0e0;
+        }
+        
+        body.light-theme .help-modal-header h2 {
+            color: #333;
+        }
+        
+        body.light-theme .help-table {
+            border-color: #e0e0e0;
+        }
+        
+        body.light-theme .help-table th {
+            background: #f3f3f3;
+            border-color: #e0e0e0;
+            color: #616161;
+        }
+        
+        body.light-theme .help-table td {
+            border-color: #e0e0e0;
+            color: #333;
+        }
+        
+        body.light-theme .help-table kbd {
+            background: #e0e0e0;
+            color: #333;
+        }
+        
+        body.light-theme .help-footer {
+            border-top-color: #e0e0e0;
+            color: #999;
+        }
+        
         /* Help Modal */
         .help-modal-overlay {
             display: none;
@@ -1000,6 +1138,9 @@
                 <button id="autocomplete-toggle" class="toolbar-btn" onclick="toggleAutocomplete()" title="Toggle Auto-completion (Off by default)">
                     <span class="codicon codicon-lightbulb-autofix"></span>
                 </button>
+                <button id="theme-toggle" class="toolbar-btn" onclick="toggleTheme()" title="Toggle Light/Dark Theme">
+                    <span class="codicon codicon-color-mode"></span>
+                </button>
                 <span class="toolbar-separator"></span>
                 <button class="toolbar-btn" id="btn-preview" onclick="toggleMarkdownMode()" title="Toggle Mode" style="display: none;">
                     MD
@@ -1145,6 +1286,39 @@
             autocompleteEnabled = !autocompleteEnabled;
             const btnEl = document.getElementById('autocomplete-toggle');
             btnEl.style.color = autocompleteEnabled ? '#4EC9B0' : '#858585';
+        }
+        
+        // Theme toggle
+        let isDarkTheme = true;
+        
+        function toggleTheme() {
+            isDarkTheme = !isDarkTheme;
+            const theme = isDarkTheme ? 'vs-dark' : 'vs';
+            
+            // Change Monaco theme
+            if (typeof monaco !== 'undefined' && state.editor) {
+                monaco.editor.setTheme(theme);
+            }
+            
+            // Change UI theme
+            document.body.classList.toggle('light-theme', !isDarkTheme);
+            
+            // Update button icon
+            const btn = document.getElementById('theme-toggle');
+            btn.title = isDarkTheme ? 'Switch to Light Theme' : 'Switch to Dark Theme';
+            btn.style.color = isDarkTheme ? '#858585' : '#FDB813';
+            
+            // Save preference
+            localStorage.setItem('editor-theme', isDarkTheme ? 'dark' : 'light');
+        }
+        
+        // Load saved theme on startup
+        function loadSavedTheme() {
+            const saved = localStorage.getItem('editor-theme');
+            if (saved === 'light') {
+                isDarkTheme = true;
+                toggleTheme();
+            }
         }
         
         // Help modal functions
@@ -1552,6 +1726,9 @@
                 renderWhitespace: 'selection',
                 bracketPairColorization: { enabled: true }
             });
+            
+            // Load saved theme
+            loadSavedTheme();
             
             // Track changes
             state.editor.onDidChangeModelContent(() => {
