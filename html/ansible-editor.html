@@ -758,6 +758,16 @@
             border-radius: 50%;
         }
         
+        /* MD Button active state */
+        .toolbar-btn.md-active {
+            background: #4ec9b0;
+            color: #1e1e1e;
+        }
+        
+        .toolbar-btn.md-active:hover {
+            background: #3db8a0;
+        }
+        
         /* Help Modal */
         .help-modal-overlay {
             display: none;
@@ -983,7 +993,7 @@
                 <button class="toolbar-btn" onclick="editorAction('commandPalette')" title="Command Palette (F1)">
                     <span class="codicon codicon-terminal"></span>
                 </button>
-                <button class="toolbar-btn" onclick="closeAllTabs()" title="Close All Tabs">
+                <button class="toolbar-btn" onclick="closeAllTabs()" title="Close All Tabs" style="color: #f48771;">
                     <span class="codicon codicon-close-all"></span>
                 </button>
                 <span class="toolbar-separator"></span>
@@ -2207,12 +2217,18 @@
         function updateMarkdownButtons() {
             const btnMD = document.getElementById('btn-preview');
             
-            // Update tooltip based on next mode
+            // Update button text, style and tooltip based on mode
             if (state.markdownMode === 'full-preview') {
+                btnMD.textContent = 'MD●';
+                btnMD.classList.add('md-active');
                 btnMD.title = 'Split View (MD + Editor)';
             } else if (state.markdownMode === 'split') {
+                btnMD.textContent = 'MD½';
+                btnMD.classList.add('md-active');
                 btnMD.title = 'Editor Only';
             } else {
+                btnMD.textContent = 'MD';
+                btnMD.classList.remove('md-active');
                 btnMD.title = 'Preview Only';
             }
         }
@@ -2247,8 +2263,11 @@
             preview.classList.remove('full-preview');
             preview.innerHTML = ''; // Clear content
             
-            // Hide MD button
-            document.getElementById('btn-preview').style.display = 'none';
+            // Hide MD button and reset state
+            const btnMD = document.getElementById('btn-preview');
+            btnMD.style.display = 'none';
+            btnMD.textContent = 'MD';
+            btnMD.classList.remove('md-active');
             
             // Reset mode
             state.markdownMode = 'full-preview';
