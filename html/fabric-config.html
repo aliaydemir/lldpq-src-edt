@@ -1,0 +1,898 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fabric Configuration</title>
+    <link rel="shortcut icon" href="/png/favicon.ico">
+    <script src="/css/auth.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        /* Layout */
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+        
+        /* Left Panel - Device List */
+        .device-panel {
+            width: 280px;
+            background: #252526;
+            border-right: 1px solid #404040;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        
+        .panel-header {
+            padding: 15px;
+            background: linear-gradient(0deg, #76b900 0%, #5a8c00 100%);
+            color: white;
+            font-weight: bold;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .panel-header svg {
+            width: 20px;
+            height: 20px;
+        }
+        
+        .search-box {
+            padding: 10px;
+            border-bottom: 1px solid #404040;
+        }
+        
+        .search-box input {
+            width: 100%;
+            padding: 8px 12px;
+            background: #3c3c3c;
+            border: 1px solid #555;
+            border-radius: 4px;
+            color: #d4d4d4;
+            font-size: 13px;
+        }
+        
+        .search-box input:focus {
+            outline: none;
+            border-color: #76b900;
+        }
+        
+        .device-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px 0;
+        }
+        
+        .device-group {
+            margin-bottom: 5px;
+        }
+        
+        .group-header {
+            padding: 8px 15px;
+            background: #2d2d2d;
+            color: #999;
+            font-size: 11px;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            user-select: none;
+        }
+        
+        .group-header:hover {
+            background: #333;
+        }
+        
+        .group-header .arrow {
+            transition: transform 0.2s;
+        }
+        
+        .group-header.collapsed .arrow {
+            transform: rotate(-90deg);
+        }
+        
+        .group-devices {
+            display: block;
+        }
+        
+        .group-devices.collapsed {
+            display: none;
+        }
+        
+        .device-item {
+            padding: 10px 15px 10px 30px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border-left: 3px solid transparent;
+            transition: all 0.2s;
+        }
+        
+        .device-item:hover {
+            background: #2a2d2e;
+        }
+        
+        .device-item.selected {
+            background: #37373d;
+            border-left-color: #76b900;
+        }
+        
+        .device-icon {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #76b900;
+        }
+        
+        .device-name {
+            font-size: 13px;
+            color: #d4d4d4;
+        }
+        
+        .device-ip {
+            font-size: 11px;
+            color: #888;
+            margin-left: auto;
+        }
+        
+        /* Right Panel - Content */
+        .content-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        
+        .content-header {
+            padding: 15px 20px;
+            background: #2d2d2d;
+            border-bottom: 1px solid #404040;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .content-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #fff;
+        }
+        
+        .content-subtitle {
+            font-size: 12px;
+            color: #888;
+            margin-top: 3px;
+        }
+        
+        .action-buttons {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(0deg, #76b900 0%, #5a8c00 100%);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: linear-gradient(0deg, #8bd400 0%, #6ba000 100%);
+        }
+        
+        .btn-secondary {
+            background: #404040;
+            color: #d4d4d4;
+        }
+        
+        .btn-secondary:hover {
+            background: #505050;
+        }
+        
+        .btn-warning {
+            background: linear-gradient(0deg, #ff6b00 0%, #cc5500 100%);
+            color: white;
+        }
+        
+        .btn-warning:hover {
+            background: linear-gradient(0deg, #ff8533 0%, #e66000 100%);
+        }
+        
+        /* Content Area */
+        .content-area {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+        
+        /* Welcome Screen */
+        .welcome-screen {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #666;
+        }
+        
+        .welcome-screen svg {
+            width: 80px;
+            height: 80px;
+            margin-bottom: 20px;
+            opacity: 0.5;
+        }
+        
+        .welcome-screen h2 {
+            font-size: 24px;
+            margin-bottom: 10px;
+            color: #888;
+        }
+        
+        .welcome-screen p {
+            font-size: 14px;
+        }
+        
+        /* Device Dashboard Sections */
+        .dashboard-section {
+            background: #2d2d2d;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            overflow: hidden;
+        }
+        
+        .section-header {
+            padding: 12px 16px;
+            background: #333;
+            font-weight: 600;
+            font-size: 14px;
+            color: #76b900;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border-bottom: 1px solid #404040;
+        }
+        
+        .section-content {
+            padding: 16px;
+        }
+        
+        /* Info Grid */
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 15px;
+        }
+        
+        .info-item {
+            background: #252526;
+            padding: 12px;
+            border-radius: 6px;
+            border-left: 3px solid #76b900;
+        }
+        
+        .info-label {
+            font-size: 11px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+        
+        .info-value {
+            font-size: 14px;
+            color: #fff;
+            font-weight: 500;
+        }
+        
+        /* Data Tables */
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        .data-table th {
+            text-align: left;
+            padding: 10px 12px;
+            background: #252526;
+            color: #888;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: 1px solid #404040;
+        }
+        
+        .data-table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #333;
+            font-size: 13px;
+        }
+        
+        .data-table tr:hover {
+            background: #333;
+        }
+        
+        .badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+        
+        .badge-green {
+            background: rgba(118, 185, 0, 0.2);
+            color: #76b900;
+        }
+        
+        .badge-blue {
+            background: rgba(0, 122, 204, 0.2);
+            color: #4fc3f7;
+        }
+        
+        .badge-orange {
+            background: rgba(255, 152, 0, 0.2);
+            color: #ffb74d;
+        }
+        
+        /* Loading */
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 40px;
+            color: #888;
+        }
+        
+        .spinner {
+            width: 24px;
+            height: 24px;
+            border: 3px solid #333;
+            border-top-color: #76b900;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        /* Bottom Action Bar */
+        .action-bar {
+            padding: 15px 20px;
+            background: #252526;
+            border-top: 1px solid #404040;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        .action-bar .status {
+            margin-left: auto;
+            font-size: 12px;
+            color: #888;
+        }
+        
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: #1e1e1e;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: #404040;
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Left Panel - Device List -->
+        <div class="device-panel">
+            <div class="panel-header">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M4 1h16a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1m0 8h16a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1m0 8h16a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1M9 5h1V3H9v2m0 8h1v-2H9v2m0 8h1v-2H9v2M5 3v2h2V3H5m0 8v2h2v-2H5m0 8v2h2v-2H5z"/>
+                </svg>
+                Fabric Config
+            </div>
+            
+            <div class="search-box">
+                <input type="text" id="device-search" placeholder="Search devices..." oninput="filterDevices(this.value)">
+            </div>
+            
+            <div class="device-list" id="device-list">
+                <div class="loading">
+                    <div class="spinner"></div>
+                    Loading devices...
+                </div>
+            </div>
+        </div>
+        
+        <!-- Right Panel - Content -->
+        <div class="content-panel">
+            <div class="content-header">
+                <div>
+                    <div class="content-title" id="content-title">Fabric Configuration</div>
+                    <div class="content-subtitle" id="content-subtitle">Select a device from the left panel</div>
+                </div>
+                <div class="action-buttons" id="action-buttons" style="display: none;">
+                    <button class="btn btn-secondary" onclick="refreshDevice()">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+                        </svg>
+                        Refresh
+                    </button>
+                </div>
+            </div>
+            
+            <div class="content-area" id="content-area">
+                <div class="welcome-screen">
+                    <svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M4 1h16a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1m0 8h16a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1m0 8h16a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1M9 5h1V3H9v2m0 8h1v-2H9v2m0 8h1v-2H9v2M5 3v2h2V3H5m0 8v2h2v-2H5m0 8v2h2v-2H5z"/>
+                    </svg>
+                    <h2>Fabric Configuration Manager</h2>
+                    <p>Select a device from the left panel to view and manage its configuration</p>
+                </div>
+            </div>
+            
+            <div class="action-bar">
+                <button class="btn btn-primary" onclick="runGenerate()">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M19 12v7H5v-7H3v7c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7h-2zm-6 .67l2.59-2.58L17 11.5l-5 5-5-5 1.41-1.41L11 12.67V3h2v9.67z"/>
+                    </svg>
+                    Generate
+                </button>
+                <button class="btn btn-secondary" onclick="runDiff()">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M9 7H7v2h2V7zm0 4H7v2h2v-2zm0-8a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h6v-2H9V5h10v4h2V5a2 2 0 0 0-2-2H9zm8 12v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4z"/>
+                    </svg>
+                    Diff
+                </button>
+                <button class="btn btn-warning" onclick="runDeploy()">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/>
+                    </svg>
+                    Deploy
+                </button>
+                <div class="status" id="status-text">Ready</div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // State
+        let devices = {};
+        let selectedDevice = null;
+        let ansibleDir = '';
+        
+        // Initialize
+        async function init() {
+            // Check auth
+            const isAuth = await LLDPqAuth.check();
+            if (!isAuth) return;
+            
+            // Only admin can access
+            if (!LLDPqAuth.isAdmin()) {
+                document.body.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100vh; color: #888;">Access denied. Admin only.</div>';
+                return;
+            }
+            
+            // Load devices
+            await loadDevices();
+        }
+        
+        // Load devices from API
+        async function loadDevices() {
+            try {
+                const response = await fetch('/fabric-api.sh?action=list-devices');
+                const data = await response.json();
+                
+                if (data.success) {
+                    devices = data.devices;
+                    ansibleDir = data.ansible_dir;
+                    renderDeviceList();
+                } else {
+                    showError('Failed to load devices: ' + data.error);
+                }
+            } catch (err) {
+                showError('Failed to load devices: ' + err.message);
+            }
+        }
+        
+        // Render device list
+        function renderDeviceList() {
+            const container = document.getElementById('device-list');
+            
+            if (Object.keys(devices).length === 0) {
+                container.innerHTML = '<div class="loading">No devices found</div>';
+                return;
+            }
+            
+            let html = '';
+            for (const [group, groupDevices] of Object.entries(devices)) {
+                html += `
+                    <div class="device-group" data-group="${group}">
+                        <div class="group-header" onclick="toggleGroup(this)">
+                            <span class="arrow">▼</span>
+                            ${group} (${groupDevices.length})
+                        </div>
+                        <div class="group-devices">
+                `;
+                
+                for (const device of groupDevices) {
+                    html += `
+                        <div class="device-item" data-hostname="${device.hostname}" onclick="selectDevice('${device.hostname}')">
+                            <div class="device-icon"></div>
+                            <span class="device-name">${device.hostname}</span>
+                            <span class="device-ip">${device.ip || ''}</span>
+                        </div>
+                    `;
+                }
+                
+                html += '</div></div>';
+            }
+            
+            container.innerHTML = html;
+        }
+        
+        // Toggle group collapse
+        function toggleGroup(header) {
+            header.classList.toggle('collapsed');
+            header.nextElementSibling.classList.toggle('collapsed');
+        }
+        
+        // Filter devices
+        function filterDevices(query) {
+            const items = document.querySelectorAll('.device-item');
+            const groups = document.querySelectorAll('.device-group');
+            
+            query = query.toLowerCase();
+            
+            groups.forEach(group => {
+                let hasVisible = false;
+                const groupItems = group.querySelectorAll('.device-item');
+                
+                groupItems.forEach(item => {
+                    const hostname = item.dataset.hostname.toLowerCase();
+                    const visible = hostname.includes(query);
+                    item.style.display = visible ? '' : 'none';
+                    if (visible) hasVisible = true;
+                });
+                
+                group.style.display = hasVisible ? '' : 'none';
+            });
+        }
+        
+        // Select device
+        async function selectDevice(hostname) {
+            // Update selection UI
+            document.querySelectorAll('.device-item').forEach(item => {
+                item.classList.toggle('selected', item.dataset.hostname === hostname);
+            });
+            
+            selectedDevice = hostname;
+            
+            // Update header
+            document.getElementById('content-title').textContent = hostname;
+            document.getElementById('content-subtitle').textContent = 'Loading configuration...';
+            document.getElementById('action-buttons').style.display = 'flex';
+            
+            // Show loading
+            document.getElementById('content-area').innerHTML = '<div class="loading"><div class="spinner"></div>Loading device configuration...</div>';
+            
+            // Load device config
+            try {
+                const response = await fetch(`/fabric-api.sh?action=get-device&hostname=${encodeURIComponent(hostname)}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    renderDeviceDashboard(data);
+                } else {
+                    showError('Failed to load device: ' + data.error);
+                }
+            } catch (err) {
+                showError('Failed to load device: ' + err.message);
+            }
+        }
+        
+        // Render device dashboard
+        function renderDeviceDashboard(data) {
+            const config = data.config;
+            const deviceInfo = data.device_info;
+            
+            document.getElementById('content-subtitle').textContent = deviceInfo.ip || '';
+            
+            let html = '';
+            
+            // Overview Section
+            html += `
+                <div class="dashboard-section">
+                    <div class="section-header">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/>
+                        </svg>
+                        Overview
+                    </div>
+                    <div class="section-content">
+                        <div class="info-grid">
+                            <div class="info-item">
+                                <div class="info-label">Hostname</div>
+                                <div class="info-value">${selectedDevice}</div>
+                            </div>
+                            <div class="info-item">
+                                <div class="info-label">Management IP</div>
+                                <div class="info-value">${config.mgmt_ip || 'N/A'}</div>
+                            </div>
+                            <div class="info-item">
+                                <div class="info-label">Loopback IP</div>
+                                <div class="info-value">${config.lo_ip || 'N/A'}</div>
+                            </div>
+                            <div class="info-item">
+                                <div class="info-label">BGP ASN</div>
+                                <div class="info-value">${config.bgp_asn || 'N/A'}</div>
+                            </div>
+                            <div class="info-item">
+                                <div class="info-label">VTEP</div>
+                                <div class="info-value">${config.vtep?.state ? '<span class="badge badge-green">Enabled</span>' : '<span class="badge badge-orange">Disabled</span>'}</div>
+                            </div>
+                            <div class="info-item">
+                                <div class="info-label">Group</div>
+                                <div class="info-value">${deviceInfo.group || 'N/A'}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // VRFs Section
+            if (config.vrfs && Object.keys(config.vrfs).length > 0) {
+                html += `
+                    <div class="dashboard-section">
+                        <div class="section-header">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+                            </svg>
+                            VRFs (${Object.keys(config.vrfs).length})
+                        </div>
+                        <div class="section-content">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>VRF Name</th>
+                                        <th>L3VNI</th>
+                                        <th>BGP Profile</th>
+                                        <th>ASN</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                `;
+                
+                for (const [vrfName, vrfConfig] of Object.entries(config.vrfs)) {
+                    html += `
+                        <tr>
+                            <td><span class="badge badge-blue">${vrfName}</span></td>
+                            <td>${vrfConfig.l3vni || '-'}</td>
+                            <td>${vrfConfig.bgp?.bgp_profile || '-'}</td>
+                            <td>${vrfConfig.bgp?.asn || '-'}</td>
+                        </tr>
+                    `;
+                }
+                
+                html += '</tbody></table></div></div>';
+            }
+            
+            // VLANs Section
+            if (config.vlan_templates && config.vlan_templates.length > 0) {
+                html += `
+                    <div class="dashboard-section">
+                        <div class="section-header">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-1 9h-4v4h-2v-4H9V9h4V5h2v4h4v2z"/>
+                            </svg>
+                            VLAN Templates (${config.vlan_templates.length})
+                        </div>
+                        <div class="section-content">
+                            <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                                ${config.vlan_templates.map(v => `<span class="badge badge-green">${v}</span>`).join('')}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            // Interfaces Section
+            if (config.interfaces && Object.keys(config.interfaces).length > 0) {
+                const interfaces = Object.entries(config.interfaces).slice(0, 20); // Show first 20
+                const total = Object.keys(config.interfaces).length;
+                
+                html += `
+                    <div class="dashboard-section">
+                        <div class="section-header">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M7.77 6.76L6.23 5.48.82 12l5.41 6.52 1.54-1.28L3.42 12l4.35-5.24zM7 13h2v-2H7v2zm10-2h-2v2h2v-2zm-6 2h2v-2h-2v2zm6.77-7.52l-1.54 1.28L20.58 12l-4.35 5.24 1.54 1.28L23.18 12l-5.41-6.52z"/>
+                            </svg>
+                            Interfaces (${total})
+                        </div>
+                        <div class="section-content">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Interface</th>
+                                        <th>Profile</th>
+                                        <th>Description</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                `;
+                
+                for (const [ifName, ifConfig] of interfaces) {
+                    html += `
+                        <tr>
+                            <td>${ifName}</td>
+                            <td>${ifConfig.sw_port_profile || ifConfig.breakout || '-'}</td>
+                            <td>${ifConfig.description || '-'}</td>
+                        </tr>
+                    `;
+                }
+                
+                if (total > 20) {
+                    html += `<tr><td colspan="3" style="text-align: center; color: #888;">... and ${total - 20} more interfaces</td></tr>`;
+                }
+                
+                html += '</tbody></table></div></div>';
+            }
+            
+            // DHCP Relay Section
+            if (config.dhcp_relay && config.dhcp_relay.length > 0) {
+                html += `
+                    <div class="dashboard-section">
+                        <div class="section-header">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14l-5-5 1.41-1.41L12 14.17l7.59-7.59L21 8l-9 9z"/>
+                            </svg>
+                            DHCP Relay (${config.dhcp_relay.length})
+                        </div>
+                        <div class="section-content">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>VRF</th>
+                                        <th>Interfaces</th>
+                                        <th>Servers</th>
+                                        <th>Upstream</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                `;
+                
+                for (const relay of config.dhcp_relay) {
+                    html += `
+                        <tr>
+                            <td><span class="badge badge-blue">${relay.vrf}</span></td>
+                            <td>${relay.interfaces?.join(', ') || '-'}</td>
+                            <td>${relay.servers?.join(', ') || '-'}</td>
+                            <td>${relay.upstream?.join(', ') || '-'}</td>
+                        </tr>
+                    `;
+                }
+                
+                html += '</tbody></table></div></div>';
+            }
+            
+            // EVPN Multihoming Section
+            if (config.evpn_mh) {
+                html += `
+                    <div class="dashboard-section">
+                        <div class="section-header">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M17 16l-4-4V8.82C14.16 8.4 15 7.3 15 6c0-1.66-1.34-3-3-3S9 4.34 9 6c0 1.3.84 2.4 2 2.82V12l-4 4H3v5h5v-3.05l4-4.2 4 4.2V21h5v-5h-4z"/>
+                            </svg>
+                            EVPN Multihoming
+                        </div>
+                        <div class="section-content">
+                            <div class="info-grid">
+                                <div class="info-item">
+                                    <div class="info-label">System MAC</div>
+                                    <div class="info-value">${config.evpn_mh.sysmac || 'N/A'}</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">DF Preference</div>
+                                    <div class="info-value">${config.evpn_mh.df_preference || 'N/A'}</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            document.getElementById('content-area').innerHTML = html;
+        }
+        
+        // Refresh device
+        function refreshDevice() {
+            if (selectedDevice) {
+                selectDevice(selectedDevice);
+            }
+        }
+        
+        // Show error
+        function showError(message) {
+            document.getElementById('content-area').innerHTML = `
+                <div class="welcome-screen">
+                    <svg viewBox="0 0 24 24" fill="#ff6b6b" style="opacity: 1;">
+                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+                    </svg>
+                    <h2 style="color: #ff6b6b;">Error</h2>
+                    <p>${message}</p>
+                </div>
+            `;
+        }
+        
+        // Ansible actions
+        async function runGenerate() {
+            setStatus('Generating configs...');
+            // TODO: Implement
+            setTimeout(() => setStatus('Ready'), 2000);
+        }
+        
+        async function runDiff() {
+            setStatus('Running diff...');
+            // TODO: Implement
+            setTimeout(() => setStatus('Ready'), 2000);
+        }
+        
+        async function runDeploy() {
+            setStatus('Deploying...');
+            // TODO: Implement
+            setTimeout(() => setStatus('Ready'), 2000);
+        }
+        
+        function setStatus(text) {
+            document.getElementById('status-text').textContent = text;
+        }
+        
+        // Initialize on load
+        init();
+    </script>
+</body>
+</html>
