@@ -30,18 +30,11 @@
         
         /* Header */
         .header {
-            background: linear-gradient(135deg, #2d2d2d 0%, #3a3a3a 100%);
-            padding: 12px 20px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            border-bottom: 1px solid #404040;
+            display: none;
         }
         
         .header h1 {
-            font-size: 18px;
-            font-weight: 500;
-            color: #76b900;
+            display: none;
         }
         
         .header-actions {
@@ -125,12 +118,14 @@
         }
         
         .sidebar-header {
-            padding: 10px 15px;
-            background: #333;
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            color: #888;
+            padding: 15px;
+            background: linear-gradient(0deg, #76b900 0%, #5a8c00 100%);
+            color: white;
+            font-weight: bold;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
         
         .file-tree {
@@ -643,10 +638,15 @@
             font-weight: bold;
             text-transform: uppercase;
             border-top: 1px solid #404040;
+            background: #252526;
         }
         
         .host-dropdown-group:first-child {
             border-top: none;
+        }
+        
+        .host-dropdown-menu {
+            max-height: 350px;
         }
         
         /* Validation indicator */
@@ -1069,7 +1069,7 @@
 </head>
 <body>
     <div class="header">
-        <h1>Ansible Config Editor</h1>
+        <h1>Fabric Editor</h1>
         <div class="header-actions">
             <div id="yaml-validation" class="validation-indicator valid" style="display: none;">
                 <span class="icon">✓</span>
@@ -1081,7 +1081,12 @@
     
     <div class="main-container">
         <div class="sidebar">
-            <div class="sidebar-header">Explorer</div>
+            <div class="sidebar-header">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M14.6,16.6L19.2,12L14.6,7.4L16,6L22,12L16,18L14.6,16.6M9.4,16.6L4.8,12L9.4,7.4L8,6L2,12L8,18L9.4,16.6Z"/>
+                </svg>
+                Fabric Editor
+            </div>
             <div id="file-tree" class="file-tree">
                 <!-- File tree will be populated by JavaScript -->
             </div>
@@ -2133,14 +2138,14 @@
             if (state.groups && state.groups.length > 0) {
                 const groupLabel = document.createElement('div');
                 groupLabel.className = 'host-dropdown-group';
-                groupLabel.textContent = 'Groups';
+                groupLabel.textContent = 'GROUPS (' + state.groups.length + ')';
                 menu.appendChild(groupLabel);
                 
                 state.groups.forEach(group => {
                     const item = document.createElement('div');
                     item.className = 'host-dropdown-item';
                     item.dataset.value = group;
-                    item.textContent = group;
+                    item.textContent = '▸ ' + group + ' (all)';
                     item.onclick = () => toggleHostSelection(group);
                     menu.appendChild(item);
                 });
@@ -2150,14 +2155,14 @@
             if (state.hosts && state.hosts.length > 0) {
                 const hostLabel = document.createElement('div');
                 hostLabel.className = 'host-dropdown-group';
-                hostLabel.textContent = 'Hosts';
+                hostLabel.textContent = 'HOSTS (' + state.hosts.length + ')';
                 menu.appendChild(hostLabel);
                 
                 state.hosts.forEach(host => {
                     const item = document.createElement('div');
                     item.className = 'host-dropdown-item';
                     item.dataset.value = host;
-                    item.textContent = host;
+                    item.textContent = '    ' + host;
                     item.onclick = () => toggleHostSelection(host);
                     menu.appendChild(item);
                 });
