@@ -517,18 +517,13 @@ def generate_topology_file(output_filename, directory, assets_file_path, devices
         all_lldp_neighbors = scan_lldp_neighbors(directory)
         pattern_matched_hosts = apply_host_patterns(host_patterns, all_lldp_neighbors)
         
-        # Add pattern-matched hosts to host_names and device_info
+        # Add pattern-matched hosts to host_names only (NOT device_info)
+        # This way they'll be in hosts_only_devices and get proper icon/layer from categorize_device
         for host in pattern_matched_hosts:
             host_names.add(host)
-            if host not in device_info:
-                device_info[host] = {
-                    "primaryIP": "N/A",
-                    "mac": "N/A",
-                    "serial_number": "N/A",
-                    "model": "N/A",
-                    "version": "N/A"
-                }
 
+    # hosts_only_devices = hosts in host_names but NOT in device_info (assets.ini)
+    # These will get their icon/layer from topology_config.yaml via categorize_device()
     hosts_only_devices = host_names - set(device_info.keys())
 
     # Parse LLDP to discover all devices (now includes pattern-matched hosts)
