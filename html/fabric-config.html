@@ -1148,6 +1148,7 @@
         // State
         let devices = {};
         let selectedDevice = null;
+        let currentDeviceConfig = null;  // Current device's config
         let ansibleDir = '';
         let vlanProfiles = {};  // Global VLAN profiles
         
@@ -1383,6 +1384,7 @@
                 const data = await response.json();
                 
                 if (data.success) {
+                    currentDeviceConfig = data.config;  // Save for VRF creation
                     renderDeviceDashboard(data);
                 } else {
                     showError('Failed to load device: ' + data.error);
@@ -1518,28 +1520,54 @@
                 </div>
             `;
             
-            // VRFs Section
-            if (config.vrfs && Object.keys(config.vrfs).length > 0) {
-                html += `
-                    <div class="dashboard-section">
-                        <div class="section-header">
+            // VRFs Section - always show with action buttons
+            const vrfCount = config.vrfs ? Object.keys(config.vrfs).length : 0;
+            html += `
+                <div class="dashboard-section">
+                    <div class="section-header-with-action">
+                        <div class="section-header-left">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
                                 <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
                             </svg>
-                            VRFs (${Object.keys(config.vrfs).length})
+                            VRFs (${vrfCount})
                         </div>
-                        <div class="section-content-table">
-                            <table class="data-table">
-                                <thead>
-                                    <tr>
-                                        <th>VRF Name</th>
-                                        <th>VXLAN Interface</th>
-                                        <th>L3VNI</th>
-                                        <th>BGP Profile</th>
-                                        <th>ASN</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
+                        <div style="display: flex; gap: 6px;">
+                            <button class="btn-add-small btn-assign" onclick="openAssignVrfModal()">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M18 16v-5c0-.55-.45-1-1-1H8.41l1.79 1.79c.39.39.39 1.02 0 1.41-.39.39-1.02.39-1.41 0L5.5 9.5c-.39-.39-.39-1.02 0-1.41L8.79 5.3c.39-.39 1.02-.39 1.41 0 .39.39.39 1.02 0 1.41L8.41 8H17c1.65 0 3 1.35 3 3v5h-2z"/>
+                                </svg>
+                                Assign
+                            </button>
+                            <button class="btn-add-small" onclick="openVrfModal()">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                                </svg>
+                                Create
+                            </button>
+                            <button class="btn-add-small btn-edit" onclick="openEditVrfModal()">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+                                </svg>
+                                Edit
+                            </button>
+                        </div>
+                    </div>
+            `;
+            
+            if (vrfCount > 0) {
+                html += `
+                    <div class="section-content-table">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>VRF Name</th>
+                                    <th>VXLAN Interface</th>
+                                    <th>L3VNI</th>
+                                    <th>BGP Profile</th>
+                                    <th>ASN</th>
+                                </tr>
+                            </thead>
+                            <tbody>
                 `;
                 
                 for (const [vrfName, vrfConfig] of Object.entries(config.vrfs)) {
@@ -1562,9 +1590,17 @@
                         vxlanInt = `vlan${vxlanVlanId}_l3`;
                     }
                     
+                    // Don't show X for default VRF
+                    const showRemove = vrfName !== 'default';
+                    
                     html += `
                         <tr>
-                            <td><span class="badge badge-blue">${vrfName}</span></td>
+                            <td>
+                                <span class="badge badge-blue badge-with-delete">
+                                    ${vrfName}
+                                    ${showRemove ? `<span class="badge-delete" onclick="event.stopPropagation(); confirmUnassignVrf('${vrfName}')" title="Remove from this device">×</span>` : ''}
+                                </span>
+                            </td>
                             <td>${vxlanInt !== '-' ? `<span class="badge badge-purple">${vxlanInt}</span>` : '-'}</td>
                             <td>${vrfConfig.l3vni || '-'}</td>
                             <td>${vrfConfig.bgp?.bgp_profile || '-'}</td>
@@ -1573,8 +1609,15 @@
                     `;
                 }
                 
-                html += '</tbody></table></div></div>';
+                html += '</tbody></table></div>';
+            } else {
+                html += `
+                    <div class="section-content">
+                        <div style="color: #888; padding: 10px 0;">No VRFs assigned to this device</div>
+                    </div>
+                `;
             }
+            html += '</div>';
             
             // VLANs Section - always show with add button
             html += `
@@ -1685,15 +1728,25 @@
                         // VRF display - show "-" for L2-only VLANs
                         const vrfDisplay = isL2Only ? '-' : (vp.vrf || 'default');
                         
+                        // VLAN ID display - API now returns proper format (e.g., "50-255" for ranges)
+                        const vlanIdDisplay = vp.vlan_id || '-';
+                        const l2vniDisplay = vp.l2vni || '-';
+                        let descDisplay = vp.description || '-';
+                        
+                        // For range profiles, show VLAN count if no description
+                        if (vp.vlan_count && vp.vlan_count > 1 && descDisplay === '-') {
+                            descDisplay = `${vp.vlan_count} VLANs`;
+                        }
+                        
                         html += `
                             <tr>
                                 <td><span class="badge badge-green">${templateName}</span></td>
-                                <td>${vp.vlan_id}</td>
+                                <td>${vlanIdDisplay}</td>
                                 <td>${vrrVip ? `<span class="badge badge-orange">${vrrVip}</span>` : '-'}</td>
                                 <td>${isL2Only ? '<span class="badge badge-gray">L2 Only</span>' : (switchIp ? `<span class="badge badge-blue">${switchIp}</span>` : '-')}</td>
                                 <td>${vrfDisplay !== '-' ? `<span class="badge badge-blue">${vrfDisplay}</span>` : '-'}</td>
-                                <td>${vp.l2vni || '-'}</td>
-                                <td>${vp.description || '-'}</td>
+                                <td>${l2vniDisplay}</td>
+                                <td>${descDisplay}</td>
                             </tr>
                         `;
                     }
@@ -2314,6 +2367,16 @@
                 document.getElementById('vlan-l2vni').value = '';
                 document.getElementById('vlan-profile-name').value = '';
                 
+                // Reset Range mode
+                document.getElementById('vlan-range-mode').checked = false;
+                document.getElementById('single-vlan-fields').style.display = 'block';
+                document.getElementById('range-vlan-fields').style.display = 'none';
+                document.getElementById('svi-section').style.display = 'block';
+                document.getElementById('range-preview').style.display = 'none';
+                document.getElementById('l2vni-label-suffix').textContent = '';
+                document.getElementById('l2vni-hint').textContent = 'Default: 100000 + VLAN ID';
+                document.getElementById('btn-create-vlan').textContent = 'Create VLAN';
+                
                 // Reset SVI/VRR fields visibility
                 document.getElementById('svi-fields').classList.remove('visible');
                 document.getElementById('vrr-fields').classList.remove('visible');
@@ -2326,6 +2389,39 @@
         
         function closeVlanModal() {
             document.getElementById('vlan-modal').classList.remove('visible');
+        }
+        
+        function toggleRangeMode() {
+            const isRange = document.getElementById('vlan-range-mode').checked;
+            document.getElementById('single-vlan-fields').style.display = isRange ? 'none' : 'block';
+            document.getElementById('range-vlan-fields').style.display = isRange ? 'block' : 'none';
+            document.getElementById('svi-section').style.display = isRange ? 'none' : 'block';
+            document.getElementById('l2vni-label-suffix').textContent = isRange ? '(Offset)' : '';
+            document.getElementById('l2vni-hint').textContent = isRange ? 'L2VNI = offset + VLAN ID' : 'Default: 100000 + VLAN ID';
+            document.getElementById('btn-create-vlan').textContent = isRange ? 'Create VLANs' : 'Create VLAN';
+            document.getElementById('vlan-description').placeholder = isRange ? 'e.g., L2 VLANs' : 'e.g., Management Network';
+        }
+        
+        function updateRangePreview() {
+            const startId = parseInt(document.getElementById('vlan-start-id').value);
+            const endId = parseInt(document.getElementById('vlan-end-id').value);
+            const previewDiv = document.getElementById('range-preview');
+            const previewContent = document.getElementById('range-preview-content');
+            
+            if (startId && endId && startId <= endId && startId >= 1 && endId <= 4094) {
+                const count = endId - startId + 1;
+                const offset = parseInt(document.getElementById('vlan-l2vni').value) || 100000;
+                
+                const profileNameInput = document.getElementById('vlan-range-profile-name');
+                if (!profileNameInput.value) {
+                    profileNameInput.placeholder = `VLAN_${startId}_${endId}_L2`;
+                }
+                
+                previewContent.innerHTML = `VLANs: ${startId} - ${endId} (<strong>${count} VLANs</strong>) | L2VNIs: ${offset + startId} - ${offset + endId}`;
+                previewDiv.style.display = 'block';
+            } else {
+                previewDiv.style.display = 'none';
+            }
         }
         
         // Unassign VLAN from current device
@@ -2795,19 +2891,96 @@
         }
         
         async function createVlan() {
-            const form = document.getElementById('vlan-form');
             const createBtn = document.getElementById('btn-create-vlan');
-            
-            // Validate
-            const vlanId = parseInt(document.getElementById('vlan-id').value);
-            if (!vlanId || vlanId < 1 || vlanId > 4094) {
-                alert('VLAN ID must be between 1 and 4094');
-                return;
-            }
+            const isRangeMode = document.getElementById('vlan-range-mode').checked;
             
             const description = document.getElementById('vlan-description').value.trim();
             if (!description) {
                 alert('Description is required');
+                return;
+            }
+            
+            createBtn.disabled = true;
+            
+            if (isRangeMode) {
+                // Range mode - create multiple VLANs
+                const startId = parseInt(document.getElementById('vlan-start-id').value);
+                const endId = parseInt(document.getElementById('vlan-end-id').value);
+                
+                if (!startId || !endId || startId < 1 || endId > 4094) {
+                    alert('VLAN IDs must be between 1 and 4094');
+                    createBtn.disabled = false;
+                    return;
+                }
+                
+                if (startId > endId) {
+                    alert('Start VLAN ID must be less than or equal to End VLAN ID');
+                    createBtn.disabled = false;
+                    return;
+                }
+                
+                const count = endId - startId + 1;
+                if (count > 500) {
+                    alert('Maximum 500 VLANs can be created at once');
+                    createBtn.disabled = false;
+                    return;
+                }
+                
+                const profileName = document.getElementById('vlan-range-profile-name').value || `VLAN_${startId}_${endId}_L2`;
+                const l2vniOffset = parseInt(document.getElementById('vlan-l2vni').value) || 100000;
+                
+                const data = {
+                    start_id: startId,
+                    end_id: endId,
+                    profile_name: profileName,
+                    description: description,
+                    l2vni_offset: l2vniOffset
+                };
+                
+                createBtn.textContent = `Creating ${count} VLANs...`;
+                
+                try {
+                    const response = await fetch('/fabric-api.sh?action=bulk-create-vlans', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(data)
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        closeVlanModal();
+                        showOutputModal('VLANs Created', 
+                            `<div style="color: #76b900; margin-bottom: 15px;">✓ ${count} VLANs created successfully!</div>` +
+                            `<div style="color: #ccc;">` +
+                            `<p><strong>Profile:</strong> ${profileName}</p>` +
+                            `<p><strong>Range:</strong> ${startId} - ${endId}</p>` +
+                            `<p style="margin-top: 15px; color: #888;">Run <strong>Deploy</strong> to apply changes.</p>` +
+                            `</div>`,
+                            'success', true);
+                        if (selectedDevice) {
+                            selectDevice(selectedDevice);
+                        }
+                    } else {
+                        showOutputModal('Creation Failed', 
+                            `<div style="color: #ff6b6b; margin-bottom: 15px;">✗ Failed to create VLANs</div>` +
+                            `<div style="color: #ccc;">${result.error || 'Unknown error'}</div>`,
+                            'error', true);
+                    }
+                } catch (e) {
+                    showOutputModal('Error', `<div style="color: #ff6b6b;">${e.message}</div>`, 'error', true);
+                }
+                
+                createBtn.disabled = false;
+                createBtn.textContent = 'Create VLANs';
+                return;
+            }
+            
+            // Single VLAN mode
+            const vlanId = parseInt(document.getElementById('vlan-id').value);
+            if (!vlanId || vlanId < 1 || vlanId > 4094) {
+                alert('VLAN ID must be between 1 and 4094');
+                createBtn.disabled = false;
                 return;
             }
             
@@ -2840,8 +3013,6 @@
                 }
             }
             
-            // Disable button
-            createBtn.disabled = true;
             createBtn.textContent = 'Creating...';
             
             try {
@@ -2883,6 +3054,296 @@
             createBtn.textContent = 'Create VLAN';
         }
         
+        // ==================== VRF MANAGEMENT ====================
+        
+        // Available VRFs (global)
+        let availableVrfProfiles = {};
+        
+        // Open VRF Create Modal
+        async function openVrfModal() {
+            document.getElementById('vrf-form').reset();
+            
+            // Get current device's BGP ASN
+            if (selectedDevice && currentDeviceConfig) {
+                const asn = getBgpAsn(currentDeviceConfig);
+                if (asn) {
+                    document.getElementById('vrf-bgp-asn').value = asn;
+                }
+            }
+            
+            document.getElementById('vrf-modal').classList.add('visible');
+        }
+        
+        function closeVrfModal() {
+            document.getElementById('vrf-modal').classList.remove('visible');
+        }
+        
+        // Create VRF
+        async function createVrf() {
+            const createBtn = document.getElementById('btn-create-vrf');
+            const vrfName = document.getElementById('vrf-name').value.trim();
+            const l3vni = parseInt(document.getElementById('vrf-l3vni').value);
+            
+            if (!vrfName) {
+                alert('VRF name is required');
+                return;
+            }
+            
+            if (!l3vni) {
+                alert('L3VNI is required');
+                return;
+            }
+            
+            const data = {
+                device: selectedDevice,
+                vrf_name: vrfName,
+                l3vni: l3vni,
+                vxlan_int: parseInt(document.getElementById('vrf-vxlan-int').value) || null,
+                bgp_asn: parseInt(document.getElementById('vrf-bgp-asn').value) || null,
+                bgp_profile: document.getElementById('vrf-bgp-profile').value.trim() || null
+            };
+            
+            createBtn.disabled = true;
+            createBtn.textContent = 'Creating...';
+            
+            try {
+                const response = await fetch('/fabric-api.sh?action=create-vrf', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    closeVrfModal();
+                    showOutputModal('VRF Created', 
+                        `<div style="color: #76b900; margin-bottom: 15px;">✓ VRF "${vrfName}" created successfully!</div>` +
+                        `<div style="color: #888;">Run <strong>Deploy</strong> to apply changes.</div>`,
+                        'success', true);
+                    selectDevice(selectedDevice);
+                } else {
+                    alert('Error: ' + (result.error || 'Unknown error'));
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+            
+            createBtn.disabled = false;
+            createBtn.textContent = 'Create VRF';
+        }
+        
+        // Open Assign VRF Modal
+        async function openAssignVrfModal() {
+            if (!selectedDevice) {
+                alert('Please select a device first');
+                return;
+            }
+            
+            const modal = document.getElementById('assign-vrf-modal');
+            const listDiv = document.getElementById('assign-vrf-list');
+            
+            listDiv.innerHTML = '<div style="color: #888; padding: 20px; text-align: center;">Loading VRFs...</div>';
+            modal.classList.add('visible');
+            
+            try {
+                // Get available VRFs from existing devices
+                const response = await fetch('/fabric-api.sh?action=get-available-vrfs');
+                const data = await response.json();
+                
+                if (!data.success) {
+                    listDiv.innerHTML = '<div style="color: #ff6b6b;">Failed to load VRFs</div>';
+                    return;
+                }
+                
+                const allVrfs = data.vrfs || [];
+                const deviceConfig = await fetch(`/fabric-api.sh?action=get-device&device=${selectedDevice}`).then(r => r.json());
+                const currentVrfs = deviceConfig.success && deviceConfig.config.vrfs ? Object.keys(deviceConfig.config.vrfs) : [];
+                
+                // Filter out already assigned VRFs
+                const availableVrfs = allVrfs.filter(v => !currentVrfs.includes(v.name));
+                
+                if (availableVrfs.length === 0) {
+                    listDiv.innerHTML = '<div style="color: #888; padding: 20px; text-align: center;">All VRFs are already assigned to this device, or no VRF templates exist.</div>';
+                    return;
+                }
+                
+                listDiv.innerHTML = `
+                    <div class="vlan-checkbox-list">
+                        ${availableVrfs.map(v => `
+                            <label class="vlan-checkbox-item">
+                                <input type="checkbox" value="${v.name}" data-l3vni="${v.l3vni || ''}" data-vxlan-int="${v.vxlan_int || ''}">
+                                <span class="vlan-name">${v.name}</span>
+                                <span class="vlan-info">${v.l3vni ? 'L3VNI: ' + v.l3vni : ''}</span>
+                            </label>
+                        `).join('')}
+                    </div>
+                `;
+            } catch (e) {
+                listDiv.innerHTML = `<div style="color: #ff6b6b;">Error: ${e.message}</div>`;
+            }
+        }
+        
+        function closeAssignVrfModal() {
+            document.getElementById('assign-vrf-modal').classList.remove('visible');
+        }
+        
+        async function assignVrfs() {
+            const checkboxes = document.querySelectorAll('#assign-vrf-list input[type="checkbox"]:checked');
+            if (checkboxes.length === 0) {
+                alert('Please select at least one VRF');
+                return;
+            }
+            
+            const vrfs = Array.from(checkboxes).map(cb => ({
+                name: cb.value,
+                l3vni: cb.dataset.l3vni || null,
+                vxlan_int: cb.dataset.vxlanInt || null
+            }));
+            
+            const assignBtn = document.getElementById('btn-assign-vrfs');
+            assignBtn.disabled = true;
+            assignBtn.textContent = 'Assigning...';
+            
+            try {
+                const response = await fetch('/fabric-api.sh?action=assign-vrfs', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        device: selectedDevice,
+                        vrfs: vrfs.map(v => v.name)
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    closeAssignVrfModal();
+                    showOutputModal('VRFs Assigned', 
+                        `<div style="color: #76b900; margin-bottom: 15px;">✓ ${vrfs.length} VRF(s) assigned to ${selectedDevice}</div>` +
+                        `<div style="color: #888;">Run <strong>Deploy</strong> to apply changes.</div>`,
+                        'success', true);
+                    selectDevice(selectedDevice);
+                } else {
+                    alert('Error: ' + (result.error || 'Unknown error'));
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+            
+            assignBtn.disabled = false;
+            assignBtn.textContent = 'Assign Selected';
+        }
+        
+        // Unassign VRF from device
+        let unassigningVrfName = '';
+        
+        function confirmUnassignVrf(vrfName) {
+            if (!selectedDevice) {
+                alert('No device selected');
+                return;
+            }
+            
+            unassigningVrfName = vrfName;
+            document.getElementById('unassign-vrf-name').textContent = vrfName;
+            document.getElementById('unassign-vrf-device-name').textContent = selectedDevice;
+            document.getElementById('unassign-vrf-confirm-modal').classList.add('visible');
+        }
+        
+        function closeUnassignVrfModal() {
+            document.getElementById('unassign-vrf-confirm-modal').classList.remove('visible');
+            unassigningVrfName = '';
+        }
+        
+        async function confirmUnassignVrfAction() {
+            if (!unassigningVrfName) return;
+            
+            closeUnassignVrfModal();
+            
+            try {
+                const response = await fetch('/fabric-api.sh?action=unassign-vrf', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        device: selectedDevice,
+                        vrf: unassigningVrfName
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showOutputModal('VRF Removed', 
+                        `<div style="color: #76b900; margin-bottom: 15px;">✓ "${unassigningVrfName}" removed from ${selectedDevice}</div>` +
+                        `<div style="color: #888;">Run <strong>Deploy</strong> to apply changes.</div>`,
+                        'success', true);
+                    selectDevice(selectedDevice);
+                } else {
+                    alert('Error: ' + result.error);
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+        
+        // Edit VRF Modal (list all VRFs)
+        async function openEditVrfModal() {
+            const modal = document.getElementById('edit-vrf-modal');
+            const listDiv = document.getElementById('edit-vrf-list');
+            
+            listDiv.innerHTML = '<div style="color: #888; padding: 20px; text-align: center;">Loading VRFs...</div>';
+            modal.classList.add('visible');
+            
+            try {
+                const response = await fetch('/fabric-api.sh?action=get-available-vrfs');
+                const data = await response.json();
+                
+                if (!data.success || !data.vrfs || data.vrfs.length === 0) {
+                    listDiv.innerHTML = '<div style="color: #888; padding: 20px; text-align: center;">No VRF profiles found.</div>';
+                    return;
+                }
+                
+                listDiv.innerHTML = `
+                    <div class="vlan-edit-list">
+                        ${data.vrfs.map(v => `
+                            <div class="vlan-edit-item">
+                                <div class="vlan-edit-info">
+                                    <span class="vlan-name">${v.name}</span>
+                                    <span class="vlan-info">L3VNI: ${v.l3vni || '-'} | Devices: ${v.device_count || 0}</span>
+                                </div>
+                                <div class="vlan-edit-actions">
+                                    <button class="btn-icon btn-icon-delete" onclick="closeEditVrfModal(); confirmDeleteVrf('${v.name}')" title="Delete">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                            <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+            } catch (e) {
+                listDiv.innerHTML = `<div style="color: #ff6b6b;">Error: ${e.message}</div>`;
+            }
+        }
+        
+        function closeEditVrfModal() {
+            document.getElementById('edit-vrf-modal').classList.remove('visible');
+        }
+        
+        // Delete VRF (placeholder - needs API)
+        function confirmDeleteVrf(vrfName) {
+            if (vrfName === 'default') {
+                alert('Cannot delete the default VRF');
+                return;
+            }
+            
+            if (confirm(`Are you sure you want to delete VRF "${vrfName}"?\n\nThis will affect all devices using this VRF.`)) {
+                // TODO: Implement delete-vrf API
+                alert('VRF deletion not yet implemented. Please edit host_vars files manually.');
+            }
+        }
+        
         // Initialize on load
         init();
     </script>
@@ -2896,39 +3357,73 @@
             </div>
             <div class="vlan-modal-body">
                 <form id="vlan-form" onsubmit="event.preventDefault(); createVlan();">
-                    <div class="form-group-inline">
-                        <div class="form-group">
-                            <label>VLAN ID *</label>
-                            <input type="number" id="vlan-id" min="1" max="4094" required 
-                                   oninput="updateL2VNI()" placeholder="e.g., 100">
+                    <!-- Range Mode Toggle -->
+                    <div class="form-group" style="margin-bottom: 15px; padding-bottom: 12px; border-bottom: 1px solid #404040;">
+                        <div class="form-checkbox">
+                            <input type="checkbox" id="vlan-range-mode" onchange="toggleRangeMode()">
+                            <label for="vlan-range-mode">Create VLAN Range (multiple VLANs)</label>
+                        </div>
+                    </div>
+                    
+                    <!-- Single VLAN Fields -->
+                    <div id="single-vlan-fields">
+                        <div class="form-group-inline">
+                            <div class="form-group">
+                                <label>VLAN ID *</label>
+                                <input type="number" id="vlan-id" min="1" max="4094" 
+                                       oninput="updateL2VNI()" placeholder="e.g., 100">
+                            </div>
+                            <div class="form-group">
+                                <label>Profile Name</label>
+                                <input type="text" id="vlan-profile-name" placeholder="VLAN_100">
+                                <div class="form-hint">Auto-generated from VLAN ID</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Range VLAN Fields -->
+                    <div id="range-vlan-fields" style="display: none;">
+                        <div class="form-group-inline">
+                            <div class="form-group">
+                                <label>Start VLAN ID *</label>
+                                <input type="number" id="vlan-start-id" min="1" max="4094" placeholder="e.g., 50" oninput="updateRangePreview()">
+                            </div>
+                            <div class="form-group">
+                                <label>End VLAN ID *</label>
+                                <input type="number" id="vlan-end-id" min="1" max="4094" placeholder="e.g., 100" oninput="updateRangePreview()">
+                            </div>
                         </div>
                         <div class="form-group">
                             <label>Profile Name</label>
-                            <input type="text" id="vlan-profile-name" placeholder="VLAN_100">
-                            <div class="form-hint">Auto-generated from VLAN ID</div>
+                            <input type="text" id="vlan-range-profile-name" placeholder="Auto: VLAN_{start}_{end}_L2">
+                        </div>
+                        <div id="range-preview" style="margin-bottom: 15px; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 6px; display: none;">
+                            <div id="range-preview-content" style="font-family: monospace; font-size: 12px; color: #76b900;"></div>
                         </div>
                     </div>
                     
                     <div class="form-group">
                         <label>Description *</label>
-                        <input type="text" id="vlan-description" required 
+                        <input type="text" id="vlan-description" 
                                placeholder="e.g., Management Network">
                     </div>
                     
                     <div class="form-group">
-                        <label>L2VNI</label>
+                        <label>L2VNI <span id="l2vni-label-suffix"></span></label>
                         <input type="number" id="vlan-l2vni" placeholder="Auto: 100000 + VLAN ID">
-                        <div class="form-hint">Default: 100000 + VLAN ID</div>
+                        <div class="form-hint" id="l2vni-hint">Default: 100000 + VLAN ID</div>
                     </div>
                     
-                    <div class="form-group">
-                        <div class="form-checkbox">
-                            <input type="checkbox" id="vlan-svi-enabled" onchange="toggleSviFields()">
-                            <label for="vlan-svi-enabled">Enable SVI / L3 Configuration</label>
+                    <!-- SVI section (only for single VLAN) -->
+                    <div id="svi-section">
+                        <div class="form-group">
+                            <div class="form-checkbox">
+                                <input type="checkbox" id="vlan-svi-enabled" onchange="toggleSviFields()">
+                                <label for="vlan-svi-enabled">Enable SVI / L3 Configuration</label>
+                            </div>
                         </div>
-                    </div>
-                    
-                    <div id="svi-fields" class="vrr-fields">
+                        
+                        <div id="svi-fields" class="vrr-fields">
                         <div class="form-group">
                             <label>VRF</label>
                             <select id="vlan-vrf">
@@ -2967,6 +3462,7 @@
                             </div>
                         </div>
                     </div>
+                    </div><!-- end svi-section -->
                     
                     <div class="form-group">
                         <div class="form-checkbox">
@@ -3144,6 +3640,105 @@
             <div class="vlan-modal-footer">
                 <button class="btn-cancel" onclick="closeEditFormModal()">Cancel</button>
                 <button class="btn-create" id="btn-save-vlan-edit" onclick="saveVlanEdit()">Save Changes</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- VRF Create Modal -->
+    <div class="vlan-modal" id="vrf-modal">
+        <div class="vlan-modal-content">
+            <div class="vlan-modal-header">
+                <h3>Create New VRF</h3>
+                <button class="vlan-modal-close" onclick="closeVrfModal()">×</button>
+            </div>
+            <div class="vlan-modal-body">
+                <form id="vrf-form" onsubmit="event.preventDefault(); createVrf();">
+                    <div class="form-group">
+                        <label>VRF Name *</label>
+                        <input type="text" id="vrf-name" required placeholder="e.g., tenant1">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>L3VNI *</label>
+                        <input type="number" id="vrf-l3vni" required placeholder="e.g., 2001001">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>VXLAN Interface VLAN</label>
+                        <input type="number" id="vrf-vxlan-int" placeholder="e.g., 4063">
+                        <div class="form-hint">VLAN ID for L3VNI interface (e.g., vlan4063_l3)</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>BGP ASN</label>
+                        <input type="number" id="vrf-bgp-asn" placeholder="e.g., 4286611970">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>BGP Profile</label>
+                        <input type="text" id="vrf-bgp-profile" placeholder="e.g., OVERLAY_LEAF">
+                    </div>
+                </form>
+            </div>
+            <div class="vlan-modal-footer">
+                <button class="btn-cancel" onclick="closeVrfModal()">Cancel</button>
+                <button class="btn-create" id="btn-create-vrf" onclick="createVrf()">Create VRF</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- VRF Assign Modal -->
+    <div class="vlan-modal" id="assign-vrf-modal">
+        <div class="vlan-modal-content" style="max-width: 450px;">
+            <div class="vlan-modal-header">
+                <h3>Assign VRFs to Device</h3>
+                <button class="vlan-modal-close" onclick="closeAssignVrfModal()">×</button>
+            </div>
+            <div class="vlan-modal-body">
+                <div id="assign-vrf-list"></div>
+            </div>
+            <div class="vlan-modal-footer">
+                <button class="btn-cancel" onclick="closeAssignVrfModal()">Cancel</button>
+                <button class="btn-create" id="btn-assign-vrfs" onclick="assignVrfs()" style="background: #2196f3;">Assign Selected</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- VRF Unassign Confirmation Modal -->
+    <div class="vlan-modal" id="unassign-vrf-confirm-modal">
+        <div class="vlan-modal-content" style="max-width: 400px;">
+            <div class="vlan-modal-header">
+                <h3>Remove VRF from Device</h3>
+                <button class="vlan-modal-close" onclick="closeUnassignVrfModal()">×</button>
+            </div>
+            <div class="vlan-modal-body" style="text-align: center; padding: 25px;">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="#ff9800" style="margin-bottom: 15px;">
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+                </svg>
+                <p style="color: #ccc; margin-bottom: 10px;">Remove VRF from this device?</p>
+                <p style="color: #76b900; font-weight: bold; font-size: 16px;" id="unassign-vrf-name"></p>
+                <p style="color: #888; font-size: 12px; margin-top: 10px;">Device: <span id="unassign-vrf-device-name" style="color: #4fc3f7;"></span></p>
+                <p style="color: #ff9800; font-size: 12px; margin-top: 15px;">Warning: This may affect routing for VLANs using this VRF</p>
+            </div>
+            <div class="vlan-modal-footer" style="justify-content: center; gap: 15px;">
+                <button class="btn-cancel" onclick="closeUnassignVrfModal()">Cancel</button>
+                <button class="btn-create" onclick="confirmUnassignVrfAction()" style="background: #ff9800;">Remove</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- VRF Edit List Modal -->
+    <div class="vlan-modal" id="edit-vrf-modal">
+        <div class="vlan-modal-content" style="max-width: 500px;">
+            <div class="vlan-modal-header">
+                <h3>Edit / Delete VRFs</h3>
+                <button class="vlan-modal-close" onclick="closeEditVrfModal()">×</button>
+            </div>
+            <div class="vlan-modal-body">
+                <div id="edit-vrf-list"></div>
+            </div>
+            <div class="vlan-modal-footer">
+                <button class="btn-cancel" onclick="closeEditVrfModal()">Close</button>
             </div>
         </div>
     </div>

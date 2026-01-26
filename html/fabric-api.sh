@@ -193,22 +193,41 @@ try:
             for profile_name, profile_data in vlan_profiles.items():
                 if profile_data and 'vlans' in profile_data:
                     vrr_enabled = profile_data.get('vrr', {}).get('state', False)
+                    vlan_ids = sorted([int(v) for v in profile_data['vlans'].keys()])
+                    
+                    # Build vlan_to_vrf mapping for all VLANs
                     for vlan_id, vlan_config in profile_data['vlans'].items():
-                        if vlan_config:
-                            if 'vrf' in vlan_config:
-                                vlan_to_vrf[str(vlan_id)] = vlan_config['vrf']
-                            # Store VLAN profile info for SVI section
-                            vlan_profiles_data[profile_name] = {
-                                'vlan_id': str(vlan_id),
-                                'description': vlan_config.get('description', ''),
-                                'vrf': vlan_config.get('vrf', 'default'),
-                                'l2vni': vlan_config.get('l2vni'),
-                                'vrr_enabled': vrr_enabled,
-                                'vrr_vip': vlan_config.get('vrr_vip'),
-                                'even_ip': vlan_config.get('even_ip'),
-                                'odd_ip': vlan_config.get('odd_ip'),
-                                'ip': vlan_config.get('ip')
-                            }
+                        if vlan_config and 'vrf' in vlan_config:
+                            vlan_to_vrf[str(vlan_id)] = vlan_config['vrf']
+                    
+                    # Get first VLAN's config for description/VRF etc
+                    first_vlan_id = vlan_ids[0] if vlan_ids else None
+                    first_vlan_config = profile_data['vlans'].get(str(first_vlan_id)) or profile_data['vlans'].get(first_vlan_id) or {}
+                    
+                    # Get last VLAN's l2vni for range profiles
+                    last_vlan_id = vlan_ids[-1] if vlan_ids else None
+                    last_vlan_config = profile_data['vlans'].get(str(last_vlan_id)) or profile_data['vlans'].get(last_vlan_id) or {}
+                    
+                    # Determine VLAN ID display (single or range)
+                    if len(vlan_ids) == 1:
+                        vlan_id_display = str(vlan_ids[0])
+                    else:
+                        vlan_id_display = f"{vlan_ids[0]}-{vlan_ids[-1]}"
+                    
+                    # Store VLAN profile info for SVI section
+                    vlan_profiles_data[profile_name] = {
+                        'vlan_id': vlan_id_display,
+                        'vlan_count': len(vlan_ids),
+                        'description': first_vlan_config.get('description', ''),
+                        'vrf': first_vlan_config.get('vrf', 'default'),
+                        'l2vni': last_vlan_config.get('l2vni'),
+                        'vrr_enabled': vrr_enabled,
+                        'vrr_vip': first_vlan_config.get('vrr_vip'),
+                        'even_ip': first_vlan_config.get('even_ip'),
+                        'odd_ip': first_vlan_config.get('odd_ip'),
+                        'ip': first_vlan_config.get('ip'),
+                        'vlans': profile_data['vlans']  # Include raw vlans data
+                    }
     
     print(json.dumps({
         'success': True,
@@ -260,6 +279,438 @@ except Exception as e:
         'success': False,
         'error': str(e)
     }))
+PYTHON
+}
+
+# Bulk create VLANs
+bulk_create_vlans() {
+    read -r POST_DATA
+    python3 << PYTHON
+import json
+import yaml
+import os
+import sys
+
+try:
+    data = json.loads('''$POST_DATA''')
+except:
+    data = json.loads(sys.stdin.read()) if sys.stdin.isatty() == False else {}
+
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+vlan_file = os.path.join(ansible_dir, 'inventory', 'group_vars', 'all', 'vlan_profiles.yaml')
+
+start_id = data.get('start_id', 1)
+end_id = data.get('end_id', 1)
+profile_name = data.get('profile_name', f'VLAN_{start_id}_{end_id}_L2')
+description = data.get('description', f'L2 VLANs {start_id}-{end_id}')
+l2vni_offset = data.get('l2vni_offset', 100000)
+
+# Validate
+if start_id < 1 or end_id > 4094 or start_id > end_id:
+    print(json.dumps({'success': False, 'error': 'Invalid VLAN ID range'}))
+    exit(0)
+
+count = end_id - start_id + 1
+if count > 500:
+    print(json.dumps({'success': False, 'error': 'Maximum 500 VLANs at once'}))
+    exit(0)
+
+# Load existing vlan profiles
+vlan_profiles = {}
+if os.path.exists(vlan_file):
+    with open(vlan_file, 'r') as f:
+        existing = yaml.safe_load(f) or {}
+        vlan_profiles = existing.get('vlan_profiles', {})
+
+# Check if profile name already exists
+if profile_name in vlan_profiles:
+    print(json.dumps({'success': False, 'error': f'Profile {profile_name} already exists'}))
+    exit(0)
+
+# Create the VLAN profile with multiple VLANs inside
+vlans_dict = {}
+for vid in range(start_id, end_id + 1):
+    vlans_dict[vid] = {
+        'description': f'{description}',
+        'l2vni': l2vni_offset + vid
+    }
+
+new_profile = {
+    'vlans': vlans_dict
+}
+
+vlan_profiles[profile_name] = new_profile
+
+# Write back
+with open(vlan_file, 'w') as f:
+    yaml.dump({'vlan_profiles': vlan_profiles}, f, default_flow_style=False, sort_keys=False)
+
+print(json.dumps({'success': True, 'message': f'Created {count} VLANs in profile {profile_name}'}))
+PYTHON
+}
+
+# ==================== VRF MANAGEMENT ====================
+
+# Get available VRFs from all devices
+get_available_vrfs() {
+    python3 << PYTHON
+import json
+import yaml
+import os
+import glob
+
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+host_vars_dir = os.path.join(ansible_dir, 'inventory', 'host_vars')
+
+# Collect all unique VRFs from all devices
+vrfs = {}
+
+for host_file in glob.glob(os.path.join(host_vars_dir, '*.yaml')) + glob.glob(os.path.join(host_vars_dir, '*.yml')):
+    hostname = os.path.basename(host_file).rsplit('.', 1)[0]
+    
+    try:
+        with open(host_file, 'r') as f:
+            host_data = yaml.safe_load(f) or {}
+            device_vrfs = host_data.get('vrfs', {})
+            
+            for vrf_name, vrf_config in device_vrfs.items():
+                if vrf_name not in vrfs:
+                    vrfs[vrf_name] = {
+                        'name': vrf_name,
+                        'l3vni': vrf_config.get('l3vni'),
+                        'vxlan_int': vrf_config.get('vxlan_int'),
+                        'bgp_profile': vrf_config.get('bgp', {}).get('bgp_profile'),
+                        'device_count': 0,
+                        'devices': []
+                    }
+                vrfs[vrf_name]['device_count'] += 1
+                vrfs[vrf_name]['devices'].append(hostname)
+    except:
+        pass
+
+print(json.dumps({
+    'success': True,
+    'vrfs': list(vrfs.values())
+}))
+PYTHON
+}
+
+# Create VRF in device's host_vars
+create_vrf() {
+    read -r POST_DATA
+    python3 << PYTHON
+import json
+import yaml
+import os
+import sys
+
+try:
+    data = json.loads('''$POST_DATA''')
+except:
+    data = {}
+
+device = data.get('device')
+vrf_name = data.get('vrf_name')
+l3vni = data.get('l3vni')
+vxlan_int = data.get('vxlan_int')
+bgp_asn = data.get('bgp_asn')
+bgp_profile = data.get('bgp_profile')
+
+if not device or not vrf_name:
+    print(json.dumps({'success': False, 'error': 'Device and VRF name are required'}))
+    sys.exit(0)
+
+if not l3vni:
+    print(json.dumps({'success': False, 'error': 'L3VNI is required'}))
+    sys.exit(0)
+
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+host_file = os.path.join(ansible_dir, 'inventory', 'host_vars', f'{device}.yaml')
+
+# Try .yml if .yaml doesn't exist
+if not os.path.exists(host_file):
+    host_file = os.path.join(ansible_dir, 'inventory', 'host_vars', f'{device}.yml')
+
+# Load existing host_vars
+host_data = {}
+if os.path.exists(host_file):
+    with open(host_file, 'r') as f:
+        host_data = yaml.safe_load(f) or {}
+
+# Initialize vrfs if not exists
+if 'vrfs' not in host_data:
+    host_data['vrfs'] = {}
+
+# Check if VRF already exists
+if vrf_name in host_data['vrfs']:
+    print(json.dumps({'success': False, 'error': f'VRF {vrf_name} already exists on this device'}))
+    sys.exit(0)
+
+# Create VRF entry
+vrf_entry = {
+    'l3vni': l3vni,
+    'lo': '{{ lo_ip }}'
+}
+
+if vxlan_int:
+    vrf_entry['vxlan_int'] = vxlan_int
+
+if bgp_asn or bgp_profile:
+    vrf_entry['bgp'] = {}
+    if bgp_asn:
+        vrf_entry['bgp']['asn'] = bgp_asn
+    if bgp_profile:
+        vrf_entry['bgp']['bgp_profile'] = bgp_profile
+
+host_data['vrfs'][vrf_name] = vrf_entry
+
+# Write back
+with open(host_file if os.path.exists(host_file) else os.path.join(ansible_dir, 'inventory', 'host_vars', f'{device}.yaml'), 'w') as f:
+    yaml.dump(host_data, f, default_flow_style=False, sort_keys=False)
+
+print(json.dumps({'success': True, 'vrf_name': vrf_name}))
+PYTHON
+}
+
+# Assign VRFs to device
+assign_vrfs() {
+    read -r POST_DATA
+    python3 << PYTHON
+import json
+import yaml
+import os
+import sys
+import glob
+
+try:
+    data = json.loads('''$POST_DATA''')
+except:
+    data = {}
+
+device = data.get('device')
+vrf_names = data.get('vrfs', [])
+
+if not device or not vrf_names:
+    print(json.dumps({'success': False, 'error': 'Device and VRF names are required'}))
+    sys.exit(0)
+
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+host_vars_dir = os.path.join(ansible_dir, 'inventory', 'host_vars')
+host_file = os.path.join(host_vars_dir, f'{device}.yaml')
+
+# Try .yml if .yaml doesn't exist
+if not os.path.exists(host_file):
+    alt_file = os.path.join(host_vars_dir, f'{device}.yml')
+    if os.path.exists(alt_file):
+        host_file = alt_file
+
+# Load existing host_vars
+host_data = {}
+if os.path.exists(host_file):
+    with open(host_file, 'r') as f:
+        host_data = yaml.safe_load(f) or {}
+
+# Initialize vrfs if not exists
+if 'vrfs' not in host_data:
+    host_data['vrfs'] = {}
+
+# Find VRF configs from other devices
+all_vrf_configs = {}
+for hf in glob.glob(os.path.join(host_vars_dir, '*.yaml')) + glob.glob(os.path.join(host_vars_dir, '*.yml')):
+    try:
+        with open(hf, 'r') as f:
+            hd = yaml.safe_load(f) or {}
+            for vrf_name, vrf_config in hd.get('vrfs', {}).items():
+                if vrf_name not in all_vrf_configs:
+                    all_vrf_configs[vrf_name] = vrf_config
+    except:
+        pass
+
+# Add VRFs
+added = []
+for vrf_name in vrf_names:
+    if vrf_name not in host_data['vrfs']:
+        if vrf_name in all_vrf_configs:
+            host_data['vrfs'][vrf_name] = all_vrf_configs[vrf_name]
+            added.append(vrf_name)
+        else:
+            # Create minimal VRF entry
+            host_data['vrfs'][vrf_name] = {'l3vni': None}
+            added.append(vrf_name)
+
+# Write back
+with open(host_file, 'w') as f:
+    yaml.dump(host_data, f, default_flow_style=False, sort_keys=False)
+
+print(json.dumps({'success': True, 'added': added}))
+PYTHON
+}
+
+# Unassign VRF from device
+unassign_vrf() {
+    read -r POST_DATA
+    python3 << PYTHON
+import json
+import yaml
+import os
+import sys
+
+try:
+    data = json.loads('''$POST_DATA''')
+except:
+    data = {}
+
+device = data.get('device')
+vrf_name = data.get('vrf')
+
+if not device or not vrf_name:
+    print(json.dumps({'success': False, 'error': 'Device and VRF name are required'}))
+    sys.exit(0)
+
+if vrf_name == 'default':
+    print(json.dumps({'success': False, 'error': 'Cannot remove default VRF'}))
+    sys.exit(0)
+
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+host_vars_dir = os.path.join(ansible_dir, 'inventory', 'host_vars')
+host_file = os.path.join(host_vars_dir, f'{device}.yaml')
+
+# Try .yml if .yaml doesn't exist
+if not os.path.exists(host_file):
+    alt_file = os.path.join(host_vars_dir, f'{device}.yml')
+    if os.path.exists(alt_file):
+        host_file = alt_file
+
+if not os.path.exists(host_file):
+    print(json.dumps({'success': False, 'error': 'Host vars file not found'}))
+    sys.exit(0)
+
+# Load host_vars
+with open(host_file, 'r') as f:
+    host_data = yaml.safe_load(f) or {}
+
+if 'vrfs' not in host_data or vrf_name not in host_data['vrfs']:
+    print(json.dumps({'success': False, 'error': f'VRF {vrf_name} not found in device config'}))
+    sys.exit(0)
+
+# Remove VRF
+del host_data['vrfs'][vrf_name]
+
+# Write back
+with open(host_file, 'w') as f:
+    yaml.dump(host_data, f, default_flow_style=False, sort_keys=False)
+
+print(json.dumps({'success': True}))
+PYTHON
+}
+
+# Get VRF report - VRFs with device assignments
+get_vrf_report() {
+    python3 << PYTHON
+import json
+import yaml
+import os
+import glob
+
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+host_vars_dir = os.path.join(ansible_dir, 'inventory', 'host_vars')
+
+# Collect all VRFs from all devices
+vrfs = {}
+unique_devices = set()
+
+for host_file in glob.glob(os.path.join(host_vars_dir, '*.yaml')) + glob.glob(os.path.join(host_vars_dir, '*.yml')):
+    hostname = os.path.basename(host_file).rsplit('.', 1)[0]
+    
+    try:
+        with open(host_file, 'r') as f:
+            host_data = yaml.safe_load(f) or {}
+            device_vrfs = host_data.get('vrfs', {})
+            
+            if device_vrfs:
+                unique_devices.add(hostname)
+            
+            for vrf_name, vrf_config in device_vrfs.items():
+                if vrf_name not in vrfs:
+                    vrfs[vrf_name] = {
+                        'name': vrf_name,
+                        'l3vni': vrf_config.get('l3vni'),
+                        'vxlan_int': vrf_config.get('vxlan_int'),
+                        'bgp_profile': vrf_config.get('bgp', {}).get('bgp_profile') if vrf_config.get('bgp') else None,
+                        'devices': []
+                    }
+                vrfs[vrf_name]['devices'].append(hostname)
+    except:
+        pass
+
+print(json.dumps({
+    'success': True,
+    'vrfs': vrfs,
+    'device_count': len(unique_devices)
+}))
+PYTHON
+}
+
+# Get VLAN report - VLANs with device assignments
+get_vlan_report() {
+    python3 << PYTHON
+import json
+import yaml
+import os
+import glob
+
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+inventory_base = os.path.join(ansible_dir, 'inventory')
+vlan_file = os.path.join(inventory_base, 'group_vars', 'all', 'vlan_profiles.yaml')
+host_vars_dir = os.path.join(inventory_base, 'host_vars')
+
+# Load VLAN profiles
+vlan_profiles = {}
+vrfs = set()
+
+if os.path.exists(vlan_file):
+    with open(vlan_file, 'r') as f:
+        data = yaml.safe_load(f) or {}
+        vlan_profiles = data.get('vlan_profiles', {})
+
+# Collect VRFs from VLAN profiles
+for vlan_name, vlan_data in vlan_profiles.items():
+    if vlan_data and 'vlans' in vlan_data:
+        for vid, vinfo in vlan_data['vlans'].items():
+            if vinfo and vinfo.get('vrf'):
+                vrfs.add(vinfo['vrf'])
+
+# Build VLAN to device mapping and collect unique devices
+vlan_device_map = {vlan_name: [] for vlan_name in vlan_profiles.keys()}
+unique_devices = set()
+
+# Scan all host_vars files for vlan_templates
+for host_file in glob.glob(os.path.join(host_vars_dir, '*.yaml')) + glob.glob(os.path.join(host_vars_dir, '*.yml')):
+    hostname = os.path.basename(host_file).rsplit('.', 1)[0]
+    
+    try:
+        with open(host_file, 'r') as f:
+            host_data = yaml.safe_load(f) or {}
+            vlan_templates = host_data.get('vlan_templates', [])
+            
+            if vlan_templates:
+                unique_devices.add(hostname)
+            
+            for vlan_name in vlan_templates:
+                if vlan_name in vlan_device_map:
+                    vlan_device_map[vlan_name].append(hostname)
+                else:
+                    vlan_device_map[vlan_name] = [hostname]
+    except:
+        pass
+
+print(json.dumps({
+    'success': True,
+    'vlan_profiles': vlan_profiles,
+    'vlan_device_map': vlan_device_map,
+    'device_count': len(unique_devices),
+    'vrf_count': len(vrfs)
+}))
 PYTHON
 }
 
@@ -796,6 +1247,9 @@ case "$ACTION" in
     "get-vlan-profiles")
         get_vlan_profiles
         ;;
+    "get-vlan-report")
+        get_vlan_report
+        ;;
     "get-port-profiles")
         get_port_profiles
         ;;
@@ -816,6 +1270,24 @@ case "$ACTION" in
         ;;
     "update-vlan")
         update_vlan
+        ;;
+    "bulk-create-vlans")
+        bulk_create_vlans
+        ;;
+    "get-available-vrfs")
+        get_available_vrfs
+        ;;
+    "create-vrf")
+        create_vrf
+        ;;
+    "assign-vrfs")
+        assign_vrfs
+        ;;
+    "unassign-vrf")
+        unassign_vrf
+        ;;
+    "get-vrf-report")
+        get_vrf_report
         ;;
     *)
         echo '{"success": false, "error": "Unknown action: '"$ACTION"'"}'

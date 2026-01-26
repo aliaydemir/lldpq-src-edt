@@ -1,0 +1,1461 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="shortcut icon" href="/png/favicon.ico">
+    <title>..::LLDPQ::..</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <script src="css/auth.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 20px;
+            min-height: 100vh;
+        }
+        
+        /* Page Header */
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #404040;
+        }
+        
+        .page-title {
+            font-size: 24px;
+            font-weight: 600;
+            color: #76b900;
+        }
+        
+        .last-updated {
+            font-size: 13px;
+            color: #888;
+        }
+        
+        .action-buttons {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        /* Summary Cards Grid */
+        .summary-grid { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); 
+            gap: 15px; 
+            margin-bottom: 25px; 
+        }
+        
+        .summary-card { 
+            background: #252526; 
+            padding: 15px; 
+            border-radius: 6px; 
+            border-left: 3px solid #76b900;
+            transition: all 0.2s ease;
+        }
+        
+        .card-total { border-left-color: #76b900; }
+        .card-info { border-left-color: #4fc3f7; }
+        .card-warning { border-left-color: #ff9800; }
+        .card-vrf { border-left-color: #9c27b0; }
+        
+        .card-value { 
+            font-size: 28px; 
+            font-weight: bold; 
+            color: #fff; 
+        }
+        
+        .card-total .card-value { color: #76b900; }
+        .card-info .card-value { color: #4fc3f7; }
+        .card-warning .card-value { color: #ffb74d; }
+        .card-vrf .card-value { color: #ce93d8; }
+        
+        .card-label { 
+            font-size: 12px; 
+            color: #888; 
+            margin-top: 5px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        /* Dashboard Section */
+        .dashboard-section {
+            background: #2d2d2d;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            overflow: hidden;
+        }
+        
+        .section-header {
+            padding: 12px 16px;
+            background: #333;
+            font-weight: 600;
+            font-size: 14px;
+            color: #76b900;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border-bottom: 1px solid #404040;
+        }
+        
+        .section-content {
+            padding: 0;
+        }
+        
+        /* Data Table */
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        .data-table th {
+            text-align: left;
+            padding: 12px 14px;
+            background: #252526;
+            color: #888;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: 1px solid #404040;
+        }
+        
+        .data-table td {
+            padding: 10px 14px;
+            border-bottom: 1px solid #333;
+            font-size: 13px;
+        }
+        
+        .data-table tr:hover {
+            background: #333;
+        }
+        
+        .data-table tr.expandable {
+            cursor: pointer;
+        }
+        
+        /* Sortable Headers */
+        .sortable {
+            cursor: pointer;
+            user-select: none;
+            position: relative;
+            padding-right: 20px !important;
+            transition: background 0.2s;
+        }
+        
+        .sortable:hover {
+            background: #2d2d2d;
+        }
+        
+        .sort-arrow {
+            font-size: 10px;
+            color: #555;
+            margin-left: 5px;
+            opacity: 0.5;
+        }
+        
+        .sortable.asc .sort-arrow::before { content: '▲'; color: #76b900; opacity: 1; }
+        .sortable.desc .sort-arrow::before { content: '▼'; color: #76b900; opacity: 1; }
+        
+        /* Badges */
+        .badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+        
+        .badge-green { background: rgba(118, 185, 0, 0.2); color: #76b900; }
+        .badge-blue { background: rgba(33, 150, 243, 0.2); color: #64b5f6; }
+        .badge-purple { background: rgba(156, 39, 176, 0.2); color: #ce93d8; }
+        .badge-orange { background: rgba(255, 152, 0, 0.2); color: #ffb74d; }
+        .badge-gray { background: rgba(158, 158, 158, 0.2); color: #9e9e9e; }
+        
+        /* Action buttons in table */
+        .row-actions {
+            display: flex;
+            gap: 8px;
+        }
+        
+        .btn-icon {
+            width: 28px;
+            height: 28px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+        
+        .btn-icon-edit {
+            background: rgba(33, 150, 243, 0.2);
+            color: #64b5f6;
+        }
+        
+        .btn-icon-edit:hover {
+            background: #2196f3;
+            color: white;
+        }
+        
+        .btn-icon-delete {
+            background: rgba(244, 67, 54, 0.2);
+            color: #ef5350;
+        }
+        
+        .btn-icon-delete:hover {
+            background: #f44336;
+            color: white;
+        }
+        
+        /* Expand icon */
+        .expand-icon {
+            display: inline-block;
+            width: 20px;
+            color: #666;
+            transition: transform 0.2s;
+        }
+        
+        .expand-icon.rotated {
+            transform: rotate(90deg);
+        }
+        
+        /* Device list row */
+        .device-list-row {
+            display: none;
+            background: #252526;
+        }
+        
+        .device-list-row.visible {
+            display: table-row;
+        }
+        
+        .device-list-row td {
+            padding: 15px 14px 15px 50px;
+        }
+        
+        .device-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        
+        .device-chip {
+            background: #333;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            color: #76b900;
+        }
+        
+        /* VLAN Name link */
+        .vlan-name {
+            color: #76b900;
+            font-weight: 500;
+        }
+        
+        /* Buttons */
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s;
+        }
+        
+        .btn-primary {
+            background: #76b900;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #8ed100;
+        }
+        
+        .btn-secondary {
+            background: #444;
+            color: #ccc;
+        }
+        
+        .btn-secondary:hover {
+            background: #555;
+        }
+        
+        .btn-purple {
+            background: #7b1fa2;
+            color: white;
+        }
+        
+        .btn-purple:hover {
+            background: #9c27b0;
+        }
+        
+        /* Loading */
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #888;
+        }
+        
+        .spinner {
+            width: 30px;
+            height: 30px;
+            border: 3px solid #333;
+            border-top-color: #76b900;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin: 0 auto 15px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .modal.visible {
+            display: flex;
+        }
+        
+        .modal-content {
+            background: #2d2d2d;
+            border-radius: 8px;
+            width: 100%;
+            max-width: 500px;
+            max-height: 90vh;
+            overflow: auto;
+        }
+        
+        .modal-header {
+            padding: 15px 20px;
+            background: #333;
+            border-bottom: 1px solid #404040;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .modal-header h3 {
+            color: #76b900;
+            font-size: 16px;
+        }
+        
+        .modal-close {
+            background: none;
+            border: none;
+            color: #888;
+            font-size: 24px;
+            cursor: pointer;
+            padding: 0;
+            line-height: 1;
+        }
+        
+        .modal-close:hover {
+            color: #fff;
+        }
+        
+        .modal-body {
+            padding: 20px;
+        }
+        
+        .modal-footer {
+            padding: 15px 20px;
+            background: #252526;
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+        
+        /* Form styles */
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: #888;
+            font-size: 12px;
+        }
+        
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 10px 12px;
+            background: #1e1e1e;
+            border: 1px solid #404040;
+            border-radius: 4px;
+            color: #fff;
+            font-size: 14px;
+        }
+        
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #76b900;
+        }
+        
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+        
+        .form-hint {
+            font-size: 11px;
+            color: #666;
+            margin-top: 4px;
+        }
+        
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            color: #ccc;
+            font-size: 13px;
+        }
+        
+        .checkbox-label input {
+            width: auto;
+        }
+        
+        /* Conditional fields */
+        .conditional-fields {
+            display: none;
+            padding: 15px;
+            margin-top: 10px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 6px;
+            border-left: 3px solid #76b900;
+        }
+        
+        .conditional-fields.visible {
+            display: block;
+        }
+        
+        /* No data message */
+        .no-data {
+            text-align: center;
+            padding: 40px;
+            color: #888;
+        }
+    </style>
+</head>
+<body>
+    <!-- Page Header -->
+    <div class="page-header">
+        <div>
+            <div class="page-title">VLAN Report</div>
+            <div class="last-updated" id="last-updated">Loading...</div>
+        </div>
+        <div class="action-buttons">
+            <button class="btn btn-secondary" onclick="loadData()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+                </svg>
+                Refresh
+            </button>
+            <button class="btn btn-primary" onclick="openCreateModal()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                </svg>
+                Create VLAN
+            </button>
+        </div>
+    </div>
+    
+    <!-- Summary Cards -->
+    <div class="summary-grid">
+        <div class="summary-card card-total">
+            <div class="card-value" id="total-vlans">-</div>
+            <div class="card-label">Total VLANs</div>
+        </div>
+        <div class="summary-card card-info">
+            <div class="card-value" id="total-devices">-</div>
+            <div class="card-label">Total Devices</div>
+        </div>
+        <div class="summary-card card-warning">
+            <div class="card-value" id="unused-vlans">-</div>
+            <div class="card-label">Unused VLANs</div>
+        </div>
+        <div class="summary-card card-vrf">
+            <div class="card-value" id="vrf-count">-</div>
+            <div class="card-label">VRF Count</div>
+        </div>
+    </div>
+    
+    <!-- VLAN Table Section -->
+    <div class="dashboard-section">
+        <div class="section-header">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-1 9h-4v4h-2v-4H9V9h4V5h2v4h4v2z"/>
+            </svg>
+            VLAN Profiles
+        </div>
+        <div class="section-content" id="content-area">
+            <div class="loading">
+                <div class="spinner"></div>
+                Loading VLAN data...
+            </div>
+        </div>
+    </div>
+    
+    <!-- Create VLAN Modal -->
+    <div class="modal" id="create-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Create VLAN</h3>
+                <button class="modal-close" onclick="closeCreateModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <form id="create-form" onsubmit="event.preventDefault(); createVlan();">
+                    <!-- Range Mode Toggle -->
+                    <div class="form-group" style="margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid #404040;">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="vlan-range-mode" onchange="toggleRangeMode()">
+                            <span>Create VLAN Range (multiple VLANs)</span>
+                        </label>
+                    </div>
+                    
+                    <!-- Single VLAN Fields -->
+                    <div id="single-vlan-fields">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>VLAN ID *</label>
+                                <input type="number" id="vlan-id" min="1" max="4094" placeholder="e.g., 100" onblur="updateProfileName()">
+                            </div>
+                            <div class="form-group">
+                                <label>Profile Name</label>
+                                <input type="text" id="vlan-profile-name" placeholder="Auto: VLAN_{id}">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Range VLAN Fields -->
+                    <div id="range-vlan-fields" style="display: none;">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Start VLAN ID *</label>
+                                <input type="number" id="vlan-start-id" min="1" max="4094" placeholder="e.g., 50" oninput="updateRangePreview()">
+                            </div>
+                            <div class="form-group">
+                                <label>End VLAN ID *</label>
+                                <input type="number" id="vlan-end-id" min="1" max="4094" placeholder="e.g., 100" oninput="updateRangePreview()">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Profile Name</label>
+                            <input type="text" id="vlan-range-profile-name" placeholder="Auto: VLAN_{start}_{end}_L2">
+                        </div>
+                        <div id="range-preview" style="margin-top: 10px; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 6px; display: none;">
+                            <div id="range-preview-content" style="font-family: monospace; font-size: 12px; color: #76b900;"></div>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Description *</label>
+                        <input type="text" id="vlan-description" placeholder="e.g., Management VLAN">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>L2VNI <span id="l2vni-label-suffix"></span></label>
+                        <input type="number" id="vlan-l2vni" placeholder="Auto: 100000 + VLAN ID">
+                    </div>
+                    
+                    <!-- SVI only for single VLAN -->
+                    <div id="svi-section">
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="vlan-svi-enabled" onchange="toggleSviFields()">
+                                <span>Enable SVI / L3 Configuration</span>
+                            </label>
+                        </div>
+                        
+                        <div id="svi-fields" class="conditional-fields">
+                            <div class="form-group">
+                                <label>VRF</label>
+                                <select id="vlan-vrf">
+                                    <option value="default">default</option>
+                                </select>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="vlan-vrr-enabled" onchange="toggleVrrFields()">
+                                    <span>Enable VRR</span>
+                                </label>
+                            </div>
+                        
+                        <div id="single-ip-field">
+                            <div class="form-group">
+                                <label>Gateway IP</label>
+                                <input type="text" id="vlan-gateway-ip" placeholder="e.g., 10.10.100.1/24">
+                            </div>
+                        </div>
+                        
+                        <div id="vrr-fields" class="conditional-fields">
+                            <div class="form-group">
+                                <label>VRR VIP</label>
+                                <input type="text" id="vlan-vrr-vip" placeholder="e.g., 10.10.100.1/24">
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Even Switch IP</label>
+                                    <input type="text" id="vlan-even-ip" placeholder="e.g., 10.10.100.2/24">
+                                </div>
+                                <div class="form-group">
+                                    <label>Odd Switch IP</label>
+                                    <input type="text" id="vlan-odd-ip" placeholder="e.g., 10.10.100.3/24">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    </div><!-- end svi-section -->
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeCreateModal()">Cancel</button>
+                <button class="btn btn-primary" id="btn-create" onclick="createVlan()">Create VLAN</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Edit VLAN Modal -->
+    <div class="modal" id="edit-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Edit VLAN</h3>
+                <button class="modal-close" onclick="closeEditModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <form id="edit-form" onsubmit="event.preventDefault(); saveVlanEdit();">
+                    <input type="hidden" id="edit-vlan-original-name">
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>VLAN ID *</label>
+                            <input type="number" id="edit-vlan-id" min="1" max="4094" required readonly style="background: #333; cursor: not-allowed;">
+                            <div class="form-hint">VLAN ID cannot be changed</div>
+                        </div>
+                        <div class="form-group">
+                            <label>Profile Name</label>
+                            <input type="text" id="edit-vlan-profile-name" placeholder="e.g., MGMT_100">
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Description *</label>
+                        <input type="text" id="edit-vlan-description" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>L2VNI</label>
+                        <input type="number" id="edit-vlan-l2vni">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="edit-vlan-svi-enabled" onchange="toggleEditSviFields()">
+                            <span>Enable SVI / L3 Configuration</span>
+                        </label>
+                    </div>
+                    
+                    <div id="edit-svi-fields" class="conditional-fields">
+                        <div class="form-group">
+                            <label>VRF</label>
+                            <select id="edit-vlan-vrf">
+                                <option value="default">default</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="edit-vlan-vrr-enabled" onchange="toggleEditVrrFields()">
+                                <span>Enable VRR</span>
+                            </label>
+                        </div>
+                        
+                        <div id="edit-single-ip-field">
+                            <div class="form-group">
+                                <label>Gateway IP</label>
+                                <input type="text" id="edit-vlan-gateway-ip" placeholder="e.g., 10.10.100.1/24">
+                            </div>
+                        </div>
+                        
+                        <div id="edit-vrr-fields" class="conditional-fields">
+                            <div class="form-group">
+                                <label>VRR VIP</label>
+                                <input type="text" id="edit-vlan-vrr-vip" placeholder="e.g., 10.10.100.1/24">
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Even Switch IP</label>
+                                    <input type="text" id="edit-vlan-even-ip" placeholder="e.g., 10.10.100.2/24">
+                                </div>
+                                <div class="form-group">
+                                    <label>Odd Switch IP</label>
+                                    <input type="text" id="edit-vlan-odd-ip" placeholder="e.g., 10.10.100.3/24">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeEditModal()">Cancel</button>
+                <button class="btn btn-primary" id="btn-save-edit" onclick="saveVlanEdit()">Save Changes</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Delete Confirm Modal -->
+    <div class="modal" id="delete-modal">
+        <div class="modal-content" style="max-width: 450px;">
+            <div class="modal-header">
+                <h3 style="color: #ff6b6b;">Delete VLAN</h3>
+                <button class="modal-close" onclick="closeDeleteModal()">×</button>
+            </div>
+            <div class="modal-body" style="text-align: center;">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="#ff6b6b" style="margin-bottom: 15px;">
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+                </svg>
+                <p style="color: #ccc; margin-bottom: 10px;">Are you sure you want to delete VLAN profile:</p>
+                <p style="color: #76b900; font-weight: bold; font-size: 18px; margin-bottom: 15px;" id="delete-vlan-name"></p>
+                <div id="affected-devices-list" style="margin-bottom: 15px; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 6px;"></div>
+                <p style="color: #888; font-size: 12px;">This will also remove the associated port profile</p>
+            </div>
+            <div class="modal-footer" style="justify-content: center; gap: 15px;">
+                <button class="btn btn-secondary" onclick="closeDeleteModal()">Cancel</button>
+                <button class="btn" id="btn-confirm-delete" onclick="confirmDelete()" style="background: #dc3545; color: white;">Delete</button>
+            </div>
+        </div>
+    </div>
+    
+    
+    <script>
+        // State
+        let vlanProfiles = {};
+        let vlanDeviceMap = {};
+        let totalDeviceCount = 0;
+        let vrfCount = 0;
+        let availableVrfs = ['default'];
+        
+        // Initialize
+        async function init() {
+            const isAuth = await LLDPqAuth.check();
+            if (!isAuth) return;
+            
+            if (!LLDPqAuth.isAdmin()) {
+                document.body.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100vh; color: #888;">Access denied. Admin only.</div>';
+                return;
+            }
+            await loadData();
+        }
+        
+        // Load all data
+        async function loadData() {
+            document.getElementById('content-area').innerHTML = '<div class="loading"><div class="spinner"></div>Loading VLAN data...</div>';
+            
+            try {
+                const response = await fetch('/fabric-api.sh?action=get-vlan-report');
+                const data = await response.json();
+                
+                if (data.success) {
+                    vlanProfiles = data.vlan_profiles || {};
+                    vlanDeviceMap = data.vlan_device_map || {};
+                    totalDeviceCount = data.device_count || 0;
+                    vrfCount = data.vrf_count || 0;
+                    
+                    document.getElementById('last-updated').textContent = 'Last Updated: ' + new Date().toLocaleString();
+                    updateSummary();
+                    renderTable();
+                } else {
+                    document.getElementById('content-area').innerHTML = '<div class="no-data">Failed to load data: ' + (data.error || 'Unknown error') + '</div>';
+                }
+            } catch (e) {
+                document.getElementById('content-area').innerHTML = '<div class="no-data">Failed to load data: ' + e.message + '</div>';
+            }
+        }
+        
+        // Update summary cards
+        function updateSummary() {
+            const totalVlans = Object.keys(vlanProfiles).length;
+            const unusedVlans = Object.values(vlanDeviceMap).filter(d => d.length === 0).length;
+            
+            document.getElementById('total-vlans').textContent = totalVlans;
+            document.getElementById('total-devices').textContent = totalDeviceCount;
+            document.getElementById('unused-vlans').textContent = unusedVlans;
+            document.getElementById('vrf-count').textContent = vrfCount;
+        }
+        
+        // Helper to extract VLAN details from nested structure
+        function getVlanDetails(vlanData) {
+            let vlanId = '-';
+            let vrf = null;  // null means L2 Only
+            let description = '-';
+            let l2vni = '-';
+            let vlanCount = 0;
+            let hasL3 = false;  // Track if any VLAN has L3 config
+            
+            if (vlanData.vlans && typeof vlanData.vlans === 'object') {
+                const vlanIds = Object.keys(vlanData.vlans).map(Number).sort((a, b) => a - b);
+                vlanCount = vlanIds.length;
+                
+                if (vlanCount === 1) {
+                    // Single VLAN
+                    vlanId = vlanIds[0].toString();
+                    const vlanInfo = vlanData.vlans[vlanIds[0]];
+                    if (vlanInfo) {
+                        // Check for L3 config (VRF, IP, VRR)
+                        if (vlanInfo.vrf || vlanInfo.ip || vlanInfo.vrr_vip || vlanInfo.even_ip || vlanInfo.odd_ip) {
+                            hasL3 = true;
+                            vrf = vlanInfo.vrf || 'default';
+                        }
+                        description = vlanInfo.description || '-';
+                        l2vni = vlanInfo.l2vni || '-';
+                    }
+                } else if (vlanCount > 1) {
+                    // Multiple VLANs - show range
+                    const minId = vlanIds[0];
+                    const maxId = vlanIds[vlanIds.length - 1];
+                    vlanId = `${minId}-${maxId}`;
+                    
+                    // Check all VLANs for L3 config and get first VRF/description
+                    for (const vid of vlanIds) {
+                        const vlanInfo = vlanData.vlans[vid];
+                        if (vlanInfo) {
+                            if (vlanInfo.vrf || vlanInfo.ip || vlanInfo.vrr_vip) {
+                                hasL3 = true;
+                                if (!vrf && vlanInfo.vrf) {
+                                    vrf = vlanInfo.vrf;
+                                }
+                            }
+                            if (description === '-' && vlanInfo.description) {
+                                description = vlanInfo.description;
+                            }
+                        }
+                    }
+                    
+                    // Show count in description if no description
+                    if (description === '-') {
+                        description = `${vlanCount} VLANs`;
+                    }
+                }
+            }
+            
+            // Override with direct properties if present
+            if (vlanData.vlan_id) vlanId = vlanData.vlan_id;
+            if (vlanData.vrf) {
+                vrf = vlanData.vrf;
+                hasL3 = true;
+            }
+            if (vlanData.ip || vlanData.vrr_vip) hasL3 = true;
+            if (vlanData.description) description = vlanData.description;
+            if (vlanData.l2vni) l2vni = vlanData.l2vni;
+            
+            // If no L3 config found, mark as L2 Only
+            if (!hasL3) {
+                vrf = 'L2 Only';
+            } else if (!vrf) {
+                vrf = 'default';
+            }
+            
+            return { vlanId, vrf, description, l2vni, vlanCount, hasL3 };
+        }
+        
+        // Render table
+        function renderTable() {
+            const vlanNames = Object.keys(vlanProfiles);
+            
+            if (vlanNames.length === 0) {
+                document.getElementById('content-area').innerHTML = '<div class="no-data">No VLAN profiles found.</div>';
+                return;
+            }
+            
+            // Sort by VLAN ID
+            vlanNames.sort((a, b) => {
+                const detailsA = getVlanDetails(vlanProfiles[a]);
+                const detailsB = getVlanDetails(vlanProfiles[b]);
+                return parseInt(detailsA.vlanId) - parseInt(detailsB.vlanId);
+            });
+            
+            let html = `
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 30px;"></th>
+                            <th class="sortable">VLAN Profile <span class="sort-arrow">▲▼</span></th>
+                            <th class="sortable">ID <span class="sort-arrow">▲▼</span></th>
+                            <th class="sortable">VRF <span class="sort-arrow">▲▼</span></th>
+                            <th class="sortable">Devices <span class="sort-arrow">▲▼</span></th>
+                            <th>Description</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+            
+            for (const vlanName of vlanNames) {
+                const vlanData = vlanProfiles[vlanName];
+                const details = getVlanDetails(vlanData);
+                const devices = vlanDeviceMap[vlanName] || [];
+                const deviceCount = devices.length;
+                
+                const vrfBadgeClass = details.vrf === 'L2 Only' ? 'badge-gray' :
+                                      details.vrf === 'default' ? 'badge-gray' : 
+                                      details.vrf === 'oob' ? 'badge-blue' : 
+                                      details.vrf === 'tenant1' ? 'badge-green' : 'badge-purple';
+                
+                html += `
+                    <tr class="expandable" onclick="toggleDeviceList('${vlanName}')">
+                        <td><span class="expand-icon" id="icon-${vlanName}">›</span></td>
+                        <td><span class="vlan-name">${vlanName}</span></td>
+                        <td>${details.vlanId}</td>
+                        <td><span class="badge ${vrfBadgeClass}">${details.vrf}</span></td>
+                        <td>
+                            <span class="badge ${deviceCount > 0 ? 'badge-green' : 'badge-gray'}">
+                                ${deviceCount} device${deviceCount !== 1 ? 's' : ''}
+                            </span>
+                        </td>
+                        <td>${details.description}</td>
+                        <td>
+                            <div class="row-actions">
+                                <button class="btn-icon btn-icon-edit" onclick="event.stopPropagation(); editVlan('${vlanName}')" title="Edit">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                        <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+                                    </svg>
+                                </button>
+                                <button class="btn-icon btn-icon-delete" onclick="event.stopPropagation(); confirmDeleteVlan('${vlanName}')" title="Delete">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                        <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr class="device-list-row" id="devices-${vlanName}">
+                        <td colspan="7">
+                            ${devices.length > 0 ? `
+                                <div class="device-chips">
+                                    ${devices.map(d => `<span class="device-chip">${d}</span>`).join('')}
+                                </div>
+                            ` : '<span style="color: #888;">No devices assigned</span>'}
+                        </td>
+                    </tr>
+                `;
+            }
+            
+            html += '</tbody></table>';
+            document.getElementById('content-area').innerHTML = html;
+        }
+        
+        // Toggle device list
+        function toggleDeviceList(vlanName) {
+            const row = document.getElementById('devices-' + vlanName);
+            const icon = document.getElementById('icon-' + vlanName);
+            
+            if (row.classList.contains('visible')) {
+                row.classList.remove('visible');
+                icon.classList.remove('rotated');
+            } else {
+                row.classList.add('visible');
+                icon.classList.add('rotated');
+            }
+        }
+        
+        // Modal functions
+        function openCreateModal() {
+            loadVrfs();
+            document.getElementById('create-form').reset();
+            document.getElementById('vlan-range-mode').checked = false;
+            document.getElementById('single-vlan-fields').style.display = 'block';
+            document.getElementById('range-vlan-fields').style.display = 'none';
+            document.getElementById('svi-section').style.display = 'block';
+            document.getElementById('svi-fields').classList.remove('visible');
+            document.getElementById('vrr-fields').classList.remove('visible');
+            document.getElementById('single-ip-field').style.display = 'block';
+            document.getElementById('range-preview').style.display = 'none';
+            document.getElementById('l2vni-label-suffix').textContent = '';
+            document.getElementById('btn-create').textContent = 'Create VLAN';
+            document.getElementById('create-modal').classList.add('visible');
+        }
+        
+        function closeCreateModal() {
+            document.getElementById('create-modal').classList.remove('visible');
+        }
+        
+        function toggleRangeMode() {
+            const isRange = document.getElementById('vlan-range-mode').checked;
+            document.getElementById('single-vlan-fields').style.display = isRange ? 'none' : 'block';
+            document.getElementById('range-vlan-fields').style.display = isRange ? 'block' : 'none';
+            document.getElementById('svi-section').style.display = isRange ? 'none' : 'block';
+            document.getElementById('l2vni-label-suffix').textContent = isRange ? '(Offset)' : '';
+            document.getElementById('vlan-l2vni').placeholder = isRange ? 'Offset: 100000 (L2VNI = offset + VLAN ID)' : 'Auto: 100000 + VLAN ID';
+            document.getElementById('btn-create').textContent = isRange ? 'Create VLANs' : 'Create VLAN';
+            
+            if (isRange) {
+                document.getElementById('vlan-description').placeholder = 'e.g., L2 VLANs';
+            } else {
+                document.getElementById('vlan-description').placeholder = 'e.g., Management VLAN';
+            }
+        }
+        
+        function updateRangePreview() {
+            const startId = parseInt(document.getElementById('vlan-start-id').value);
+            const endId = parseInt(document.getElementById('vlan-end-id').value);
+            const previewDiv = document.getElementById('range-preview');
+            const previewContent = document.getElementById('range-preview-content');
+            
+            if (startId && endId && startId <= endId && startId >= 1 && endId <= 4094) {
+                const count = endId - startId + 1;
+                const offset = parseInt(document.getElementById('vlan-l2vni').value) || 100000;
+                
+                // Auto-update profile name placeholder
+                const profileNameInput = document.getElementById('vlan-range-profile-name');
+                if (!profileNameInput.value) {
+                    profileNameInput.placeholder = `VLAN_${startId}_${endId}_L2`;
+                }
+                
+                previewContent.innerHTML = `VLANs: ${startId} - ${endId} (<strong>${count} VLANs</strong>) | L2VNIs: ${offset + startId} - ${offset + endId}`;
+                previewDiv.style.display = 'block';
+            } else {
+                previewDiv.style.display = 'none';
+            }
+        }
+        
+        async function loadVrfs() {
+            try {
+                const response = await fetch('/fabric-api.sh?action=get-vrfs');
+                const data = await response.json();
+                if (data.success) {
+                    availableVrfs = data.vrfs || ['default'];
+                    document.getElementById('vlan-vrf').innerHTML = availableVrfs.map(v => 
+                        `<option value="${v}">${v}</option>`
+                    ).join('');
+                }
+            } catch (e) {
+                console.error('Failed to load VRFs:', e);
+            }
+        }
+        
+        function updateProfileName() {
+            const vlanId = document.getElementById('vlan-id').value;
+            const profileName = document.getElementById('vlan-profile-name');
+            if (!profileName.value && vlanId) {
+                profileName.value = 'VLAN_' + vlanId;
+            }
+        }
+        
+        function toggleSviFields() {
+            const sviFields = document.getElementById('svi-fields');
+            const sviEnabled = document.getElementById('vlan-svi-enabled').checked;
+            if (sviEnabled) {
+                sviFields.classList.add('visible');
+            } else {
+                sviFields.classList.remove('visible');
+            }
+        }
+        
+        function toggleVrrFields() {
+            const vrrFields = document.getElementById('vrr-fields');
+            const singleIpField = document.getElementById('single-ip-field');
+            const vrrEnabled = document.getElementById('vlan-vrr-enabled').checked;
+            
+            if (vrrEnabled) {
+                vrrFields.classList.add('visible');
+                singleIpField.style.display = 'none';
+            } else {
+                vrrFields.classList.remove('visible');
+                singleIpField.style.display = 'block';
+            }
+        }
+        
+        async function createVlan() {
+            const createBtn = document.getElementById('btn-create');
+            const isRangeMode = document.getElementById('vlan-range-mode').checked;
+            
+            const description = document.getElementById('vlan-description').value.trim();
+            if (!description) {
+                alert('Description is required');
+                return;
+            }
+            
+            createBtn.disabled = true;
+            
+            if (isRangeMode) {
+                // Range mode - create multiple VLANs
+                const startId = parseInt(document.getElementById('vlan-start-id').value);
+                const endId = parseInt(document.getElementById('vlan-end-id').value);
+                
+                if (!startId || !endId || startId < 1 || endId > 4094) {
+                    alert('VLAN IDs must be between 1 and 4094');
+                    createBtn.disabled = false;
+                    return;
+                }
+                
+                if (startId > endId) {
+                    alert('Start VLAN ID must be less than or equal to End VLAN ID');
+                    createBtn.disabled = false;
+                    return;
+                }
+                
+                const count = endId - startId + 1;
+                if (count > 500) {
+                    alert('Maximum 500 VLANs can be created at once');
+                    createBtn.disabled = false;
+                    return;
+                }
+                
+                const profileName = document.getElementById('vlan-range-profile-name').value || `VLAN_${startId}_${endId}_L2`;
+                const l2vniOffset = parseInt(document.getElementById('vlan-l2vni').value) || 100000;
+                
+                const data = {
+                    start_id: startId,
+                    end_id: endId,
+                    profile_name: profileName,
+                    description: description,
+                    l2vni_offset: l2vniOffset
+                };
+                
+                createBtn.textContent = `Creating ${count} VLANs...`;
+                
+                try {
+                    const response = await fetch('/fabric-api.sh?action=bulk-create-vlans', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(data)
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        closeCreateModal();
+                        alert(`${count} VLANs created successfully! Run Deploy to apply changes.`);
+                        await loadData();
+                    } else {
+                        alert('Error: ' + (result.error || 'Unknown error'));
+                    }
+                } catch (e) {
+                    alert('Error: ' + e.message);
+                }
+                
+                createBtn.disabled = false;
+                createBtn.textContent = 'Create VLANs';
+                return;
+            }
+            
+            // Single VLAN mode
+            const vlanId = parseInt(document.getElementById('vlan-id').value);
+            
+            if (!vlanId || vlanId < 1 || vlanId > 4094) {
+                alert('VLAN ID must be between 1 and 4094');
+                createBtn.disabled = false;
+                return;
+            }
+            
+            const sviEnabled = document.getElementById('vlan-svi-enabled').checked;
+            const vrrEnabled = sviEnabled && document.getElementById('vlan-vrr-enabled').checked;
+            
+            const data = {
+                vlan_id: vlanId,
+                profile_name: document.getElementById('vlan-profile-name').value || 'VLAN_' + vlanId,
+                description: description,
+                l2vni: parseInt(document.getElementById('vlan-l2vni').value) || (100000 + vlanId),
+                svi_enabled: sviEnabled,
+                vrr_enabled: vrrEnabled
+            };
+            
+            if (sviEnabled) {
+                data.vrf = document.getElementById('vlan-vrf').value;
+                if (vrrEnabled) {
+                    data.vrr_vip = document.getElementById('vlan-vrr-vip').value.trim();
+                    data.even_ip = document.getElementById('vlan-even-ip').value.trim();
+                    data.odd_ip = document.getElementById('vlan-odd-ip').value.trim();
+                } else {
+                    data.gateway_ip = document.getElementById('vlan-gateway-ip').value.trim();
+                }
+            }
+            
+            createBtn.textContent = 'Creating...';
+            
+            try {
+                const response = await fetch('/fabric-api.sh?action=create-vlan', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    closeCreateModal();
+                    alert('VLAN created successfully! Run Deploy to apply changes.');
+                    await loadData();
+                } else {
+                    alert('Error: ' + (result.error || 'Unknown error'));
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+            
+            createBtn.disabled = false;
+            createBtn.textContent = 'Create VLAN';
+        }
+        
+        // Edit VLAN functions
+        let editingVlanName = '';
+        
+        async function editVlan(vlanName) {
+            editingVlanName = vlanName;
+            const vp = vlanProfiles[vlanName];
+            if (!vp) {
+                alert('VLAN profile not found');
+                return;
+            }
+            
+            await loadVrfs();
+            const vrfSelect = document.getElementById('edit-vlan-vrf');
+            vrfSelect.innerHTML = availableVrfs.map(v => 
+                `<option value="${v}">${v}</option>`
+            ).join('');
+            
+            const details = getVlanDetails(vp);
+            
+            document.getElementById('edit-vlan-original-name').value = vlanName;
+            document.getElementById('edit-vlan-profile-name').value = vlanName;
+            document.getElementById('edit-vlan-id').value = details.vlanId;
+            document.getElementById('edit-vlan-description').value = details.description !== '-' ? details.description : '';
+            document.getElementById('edit-vlan-l2vni').value = details.l2vni !== '-' ? details.l2vni : '';
+            
+            let hasSvi = false;
+            let hasVrr = false;
+            let vrf = 'default';
+            let vrrVip = '';
+            let evenIp = '';
+            let oddIp = '';
+            let gatewayIp = '';
+            
+            if (vp.vlans && typeof vp.vlans === 'object') {
+                const vlanIds = Object.keys(vp.vlans);
+                if (vlanIds.length > 0) {
+                    const vlanInfo = vp.vlans[vlanIds[0]];
+                    if (vlanInfo) {
+                        vrf = vlanInfo.vrf || 'default';
+                        if (vlanInfo.vrf || vlanInfo.ip || vlanInfo.vrr_vip) {
+                            hasSvi = true;
+                        }
+                        if (vlanInfo.vrr_vip || vlanInfo.even_ip || vlanInfo.odd_ip) {
+                            hasVrr = true;
+                            vrrVip = vlanInfo.vrr_vip || '';
+                            evenIp = vlanInfo.even_ip || '';
+                            oddIp = vlanInfo.odd_ip || '';
+                        } else if (vlanInfo.ip) {
+                            gatewayIp = vlanInfo.ip || '';
+                        }
+                    }
+                }
+            }
+            
+            document.getElementById('edit-vlan-svi-enabled').checked = hasSvi;
+            if (hasSvi) {
+                document.getElementById('edit-svi-fields').classList.add('visible');
+                document.getElementById('edit-vlan-vrf').value = vrf;
+                document.getElementById('edit-vlan-vrr-enabled').checked = hasVrr;
+                
+                if (hasVrr) {
+                    document.getElementById('edit-vrr-fields').classList.add('visible');
+                    document.getElementById('edit-single-ip-field').style.display = 'none';
+                    document.getElementById('edit-vlan-vrr-vip').value = vrrVip;
+                    document.getElementById('edit-vlan-even-ip').value = evenIp;
+                    document.getElementById('edit-vlan-odd-ip').value = oddIp;
+                } else {
+                    document.getElementById('edit-vrr-fields').classList.remove('visible');
+                    document.getElementById('edit-single-ip-field').style.display = 'block';
+                    document.getElementById('edit-vlan-gateway-ip').value = gatewayIp;
+                }
+            } else {
+                document.getElementById('edit-svi-fields').classList.remove('visible');
+            }
+            
+            document.getElementById('edit-modal').classList.add('visible');
+        }
+        
+        function closeEditModal() {
+            document.getElementById('edit-modal').classList.remove('visible');
+            editingVlanName = '';
+        }
+        
+        function toggleEditSviFields() {
+            const sviFields = document.getElementById('edit-svi-fields');
+            const sviEnabled = document.getElementById('edit-vlan-svi-enabled').checked;
+            if (sviEnabled) {
+                sviFields.classList.add('visible');
+                toggleEditVrrFields();
+            } else {
+                sviFields.classList.remove('visible');
+            }
+        }
+        
+        function toggleEditVrrFields() {
+            const vrrFields = document.getElementById('edit-vrr-fields');
+            const singleIpField = document.getElementById('edit-single-ip-field');
+            const vrrEnabled = document.getElementById('edit-vlan-vrr-enabled').checked;
+            
+            if (vrrEnabled) {
+                vrrFields.classList.add('visible');
+                singleIpField.style.display = 'none';
+            } else {
+                vrrFields.classList.remove('visible');
+                singleIpField.style.display = 'block';
+            }
+        }
+        
+        async function saveVlanEdit() {
+            const saveBtn = document.getElementById('btn-save-edit');
+            const originalName = document.getElementById('edit-vlan-original-name').value;
+            
+            const sviEnabled = document.getElementById('edit-vlan-svi-enabled').checked;
+            const vrrEnabled = sviEnabled && document.getElementById('edit-vlan-vrr-enabled').checked;
+            
+            const data = {
+                original_name: originalName,
+                profile_name: document.getElementById('edit-vlan-profile-name').value,
+                vlan_id: parseInt(document.getElementById('edit-vlan-id').value),
+                description: document.getElementById('edit-vlan-description').value,
+                l2vni: parseInt(document.getElementById('edit-vlan-l2vni').value) || null,
+                svi_enabled: sviEnabled,
+                vrr_enabled: vrrEnabled
+            };
+            
+            if (sviEnabled) {
+                data.vrf = document.getElementById('edit-vlan-vrf').value;
+                if (vrrEnabled) {
+                    data.vrr_vip = document.getElementById('edit-vlan-vrr-vip').value;
+                    data.even_ip = document.getElementById('edit-vlan-even-ip').value;
+                    data.odd_ip = document.getElementById('edit-vlan-odd-ip').value;
+                } else {
+                    data.gateway_ip = document.getElementById('edit-vlan-gateway-ip').value;
+                }
+            }
+            
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Saving...';
+            
+            try {
+                const response = await fetch('/fabric-api.sh?action=update-vlan', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    closeEditModal();
+                    alert('VLAN updated successfully! Run Deploy to apply changes.');
+                    await loadData();
+                } else {
+                    alert('Error: ' + (result.error || 'Unknown error'));
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+            
+            saveBtn.disabled = false;
+            saveBtn.textContent = 'Save Changes';
+        }
+        
+        // Delete VLAN functions
+        let deletingVlanName = '';
+        
+        function confirmDeleteVlan(vlanName) {
+            deletingVlanName = vlanName;
+            document.getElementById('delete-vlan-name').textContent = vlanName;
+            
+            const devices = vlanDeviceMap[vlanName] || [];
+            const affectedDiv = document.getElementById('affected-devices-list');
+            if (devices.length > 0) {
+                affectedDiv.innerHTML = `
+                    <p style="color: #ff6b6b; margin-bottom: 8px;">Warning: This VLAN is assigned to ${devices.length} device(s):</p>
+                    <div style="display: flex; flex-wrap: wrap; gap: 5px; justify-content: center;">
+                        ${devices.map(d => `<span style="background: #444; padding: 2px 8px; border-radius: 4px; font-size: 12px;">${d}</span>`).join('')}
+                    </div>
+                `;
+            } else {
+                affectedDiv.innerHTML = '<p style="color: #888;">This VLAN is not assigned to any devices.</p>';
+            }
+            
+            document.getElementById('delete-modal').classList.add('visible');
+        }
+        
+        function closeDeleteModal() {
+            document.getElementById('delete-modal').classList.remove('visible');
+            deletingVlanName = '';
+        }
+        
+        async function confirmDelete() {
+            if (!deletingVlanName) return;
+            
+            const deleteBtn = document.getElementById('btn-confirm-delete');
+            deleteBtn.disabled = true;
+            deleteBtn.textContent = 'Deleting...';
+            
+            try {
+                const response = await fetch('/fabric-api.sh?action=delete-vlan', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ profile_name: deletingVlanName })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    closeDeleteModal();
+                    alert('VLAN deleted successfully! Run Deploy to apply changes.');
+                    await loadData();
+                } else {
+                    alert('Error: ' + (result.error || 'Unknown error'));
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+            
+            deleteBtn.disabled = false;
+            deleteBtn.textContent = 'Delete';
+        }
+        
+        
+        // Init on load
+        document.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>
