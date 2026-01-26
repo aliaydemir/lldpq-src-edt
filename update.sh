@@ -290,9 +290,15 @@ if [[ -d "$HOME/lldpq" ]]; then
         sudo chmod 664 "$WEB_ROOT/topology.dot"
     fi
     
-    if [[ -f "$HOME/lldpq/topology_config.yaml" ]]; then
-        echo "     • topology_config.yaml"
-        cp "$HOME/lldpq/topology_config.yaml" "$temp_dir/"
+    # topology_config.yaml is stored in web root with symlink in ~/lldpq
+    if [[ -L "$HOME/lldpq/topology_config.yaml" ]]; then
+        echo "     • topology_config.yaml (symlink to $WEB_ROOT)"
+        # Symlink will be recreated later
+    elif [[ -f "$HOME/lldpq/topology_config.yaml" ]]; then
+        echo "     • topology_config.yaml (migrating to $WEB_ROOT)"
+        sudo cp "$HOME/lldpq/topology_config.yaml" "$WEB_ROOT/topology_config.yaml"
+        sudo chown www-data:$USER "$WEB_ROOT/topology_config.yaml"
+        sudo chmod 664 "$WEB_ROOT/topology_config.yaml"
     fi
     
     if [[ -f "$HOME/lldpq/notifications.yaml" ]]; then
@@ -335,6 +341,13 @@ if [[ -f "$WEB_ROOT/topology.dot" ]] && [[ ! -L "$HOME/lldpq/topology.dot" ]]; t
     rm -f "$HOME/lldpq/topology.dot" 2>/dev/null
     ln -sf "$WEB_ROOT/topology.dot" "$HOME/lldpq/topology.dot"
 fi
+
+# Ensure topology_config.yaml symlink exists (after lldpq directory is created)
+if [[ -f "$WEB_ROOT/topology_config.yaml" ]] && [[ ! -L "$HOME/lldpq/topology_config.yaml" ]]; then
+    mkdir -p "$HOME/lldpq"  # Ensure directory exists
+    rm -f "$HOME/lldpq/topology_config.yaml" 2>/dev/null
+    ln -sf "$WEB_ROOT/topology_config.yaml" "$HOME/lldpq/topology_config.yaml"
+fi
 echo "lldpq directory updated with preserved configs"
 
 # Restore monitoring data if backed up
@@ -363,7 +376,7 @@ echo "   Configuration files:"
 # hosts.ini removed - now using endpoint_hosts in devices.yaml
 echo "     • ~/lldpq/devices.yaml (includes endpoint_hosts for topology)"
 echo "     • $WEB_ROOT/topology.dot (web-editable, symlinked from ~/lldpq)"
-echo "     • ~/lldpq/topology_config.yaml"
+echo "     • $WEB_ROOT/topology_config.yaml (web-editable, symlinked from ~/lldpq)"
 echo "     • ~/lldpq/notifications.yaml"
 if [[ -n "$backup_data_dir" ]] || [[ -d "$HOME/lldpq/monitor-results" ]] || [[ -d "$HOME/lldpq/lldp-results" ]] || [[ -d "$HOME/lldpq/alert-states" ]]; then
     echo "   Monitoring data directories:"
