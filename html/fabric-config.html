@@ -614,6 +614,27 @@
             color: #ce93d8;
         }
         
+        .badge-with-delete {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding-right: 6px;
+        }
+        
+        .badge-delete {
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+            opacity: 0.6;
+            transition: opacity 0.2s, color 0.2s;
+            line-height: 1;
+        }
+        
+        .badge-delete:hover {
+            opacity: 1;
+            color: #ff6b6b;
+        }
+
         .badge-orange {
             background: rgba(255, 152, 0, 0.2);
             color: #ffb74d;
@@ -621,7 +642,277 @@
         
         .badge-gray {
             background: rgba(128, 128, 128, 0.2);
+            color: #aaa;
+        }
+        
+        .btn-assign {
+            background: #2196f3 !important;
+        }
+        
+        .btn-assign:hover {
+            background: #1976d2 !important;
+        }
+        
+        .vlan-checkbox-list {
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid #444;
+            border-radius: 6px;
+            background: rgba(0,0,0,0.2);
+        }
+        
+        .vlan-checkbox-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            cursor: pointer;
+            transition: background 0.2s;
+            border-bottom: 1px solid #333;
+        }
+        
+        .vlan-checkbox-item:last-child {
+            border-bottom: none;
+        }
+        
+        .vlan-checkbox-item:hover {
+            background: rgba(118, 185, 0, 0.1);
+        }
+        
+        .vlan-checkbox-item input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+        }
+        
+        .vlan-checkbox-label {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        
+        .vlan-name {
+            color: #76b900;
+            font-weight: 500;
+        }
+        
+        .vlan-info {
+            color: #888;
+            font-size: 12px;
+        }
+        
+        .badge-gray {
+            background: rgba(128, 128, 128, 0.2);
             color: #999;
+        }
+        
+        /* Section header with add button */
+        .section-header-with-action {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            background: #333;
+            font-weight: 600;
+            color: #76b900;
+        }
+        
+        .section-header-left {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .btn-add-small {
+            background: #76b900;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            padding: 4px 10px;
+            font-size: 12px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            transition: background 0.2s;
+        }
+        
+        .btn-add-small:hover {
+            background: #8fcf00;
+        }
+        
+        /* VLAN Form Modal */
+        .vlan-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 2000;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .vlan-modal.visible {
+            display: flex;
+        }
+        
+        .vlan-modal-content {
+            background: #2d2d2d;
+            border-radius: 8px;
+            width: 500px;
+            max-width: 90%;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+        }
+        
+        .vlan-modal-header {
+            padding: 16px 20px;
+            background: linear-gradient(135deg, #76b900 0%, #5a8f00 100%);
+            color: white;
+            font-weight: 600;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-radius: 8px 8px 0 0;
+        }
+        
+        .vlan-modal-header h3 {
+            margin: 0;
+            font-size: 16px;
+        }
+        
+        .vlan-modal-close {
+            background: none;
+            border: none;
+            color: white;
+            font-size: 24px;
+            cursor: pointer;
+            padding: 0;
+            line-height: 1;
+        }
+        
+        .vlan-modal-body {
+            padding: 20px;
+        }
+        
+        .form-group {
+            margin-bottom: 16px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 13px;
+            color: #ccc;
+        }
+        
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 10px 12px;
+            background: #1e1e1e;
+            border: 1px solid #444;
+            border-radius: 4px;
+            color: #fff;
+            font-size: 14px;
+            box-sizing: border-box;
+        }
+        
+        .form-group input:focus,
+        .form-group select:focus {
+            border-color: #76b900;
+            outline: none;
+        }
+        
+        .form-group-inline {
+            display: flex;
+            gap: 12px;
+        }
+        
+        .form-group-inline .form-group {
+            flex: 1;
+        }
+        
+        .form-checkbox {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .form-checkbox input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            accent-color: #76b900;
+        }
+        
+        .form-checkbox label {
+            margin: 0;
+            cursor: pointer;
+        }
+        
+        .form-hint {
+            font-size: 11px;
+            color: #888;
+            margin-top: 4px;
+        }
+        
+        .vlan-modal-footer {
+            padding: 16px 20px;
+            background: #252526;
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            border-radius: 0 0 8px 8px;
+        }
+        
+        .btn-cancel {
+            background: #444;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            padding: 10px 20px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        
+        .btn-cancel:hover {
+            background: #555;
+        }
+        
+        .btn-create {
+            background: #76b900;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            padding: 10px 20px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        
+        .btn-create:hover {
+            background: #8fcf00;
+        }
+        
+        .btn-create:disabled {
+            background: #444;
+            cursor: not-allowed;
+        }
+        
+        .vrr-fields {
+            display: none;
+            margin-top: 12px;
+            padding: 12px;
+            background: #252526;
+            border-radius: 4px;
+        }
+        
+        .vrr-fields.visible {
+            display: block;
         }
         
         /* Loading */
@@ -1209,27 +1500,57 @@
                 html += '</tbody></table></div></div>';
             }
             
-            // VLANs Section
-            if (config.vlan_templates && config.vlan_templates.length > 0) {
-                html += `
-                    <div class="dashboard-section">
-                        <div class="section-header">
+            // VLANs Section - always show with add button
+            html += `
+                <div class="dashboard-section">
+                    <div class="section-header-with-action">
+                        <div class="section-header-left">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
                                 <path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-1 9h-4v4h-2v-4H9V9h4V5h2v4h4v2z"/>
                             </svg>
-                            VLAN Templates (${config.vlan_templates.length})
+                            VLAN Templates (${config.vlan_templates?.length || 0})
                         </div>
-                        <div class="section-content">
-                            <div style="display: flex; flex-wrap: wrap; gap: 8px;">
-                                ${config.vlan_templates.map(v => `<span class="badge badge-green">${v}</span>`).join('')}
-                            </div>
+                        <div style="display: flex; gap: 8px;">
+                            <button class="btn-add-small btn-assign" onclick="openAssignVlanModal()">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M18 16v-5c0-.55-.45-1-1-1H8.41l1.79 1.79c.39.39.39 1.02 0 1.41-.39.39-1.02.39-1.41 0L5.5 9.5c-.39-.39-.39-1.02 0-1.41L8.79 5.3c.39-.39 1.02-.39 1.41 0 .39.39.39 1.02 0 1.41L8.41 8H17c1.65 0 3 1.35 3 3v5h-2z"/>
+                                </svg>
+                                Assign
+                            </button>
+                            <button class="btn-add-small" onclick="openVlanModal()">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                                </svg>
+                                Create
+                            </button>
+                        </div>
+                    </div>`;
+            
+            if (config.vlan_templates && config.vlan_templates.length > 0) {
+                html += `
+                    <div class="section-content">
+                        <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                            ${config.vlan_templates.map(v => `
+                                <span class="badge badge-green badge-with-delete">
+                                    ${v}
+                                    <span class="badge-delete" onclick="event.stopPropagation(); confirmDeleteVlan('${v}')" title="Delete VLAN">×</span>
+                                </span>
+                            `).join('')}
                         </div>
                     </div>
                 `;
-                
-                // SVI / Gateway IPs Section - show IP info for used VLANs
-                const usedVlanProfiles = config.vlan_templates.filter(v => vlanProfiles[v]);
-                if (usedVlanProfiles.length > 0) {
+            } else {
+                html += `
+                    <div class="section-content">
+                        <div style="color: #888; padding: 10px 0;">No VLANs assigned to this device</div>
+                    </div>
+                `;
+            }
+            html += `</div>`; // Close dashboard-section
+            
+            // SVI / Gateway IPs Section - show IP info for used VLANs
+            const usedVlanProfiles = (config.vlan_templates || []).filter(v => vlanProfiles[v]);
+            if (usedVlanProfiles.length > 0) {
                     // Determine if this is an odd or even switch based on lo_ip or hostname
                     let isOddSwitch = false;
                     if (config.lo_ip) {
@@ -1296,7 +1617,6 @@
                     }
                     
                     html += '</tbody></table></div></div>';
-                }
             }
             
             // DHCP Relay Section
@@ -1649,12 +1969,13 @@
         }
         
         // Show output modal
-        function showOutputModal(title, content, type = 'success') {
+        function showOutputModal(title, content, type = 'success', isHtml = false) {
             const modal = document.getElementById('output-modal');
             const header = document.getElementById('output-modal-header');
             document.getElementById('output-modal-title').textContent = title;
-            document.getElementById('output-modal-content').innerHTML = ansiToHtml(content);
-            
+            // If content is already HTML, use it directly; otherwise convert ANSI codes
+            document.getElementById('output-modal-content').innerHTML = isHtml ? content : ansiToHtml(content);
+
             header.className = 'output-modal-header ' + type;
             modal.classList.add('visible');
         }
@@ -1882,8 +2203,489 @@
             if (statusEl) statusEl.textContent = text;
         }
         
+        // ==================== VLAN Management ====================
+        
+        let availableVrfs = ['default'];
+        
+        async function loadVrfs() {
+            try {
+                const response = await fetch('/fabric-api.sh?action=get-vrfs');
+                const data = await response.json();
+                if (data.success) {
+                    availableVrfs = data.vrfs || ['default'];
+                }
+            } catch (e) {
+                console.error('Failed to load VRFs:', e);
+            }
+        }
+        
+        function openVlanModal() {
+            loadVrfs().then(() => {
+                // Populate VRF dropdown
+                const vrfSelect = document.getElementById('vlan-vrf');
+                vrfSelect.innerHTML = availableVrfs.map(v => 
+                    `<option value="${v}">${v}</option>`
+                ).join('');
+                
+                // Reset form
+                document.getElementById('vlan-form').reset();
+                document.getElementById('vlan-l2vni').value = '';
+                document.getElementById('vlan-profile-name').value = '';
+                
+                // Reset SVI/VRR fields visibility
+                document.getElementById('svi-fields').classList.remove('visible');
+                document.getElementById('vrr-fields').classList.remove('visible');
+                document.getElementById('single-ip-field').style.display = 'block';
+                
+                // Show modal
+                document.getElementById('vlan-modal').classList.add('visible');
+            });
+        }
+        
+        function closeVlanModal() {
+            document.getElementById('vlan-modal').classList.remove('visible');
+        }
+        
+        function confirmDeleteVlan(profileName) {
+            const modal = document.getElementById('delete-confirm-modal');
+            document.getElementById('delete-vlan-name').textContent = profileName;
+            modal.dataset.profileName = profileName;
+            
+            // Find all devices using this VLAN
+            const affectedDevices = [];
+            for (const [deviceName, deviceData] of Object.entries(devices)) {
+                if (deviceData.config && deviceData.config.vlan_templates) {
+                    if (deviceData.config.vlan_templates.includes(profileName)) {
+                        affectedDevices.push(deviceName);
+                    }
+                }
+            }
+            
+            // Update affected devices list
+            const affectedList = document.getElementById('affected-devices-list');
+            if (affectedDevices.length > 0) {
+                affectedList.innerHTML = `
+                    <div style="color: #ff6b6b; font-weight: bold; margin-bottom: 8px;">
+                        ⚠️ This VLAN is used by ${affectedDevices.length} device(s):
+                    </div>
+                    <div style="display: flex; flex-wrap: wrap; gap: 5px; justify-content: center;">
+                        ${affectedDevices.slice(0, 10).map(d => `<span class="badge badge-orange">${d}</span>`).join('')}
+                        ${affectedDevices.length > 10 ? `<span class="badge badge-gray">+${affectedDevices.length - 10} more</span>` : ''}
+                    </div>
+                `;
+            } else {
+                affectedList.innerHTML = `<div style="color: #888;">No devices are currently using this VLAN.</div>`;
+            }
+            
+            modal.classList.add('visible');
+        }
+        
+        function closeDeleteModal() {
+            document.getElementById('delete-confirm-modal').classList.remove('visible');
+        }
+        
+        function openAssignVlanModal() {
+            if (!selectedDevice) {
+                alert('Please select a device first');
+                return;
+            }
+            
+            const modal = document.getElementById('assign-vlan-modal');
+            const listContainer = document.getElementById('assign-vlan-list');
+            
+            // Get current device's assigned VLANs
+            const deviceData = devices[selectedDevice];
+            const assignedVlans = deviceData?.config?.vlan_templates || [];
+            
+            // Get all available VLANs from vlan_profiles
+            const allVlans = Object.keys(vlanProfiles);
+            
+            // Filter to show only unassigned VLANs
+            const availableVlans = allVlans.filter(v => !assignedVlans.includes(v));
+            
+            if (availableVlans.length === 0) {
+                listContainer.innerHTML = `
+                    <div style="text-align: center; color: #888; padding: 20px;">
+                        All VLANs are already assigned to this device.<br>
+                        <span style="font-size: 12px;">Use "Create" to add a new VLAN.</span>
+                    </div>
+                `;
+            } else {
+                listContainer.innerHTML = `
+                    <div style="margin-bottom: 10px; color: #ccc;">Select VLANs to assign to <strong style="color: #76b900;">${selectedDevice}</strong>:</div>
+                    <div class="vlan-checkbox-list">
+                        ${availableVlans.map(v => {
+                            const vp = vlanProfiles[v];
+                            const vlanId = vp?.vlan_id || '-';
+                            const desc = vp?.description || '';
+                            return `
+                                <label class="vlan-checkbox-item">
+                                    <input type="checkbox" name="assign-vlan" value="${v}">
+                                    <span class="vlan-checkbox-label">
+                                        <span class="vlan-name">${v}</span>
+                                        <span class="vlan-info">VLAN ${vlanId}${desc ? ' - ' + desc : ''}</span>
+                                    </span>
+                                </label>
+                            `;
+                        }).join('')}
+                    </div>
+                `;
+            }
+            
+            modal.classList.add('visible');
+        }
+        
+        function closeAssignVlanModal() {
+            document.getElementById('assign-vlan-modal').classList.remove('visible');
+        }
+        
+        async function assignVlans() {
+            const checkboxes = document.querySelectorAll('input[name="assign-vlan"]:checked');
+            const vlansToAssign = Array.from(checkboxes).map(cb => cb.value);
+            
+            if (vlansToAssign.length === 0) {
+                alert('Please select at least one VLAN to assign');
+                return;
+            }
+            
+            const assignBtn = document.getElementById('btn-assign-vlans');
+            assignBtn.disabled = true;
+            assignBtn.textContent = 'Assigning...';
+            
+            try {
+                const response = await fetch('/fabric-api.sh?action=assign-vlans', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        device: selectedDevice,
+                        vlans: vlansToAssign
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    closeAssignVlanModal();
+                    showOutputModal('VLANs Assigned',
+                        `<div style="color: #76b900; margin-bottom: 15px;">✓ ${vlansToAssign.length} VLAN(s) assigned to ${selectedDevice}!</div>` +
+                        `<div style="color: #ccc;">` +
+                        `<p>Assigned: ${vlansToAssign.join(', ')}</p>` +
+                        `<p style="margin-top: 15px; color: #888;">Run <strong>Generate</strong> and <strong>Deploy</strong> to apply changes.</p>` +
+                        `</div>`,
+                        'success', true);
+                    
+                    // Refresh device view
+                    loadDevice(selectedDevice);
+                } else {
+                    alert('Error: ' + result.error);
+                }
+            } catch (e) {
+                alert('Failed to assign VLANs: ' + e.message);
+            } finally {
+                assignBtn.disabled = false;
+                assignBtn.textContent = 'Assign Selected';
+            }
+        }
+        
+        async function deleteVlan() {
+            const modal = document.getElementById('delete-confirm-modal');
+            const profileName = modal.dataset.profileName;
+            const deleteBtn = document.getElementById('btn-confirm-delete');
+            
+            deleteBtn.disabled = true;
+            deleteBtn.textContent = 'Deleting...';
+            
+            try {
+                const response = await fetch('/fabric-api.sh?action=delete-vlan', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ profile_name: profileName })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    closeDeleteModal();
+                    showOutputModal('VLAN Deleted', 
+                        `<div style="color: #76b900; margin-bottom: 15px;">✓ VLAN profile "${profileName}" deleted successfully!</div>` +
+                        `<div style="color: #ccc;">` +
+                        `<p>Removed from: vlan_profiles.yaml</p>` +
+                        (result.port_profile_deleted ? `<p>Port profile also removed: ${result.port_profile}</p>` : '') +
+                        `<p style="margin-top: 15px; color: #888;">Run <strong>Generate</strong> and <strong>Deploy</strong> to apply changes.</p>` +
+                        `</div>`,
+                        'success', true);
+                    
+                    // Refresh device view
+                    if (selectedDevice) {
+                        loadDevice(selectedDevice);
+                    }
+                } else {
+                    alert('Error: ' + result.error);
+                }
+            } catch (e) {
+                alert('Failed to delete VLAN: ' + e.message);
+            } finally {
+                deleteBtn.disabled = false;
+                deleteBtn.textContent = 'Delete';
+            }
+        }
+
+        function updateL2VNI() {
+            const vlanId = document.getElementById('vlan-id').value;
+            if (vlanId && !isNaN(vlanId)) {
+                document.getElementById('vlan-l2vni').value = 100000 + parseInt(vlanId);
+                document.getElementById('vlan-profile-name').value = 'VLAN_' + vlanId;
+            }
+        }
+        
+        function toggleSviFields() {
+            const sviFields = document.getElementById('svi-fields');
+            const sviEnabled = document.getElementById('vlan-svi-enabled').checked;
+            if (sviEnabled) {
+                sviFields.classList.add('visible');
+                // Show single IP by default, VRR fields hidden
+                toggleVrrFields();
+            } else {
+                sviFields.classList.remove('visible');
+            }
+        }
+        
+        function toggleVrrFields() {
+            const vrrFields = document.getElementById('vrr-fields');
+            const singleIpField = document.getElementById('single-ip-field');
+            const vrrEnabled = document.getElementById('vlan-vrr-enabled').checked;
+            
+            if (vrrEnabled) {
+                vrrFields.classList.add('visible');
+                singleIpField.style.display = 'none';
+            } else {
+                vrrFields.classList.remove('visible');
+                singleIpField.style.display = 'block';
+            }
+        }
+        
+        async function createVlan() {
+            const form = document.getElementById('vlan-form');
+            const createBtn = document.getElementById('btn-create-vlan');
+            
+            // Validate
+            const vlanId = parseInt(document.getElementById('vlan-id').value);
+            if (!vlanId || vlanId < 1 || vlanId > 4094) {
+                alert('VLAN ID must be between 1 and 4094');
+                return;
+            }
+            
+            const description = document.getElementById('vlan-description').value.trim();
+            if (!description) {
+                alert('Description is required');
+                return;
+            }
+            
+            // Build data
+            const sviEnabled = document.getElementById('vlan-svi-enabled').checked;
+            const vrrEnabled = sviEnabled && document.getElementById('vlan-vrr-enabled').checked;
+            
+            const data = {
+                vlan_id: vlanId,
+                profile_name: document.getElementById('vlan-profile-name').value || `VLAN_${vlanId}`,
+                description: description,
+                l2vni: parseInt(document.getElementById('vlan-l2vni').value) || (100000 + vlanId),
+                stp_bpduguard: document.getElementById('vlan-stp-bpduguard').checked,
+                svi_enabled: sviEnabled,
+                vrr_enabled: vrrEnabled
+            };
+            
+            // Only include VRF and IP info if SVI is enabled
+            if (sviEnabled) {
+                data.vrf = document.getElementById('vlan-vrf').value;
+                
+                if (vrrEnabled) {
+                    // VRR mode: VIP + Even/Odd IPs
+                    data.vrr_vip = document.getElementById('vlan-vrr-vip').value.trim();
+                    data.even_ip = document.getElementById('vlan-even-ip').value.trim();
+                    data.odd_ip = document.getElementById('vlan-odd-ip').value.trim();
+                } else {
+                    // Single gateway IP mode
+                    data.gateway_ip = document.getElementById('vlan-gateway-ip').value.trim();
+                }
+            }
+            
+            // Disable button
+            createBtn.disabled = true;
+            createBtn.textContent = 'Creating...';
+            
+            try {
+                const response = await fetch('/fabric-api.sh?action=create-vlan', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    closeVlanModal();
+                    const msg = '<div style="color: #76b900; margin-bottom: 15px;">✓ VLAN ' + vlanId + ' created successfully!</div>' +
+                        '<div style="color: #ccc;">' +
+                        '<p><strong>VLAN Profile:</strong> ' + result.vlan_profile + '</p>' +
+                        '<p><strong>Port Profile:</strong> ' + result.port_profile + '</p>' +
+                        '<p style="margin-top: 15px; color: #888;">Run <strong>Generate</strong> and <strong>Deploy</strong> to apply changes to devices.</p>' +
+                        '</div>';
+                    showOutputModal('VLAN Created', msg, 'success', true);
+                    
+                    // Refresh current device if one is selected
+                    if (selectedDevice) {
+                        selectDevice(selectedDevice);
+                    }
+                } else {
+                    alert('Error: ' + (result.error || 'Unknown error'));
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+            
+            createBtn.disabled = false;
+            createBtn.textContent = 'Create VLAN';
+        }
+        
         // Initialize on load
         init();
     </script>
+    
+    <!-- VLAN Creation Modal -->
+    <div id="vlan-modal" class="vlan-modal">
+        <div class="vlan-modal-content">
+            <div class="vlan-modal-header">
+                <h3>Create New VLAN</h3>
+                <button class="vlan-modal-close" onclick="closeVlanModal()">&times;</button>
+            </div>
+            <div class="vlan-modal-body">
+                <form id="vlan-form" onsubmit="event.preventDefault(); createVlan();">
+                    <div class="form-group-inline">
+                        <div class="form-group">
+                            <label>VLAN ID *</label>
+                            <input type="number" id="vlan-id" min="1" max="4094" required 
+                                   oninput="updateL2VNI()" placeholder="e.g., 100">
+                        </div>
+                        <div class="form-group">
+                            <label>Profile Name</label>
+                            <input type="text" id="vlan-profile-name" placeholder="VLAN_100">
+                            <div class="form-hint">Auto-generated from VLAN ID</div>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Description *</label>
+                        <input type="text" id="vlan-description" required 
+                               placeholder="e.g., Management Network">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>L2VNI</label>
+                        <input type="number" id="vlan-l2vni" placeholder="Auto: 100000 + VLAN ID">
+                        <div class="form-hint">Default: 100000 + VLAN ID</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <div class="form-checkbox">
+                            <input type="checkbox" id="vlan-svi-enabled" onchange="toggleSviFields()">
+                            <label for="vlan-svi-enabled">Enable SVI / L3 Configuration</label>
+                        </div>
+                    </div>
+                    
+                    <div id="svi-fields" class="vrr-fields">
+                        <div class="form-group">
+                            <label>VRF</label>
+                            <select id="vlan-vrf">
+                                <option value="default">default</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <div class="form-checkbox">
+                                <input type="checkbox" id="vlan-vrr-enabled" onchange="toggleVrrFields()">
+                                <label for="vlan-vrr-enabled">Enable VRR (Virtual Router Redundancy)</label>
+                            </div>
+                        </div>
+                        
+                        <!-- Single IP (when VRR disabled) -->
+                        <div id="single-ip-field" class="form-group">
+                            <label>Gateway IP</label>
+                            <input type="text" id="vlan-gateway-ip" placeholder="e.g., 10.10.100.1/24">
+                        </div>
+                        
+                        <!-- VRR IPs (when VRR enabled) -->
+                        <div id="vrr-fields" class="vrr-fields">
+                            <div class="form-group">
+                                <label>VRR Virtual IP (VIP)</label>
+                                <input type="text" id="vlan-vrr-vip" placeholder="e.g., 10.10.100.1/24">
+                            </div>
+                            <div class="form-group-inline">
+                                <div class="form-group">
+                                    <label>Even Switch IP</label>
+                                    <input type="text" id="vlan-even-ip" placeholder="e.g., 10.10.100.2/24">
+                                </div>
+                                <div class="form-group">
+                                    <label>Odd Switch IP</label>
+                                    <input type="text" id="vlan-odd-ip" placeholder="e.g., 10.10.100.3/24">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <div class="form-checkbox">
+                            <input type="checkbox" id="vlan-stp-bpduguard" checked>
+                            <label for="vlan-stp-bpduguard">Enable STP BPDU Guard (for access ports)</label>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="vlan-modal-footer">
+                <button class="btn-cancel" onclick="closeVlanModal()">Cancel</button>
+                <button class="btn-create" id="btn-create-vlan" onclick="createVlan()">Create VLAN</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Delete Confirmation Modal -->
+    <div class="vlan-modal" id="delete-confirm-modal">
+        <div class="vlan-modal-content" style="max-width: 400px;">
+            <div class="vlan-modal-header">
+                <h3>Delete VLAN</h3>
+                <button class="vlan-modal-close" onclick="closeDeleteModal()">×</button>
+            </div>
+            <div class="vlan-modal-body" style="text-align: center; padding: 25px;">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="#ff6b6b" style="margin-bottom: 15px;">
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+                </svg>
+                <p style="color: #ccc; margin-bottom: 10px;">Are you sure you want to delete VLAN profile:</p>
+                <p style="color: #76b900; font-weight: bold; font-size: 18px; margin-bottom: 15px;" id="delete-vlan-name"></p>
+                <div id="affected-devices-list" style="margin-bottom: 15px; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 6px;"></div>
+                <p style="color: #888; font-size: 12px;">This will also remove the associated port profile from sw_port_profiles.yaml</p>
+            </div>
+            <div class="vlan-modal-footer" style="justify-content: center; gap: 15px;">
+                <button class="btn-cancel" onclick="closeDeleteModal()">Cancel</button>
+                <button class="btn-create" id="btn-confirm-delete" onclick="deleteVlan()" style="background: #dc3545;">Delete</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Assign VLAN Modal -->
+    <div class="vlan-modal" id="assign-vlan-modal">
+        <div class="vlan-modal-content" style="max-width: 450px;">
+            <div class="vlan-modal-header">
+                <h3>Assign VLANs to Device</h3>
+                <button class="vlan-modal-close" onclick="closeAssignVlanModal()">×</button>
+            </div>
+            <div class="vlan-modal-body">
+                <div id="assign-vlan-list"></div>
+            </div>
+            <div class="vlan-modal-footer">
+                <button class="btn-cancel" onclick="closeAssignVlanModal()">Cancel</button>
+                <button class="btn-create" id="btn-assign-vlans" onclick="assignVlans()" style="background: #2196f3;">Assign Selected</button>
+            </div>
+        </div>
+    </div>
 </body>
 </html>

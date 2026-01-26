@@ -297,6 +297,329 @@ except Exception as e:
 PYTHON
 }
 
+# Create VLAN - adds to vlan_profiles.yaml and sw_port_profiles.yaml
+create_vlan() {
+    # Read POST data
+    local post_data
+    read -r post_data
+    
+    python3 << PYTHON
+import json
+import yaml
+import os
+import sys
+from datetime import datetime
+
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+vlan_profiles_file = f"{ansible_dir}/inventory/group_vars/all/vlan_profiles.yaml"
+port_profiles_file = f"{ansible_dir}/inventory/group_vars/all/sw_port_profiles.yaml"
+
+try:
+    # Parse POST data
+    post_data = '''$post_data'''
+    data = json.loads(post_data)
+    
+    vlan_id = int(data.get('vlan_id'))
+    profile_name = data.get('profile_name', f'VLAN_{vlan_id}')
+    description = data.get('description', '')
+    l2vni = data.get('l2vni', 100000 + vlan_id)
+    stp_bpduguard = data.get('stp_bpduguard', True)
+    
+    # SVI/L3 configuration
+    svi_enabled = data.get('svi_enabled', False)
+    vrf = data.get('vrf', 'default') if svi_enabled else None
+    vrr_enabled = data.get('vrr_enabled', False) if svi_enabled else False
+    vrr_vip = data.get('vrr_vip', '')
+    even_ip = data.get('even_ip', '')
+    odd_ip = data.get('odd_ip', '')
+    gateway_ip = data.get('gateway_ip', '')
+    
+    # Validate VLAN ID
+    if vlan_id < 1 or vlan_id > 4094:
+        print(json.dumps({'success': False, 'error': 'VLAN ID must be between 1 and 4094'}))
+        sys.exit(0)
+    
+    # Load existing vlan_profiles
+    vlan_config = {}
+    if os.path.exists(vlan_profiles_file):
+        with open(vlan_profiles_file, 'r') as f:
+            vlan_config = yaml.safe_load(f) or {}
+    
+    if 'vlan_profiles' not in vlan_config:
+        vlan_config['vlan_profiles'] = {}
+    
+    # Check if VLAN profile already exists
+    if profile_name in vlan_config['vlan_profiles']:
+        print(json.dumps({'success': False, 'error': f'VLAN profile {profile_name} already exists'}))
+        sys.exit(0)
+    
+    # Check if VLAN ID already used
+    for pname, pdata in vlan_config['vlan_profiles'].items():
+        if pdata and 'vlans' in pdata:
+            if vlan_id in pdata['vlans'] or str(vlan_id) in pdata['vlans']:
+                print(json.dumps({'success': False, 'error': f'VLAN ID {vlan_id} already exists in profile {pname}'}))
+                sys.exit(0)
+    
+    # Build VLAN entry
+    vlan_entry = {
+        'description': description,
+        'l2vni': l2vni
+    }
+    
+    # Add VRF and IP info only if SVI is enabled
+    if svi_enabled:
+        vlan_entry['vrf'] = vrf
+        vlan_entry['ipv6'] = False  # Always disabled
+        
+        if vrr_enabled:
+            # VRR mode with VIP and Even/Odd IPs
+            if vrr_vip:
+                vlan_entry['vrr_vip'] = vrr_vip
+            if even_ip:
+                vlan_entry['even_ip'] = even_ip
+            if odd_ip:
+                vlan_entry['odd_ip'] = odd_ip
+        else:
+            # Single gateway IP mode
+            if gateway_ip:
+                vlan_entry['ip'] = gateway_ip
+    
+    # Build profile entry
+    profile_entry = {
+        'vrr': {'state': vrr_enabled if svi_enabled else False},
+        'vlans': {vlan_id: vlan_entry}
+    }
+    
+    # Add to vlan_profiles
+    vlan_config['vlan_profiles'][profile_name] = profile_entry
+    
+    # Write vlan_profiles.yaml
+    with open(vlan_profiles_file, 'w') as f:
+        yaml.dump(vlan_config, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+    
+    # Load existing port_profiles
+    port_config = {}
+    if os.path.exists(port_profiles_file):
+        with open(port_profiles_file, 'r') as f:
+            port_config = yaml.safe_load(f) or {}
+    
+    if 'sw_port_profiles' not in port_config:
+        port_config['sw_port_profiles'] = {}
+    
+    # Create ACCESS_VLAN_{id} profile
+    access_profile_name = f'ACCESS_VLAN_{vlan_id}'
+    if access_profile_name not in port_config['sw_port_profiles']:
+        port_config['sw_port_profiles'][access_profile_name] = {
+            'description': description,
+            'sw_port_mode': 'access',
+            'access_vlan': vlan_id,
+            'stp_bpduguard': stp_bpduguard
+        }
+        
+        # Write port_profiles.yaml
+        with open(port_profiles_file, 'w') as f:
+            yaml.dump(port_config, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+    
+    print(json.dumps({
+        'success': True,
+        'message': f'VLAN {vlan_id} created successfully',
+        'vlan_profile': profile_name,
+        'port_profile': access_profile_name
+    }))
+
+except json.JSONDecodeError as e:
+    print(json.dumps({'success': False, 'error': f'Invalid JSON: {str(e)}'}))
+except Exception as e:
+    print(json.dumps({'success': False, 'error': str(e)}))
+PYTHON
+}
+
+# Get list of VRFs for dropdown
+get_vrfs() {
+    python3 << 'PYTHON'
+import json
+import yaml
+import os
+
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+vlan_profiles_file = f"{ansible_dir}/inventory/group_vars/all/vlan_profiles.yaml"
+
+vrfs = set(['default'])
+
+try:
+    # Check vxlan_int mapping for VRF names
+    if os.path.exists(vlan_profiles_file):
+        with open(vlan_profiles_file, 'r') as f:
+            config = yaml.safe_load(f) or {}
+        
+        # Get VRFs from vxlan_int mapping
+        if 'vxlan_int' in config:
+            vrfs.update(config['vxlan_int'].keys())
+        
+        # Get VRFs from vlan_profiles
+        if 'vlan_profiles' in config:
+            for profile in config['vlan_profiles'].values():
+                if profile and 'vlans' in profile:
+                    for vlan in profile['vlans'].values():
+                        if vlan and 'vrf' in vlan:
+                            vrfs.add(vlan['vrf'])
+    
+    print(json.dumps({
+        'success': True,
+        'vrfs': sorted(list(vrfs))
+    }))
+
+except Exception as e:
+    print(json.dumps({'success': False, 'error': str(e)}))
+PYTHON
+}
+
+delete_vlan() {
+    # Read POST data
+    local post_data
+    read -r post_data
+
+    python3 << PYTHON
+import json
+import yaml
+import os
+import sys
+
+# Parse POST data
+post_data = '''$post_data'''
+data = json.loads(post_data)
+
+profile_name = data.get('profile_name', '')
+
+if not profile_name:
+    print(json.dumps({'success': False, 'error': 'Profile name is required'}))
+    sys.exit(0)
+
+# Paths
+inventory_base = "$INVENTORY"
+vlan_profiles_file = os.path.join(inventory_base, 'group_vars', 'all', 'vlan_profiles.yaml')
+port_profiles_file = os.path.join(inventory_base, 'group_vars', 'all', 'sw_port_profiles.yaml')
+
+# Load vlan_profiles
+vlan_config = {}
+if os.path.exists(vlan_profiles_file):
+    with open(vlan_profiles_file, 'r') as f:
+        vlan_config = yaml.safe_load(f) or {}
+
+if 'vlan_profiles' not in vlan_config or profile_name not in vlan_config['vlan_profiles']:
+    print(json.dumps({'success': False, 'error': f'VLAN profile {profile_name} not found'}))
+    sys.exit(0)
+
+# Get VLAN ID for port profile name
+vlan_id = None
+profile_data = vlan_config['vlan_profiles'][profile_name]
+if profile_data and 'vlans' in profile_data:
+    vlan_ids = list(profile_data['vlans'].keys())
+    if vlan_ids:
+        vlan_id = vlan_ids[0]
+
+# Delete from vlan_profiles
+del vlan_config['vlan_profiles'][profile_name]
+
+# Save vlan_profiles
+with open(vlan_profiles_file, 'w') as f:
+    yaml.dump(vlan_config, f, default_flow_style=False, sort_keys=False)
+
+# Try to delete corresponding port profile
+port_profile_deleted = False
+port_profile_name = None
+if vlan_id:
+    port_profile_name = f'ACCESS_VLAN_{vlan_id}'
+    
+    port_config = {}
+    if os.path.exists(port_profiles_file):
+        with open(port_profiles_file, 'r') as f:
+            port_config = yaml.safe_load(f) or {}
+    
+    if 'sw_port_profiles' in port_config and port_profile_name in port_config['sw_port_profiles']:
+        del port_config['sw_port_profiles'][port_profile_name]
+        
+        with open(port_profiles_file, 'w') as f:
+            yaml.dump(port_config, f, default_flow_style=False, sort_keys=False)
+        
+        port_profile_deleted = True
+
+print(json.dumps({
+    'success': True,
+    'profile_name': profile_name,
+    'port_profile': port_profile_name,
+    'port_profile_deleted': port_profile_deleted
+}))
+PYTHON
+}
+
+assign_vlans() {
+    # Read POST data
+    local post_data
+    read -r post_data
+
+    python3 << PYTHON
+import json
+import yaml
+import os
+import sys
+
+# Parse POST data
+post_data = '''$post_data'''
+data = json.loads(post_data)
+
+device = data.get('device', '')
+vlans = data.get('vlans', [])
+
+if not device:
+    print(json.dumps({'success': False, 'error': 'Device name is required'}))
+    sys.exit(0)
+
+if not vlans:
+    print(json.dumps({'success': False, 'error': 'No VLANs selected'}))
+    sys.exit(0)
+
+# Path to host_vars
+inventory_base = "$INVENTORY"
+host_vars_file = os.path.join(inventory_base, 'host_vars', device + '.yaml')
+
+if not os.path.exists(host_vars_file):
+    # Also try without .yaml
+    host_vars_file = os.path.join(inventory_base, 'host_vars', device + '.yml')
+
+if not os.path.exists(host_vars_file):
+    print(json.dumps({'success': False, 'error': f'Host vars file not found for {device}'}))
+    sys.exit(0)
+
+# Load host_vars
+host_config = {}
+with open(host_vars_file, 'r') as f:
+    host_config = yaml.safe_load(f) or {}
+
+# Add VLANs to vlan_templates
+if 'vlan_templates' not in host_config:
+    host_config['vlan_templates'] = []
+
+# Add new VLANs (avoid duplicates)
+added = []
+for vlan in vlans:
+    if vlan not in host_config['vlan_templates']:
+        host_config['vlan_templates'].append(vlan)
+        added.append(vlan)
+
+# Save host_vars
+with open(host_vars_file, 'w') as f:
+    yaml.dump(host_config, f, default_flow_style=False, sort_keys=False)
+
+print(json.dumps({
+    'success': True,
+    'device': device,
+    'added_vlans': added,
+    'total_vlans': len(host_config['vlan_templates'])
+}))
+PYTHON
+}
+
 # Main handler
 parse_query
 
@@ -312,6 +635,18 @@ case "$ACTION" in
         ;;
     "get-port-profiles")
         get_port_profiles
+        ;;
+    "get-vrfs")
+        get_vrfs
+        ;;
+    "create-vlan")
+        create_vlan
+        ;;
+    "delete-vlan")
+        delete_vlan
+        ;;
+    "assign-vlans")
+        assign_vlans
         ;;
     *)
         echo '{"success": false, "error": "Unknown action: '"$ACTION"'"}'
