@@ -204,9 +204,9 @@ case "$ACTION" in
         TARGET_USER=$(get_post_param "target_user")
         NEW_PASSWORD=$(get_post_param "new_password")
         
-        # Validate target user
-        if [ "$TARGET_USER" != "admin" ] && [ "$TARGET_USER" != "operator" ]; then
-            json_response '{"success": false, "error": "Invalid user"}'
+        # Validate target user exists
+        if ! grep -q "^$TARGET_USER:" "$USERS_FILE"; then
+            json_response '{"success": false, "error": "User not found"}'
             exit 0
         fi
         
@@ -229,6 +229,149 @@ case "$ACTION" in
         chmod 600 "$USERS_FILE"
         
         json_response '{"success": true, "message": "Password changed successfully"}'
+        ;;
+    
+    list-users)
+        TOKEN=$(get_cookie)
+        
+        if ! validate_session "$TOKEN"; then
+            json_response '{"success": false, "error": "Not authenticated"}'
+            exit 0
+        fi
+        
+        INFO=$(get_session_info "$TOKEN")
+        CURRENT_ROLE=$(echo "$INFO" | tail -1)
+        
+        # Only admin can list users
+        if [ "$CURRENT_ROLE" != "admin" ]; then
+            json_response '{"success": false, "error": "Permission denied"}'
+            exit 0
+        fi
+        
+        # Build JSON array of users (exclude password hash)
+        USERS_JSON="["
+        FIRST=true
+        while IFS=':' read -r username hash role; do
+            if [ -n "$username" ]; then
+                if [ "$FIRST" = true ]; then
+                    FIRST=false
+                else
+                    USERS_JSON="$USERS_JSON,"
+                fi
+                USERS_JSON="$USERS_JSON{\"username\":\"$username\",\"role\":\"$role\"}"
+            fi
+        done < "$USERS_FILE"
+        USERS_JSON="$USERS_JSON]"
+        
+        json_response "{\"success\": true, \"users\": $USERS_JSON}"
+        ;;
+    
+    create-user)
+        TOKEN=$(get_cookie)
+        
+        if ! validate_session "$TOKEN"; then
+            json_response '{"success": false, "error": "Not authenticated"}'
+            exit 0
+        fi
+        
+        INFO=$(get_session_info "$TOKEN")
+        CURRENT_ROLE=$(echo "$INFO" | tail -1)
+        
+        # Only admin can create users
+        if [ "$CURRENT_ROLE" != "admin" ]; then
+            json_response '{"success": false, "error": "Permission denied"}'
+            exit 0
+        fi
+        
+        NEW_USERNAME=$(get_post_param "username")
+        NEW_PASSWORD=$(get_post_param "password")
+        
+        # Validate username (alphanumeric, 3-20 chars)
+        if ! echo "$NEW_USERNAME" | grep -qE '^[a-zA-Z][a-zA-Z0-9_-]{2,19}$'; then
+            json_response '{"success": false, "error": "Invalid username. Use 3-20 alphanumeric characters, starting with a letter."}'
+            exit 0
+        fi
+        
+        # Check if user already exists
+        if grep -q "^$NEW_USERNAME:" "$USERS_FILE"; then
+            json_response '{"success": false, "error": "User already exists"}'
+            exit 0
+        fi
+        
+        # Cannot create admin users
+        if [ "$NEW_USERNAME" = "admin" ]; then
+            json_response '{"success": false, "error": "Cannot create admin user"}'
+            exit 0
+        fi
+        
+        # Validate password length
+        if [ ${#NEW_PASSWORD} -lt 6 ]; then
+            json_response '{"success": false, "error": "Password must be at least 6 characters"}'
+            exit 0
+        fi
+        
+        # Hash password and add user (always as operator role)
+        NEW_HASH=$(hash_password "$NEW_PASSWORD")
+        echo "$NEW_USERNAME:$NEW_HASH:operator" >> "$USERS_FILE"
+        chmod 600 "$USERS_FILE"
+        
+        json_response "{\"success\": true, \"message\": \"User '$NEW_USERNAME' created successfully\"}"
+        ;;
+    
+    delete-user)
+        TOKEN=$(get_cookie)
+        
+        if ! validate_session "$TOKEN"; then
+            json_response '{"success": false, "error": "Not authenticated"}'
+            exit 0
+        fi
+        
+        INFO=$(get_session_info "$TOKEN")
+        CURRENT_USER=$(echo "$INFO" | head -1)
+        CURRENT_ROLE=$(echo "$INFO" | tail -1)
+        
+        # Only admin can delete users
+        if [ "$CURRENT_ROLE" != "admin" ]; then
+            json_response '{"success": false, "error": "Permission denied"}'
+            exit 0
+        fi
+        
+        TARGET_USER=$(get_post_param "username")
+        
+        # Cannot delete admin user
+        if [ "$TARGET_USER" = "admin" ]; then
+            json_response '{"success": false, "error": "Cannot delete admin user"}'
+            exit 0
+        fi
+        
+        # Cannot delete yourself
+        if [ "$TARGET_USER" = "$CURRENT_USER" ]; then
+            json_response '{"success": false, "error": "Cannot delete yourself"}'
+            exit 0
+        fi
+        
+        # Check if user exists
+        if ! grep -q "^$TARGET_USER:" "$USERS_FILE"; then
+            json_response '{"success": false, "error": "User not found"}'
+            exit 0
+        fi
+        
+        # Delete user from file
+        grep -v "^$TARGET_USER:" "$USERS_FILE" > "$USERS_FILE.tmp"
+        mv "$USERS_FILE.tmp" "$USERS_FILE"
+        chmod 600 "$USERS_FILE"
+        
+        # Remove any active sessions for this user
+        for session_file in "$SESSIONS_DIR"/*; do
+            if [ -f "$session_file" ]; then
+                SESSION_USER=$(sed -n '2p' "$session_file" 2>/dev/null)
+                if [ "$SESSION_USER" = "$TARGET_USER" ]; then
+                    rm -f "$session_file"
+                fi
+            fi
+        done
+        
+        json_response "{\"success\": true, \"message\": \"User '$TARGET_USER' deleted successfully\"}"
         ;;
         
     *)

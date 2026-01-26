@@ -199,17 +199,35 @@ operator / operator   # limited access (no Ansible)
 - **session-based login**: login page with 8-hour session timeout
 - **remember me option**: stay logged in for 7 days
 - **role-based access**: admin vs operator privileges
-- **password management**: admin can change both passwords via UI
+- **password management**: admin can change all passwords via UI
+- **user management**: admin can create/delete operator users
 
 ### roles:
-| Role | Dashboard | Topology View | Topology Edit | Configs | Ansible Editor |
-|------|-----------|---------------|---------------|---------|----------------|
-| admin | Yes | Yes | Yes | Yes | Yes |
-| operator | Yes | Yes | No | Yes | No |
+| Role | Dashboard | Topology View | Topology Edit | Configs | Ansible Editor | User Management |
+|------|-----------|---------------|---------------|---------|----------------|-----------------|
+| admin | Yes | Yes | Yes | Yes | Yes | Yes |
+| operator | Yes | Yes | No | Yes | No | No |
 
 **Operator restrictions:**
 - Cannot edit `topology.dot` or `topology_config.yaml`
 - Cannot access Ansible Config Editor
+- Cannot manage users
+
+### user management (admin only):
+1. login as admin
+2. click username in sidebar
+3. select "User Management"
+
+**capabilities:**
+- view all existing users and their roles
+- create new users (automatically assigned "operator" role)
+- delete users (except admin)
+- deleted users are immediately logged out
+
+**security rules:**
+- new users can only be created with "operator" role
+- admin user cannot be deleted
+- users cannot delete themselves
 
 ### change passwords:
 1. login as admin

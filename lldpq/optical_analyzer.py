@@ -434,224 +434,175 @@ class OpticalAnalyzer:
         anomalies = self.detect_optical_anomalies()
 
         html_content = f"""<!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Optical Diagnostics Analysis</title>
-    <link rel="stylesheet" type="text/css" href="/css/styles2.css">
+    <link rel="shortcut icon" href="/png/favicon.ico">
     <link rel="stylesheet" type="text/css" href="/css/select2.min.css">
     <style>
-        .summary-grid {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin: 20px 0;
-        }}
-        .summary-card {{
-            background: #f8f9fa;
-            padding: 15px;
-            border-radius: 8px;
-            border-left: 4px solid #007bff;
-        }}
-        .metric {{ font-size: 24px; font-weight: bold; }}
-        .optical-excellent {{ color: #4caf50; font-weight: bold; }}
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #1e1e1e; color: #d4d4d4; padding: 20px; min-height: 100vh; }}
+        .page-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid #404040; }}
+        .page-title {{ font-size: 24px; font-weight: 600; color: #76b900; }}
+        .last-updated {{ font-size: 13px; color: #888; }}
+        .dashboard-section {{ background: #2d2d2d; border-radius: 8px; margin-bottom: 20px; overflow: hidden; }}
+        .section-header {{ padding: 12px 16px; background: #333; font-weight: 600; font-size: 14px; color: #76b900; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #404040; }}
+        .section-content {{ padding: 16px; }}
+        .section-content-table {{ padding: 0; }}
+        .summary-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }}
+        .summary-card {{ background: #252526; padding: 15px; border-radius: 6px; border-left: 3px solid #76b900; cursor: pointer; transition: all 0.2s ease; }}
+        .summary-card:hover {{ background: #2d2d2d; transform: translateY(-1px); }}
+        .summary-card.active {{ background: #333; border-left-width: 5px; }}
+        .card-excellent {{ border-left-color: #76b900; }}
+        .card-good {{ border-left-color: #8bc34a; }}
+        .card-warning {{ border-left-color: #ff9800; }}
+        .card-critical {{ border-left-color: #f44336; }}
+        .card-info {{ border-left-color: #4fc3f7; }}
+        .metric {{ font-size: 22px; font-weight: bold; color: #d4d4d4; }}
+        .metric-label {{ font-size: 12px; color: #888; margin-top: 4px; }}
+        .optical-excellent {{ color: #76b900; font-weight: bold; }}
         .optical-good {{ color: #8bc34a; font-weight: bold; }}
         .optical-warning {{ color: #ff9800; font-weight: bold; }}
         .optical-critical {{ color: #f44336; font-weight: bold; }}
-        .optical-unknown {{ color: gray; }}
-        .optical-table {{ width: 100%; border-collapse: collapse; margin: 20px 0; table-layout: fixed; }}
-        .optical-table th, .optical-table td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
-
-        /* Column width specifications */
-        .optical-table th:nth-child(1), .optical-table td:nth-child(1) {{ width: 16%; }} /* Port */
-        .optical-table th:nth-child(2), .optical-table td:nth-child(2) {{ width: 8%; }}  /* Health */
-        .optical-table th:nth-child(3), .optical-table td:nth-child(3) {{ width: 10%; }} /* RX Power */
-        .optical-table th:nth-child(4), .optical-table td:nth-child(4) {{ width: 10%; }} /* TX Power */
-        .optical-table th:nth-child(5), .optical-table td:nth-child(5) {{ width: 8%; }}  /* Temperature */
-        .optical-table th:nth-child(6), .optical-table td:nth-child(6) {{ width: 12%; }} /* Link Margin */
-        .optical-table th:nth-child(7), .optical-table td:nth-child(7) {{ width: 9%; }}  /* Voltage */
-        .optical-table th:nth-child(8), .optical-table td:nth-child(8) {{ width: 13%; }} /* Bias Current */
-        .optical-table th:nth-child(9), .optical-table td:nth-child(9) {{ width: 16%; word-wrap: break-word; }} /* Recommended Action */
-
-        .optical-table th {{ background-color: #f2f2f2; font-weight: bold; }}
+        .optical-unknown {{ color: #888; }}
+        .optical-table {{ width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }}
+        .optical-table th, .optical-table td {{ border: 1px solid #404040; padding: 10px 12px; text-align: left; }}
+        .optical-table th {{ background: #333; color: #76b900; font-weight: 600; font-size: 12px; }}
+        .optical-table tbody tr {{ background: #252526; }}
+        .optical-table tbody tr:hover {{ background: #2d2d2d; }}
         .optical-table td {{ word-wrap: break-word; overflow-wrap: break-word; }}
-        .anomaly-card {{
-            margin: 10px 0;
-            padding: 15px;
-            border-radius: 8px;
-            border-left: 4px solid #f44336;
-            background-color: #ffebee;
-        }}
-        .warning-card {{
-            border-left-color: #ff9800;
-            background-color: #fff3e0;
-        }}
-
-        .summary-card {{
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }}
-        .summary-card:hover {{
-            transform: translateY(-2px);
-            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
-        }}
-        .summary-card.active {{
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.25);
-            border-left-width: 6px;
-        }}
-
-        .filter-info {{
-            text-align: center;
-            padding: 10px;
-            margin: 10px 0;
-            background: #e8f4fd;
-            border-radius: 4px;
-            color: #1976d2;
-            display: none;
-        }}
-
-        /* Sortable table styling */
-        .sortable {{ cursor: pointer; user-select: none; position: relative; padding-right: 20px; }}
-        .sortable:hover {{ background-color: #f5f5f5; }}
-        .sort-arrow {{ font-size: 10px; color: #999; margin-left: 5px; opacity: 0.5; }}
-        .sortable.asc .sort-arrow::before {{ content: '▲'; color: #b57614; opacity: 1; }}
-        .sortable.desc .sort-arrow::before {{ content: '▼'; color: #b57614; opacity: 1; }}
+        .sortable {{ cursor: pointer; user-select: none; padding-right: 20px; }}
+        .sortable:hover {{ background: #3c3c3c; }}
+        .sort-arrow {{ font-size: 10px; color: #666; margin-left: 5px; opacity: 0.5; }}
+        .sortable.asc .sort-arrow::before {{ content: '▲'; color: #76b900; opacity: 1; }}
+        .sortable.desc .sort-arrow::before {{ content: '▼'; color: #76b900; opacity: 1; }}
         .sortable.asc .sort-arrow, .sortable.desc .sort-arrow {{ opacity: 1; }}
-
-        @keyframes spin {{
-            from {{ transform: rotate(0deg); }}
-            to {{ transform: rotate(360deg); }}
-        }}
-        
-        /* Device Search Box */
-        .device-search-container {{
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }}
-        .device-search-container .select2-container {{
-            min-width: 250px;
-        }}
-        .device-search-container .select2-container--default .select2-selection--single {{
-            height: 38px;
-            border: 1px solid #ccc;
-            border-radius: 6px;
-            display: flex;
-            align-items: center;
-        }}
-        .device-search-container .select2-container--default .select2-selection--single .select2-selection__rendered {{
-            line-height: 38px;
-            color: #333;
-            padding-left: 8px;
-            font-size: 14px;
-        }}
-        .device-search-container .select2-container--default .select2-selection--single .select2-selection__arrow {{
-            height: 38px;
-        }}
-        .device-search-container .select2-container--default .select2-selection--single .select2-selection__placeholder {{
-            color: #999;
-        }}
-        .clear-search-btn {{
-            background: #ff5722;
-            color: white;
-            border: none;
-            padding: 8px 12px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 14px;
-            display: none;
-            transition: all 0.3s ease;
-        }}
-        .clear-search-btn:hover {{
-            background: #e64a19;
-        }}
+        .filter-info {{ text-align: center; padding: 10px 15px; margin: 15px 16px; background: rgba(118, 185, 0, 0.1); border: 1px solid rgba(118, 185, 0, 0.3); border-radius: 6px; color: #76b900; display: none; font-size: 13px; }}
+        .filter-info button {{ margin-left: 10px; padding: 4px 10px; background: #76b900; color: #000; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; }}
+        .btn {{ padding: 8px 14px; border: none; border-radius: 4px; font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; gap: 6px; }}
+        .btn-primary {{ background: linear-gradient(0deg, #76b900 0%, #5a8c00 100%); color: white; }}
+        .btn-primary:hover {{ background: linear-gradient(0deg, #8bd400 0%, #6ba000 100%); }}
+        .btn-secondary {{ background: linear-gradient(0deg, #4fc3f7 0%, #0288d1 100%); color: white; }}
+        .btn-secondary:hover {{ background: linear-gradient(0deg, #81d4fa 0%, #039be5 100%); }}
+        .action-buttons {{ display: flex; gap: 10px; align-items: center; }}
+        .device-search-container {{ display: flex; align-items: center; gap: 8px; }}
+        .device-search-container .select2-container {{ min-width: 200px; }}
+        .device-search-container .select2-container--default .select2-selection--single {{ height: 34px; border: 1px solid #555; border-radius: 4px; background: #3c3c3c; display: flex; align-items: center; }}
+        .device-search-container .select2-container--default .select2-selection--single .select2-selection__rendered {{ line-height: 34px; color: #d4d4d4; padding-left: 10px; font-size: 13px; }}
+        .device-search-container .select2-container--default .select2-selection--single .select2-selection__arrow {{ height: 34px; }}
+        .device-search-container .select2-container--default .select2-selection--single .select2-selection__placeholder {{ color: #888; }}
+        .select2-dropdown {{ background: #2d2d2d; border: 1px solid #555; }}
+        .select2-container--default .select2-search--dropdown .select2-search__field {{ background: #3c3c3c; border: 1px solid #555; color: #d4d4d4; }}
+        .select2-container--default .select2-results__option {{ color: #d4d4d4; padding: 8px 12px; }}
+        .select2-container--default .select2-results__option--highlighted[aria-selected] {{ background: #76b900; color: #000; }}
+        .select2-container--default .select2-results__option[aria-selected=true] {{ background: #3c3c3c; }}
+        .clear-search-btn {{ background: #f44336; color: white; border: none; padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; display: none; }}
+        .clear-search-btn:hover {{ background: #d32f2f; }}
+        ::-webkit-scrollbar {{ width: 8px; height: 8px; }}
+        ::-webkit-scrollbar-track {{ background: #1e1e1e; }}
+        ::-webkit-scrollbar-thumb {{ background: #404040; border-radius: 4px; }}
+        ::-webkit-scrollbar-thumb:hover {{ background: #555; }}
+        @keyframes spin {{ from {{ transform: rotate(0deg); }} to {{ transform: rotate(360deg); }} }}
     </style>
 </head>
 <body>
-    <h1></h1>
-    <h1><font color="#b57614">Optical Diagnostics Analysis</font></h1>
-    <p><strong>Last Updated:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
-
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-        <h2 style="margin: 0;">Optical Summary</h2>
-        <div style="display: flex; gap: 10px; align-items: center;">
-            <!-- Device Search Box -->
+    <div class="page-header">
+        <div>
+            <div class="page-title">Optical Diagnostics Analysis</div>
+            <div class="last-updated">Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</div>
+        </div>
+        <div class="action-buttons">
             <div class="device-search-container">
-                <select id="deviceSearch" style="width: 250px;">
-                    <option value="">Search Device...</option>
-                </select>
+                <select id="deviceSearch" style="width: 200px;"><option value="">Search Device...</option></select>
                 <button id="clearSearchBtn" class="clear-search-btn" onclick="clearDeviceSearch()">✕</button>
             </div>
-            <button id="run-analysis" onclick="runAnalysis()"
-                    style="background: #b57614; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 8px; transition: all 0.3s ease;"
-                    onmouseover="this.style.background='#a06612'"
-                    onmouseout="this.style.background='#b57614'">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8Z"/>
-                </svg>
+            <button id="run-analysis" onclick="runAnalysis()" class="btn btn-secondary">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4Z"/></svg>
                 Run Analysis
             </button>
-            <button id="download-csv" onclick="downloadCSV()"
-                    style="background: #4caf50; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 8px; transition: all 0.3s ease;"
-                    onmouseover="this.style.background='#45a049'"
-                    onmouseout="this.style.background='#4caf50'">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
-                </svg>
+            <button id="download-csv" onclick="downloadCSV()" class="btn btn-primary">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/></svg>
                 Download CSV
             </button>
         </div>
     </div>
-    <div class="summary-grid">
-        <div class="summary-card" id="total-ports-card">
-            <div class="metric" id="total-ports">{summary['total_ports']}</div>
-            <div>Total Ports</div>
+    
+    <div class="dashboard-section">
+        <div class="section-header">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+            Optical Summary
         </div>
-        <div class="summary-card" id="excellent-card">
-            <div class="metric optical-excellent" id="excellent-ports">{len(summary['excellent_ports'])}</div>
-            <div>Excellent</div>
-        </div>
-        <div class="summary-card" id="good-card">
-            <div class="metric optical-good" id="good-ports">{len(summary['good_ports'])}</div>
-            <div>Good</div>
-        </div>
-        <div class="summary-card" id="warning-card">
-            <div class="metric optical-warning" id="warning-ports">{len(summary['warning_ports'])}</div>
-            <div>Warning</div>
-        </div>
-        <div class="summary-card" id="critical-card">
-            <div class="metric optical-critical" id="critical-ports">{len(summary['critical_ports'])}</div>
-            <div>Critical</div>
+        <div class="section-content">
+            <div class="summary-grid">
+                <div class="summary-card card-info" id="total-ports-card">
+                    <div class="metric" id="total-ports">{summary['total_ports']}</div>
+                    <div class="metric-label">Total Ports</div>
+                </div>
+                <div class="summary-card card-excellent" id="excellent-card">
+                    <div class="metric optical-excellent" id="excellent-ports">{len(summary['excellent_ports'])}</div>
+                    <div class="metric-label">Excellent</div>
+                </div>
+                <div class="summary-card card-good" id="good-card">
+                    <div class="metric optical-good" id="good-ports">{len(summary['good_ports'])}</div>
+                    <div class="metric-label">Good</div>
+                </div>
+                <div class="summary-card card-warning" id="warning-card">
+                    <div class="metric optical-warning" id="warning-ports">{len(summary['warning_ports'])}</div>
+                    <div class="metric-label">Warning</div>
+                </div>
+                <div class="summary-card card-critical" id="critical-card">
+                    <div class="metric optical-critical" id="critical-ports">{len(summary['critical_ports'])}</div>
+                    <div class="metric-label">Critical</div>
+                </div>
+            </div>
         </div>
     </div>
-
-    <div id="filter-info" class="filter-info">
-        <span id="filter-text"></span>
-        <button onclick="clearFilter()" style="margin-left: 10px; padding: 2px 8px; background: #1976d2; color: white; border: none; border-radius: 3px; cursor: pointer;">Show All</button>
-    </div>"""
+    
+"""
 
         # Create one unified table for all ports (sorted by health - problems first)
         all_ports = summary['critical_ports'] + summary['warning_ports'] + summary['good_ports'] + summary['excellent_ports']
 
         html_content += f"""
-    <h2>Optical Port Status ({len(all_ports)} ports)</h2>
-    <table class="optical-table" id="optical-table">
-        <thead>
-        <tr>
-            <th class="sortable" data-column="0" data-type="port">Port <span class="sort-arrow">▲▼</span></th>
-            <th class="sortable" data-column="1" data-type="optical-health">Health <span class="sort-arrow">▲▼</span></th>
-            <th class="sortable" data-column="2" data-type="optical-power">Rx Pwr (dBm) <span class="sort-arrow">▲▼</span></th>
-            <th class="sortable" data-column="3" data-type="optical-power">Tx Pwr (dBm) <span class="sort-arrow">▲▼</span></th>
-            <th class="sortable" data-column="4" data-type="temperature">Temp(°C) <span class="sort-arrow">▲▼</span></th>
-            <th class="sortable" data-column="5" data-type="optical-power">Link Margin (dB) <span class="sort-arrow">▲▼</span></th>
-            <th class="sortable" data-column="6" data-type="voltage">Voltage (V) <span class="sort-arrow">▲▼</span></th>
-            <th class="sortable" data-column="7" data-type="current">Bias Current (mA) <span class="sort-arrow">▲▼</span></th>
-            <th class="sortable" data-column="8" data-type="string">Recommended Action <span class="sort-arrow">▲▼</span></th>
-        </tr>
-        </thead>
-        <tbody id="optical-data">"""
+    <div class="dashboard-section">
+        <div class="section-header">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M4,1H20A1,1 0 0,1 21,2V6A1,1 0 0,1 20,7H4A1,1 0 0,1 3,6V2A1,1 0 0,1 4,1M4,9H20A1,1 0 0,1 21,10V14A1,1 0 0,1 20,15H4A1,1 0 0,1 3,14V10A1,1 0 0,1 4,9M4,17H20A1,1 0 0,1 21,18V22A1,1 0 0,1 20,23H4A1,1 0 0,1 3,22V18A1,1 0 0,1 4,17Z"/></svg>
+            Optical Port Status ({len(all_ports)} total)
+        </div>
+        <div class="section-content-table">
+            <div id="filter-info" class="filter-info">
+                <span id="filter-text"></span>
+                <button onclick="clearFilter()">Show All</button>
+            </div>
+            <table class="optical-table" id="optical-table">
+                <thead>
+                <tr>
+                    <th class="sortable" data-column="0" data-type="string">Device <span class="sort-arrow">▲▼</span></th>
+                    <th class="sortable" data-column="1" data-type="port">Port <span class="sort-arrow">▲▼</span></th>
+                    <th class="sortable" data-column="2" data-type="optical-health">Health <span class="sort-arrow">▲▼</span></th>
+                    <th class="sortable" data-column="3" data-type="optical-power">Rx Pwr <span class="sort-arrow">▲▼</span></th>
+                    <th class="sortable" data-column="4" data-type="optical-power">Tx Pwr <span class="sort-arrow">▲▼</span></th>
+                    <th class="sortable" data-column="5" data-type="temperature">Temp <span class="sort-arrow">▲▼</span></th>
+                    <th class="sortable" data-column="6" data-type="optical-power">Margin <span class="sort-arrow">▲▼</span></th>
+                    <th class="sortable" data-column="7" data-type="voltage">Voltage <span class="sort-arrow">▲▼</span></th>
+                    <th class="sortable" data-column="8" data-type="current">Bias <span class="sort-arrow">▲▼</span></th>
+                    <th class="sortable" data-column="9" data-type="string">Action <span class="sort-arrow">▲▼</span></th>
+                </tr>
+                </thead>
+                <tbody id="optical-data">"""
 
         for port in all_ports:
+            # Split port name into device and interface
+            port_name = port['port']
+            if ':' in port_name:
+                device_name = port_name.split(':')[0]
+                interface_name = port_name.split(':')[1]
+            else:
+                device_name = "unknown"
+                interface_name = port_name
+            
             rx_power = f"{port['rx_power_dbm']:.2f}" if port['rx_power_dbm'] is not None else "N/A"
             tx_power = f"{port['tx_power_dbm']:.2f}" if port['tx_power_dbm'] is not None else "N/A"
             temperature = f"{port['temperature_c']:.1f}" if port['temperature_c'] is not None else "N/A"
@@ -662,33 +613,47 @@ class OpticalAnalyzer:
             health_class = f"optical-{port['health']}"
 
             html_content += f"""
-        <tr data-health="{port['health']}">
-            <td>{port['port']}</td>
-            <td><span class="{health_class}">{port['health'].upper()}</span></td>
-            <td>{rx_power}</td>
-            <td>{tx_power}</td>
-            <td>{temperature}</td>
-            <td>{link_margin}</td>
-            <td>{voltage}</td>
-            <td>{bias_current}</td>
-            <td>{recommended_action}</td>
-        </tr>"""
+                <tr data-health="{port['health']}">
+                    <td>{device_name}</td>
+                    <td>{interface_name}</td>
+                    <td><span class="{health_class}">{port['health'].upper()}</span></td>
+                    <td>{rx_power}</td>
+                    <td>{tx_power}</td>
+                    <td>{temperature}</td>
+                    <td>{link_margin}</td>
+                    <td>{voltage}</td>
+                    <td>{bias_current}</td>
+                    <td>{recommended_action}</td>
+                </tr>"""
 
         html_content += """
         </tbody>
-    </table>"""
+            </table>
+        </div>
+    </div>"""
 
         html_content += f"""
-    <h2>Optical Health Thresholds</h2>
-    <table class="optical-table">
-        <tr><th>Parameter</th><th>Min Threshold</th><th>Max Threshold</th><th>Description</th></tr>
-        <tr><td>RX Power</td><td>{self.thresholds['rx_power_min_dbm']} dBm</td><td>{self.thresholds['rx_power_critical_high_dbm']} dBm</td><td>Received optical power range (warning above {self.thresholds['rx_power_warning_high_dbm']} dBm)</td></tr>
-        <tr><td>TX Power</td><td>{self.thresholds['tx_power_min_dbm']} dBm</td><td>{self.thresholds['tx_power_max_dbm']} dBm</td><td>Transmitted optical power range</td></tr>
-        <tr><td>Temperature</td><td>{self.thresholds['temperature_min_c']}°C</td><td>{self.thresholds['temperature_max_c']}°C</td><td>SFP/QSFP operating temperature</td></tr>
-        <tr><td>Voltage</td><td>{self.thresholds['voltage_min_v']}V</td><td>{self.thresholds['voltage_max_v']}V</td><td>Supply voltage range</td></tr>
-        <tr><td>Link Margin</td><td>{self.thresholds['link_margin_min_db']} dB</td><td>-</td><td>Minimum acceptable link budget margin</td></tr>
-        <tr><td>Bias Current</td><td>-</td><td>{self.thresholds['bias_current_max_ma']} mA</td><td>Maximum laser bias current</td></tr>
-    </table>
+    <div class="dashboard-section">
+        <div class="section-header">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12,15.5A3.5,3.5 0 0,1 8.5,12A3.5,3.5 0 0,1 12,8.5A3.5,3.5 0 0,1 15.5,12A3.5,3.5 0 0,1 12,15.5M19.43,12.97C19.47,12.65 19.5,12.33 19.5,12C19.5,11.67 19.47,11.34 19.43,11L21.54,9.37C21.73,9.22 21.78,8.95 21.66,8.73L19.66,5.27C19.54,5.05 19.27,4.96 19.05,5.05L16.56,6.05C16.04,5.66 15.5,5.32 14.87,5.07L14.5,2.42C14.46,2.18 14.25,2 14,2H10C9.75,2 9.54,2.18 9.5,2.42L9.13,5.07C8.5,5.32 7.96,5.66 7.44,6.05L4.95,5.05C4.73,4.96 4.46,5.05 4.34,5.27L2.34,8.73C2.21,8.95 2.27,9.22 2.46,9.37L4.57,11C4.53,11.34 4.5,11.67 4.5,12C4.5,12.33 4.53,12.65 4.57,12.97L2.46,14.63C2.27,14.78 2.21,15.05 2.34,15.27L4.34,18.73C4.46,18.95 4.73,19.03 4.95,18.95L7.44,17.94C7.96,18.34 8.5,18.68 9.13,18.93L9.5,21.58C9.54,21.82 9.75,22 10,22H14C14.25,22 14.46,21.82 14.5,21.58L14.87,18.93C15.5,18.67 16.04,18.34 16.56,17.94L19.05,18.95C19.27,19.03 19.54,18.95 19.66,18.73L21.66,15.27C21.78,15.05 21.73,14.78 21.54,14.63L19.43,12.97Z"/></svg>
+            Optical Health Thresholds
+        </div>
+        <div class="section-content-table">
+            <table class="optical-table">
+                <thead>
+                    <tr><th>Parameter</th><th>Min Threshold</th><th>Max Threshold</th><th>Description</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>RX Power</td><td>{self.thresholds['rx_power_min_dbm']} dBm</td><td>{self.thresholds['rx_power_critical_high_dbm']} dBm</td><td>Received optical power range (warning above {self.thresholds['rx_power_warning_high_dbm']} dBm)</td></tr>
+                    <tr><td>TX Power</td><td>{self.thresholds['tx_power_min_dbm']} dBm</td><td>{self.thresholds['tx_power_max_dbm']} dBm</td><td>Transmitted optical power range</td></tr>
+                    <tr><td>Temperature</td><td>{self.thresholds['temperature_min_c']}°C</td><td>{self.thresholds['temperature_max_c']}°C</td><td>SFP/QSFP operating temperature</td></tr>
+                    <tr><td>Voltage</td><td>{self.thresholds['voltage_min_v']}V</td><td>{self.thresholds['voltage_max_v']}V</td><td>Supply voltage range</td></tr>
+                    <tr><td>Link Margin</td><td>{self.thresholds['link_margin_min_db']} dB</td><td>-</td><td>Minimum acceptable link budget margin</td></tr>
+                    <tr><td>Bias Current</td><td>-</td><td>{self.thresholds['bias_current_max_ma']} mA</td><td>Maximum laser bias current</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
 """
 
         html_content += """

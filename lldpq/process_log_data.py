@@ -320,302 +320,167 @@ class LogAnalyzer:
         
         html_content = f"""
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Log Analysis Results</title>
-    <link rel="stylesheet" type="text/css" href="/css/styles2.css">
+    <link rel="shortcut icon" href="/png/favicon.ico">
     <link rel="stylesheet" type="text/css" href="/css/select2.min.css">
     <style>
-        .summary-grid {{ 
-            display: grid; 
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); 
-            gap: 15px; 
-            margin: 20px 0; 
-        }}
-        .summary-card {{ 
-            background: #f8f9fa; 
-            padding: 15px; 
-            border-radius: 8px; 
-            border-left: 4px solid #007bff; 
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }}
-        .card-excellent {{ border-left-color: #4caf50; }}
-        .card-good {{ border-left-color: #8bc34a; }}
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #1e1e1e; color: #d4d4d4; padding: 20px; min-height: 100vh; }}
+        .page-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid #404040; }}
+        .page-title {{ font-size: 24px; font-weight: 600; color: #76b900; }}
+        .last-updated {{ font-size: 13px; color: #888; }}
+        .dashboard-section {{ background: #2d2d2d; border-radius: 8px; margin-bottom: 20px; overflow: hidden; }}
+        .section-header {{ padding: 12px 16px; background: #333; font-weight: 600; font-size: 14px; color: #76b900; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #404040; }}
+        .section-content {{ padding: 16px; }}
+        .section-content-table {{ padding: 0; }}
+        .summary-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }}
+        .summary-card {{ background: #252526; padding: 15px; border-radius: 6px; border-left: 3px solid #76b900; cursor: pointer; transition: all 0.2s ease; }}
+        .summary-card:hover {{ background: #2d2d2d; transform: translateY(-1px); }}
+        .summary-card.active {{ background: #333; border-left-width: 5px; }}
+        .card-excellent {{ border-left-color: #76b900; }}
         .card-warning {{ border-left-color: #ff9800; }}
         .card-critical {{ border-left-color: #f44336; }}
-        .card-total {{ border-left-color: #2196f3; }}
-        .metric {{ font-size: 24px; font-weight: bold; }}
-        
-        /* Colored card values */
-        .card-excellent .metric {{ color: #4caf50; }}
-        .card-good .metric {{ color: #8bc34a; }}
-        .card-warning .metric {{ color: #ff9800; }}
-        .card-critical .metric {{ color: #f44336; }}
-        .card-total .metric {{ color: #333; }}
-        .card-info .metric {{ color: #2196f3; }}
-        
-        /* Card labels - visible on light card background */
-        .summary-card div:not(.metric) {{ color: #666; }}
-        
-        .log-excellent {{ color: #4caf50; font-weight: bold; }}
+        .card-info {{ border-left-color: #4fc3f7; }}
+        .metric {{ font-size: 22px; font-weight: bold; color: #d4d4d4; }}
+        .metric-label {{ font-size: 12px; color: #888; margin-top: 4px; }}
+        .log-excellent {{ color: #76b900; font-weight: bold; }}
         .log-good {{ color: #8bc34a; font-weight: bold; }}
         .log-warning {{ color: #ff9800; font-weight: bold; }}
         .log-critical {{ color: #f44336; font-weight: bold; }}
-        
-        /* Total log count color coding like other analysis pages */
-        .total-excellent {{ color: #4caf50; font-weight: bold; }}
+        .total-excellent {{ color: #76b900; font-weight: bold; }}
         .total-good {{ color: #8bc34a; font-weight: bold; }}
         .total-warning {{ color: #ff9800; font-weight: bold; }}
         .total-critical {{ color: #f44336; font-weight: bold; }}
-        
-        /* Sortable table styling - same as Hardware Analysis */
-        .sortable {{ cursor: pointer; user-select: none; position: relative; padding-right: 20px; }}
-        .sortable:hover {{ background-color: #f5f5f5; }}
-        .sort-arrow {{ font-size: 10px; color: #999; margin-left: 5px; opacity: 0.5; }}
-        .sortable.asc .sort-arrow::before {{ content: '▲'; color: #b57614; opacity: 1; }}
-        .sortable.desc .sort-arrow::before {{ content: '▼'; color: #b57614; opacity: 1; }}
+        .log-table {{ width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }}
+        .log-table th, .log-table td {{ border: 1px solid #404040; padding: 10px 12px; text-align: left; word-wrap: break-word; }}
+        .log-table th {{ background: #333; color: #76b900; font-weight: 600; font-size: 12px; }}
+        .log-table tbody tr {{ background: #252526; }}
+        .log-table tbody tr:hover {{ background: #2d2d2d; }}
+        .sortable {{ cursor: pointer; user-select: none; padding-right: 20px; }}
+        .sortable:hover {{ background: #3c3c3c; }}
+        .sort-arrow {{ font-size: 10px; color: #666; margin-left: 5px; opacity: 0.5; }}
+        .sortable.asc .sort-arrow::before {{ content: '▲'; color: #76b900; opacity: 1; }}
+        .sortable.desc .sort-arrow::before {{ content: '▼'; color: #76b900; opacity: 1; }}
         .sortable.asc .sort-arrow, .sortable.desc .sort-arrow {{ opacity: 1; }}
-        
-        .log-table {{ width: 100%; border-collapse: collapse; margin: 20px 0; table-layout: fixed; }}
-        .log-table th, .log-table td {{ border: 1px solid #ddd; padding: 5px 8px; text-align: left; word-wrap: break-word; }}
-        .log-table th {{ background-color: #f2f2f2; font-weight: bold; padding: 8px 8px; }}
-        
-        /* Column width specifications */
-        .log-table th:nth-child(1), .log-table td:nth-child(1) {{ width: 20%; }} /* Device */
-        .log-table th:nth-child(2), .log-table td:nth-child(2) {{ width: 15%; }} /* Critical */
-        .log-table th:nth-child(3), .log-table td:nth-child(3) {{ width: 15%; }} /* Warning */
-        .log-table th:nth-child(4), .log-table td:nth-child(4) {{ width: 15%; }} /* Error */
-        .log-table th:nth-child(5), .log-table td:nth-child(5) {{ width: 15%; }} /* Info */
-        .log-table th:nth-child(6), .log-table td:nth-child(6) {{ width: 20%; }} /* Total */
-        
-        .severity-count {{
-            display: inline-block;
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-weight: bold;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            min-width: 25px;
-            text-align: center;
-        }}
-        
-        .severity-count:hover {{
-            transform: scale(1.05);
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-        }}
-        
-        .severity-count.critical {{
-            background: #ffebee;
-            color: #f44336;
-            border: 1px solid #f44336;
-        }}
-        
-        .severity-count.warning {{
-            background: #fff3e0;
-            color: #ff9800;
-            border: 1px solid #ff9800;
-        }}
-        
-        .severity-count.error {{
-            background: #fff3e0;
-            color: #ff9800;
-            border: 1px solid #ff9800;
-        }}
-        
-        .severity-count.info {{
-            background: #e3f2fd;
-            color: #2196f3;
-            border: 1px solid #2196f3;
-        }}
-        
-        .severity-count.zero {{
-            background: #f5f5f5;
-            color: #9e9e9e;
-            border: 1px solid #e0e0e0;
-            cursor: default;
-        }}
-        
-        .summary-card:hover {{
-            transform: translateY(-2px);
-            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
-        }}
-        .summary-card.active {{
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.25);
-            border-left-width: 6px;
-        }}
-        
-        .filter-info {{
-            text-align: center;
-            padding: 10px;
-            margin: 10px 0;
-            background: #e8f4fd;
-            border-radius: 4px;
-            color: #1976d2;
-            display: none;
-        }}
-        
-        .log-details {{
-            display: none;
-            background: #f8f9fa;
-            border: 1px solid #e2e8f0;
-            border-radius: 8px;
-            margin: 10px 0;
-            max-height: 400px;
-            overflow-y: auto;
-        }}
-        
-        .log-entry {{
-            padding: 10px 15px;
-            border-bottom: 1px solid #e2e8f0;
-            font-family: 'Courier New', monospace;
-            font-size: 0.9em;
-        }}
-        
-        .log-entry:last-child {{
-            border-bottom: none;
-        }}
-        
-        .log-timestamp {{
-            color: #666;
-            margin-right: 10px;
-        }}
-        
-        .log-section {{
-            background: #e2e8f0;
-            color: #2d3748;
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-size: 0.8em;
-            margin-right: 10px;
-        }}
-        
-        @keyframes spin {{
-            from {{ transform: rotate(0deg); }}
-            to {{ transform: rotate(360deg); }}
-        }}
-        
-        /* Device Search Box */
-        .device-search-container {{
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }}
-        .device-search-container .select2-container {{
-            min-width: 250px;
-        }}
-        .device-search-container .select2-container--default .select2-selection--single {{
-            height: 38px;
-            border: 1px solid #ccc;
-            border-radius: 6px;
-            display: flex;
-            align-items: center;
-        }}
-        .device-search-container .select2-container--default .select2-selection--single .select2-selection__rendered {{
-            line-height: 38px;
-            color: #333;
-            padding-left: 8px;
-            font-size: 14px;
-        }}
-        .device-search-container .select2-container--default .select2-selection--single .select2-selection__arrow {{
-            height: 38px;
-        }}
-        .device-search-container .select2-container--default .select2-selection--single .select2-selection__placeholder {{
-            color: #999;
-        }}
-        .clear-search-btn {{
-            background: #ff5722;
-            color: white;
-            border: none;
-            padding: 8px 12px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 14px;
-            display: none;
-            transition: all 0.3s ease;
-        }}
-        .clear-search-btn:hover {{
-            background: #e64a19;
-        }}
+        .filter-info {{ text-align: center; padding: 10px 15px; margin: 15px 16px; background: rgba(118, 185, 0, 0.1); border: 1px solid rgba(118, 185, 0, 0.3); border-radius: 6px; color: #76b900; display: none; font-size: 13px; }}
+        .filter-info button {{ margin-left: 10px; padding: 4px 10px; background: #76b900; color: #000; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; }}
+        .severity-count {{ display: inline-block; padding: 2px 8px; border-radius: 4px; font-weight: bold; cursor: pointer; transition: all 0.2s ease; min-width: 30px; text-align: center; font-size: 12px; }}
+        .severity-count:hover {{ transform: scale(1.05); }}
+        .severity-count.critical {{ background: rgba(244, 67, 54, 0.2); color: #f44336; border: 1px solid #f44336; }}
+        .severity-count.warning {{ background: rgba(255, 152, 0, 0.2); color: #ff9800; border: 1px solid #ff9800; }}
+        .severity-count.error {{ background: rgba(255, 152, 0, 0.2); color: #ff9800; border: 1px solid #ff9800; }}
+        .severity-count.info {{ background: rgba(79, 195, 247, 0.2); color: #4fc3f7; border: 1px solid #4fc3f7; }}
+        .severity-count.zero {{ background: #333; color: #666; border: 1px solid #555; cursor: default; }}
+        .log-details {{ display: none; background: #252526; border: 1px solid #404040; border-radius: 6px; margin: 10px 0; max-height: 400px; overflow-y: auto; }}
+        .log-entry {{ padding: 10px 15px; border-bottom: 1px solid #404040; font-family: 'Courier New', monospace; font-size: 12px; color: #d4d4d4; }}
+        .log-entry:last-child {{ border-bottom: none; }}
+        .log-timestamp {{ color: #888; margin-right: 10px; }}
+        .log-section {{ background: #3c3c3c; color: #d4d4d4; padding: 2px 6px; border-radius: 4px; font-size: 11px; margin-right: 10px; }}
+        .btn {{ padding: 8px 14px; border: none; border-radius: 4px; font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; gap: 6px; }}
+        .btn-primary {{ background: linear-gradient(0deg, #76b900 0%, #5a8c00 100%); color: white; }}
+        .btn-primary:hover {{ background: linear-gradient(0deg, #8bd400 0%, #6ba000 100%); }}
+        .btn-secondary {{ background: linear-gradient(0deg, #4fc3f7 0%, #0288d1 100%); color: white; }}
+        .btn-secondary:hover {{ background: linear-gradient(0deg, #81d4fa 0%, #039be5 100%); }}
+        .action-buttons {{ display: flex; gap: 10px; align-items: center; }}
+        .device-search-container {{ display: flex; align-items: center; gap: 8px; }}
+        .device-search-container .select2-container {{ min-width: 200px; }}
+        .device-search-container .select2-container--default .select2-selection--single {{ height: 34px; border: 1px solid #555; border-radius: 4px; background: #3c3c3c; display: flex; align-items: center; }}
+        .device-search-container .select2-container--default .select2-selection--single .select2-selection__rendered {{ line-height: 34px; color: #d4d4d4; padding-left: 10px; font-size: 13px; }}
+        .device-search-container .select2-container--default .select2-selection--single .select2-selection__arrow {{ height: 34px; }}
+        .device-search-container .select2-container--default .select2-selection--single .select2-selection__placeholder {{ color: #888; }}
+        .select2-dropdown {{ background: #2d2d2d; border: 1px solid #555; }}
+        .select2-container--default .select2-search--dropdown .select2-search__field {{ background: #3c3c3c; border: 1px solid #555; color: #d4d4d4; }}
+        .select2-container--default .select2-results__option {{ color: #d4d4d4; padding: 8px 12px; }}
+        .select2-container--default .select2-results__option--highlighted[aria-selected] {{ background: #76b900; color: #000; }}
+        .select2-container--default .select2-results__option[aria-selected=true] {{ background: #3c3c3c; }}
+        .clear-search-btn {{ background: #f44336; color: white; border: none; padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; display: none; }}
+        .clear-search-btn:hover {{ background: #d32f2f; }}
+        ::-webkit-scrollbar {{ width: 8px; height: 8px; }}
+        ::-webkit-scrollbar-track {{ background: #1e1e1e; }}
+        ::-webkit-scrollbar-thumb {{ background: #404040; border-radius: 4px; }}
+        ::-webkit-scrollbar-thumb:hover {{ background: #555; }}
+        @keyframes spin {{ from {{ transform: rotate(0deg); }} to {{ transform: rotate(360deg); }} }}
     </style>
 </head>
 <body>
-    <h1></h1>
-    <h1><font color="#b57614">Log Analysis Results</font></h1>
-    <p><strong>Last Updated:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
-    
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-        <h2 style="margin: 0;">Log Summary</h2>
-        <div style="display: flex; gap: 10px; align-items: center;">
-            <!-- Device Search Box -->
+    <div class="page-header">
+        <div>
+            <div class="page-title">Log Analysis Results</div>
+            <div class="last-updated">Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</div>
+        </div>
+        <div class="action-buttons">
             <div class="device-search-container">
-                <select id="deviceSearch" style="width: 250px;">
-                    <option value="">Search Device...</option>
-                </select>
+                <select id="deviceSearch" style="width: 200px;"><option value="">Search Device...</option></select>
                 <button id="clearSearchBtn" class="clear-search-btn" onclick="clearDeviceSearch()">✕</button>
             </div>
-            <button id="run-analysis" onclick="runAnalysis()" 
-                    style="background: #b57614; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 8px; transition: all 0.3s ease;"
-                    onmouseover="this.style.background='#a06612'" 
-                    onmouseout="this.style.background='#b57614'">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8Z"/>
-                </svg>
+            <button id="run-analysis" onclick="runAnalysis()" class="btn btn-secondary">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4Z"/></svg>
                 Run Analysis
             </button>
-            <button id="download-csv" onclick="downloadCSV()" 
-                    style="background: #4caf50; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 8px; transition: all 0.3s ease;"
-                    onmouseover="this.style.background='#45a049'" 
-                    onmouseout="this.style.background='#4caf50'">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
-                </svg>
+            <button id="download-csv" onclick="downloadCSV()" class="btn btn-primary">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/></svg>
                 Download CSV
             </button>
         </div>
     </div>
-    <div class="summary-grid">
-        <div class="summary-card card-total" id="total-devices-card">
-            <div class="metric" id="total-devices">{total_devices}</div>
-            <div>Total Devices</div>
+    
+    <div class="dashboard-section">
+        <div class="section-header">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+            Log Summary
         </div>
-        <div class="summary-card card-critical" id="critical-card">
-            <div class="metric log-critical" id="critical-logs">{totals['critical']}</div>
-            <div>Critical Issues</div>
-        </div>
-        <div class="summary-card card-warning" id="warning-card">
-            <div class="metric log-warning" id="warning-logs">{totals['warning']}</div>
-            <div>Warning Messages</div>
-        </div>
-        <div class="summary-card card-warning" id="error-card">
-            <div class="metric log-warning" id="error-logs">{totals['error']}</div>
-            <div>Error Messages</div>
-        </div>
-        <div class="summary-card card-excellent" id="info-card">
-            <div class="metric log-good" id="info-logs">{totals['info']}</div>
-            <div>Info Messages</div>
+        <div class="section-content">
+            <div class="summary-grid">
+                <div class="summary-card card-info" id="total-devices-card">
+                    <div class="metric" id="total-devices">{total_devices}</div>
+                    <div class="metric-label">Total Devices</div>
+                </div>
+                <div class="summary-card card-critical" id="critical-card">
+                    <div class="metric log-critical" id="critical-logs">{totals['critical']}</div>
+                    <div class="metric-label">Critical</div>
+                </div>
+                <div class="summary-card card-warning" id="warning-card">
+                    <div class="metric log-warning" id="warning-logs">{totals['warning']}</div>
+                    <div class="metric-label">Warning</div>
+                </div>
+                <div class="summary-card card-warning" id="error-card">
+                    <div class="metric log-warning" id="error-logs">{totals['error']}</div>
+                    <div class="metric-label">Error</div>
+                </div>
+                <div class="summary-card card-excellent" id="info-card">
+                    <div class="metric log-good" id="info-logs">{totals['info']}</div>
+                    <div class="metric-label">Info</div>
+                </div>
+            </div>
         </div>
     </div>
     
-    <div id="filter-info" class="filter-info">
-        <span id="filter-text"></span>
-        <button onclick="clearFilter()" style="margin-left: 10px; padding: 2px 8px; background: #1976d2; color: white; border: none; border-radius: 3px; cursor: pointer;">Show All</button>
-    </div>
-    
-    <h2>Device Log Details</h2>
-    <table class="log-table" id="log-table">
-        <thead>
-            <tr>
-                <th class="sortable" data-column="0" data-type="string">Device <span class="sort-arrow">▲▼</span></th>
-                <th class="sortable" data-column="1" data-type="number">Critical <span class="sort-arrow">▲▼</span></th>
-                <th class="sortable" data-column="2" data-type="number">Warning <span class="sort-arrow">▲▼</span></th>
-                <th class="sortable" data-column="3" data-type="number">Error <span class="sort-arrow">▲▼</span></th>
-                <th class="sortable" data-column="4" data-type="number">Info <span class="sort-arrow">▲▼</span></th>
-                <th class="sortable" data-column="5" data-type="number">Total <span class="sort-arrow">▲▼</span></th>
-            </tr>
-        </thead>
-        <tbody>"""
+    <div class="dashboard-section">
+        <div class="section-header">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M4,1H20A1,1 0 0,1 21,2V6A1,1 0 0,1 20,7H4A1,1 0 0,1 3,6V2A1,1 0 0,1 4,1M4,9H20A1,1 0 0,1 21,10V14A1,1 0 0,1 20,15H4A1,1 0 0,1 3,14V10A1,1 0 0,1 4,9M4,17H20A1,1 0 0,1 21,18V22A1,1 0 0,1 20,23H4A1,1 0 0,1 3,22V18A1,1 0 0,1 4,17Z"/></svg>
+            Device Log Details
+        </div>
+        <div class="section-content-table">
+            <div id="filter-info" class="filter-info">
+                <span id="filter-text"></span>
+                <button onclick="clearFilter()">Show All</button>
+            </div>
+            <table class="log-table" id="log-table">
+                <thead>
+                    <tr>
+                        <th class="sortable" data-column="0" data-type="string">Device <span class="sort-arrow">▲▼</span></th>
+                        <th class="sortable" data-column="1" data-type="number">Critical <span class="sort-arrow">▲▼</span></th>
+                        <th class="sortable" data-column="2" data-type="number">Warning <span class="sort-arrow">▲▼</span></th>
+                        <th class="sortable" data-column="3" data-type="number">Error <span class="sort-arrow">▲▼</span></th>
+                        <th class="sortable" data-column="4" data-type="number">Info <span class="sort-arrow">▲▼</span></th>
+                        <th class="sortable" data-column="5" data-type="number">Total <span class="sort-arrow">▲▼</span></th>
+                    </tr>
+                </thead>
+                <tbody>"""
         
         # Sort devices by total log count (descending)
         sorted_devices = sorted(self.log_counts.items(), 
@@ -689,8 +554,10 @@ class LogAnalyzer:
                     </tr>"""
         
         html_content += """
-        </tbody>
-    </table>
+                </tbody>
+            </table>
+        </div>
+    </div>
     
     <!-- jQuery and Select2 for device search -->
     <script src="/css/jquery-3.5.1.min.js"></script>

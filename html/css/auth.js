@@ -78,6 +78,7 @@ const LLDPqAuth = {
                     <span class="user-name">${this.user}</span>
                 </div>
                 <div class="user-dropdown" id="user-dropdown">
+                    ${this.isAdmin() ? '<a href="#" onclick="LLDPqAuth.showUserManagementModal(); return false;">User Management</a>' : ''}
                     ${this.isAdmin() ? '<a href="#" onclick="LLDPqAuth.showPasswordModal(); return false;">Change Passwords</a>' : ''}
                     <a href="#" onclick="LLDPqAuth.logout(); return false;">Logout</a>
                 </div>
@@ -206,6 +207,188 @@ const LLDPqAuth = {
             errorDiv.textContent = result.error || 'Failed to change password';
             errorDiv.style.display = 'block';
         }
+    },
+    
+    // Show user management modal
+    async showUserManagementModal() {
+        const modal = document.getElementById('user-management-modal');
+        if (modal) {
+            modal.style.display = 'flex';
+            await this.loadUserList();
+        }
+        this.toggleMenu(); // Close dropdown
+    },
+    
+    // Hide user management modal
+    hideUserManagementModal() {
+        const modal = document.getElementById('user-management-modal');
+        if (modal) {
+            modal.style.display = 'none';
+        }
+        // Clear form
+        document.getElementById('um-new-username').value = '';
+        document.getElementById('um-new-password').value = '';
+        document.getElementById('um-error').style.display = 'none';
+        document.getElementById('um-success').style.display = 'none';
+    },
+    
+    // Load user list
+    async loadUserList() {
+        try {
+            const response = await fetch('/auth-api?action=list-users');
+            const data = await response.json();
+            
+            if (data.success && data.users) {
+                const listDiv = document.getElementById('um-user-list');
+                listDiv.innerHTML = data.users.map(user => `
+                    <div class="user-list-item">
+                        <div class="user-list-info">
+                            <span class="user-list-name">${user.username}</span>
+                            <span class="user-list-role ${user.role}">${user.role}</span>
+                        </div>
+                        ${user.username !== 'admin' ? `<button class="btn-delete-user" onclick="LLDPqAuth.deleteUser('${user.username}')">Delete</button>` : '<span class="protected-badge">Protected</span>'}
+                    </div>
+                `).join('');
+                
+                // Update password modal select options
+                this.updatePasswordUserSelect(data.users);
+            }
+        } catch (e) {
+            console.error('Failed to load users:', e);
+        }
+    },
+    
+    // Update password modal user select
+    updatePasswordUserSelect(users) {
+        const select = document.getElementById('pw-target-user');
+        if (select && users) {
+            select.innerHTML = users.map(user => 
+                `<option value="${user.username}">${user.username} (${user.role})</option>`
+            ).join('');
+        }
+    },
+    
+    // Create new user
+    async createUser() {
+        const username = document.getElementById('um-new-username').value.trim();
+        const password = document.getElementById('um-new-password').value;
+        const errorDiv = document.getElementById('um-error');
+        const successDiv = document.getElementById('um-success');
+        
+        errorDiv.style.display = 'none';
+        successDiv.style.display = 'none';
+        
+        if (!username) {
+            errorDiv.textContent = 'Username is required';
+            errorDiv.style.display = 'block';
+            return;
+        }
+        
+        if (password.length < 6) {
+            errorDiv.textContent = 'Password must be at least 6 characters';
+            errorDiv.style.display = 'block';
+            return;
+        }
+        
+        try {
+            const response = await fetch('/auth-api?action=create-user', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                successDiv.textContent = data.message;
+                successDiv.style.display = 'block';
+                document.getElementById('um-new-username').value = '';
+                document.getElementById('um-new-password').value = '';
+                await this.loadUserList();
+                
+                setTimeout(() => { successDiv.style.display = 'none'; }, 3000);
+            } else {
+                errorDiv.textContent = data.error;
+                errorDiv.style.display = 'block';
+            }
+        } catch (e) {
+            errorDiv.textContent = 'Connection error';
+            errorDiv.style.display = 'block';
+        }
+    },
+    
+    // Delete user
+    async deleteUser(username) {
+        if (!confirm(`Are you sure you want to delete user "${username}"?`)) {
+            return;
+        }
+        
+        const errorDiv = document.getElementById('um-error');
+        const successDiv = document.getElementById('um-success');
+        
+        try {
+            const response = await fetch('/auth-api?action=delete-user', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: `username=${encodeURIComponent(username)}`
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                successDiv.textContent = data.message;
+                successDiv.style.display = 'block';
+                await this.loadUserList();
+                
+                setTimeout(() => { successDiv.style.display = 'none'; }, 3000);
+            } else {
+                errorDiv.textContent = data.error;
+                errorDiv.style.display = 'block';
+            }
+        } catch (e) {
+            errorDiv.textContent = 'Connection error';
+            errorDiv.style.display = 'block';
+        }
+    },
+    
+    // Create user management modal HTML
+    createUserManagementModal() {
+        const modalHtml = `
+            <div id="user-management-modal" class="modal" style="display: none;">
+                <div class="modal-content" style="max-width: 500px;">
+                    <div class="modal-header">
+                        <h3>User Management</h3>
+                        <span class="modal-close" onclick="LLDPqAuth.hideUserManagementModal()">&times;</span>
+                    </div>
+                    <div class="modal-body">
+                        <div class="um-section">
+                            <h4>Existing Users</h4>
+                            <div id="um-user-list" class="user-list">
+                                <div class="loading">Loading...</div>
+                            </div>
+                        </div>
+                        <div class="um-section">
+                            <h4>Create New User <span class="role-note">(Operator role)</span></h4>
+                            <div class="form-group">
+                                <label>Username</label>
+                                <input type="text" id="um-new-username" placeholder="Enter username (3-20 chars)">
+                            </div>
+                            <div class="form-group">
+                                <label>Password</label>
+                                <input type="password" id="um-new-password" placeholder="Enter password (min 6 chars)">
+                            </div>
+                            <button class="btn-create-user" onclick="LLDPqAuth.createUser()">Create User</button>
+                        </div>
+                        <div id="um-error" class="error-text" style="display: none;"></div>
+                        <div id="um-success" class="success-text" style="display: none;"></div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn-cancel" onclick="LLDPqAuth.hideUserManagementModal()">Close</button>
+                    </div>
+                </div>
+            </div>
+        `;
+        return modalHtml;
     },
     
     // Get CSS styles for auth components
@@ -419,6 +602,129 @@ const LLDPqAuth = {
                 color: #76b900;
                 font-size: 13px;
                 margin-top: 10px;
+            }
+            
+            /* User Management Modal Styles */
+            .um-section {
+                margin-bottom: 20px;
+                padding-bottom: 15px;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            }
+            
+            .um-section:last-of-type {
+                border-bottom: none;
+                margin-bottom: 10px;
+            }
+            
+            .um-section h4 {
+                color: #76b900;
+                font-size: 14px;
+                margin-bottom: 12px;
+                font-weight: 600;
+            }
+            
+            .um-section .role-note {
+                color: #888;
+                font-weight: normal;
+                font-size: 12px;
+            }
+            
+            .user-list {
+                max-height: 200px;
+                overflow-y: auto;
+                background: rgba(0, 0, 0, 0.2);
+                border-radius: 6px;
+                padding: 8px;
+            }
+            
+            .user-list-item {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 10px 12px;
+                background: rgba(255, 255, 255, 0.05);
+                border-radius: 4px;
+                margin-bottom: 6px;
+            }
+            
+            .user-list-item:last-child {
+                margin-bottom: 0;
+            }
+            
+            .user-list-info {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+            
+            .user-list-name {
+                color: #fff;
+                font-weight: 500;
+            }
+            
+            .user-list-role {
+                padding: 2px 8px;
+                border-radius: 10px;
+                font-size: 11px;
+                font-weight: 600;
+                text-transform: uppercase;
+            }
+            
+            .user-list-role.admin {
+                background: rgba(118, 185, 0, 0.2);
+                color: #76b900;
+            }
+            
+            .user-list-role.operator {
+                background: rgba(79, 195, 247, 0.2);
+                color: #4fc3f7;
+            }
+            
+            .btn-delete-user {
+                padding: 5px 12px;
+                background: rgba(244, 67, 54, 0.2);
+                border: 1px solid rgba(244, 67, 54, 0.5);
+                color: #f44336;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 12px;
+                transition: all 0.2s;
+            }
+            
+            .btn-delete-user:hover {
+                background: rgba(244, 67, 54, 0.4);
+            }
+            
+            .protected-badge {
+                padding: 5px 12px;
+                background: rgba(255, 255, 255, 0.1);
+                color: #888;
+                border-radius: 4px;
+                font-size: 11px;
+            }
+            
+            .btn-create-user {
+                width: 100%;
+                padding: 10px;
+                background: #76b900;
+                border: none;
+                color: #fff;
+                border-radius: 6px;
+                cursor: pointer;
+                font-size: 14px;
+                font-weight: 500;
+                transition: all 0.2s;
+                margin-top: 10px;
+            }
+            
+            .btn-create-user:hover {
+                background: #8ad400;
+            }
+            
+            .loading {
+                text-align: center;
+                color: #888;
+                padding: 20px;
             }
         `;
     }

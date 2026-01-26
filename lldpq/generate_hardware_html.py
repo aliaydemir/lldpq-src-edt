@@ -544,234 +544,165 @@ def generate_hardware_html():
     # Use current device files count instead of historical count
     total_devices = current_device_files
     
-    # Generate BER-style HTML
+    # Generate dark theme HTML
     html_content = f"""<!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Hardware Health Analysis</title>
     <meta charset="UTF-8">
-    <link rel="stylesheet" type="text/css" href="/css/styles2.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hardware Health Analysis</title>
+    <link rel="shortcut icon" href="/png/favicon.ico">
     <link rel="stylesheet" type="text/css" href="/css/select2.min.css">
     <style>
-        .summary-grid {{ 
-            display: grid; 
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); 
-            gap: 15px; 
-            margin: 20px 0; 
-        }}
-        .summary-card {{ 
-            background: #f8f9fa; 
-            padding: 15px; 
-            border-radius: 8px; 
-            border-left: 4px solid #007bff; 
-        }}
-        .card-excellent {{ border-left-color: #4caf50; }}
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #1e1e1e; color: #d4d4d4; padding: 20px; min-height: 100vh; }}
+        .page-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid #404040; }}
+        .page-title {{ font-size: 24px; font-weight: 600; color: #76b900; }}
+        .last-updated {{ font-size: 13px; color: #888; }}
+        .dashboard-section {{ background: #2d2d2d; border-radius: 8px; margin-bottom: 20px; overflow: hidden; }}
+        .section-header {{ padding: 12px 16px; background: #333; font-weight: 600; font-size: 14px; color: #76b900; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #404040; }}
+        .section-content {{ padding: 16px; }}
+        .section-content-table {{ padding: 0; }}
+        .summary-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }}
+        .summary-card {{ background: #252526; padding: 15px; border-radius: 6px; border-left: 3px solid #76b900; cursor: pointer; transition: all 0.2s ease; }}
+        .summary-card:hover {{ background: #2d2d2d; transform: translateY(-1px); }}
+        .summary-card.active {{ background: #333; border-left-width: 5px; }}
+        .card-excellent {{ border-left-color: #76b900; }}
         .card-good {{ border-left-color: #8bc34a; }}
         .card-warning {{ border-left-color: #ff9800; }}
         .card-critical {{ border-left-color: #f44336; }}
-        .card-total {{ border-left-color: #2196f3; }}
-        .metric {{ font-size: 24px; font-weight: bold; }}
-        
-        /* Colored card values */
-        .card-excellent .metric {{ color: #4caf50; }}
+        .card-info {{ border-left-color: #4fc3f7; }}
+        .metric {{ font-size: 22px; font-weight: bold; color: #d4d4d4; }}
+        .metric-label {{ font-size: 12px; color: #888; margin-top: 4px; }}
+        .card-excellent .metric {{ color: #76b900; }}
         .card-good .metric {{ color: #8bc34a; }}
         .card-warning .metric {{ color: #ff9800; }}
         .card-critical .metric {{ color: #f44336; }}
-        .card-total .metric {{ color: #333; }}
-        .card-info .metric {{ color: #2196f3; }}
-        .hardware-excellent {{ color: #4caf50; font-weight: bold; }}
+        .hardware-excellent {{ color: #76b900; font-weight: bold; }}
         .hardware-good {{ color: #8bc34a; font-weight: bold; }}
         .hardware-warning {{ color: #ff9800; font-weight: bold; }}
         .hardware-critical {{ color: #f44336; font-weight: bold; }}
-        .hardware-table {{ width: 100%; border-collapse: collapse; margin: 20px 0; table-layout: fixed; }}
-        .hardware-table th, .hardware-table td {{ border: 1px solid #ddd; padding: 8px; text-align: left; word-wrap: break-word; }}
-        .hardware-table th {{ background-color: #f2f2f2; font-weight: bold; }}
-        
-        /* Column width specifications */
-        .hardware-table th:nth-child(1), .hardware-table td:nth-child(1) {{ width: 12%; }} /* Device */
-        .hardware-table th:nth-child(2), .hardware-table td:nth-child(2) {{ width: 7%; }} /* Health */
-        .hardware-table th:nth-child(3), .hardware-table td:nth-child(3) {{ width: 10%; }} /* CPU Temp */
-        .hardware-table th:nth-child(4), .hardware-table td:nth-child(4) {{ width: 10%; }} /* ASIC Temp */
-        .hardware-table th:nth-child(5), .hardware-table td:nth-child(5) {{ width: 8%; }} /* Memory */
-        .hardware-table th:nth-child(6), .hardware-table td:nth-child(6) {{ width: 7%; }} /* CPU Load */
-        .hardware-table th:nth-child(7), .hardware-table td:nth-child(7) {{ width: 9%; }} /* Fan Status */
-        .hardware-table th:nth-child(8), .hardware-table td:nth-child(8) {{ width: 11%; }} /* PSU Efficiency */
-        .hardware-table th:nth-child(9), .hardware-table td:nth-child(9) {{ width: 14%; }} /* PSU Power IN/OUT */
-        .hardware-table th:nth-child(10), .hardware-table td:nth-child(10) {{ width: 12%; }} /* Model */
-        
-        /* Sortable table styling */
-        .sortable {{ cursor: pointer; user-select: none; position: relative; padding-right: 20px; }}
-        .sortable:hover {{ background-color: #f5f5f5; }}
-        .sort-arrow {{ font-size: 10px; color: #999; margin-left: 5px; opacity: 0.5; }}
-        .sortable.asc .sort-arrow::before {{ content: '▲'; color: #b57614; opacity: 1; }}
-        .sortable.desc .sort-arrow::before {{ content: '▼'; color: #b57614; opacity: 1; }}
+        .hardware-table {{ width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }}
+        .hardware-table th, .hardware-table td {{ border: 1px solid #404040; padding: 10px 12px; text-align: left; word-wrap: break-word; }}
+        .hardware-table th {{ background: #333; color: #76b900; font-weight: 600; font-size: 12px; }}
+        .hardware-table tbody tr {{ background: #252526; }}
+        .hardware-table tbody tr:hover {{ background: #2d2d2d; }}
+        .sortable {{ cursor: pointer; user-select: none; padding-right: 20px; }}
+        .sortable:hover {{ background: #3c3c3c; }}
+        .sort-arrow {{ font-size: 10px; color: #666; margin-left: 5px; opacity: 0.5; }}
+        .sortable.asc .sort-arrow::before {{ content: '▲'; color: #76b900; opacity: 1; }}
+        .sortable.desc .sort-arrow::before {{ content: '▼'; color: #76b900; opacity: 1; }}
         .sortable.asc .sort-arrow, .sortable.desc .sort-arrow {{ opacity: 1; }}
-        
-        .summary-card {{
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }}
-        .summary-card:hover {{
-            transform: translateY(-2px);
-            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
-        }}
-        .summary-card.active {{
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.25);
-            border-left-width: 6px;
-        }}
-        
-        .filter-info {{
-            text-align: center;
-            padding: 10px;
-            margin: 10px 0;
-            background: #e8f4fd;
-            border-radius: 4px;
-            color: #1976d2;
-            display: none;
-        }}
-        
-        @keyframes spin {{
-            from {{ transform: rotate(0deg); }}
-            to {{ transform: rotate(360deg); }}
-        }}
-
-        /* Per-metric status dots (non-intrusive) */
-        .status-dot {{
-            display: inline-block;
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            margin-left: 6px;
-            vertical-align: middle;
-        }}
+        .filter-info {{ text-align: center; padding: 10px 15px; margin: 15px 16px; background: rgba(118, 185, 0, 0.1); border: 1px solid rgba(118, 185, 0, 0.3); border-radius: 6px; color: #76b900; display: none; font-size: 13px; }}
+        .filter-info button {{ margin-left: 10px; padding: 4px 10px; background: #76b900; color: #000; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; }}
+        .status-dot {{ display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-left: 6px; vertical-align: middle; }}
         .status-dot.warning {{ background-color: #ff9800; }}
         .status-dot.critical {{ background-color: #f44336; }}
-        
-        /* Device Search Box */
-        .device-search-container {{
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }}
-        .device-search-container .select2-container {{
-            min-width: 250px;
-        }}
-        .device-search-container .select2-container--default .select2-selection--single {{
-            height: 38px;
-            border: 1px solid #ccc;
-            border-radius: 6px;
-            display: flex;
-            align-items: center;
-        }}
-        .device-search-container .select2-container--default .select2-selection--single .select2-selection__rendered {{
-            line-height: 38px;
-            color: #333;
-            padding-left: 8px;
-            font-size: 14px;
-        }}
-        .device-search-container .select2-container--default .select2-selection--single .select2-selection__arrow {{
-            height: 38px;
-        }}
-        .device-search-container .select2-container--default .select2-selection--single .select2-selection__placeholder {{
-            color: #999;
-        }}
-        .clear-search-btn {{
-            background: #ff5722;
-            color: white;
-            border: none;
-            padding: 8px 12px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 14px;
-            display: none;
-            transition: all 0.3s ease;
-        }}
-        .clear-search-btn:hover {{
-            background: #e64a19;
-        }}
+        .btn {{ padding: 8px 14px; border: none; border-radius: 4px; font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; gap: 6px; }}
+        .btn-primary {{ background: linear-gradient(0deg, #76b900 0%, #5a8c00 100%); color: white; }}
+        .btn-primary:hover {{ background: linear-gradient(0deg, #8bd400 0%, #6ba000 100%); }}
+        .btn-secondary {{ background: linear-gradient(0deg, #4fc3f7 0%, #0288d1 100%); color: white; }}
+        .btn-secondary:hover {{ background: linear-gradient(0deg, #81d4fa 0%, #039be5 100%); }}
+        .action-buttons {{ display: flex; gap: 10px; align-items: center; }}
+        .device-search-container {{ display: flex; align-items: center; gap: 8px; }}
+        .device-search-container .select2-container {{ min-width: 200px; }}
+        .device-search-container .select2-container--default .select2-selection--single {{ height: 34px; border: 1px solid #555; border-radius: 4px; background: #3c3c3c; display: flex; align-items: center; }}
+        .device-search-container .select2-container--default .select2-selection--single .select2-selection__rendered {{ line-height: 34px; color: #d4d4d4; padding-left: 10px; font-size: 13px; }}
+        .device-search-container .select2-container--default .select2-selection--single .select2-selection__arrow {{ height: 34px; }}
+        .device-search-container .select2-container--default .select2-selection--single .select2-selection__placeholder {{ color: #888; }}
+        .select2-dropdown {{ background: #2d2d2d; border: 1px solid #555; }}
+        .select2-container--default .select2-search--dropdown .select2-search__field {{ background: #3c3c3c; border: 1px solid #555; color: #d4d4d4; }}
+        .select2-container--default .select2-results__option {{ color: #d4d4d4; padding: 8px 12px; }}
+        .select2-container--default .select2-results__option--highlighted[aria-selected] {{ background: #76b900; color: #000; }}
+        .select2-container--default .select2-results__option[aria-selected=true] {{ background: #3c3c3c; }}
+        .clear-search-btn {{ background: #f44336; color: white; border: none; padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; display: none; }}
+        .clear-search-btn:hover {{ background: #d32f2f; }}
+        ::-webkit-scrollbar {{ width: 8px; height: 8px; }}
+        ::-webkit-scrollbar-track {{ background: #1e1e1e; }}
+        ::-webkit-scrollbar-thumb {{ background: #404040; border-radius: 4px; }}
+        ::-webkit-scrollbar-thumb:hover {{ background: #555; }}
+        @keyframes spin {{ from {{ transform: rotate(0deg); }} to {{ transform: rotate(360deg); }} }}
     </style>
-  </head>
-  <body>
-    <h1></h1>
-    <h1><font color="#b57614">Hardware Health Analysis</font></h1>
-        <p><strong>Last Updated:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
-        
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-            <h2 style="margin: 0;">Hardware Summary</h2>
-            <div style="display: flex; gap: 10px; align-items: center;">
-                <!-- Device Search Box -->
-                <div class="device-search-container">
-                    <select id="deviceSearch" style="width: 250px;">
-                        <option value="">Search Device...</option>
-                    </select>
-                    <button id="clearSearchBtn" class="clear-search-btn" onclick="clearDeviceSearch()">✕</button>
+</head>
+<body>
+    <div class="page-header">
+        <div>
+            <div class="page-title">Hardware Health Analysis</div>
+            <div class="last-updated">Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</div>
+        </div>
+        <div class="action-buttons">
+            <div class="device-search-container">
+                <select id="deviceSearch" style="width: 200px;"><option value="">Search Device...</option></select>
+                <button id="clearSearchBtn" class="clear-search-btn" onclick="clearDeviceSearch()">✕</button>
+            </div>
+            <button id="run-analysis" onclick="runAnalysis()" class="btn btn-secondary">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4Z"/></svg>
+                Run Analysis
+            </button>
+            <button id="download-csv" onclick="downloadCSV()" class="btn btn-primary">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/></svg>
+                Download CSV
+            </button>
+        </div>
+    </div>
+    
+    <div class="dashboard-section">
+        <div class="section-header">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+            Hardware Summary
+        </div>
+        <div class="section-content">
+            <div class="summary-grid">
+                <div class="summary-card card-info" id="total-devices-card">
+                    <div class="metric" id="total-devices">{total_devices}</div>
+                    <div class="metric-label">Total Devices</div>
                 </div>
-                <button id="run-analysis" onclick="runAnalysis()" 
-                        style="background: #b57614; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 8px; transition: all 0.3s ease;"
-                        onmouseover="this.style.background='#a06612'" 
-                        onmouseout="this.style.background='#b57614'">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8Z"/>
-                    </svg>
-                    Run Analysis
-                </button>
-                <button id="download-csv" onclick="downloadCSV()" 
-                        style="background: #4caf50; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 8px; transition: all 0.3s ease;"
-                        onmouseover="this.style.background='#45a049'" 
-                        onmouseout="this.style.background='#4caf50'">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
-                    </svg>
-                    Download CSV
-                </button>
+                <div class="summary-card card-excellent" id="excellent-card">
+                    <div class="metric" id="excellent-devices">{len(summary['excellent_devices'])}</div>
+                    <div class="metric-label">Excellent</div>
+                </div>
+                <div class="summary-card card-good" id="good-card">
+                    <div class="metric" id="good-devices">{len(summary['good_devices'])}</div>
+                    <div class="metric-label">Good</div>
+                </div>
+                <div class="summary-card card-warning" id="warning-card">
+                    <div class="metric" id="warning-devices">{len(summary['warning_devices'])}</div>
+                    <div class="metric-label">Warning</div>
+                </div>
+                <div class="summary-card card-critical" id="critical-card">
+                    <div class="metric" id="critical-devices">{len(summary['critical_devices'])}</div>
+                    <div class="metric-label">Critical</div>
+                </div>
             </div>
         </div>
-        <div class="summary-grid">
-            <div class="summary-card card-total" id="total-devices-card">
-                <div class="metric" id="total-devices">{total_devices}</div>
-                <div>Total Devices</div>
-            </div>
-            <div class="summary-card card-excellent" id="excellent-card">
-                <div class="metric" id="excellent-devices">{len(summary['excellent_devices'])}</div>
-                <div>Excellent</div>
-            </div>
-            <div class="summary-card card-good" id="good-card">
-                <div class="metric" id="good-devices">{len(summary['good_devices'])}</div>
-                <div>Good</div>
-            </div>
-            <div class="summary-card card-warning" id="warning-card">
-                <div class="metric" id="warning-devices">{len(summary['warning_devices'])}</div>
-                <div>Warning</div>
-            </div>
-            <div class="summary-card card-critical" id="critical-card">
-                <div class="metric" id="critical-devices">{len(summary['critical_devices'])}</div>
-                <div>Critical</div>
-            </div>
+    </div>
+    
+    <div class="dashboard-section">
+        <div class="section-header">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M4,1H20A1,1 0 0,1 21,2V6A1,1 0 0,1 20,7H4A1,1 0 0,1 3,6V2A1,1 0 0,1 4,1M4,9H20A1,1 0 0,1 21,10V14A1,1 0 0,1 20,15H4A1,1 0 0,1 3,14V10A1,1 0 0,1 4,9M4,17H20A1,1 0 0,1 21,18V22A1,1 0 0,1 20,23H4A1,1 0 0,1 3,22V18A1,1 0 0,1 4,17Z"/></svg>
+            Device Hardware Status
         </div>
-        
-        <div id="filter-info" class="filter-info">
-            <span id="filter-text"></span>
-            <button onclick="clearFilter()" style="margin-left: 10px; padding: 2px 8px; background: #1976d2; color: white; border: none; border-radius: 3px; cursor: pointer;">Show All</button>
-        </div>
-
-        <h2>Device Hardware Status</h2>
-        <table class="hardware-table" id="hardware-table">
-            <thead>
-                <tr>
-                    <th class="sortable" data-column="0" data-type="string">Device <span class="sort-arrow">▲▼</span></th>
-                    <th class="sortable" data-column="1" data-type="hardware-status">Health <span class="sort-arrow">▲▼</span></th>
-                    <th class="sortable" data-column="2" data-type="number">CPU Temp (°C) <span class="sort-arrow">▲▼</span></th>
-                    <th class="sortable" data-column="3" data-type="number">ASIC Temp (°C) <span class="sort-arrow">▲▼</span></th>
-                    <th class="sortable" data-column="4" data-type="number">Memory (%) <span class="sort-arrow">▲▼</span></th>
-                    <th class="sortable" data-column="5" data-type="number">CPU Load <span class="sort-arrow">▲▼</span></th>
-                    <th class="sortable" data-column="6" data-type="hardware-status">Fan Status <span class="sort-arrow">▲▼</span></th>
-                    <th class="sortable" data-column="7" data-type="number">PSU Efficiency (%) <span class="sort-arrow">▲▼</span></th>
-                    <th class="sortable" data-column="8" data-type="string">PSU Power (IN/OUT) <span class="sort-arrow">▲▼</span></th>
-                    <th class="sortable" data-column="9" data-type="string">Model <span class="sort-arrow">▲▼</span></th>
-                </tr>
-            </thead>
-            <tbody id="hardware-data">
+        <div class="section-content-table">
+            <div id="filter-info" class="filter-info">
+                <span id="filter-text"></span>
+                <button onclick="clearFilter()">Show All</button>
+            </div>
+            <table class="hardware-table" id="hardware-table">
+                <thead>
+                    <tr>
+                        <th class="sortable" data-column="0" data-type="string">Device <span class="sort-arrow">▲▼</span></th>
+                        <th class="sortable" data-column="1" data-type="hardware-status">Health <span class="sort-arrow">▲▼</span></th>
+                        <th class="sortable" data-column="2" data-type="number">CPU <span class="sort-arrow">▲▼</span></th>
+                        <th class="sortable" data-column="3" data-type="number">ASIC <span class="sort-arrow">▲▼</span></th>
+                        <th class="sortable" data-column="4" data-type="number">Mem% <span class="sort-arrow">▲▼</span></th>
+                        <th class="sortable" data-column="5" data-type="number">Load <span class="sort-arrow">▲▼</span></th>
+                        <th class="sortable" data-column="6" data-type="hardware-status">Fan <span class="sort-arrow">▲▼</span></th>
+                        <th class="sortable" data-column="7" data-type="number">PSU% <span class="sort-arrow">▲▼</span></th>
+                        <th class="sortable" data-column="8" data-type="string">PSU Power <span class="sort-arrow">▲▼</span></th>
+                        <th class="sortable" data-column="9" data-type="string">Model <span class="sort-arrow">▲▼</span></th>
+                    </tr>
+                </thead>
+                <tbody id="hardware-data">
 """
     
     # Add all devices to table (sorted by health - problems first)
@@ -943,20 +874,32 @@ def generate_hardware_html():
 """
     
     html_content += """
-            </tbody>
-        </table>
+                </tbody>
+            </table>
+        </div>
+    </div>
         
-
-    <h2>Hardware Health Thresholds</h2>
-    <table class="hardware-table">
-        <tr><th>Parameter</th><th>Excellent</th><th>Good</th><th>Warning</th><th>Critical</th></tr>
-        <tr><td>CPU Temperature</td><td>&lt; 60°C</td><td>60-70°C</td><td>70-80°C</td><td>&gt; 80°C</td></tr>
-        <tr><td>ASIC Temperature</td><td>&lt; 85°C</td><td>85-105°C</td><td>105-115°C</td><td>&gt; 115°C</td></tr>
-        <tr><td>Memory Usage</td><td>&lt; 60%</td><td>60-75%</td><td>75-85%</td><td>&gt; 85%</td></tr>
-        <tr><td>CPU Load (5min avg)</td><td>&lt; 1.0</td><td>1.0-2.0</td><td>2.0-3.0</td><td>&gt; 3.0</td></tr>
-        <tr><td>Fan Speed</td><td>&gt; 4000 RPM</td><td>3000-4000 RPM</td><td>1000-3000 RPM</td><td>&lt; 1000 RPM</td></tr>
-        <tr><td>PSU Efficiency</td><td>&gt; 90%</td><td>50-90%</td><td>30-50%</td><td>&lt; 30%</td></tr>
-    </table>
+    <div class="dashboard-section">
+        <div class="section-header">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12,15.5A3.5,3.5 0 0,1 8.5,12A3.5,3.5 0 0,1 12,8.5A3.5,3.5 0 0,1 15.5,12A3.5,3.5 0 0,1 12,15.5M19.43,12.97C19.47,12.65 19.5,12.33 19.5,12C19.5,11.67 19.47,11.34 19.43,11L21.54,9.37C21.73,9.22 21.78,8.95 21.66,8.73L19.66,5.27C19.54,5.05 19.27,4.96 19.05,5.05L16.56,6.05C16.04,5.66 15.5,5.32 14.87,5.07L14.5,2.42C14.46,2.18 14.25,2 14,2H10C9.75,2 9.54,2.18 9.5,2.42L9.13,5.07C8.5,5.32 7.96,5.66 7.44,6.05L4.95,5.05C4.73,4.96 4.46,5.05 4.34,5.27L2.34,8.73C2.21,8.95 2.27,9.22 2.46,9.37L4.57,11C4.53,11.34 4.5,11.67 4.5,12C4.5,12.33 4.53,12.65 4.57,12.97L2.46,14.63C2.27,14.78 2.21,15.05 2.34,15.27L4.34,18.73C4.46,18.95 4.73,19.03 4.95,18.95L7.44,17.94C7.96,18.34 8.5,18.68 9.13,18.93L9.5,21.58C9.54,21.82 9.75,22 10,22H14C14.25,22 14.46,21.82 14.5,21.58L14.87,18.93C15.5,18.67 16.04,18.34 16.56,17.94L19.05,18.95C19.27,19.03 19.54,18.95 19.66,18.73L21.66,15.27C21.78,15.05 21.73,14.78 21.54,14.63L19.43,12.97Z"/></svg>
+            Hardware Health Thresholds
+        </div>
+        <div class="section-content-table">
+            <table class="hardware-table">
+                <thead>
+                    <tr><th>Parameter</th><th>Excellent</th><th>Good</th><th>Warning</th><th>Critical</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>CPU Temperature</td><td>&lt; 60°C</td><td>60-70°C</td><td>70-80°C</td><td>&gt; 80°C</td></tr>
+                    <tr><td>ASIC Temperature</td><td>&lt; 85°C</td><td>85-105°C</td><td>105-115°C</td><td>&gt; 115°C</td></tr>
+                    <tr><td>Memory Usage</td><td>&lt; 60%</td><td>60-75%</td><td>75-85%</td><td>&gt; 85%</td></tr>
+                    <tr><td>CPU Load (5min avg)</td><td>&lt; 1.0</td><td>1.0-2.0</td><td>2.0-3.0</td><td>&gt; 3.0</td></tr>
+                    <tr><td>Fan Speed</td><td>&gt; 4000 RPM</td><td>3000-4000 RPM</td><td>1000-3000 RPM</td><td>&lt; 1000 RPM</td></tr>
+                    <tr><td>PSU Efficiency</td><td>&gt; 90%</td><td>50-90%</td><td>30-50%</td><td>&lt; 30%</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
 
 """
     
