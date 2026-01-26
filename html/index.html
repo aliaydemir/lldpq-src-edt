@@ -377,7 +377,15 @@
             }
             
             try {
-                const response = await fetch(GITHUB_VERSION_URL + '?t=' + Date.now());
+                // 5 second timeout for slow/no internet
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 5000);
+                
+                const response = await fetch(GITHUB_VERSION_URL + '?t=' + Date.now(), {
+                    signal: controller.signal
+                });
+                clearTimeout(timeoutId);
+                
                 if (!response.ok) return;
                 
                 remoteVersion = (await response.text()).trim();
