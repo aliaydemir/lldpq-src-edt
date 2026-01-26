@@ -175,25 +175,41 @@ try:
             pp_config = yaml.safe_load(f) or {}
             port_profiles = pp_config.get('sw_port_profiles', {})
     
-    # Load VLAN profiles for VRF resolution
+    # Load VLAN profiles for VRF and IP resolution
     vlan_to_vrf = {}
+    vlan_profiles_data = {}
     if os.path.exists(vlan_profiles_file):
         with open(vlan_profiles_file, 'r') as f:
             vp_config = yaml.safe_load(f) or {}
             vlan_profiles = vp_config.get('vlan_profiles', {})
-            # Build VLAN ID to VRF mapping
+            # Build VLAN ID to VRF mapping and VLAN profile data
             for profile_name, profile_data in vlan_profiles.items():
                 if profile_data and 'vlans' in profile_data:
+                    vrr_enabled = profile_data.get('vrr', {}).get('state', False)
                     for vlan_id, vlan_config in profile_data['vlans'].items():
-                        if vlan_config and 'vrf' in vlan_config:
-                            vlan_to_vrf[str(vlan_id)] = vlan_config['vrf']
+                        if vlan_config:
+                            if 'vrf' in vlan_config:
+                                vlan_to_vrf[str(vlan_id)] = vlan_config['vrf']
+                            # Store VLAN profile info for SVI section
+                            vlan_profiles_data[profile_name] = {
+                                'vlan_id': str(vlan_id),
+                                'description': vlan_config.get('description', ''),
+                                'vrf': vlan_config.get('vrf', 'default'),
+                                'l2vni': vlan_config.get('l2vni'),
+                                'vrr_enabled': vrr_enabled,
+                                'vrr_vip': vlan_config.get('vrr_vip'),
+                                'even_ip': vlan_config.get('even_ip'),
+                                'odd_ip': vlan_config.get('odd_ip'),
+                                'ip': vlan_config.get('ip')
+                            }
     
     print(json.dumps({
         'success': True,
         'config': config,
         'device_info': device_info,
         'port_profiles': port_profiles,
-        'vlan_to_vrf': vlan_to_vrf
+        'vlan_to_vrf': vlan_to_vrf,
+        'vlan_profiles': vlan_profiles_data
     }))
 
 except Exception as e:

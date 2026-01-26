@@ -663,6 +663,7 @@
             const deviceInfo = data.device_info;
             const portProfiles = data.port_profiles || {};
             const vlanToVrf = data.vlan_to_vrf || {};
+            const vlanProfiles = data.vlan_profiles || {};
             
             document.getElementById('content-subtitle').textContent = deviceInfo.ip || '';
             
@@ -813,6 +814,71 @@
                         </div>
                     </div>
                 `;
+                
+                // SVI / Gateway IPs Section - show IP info for used VLANs
+                const usedVlanProfiles = config.vlan_templates.filter(v => vlanProfiles[v]);
+                if (usedVlanProfiles.length > 0) {
+                    // Determine if this is an odd or even switch based on lo_ip or hostname
+                    let isOddSwitch = false;
+                    if (config.lo_ip) {
+                        const lastOctet = config.lo_ip.split('.')[3]?.split('/')[0];
+                        if (lastOctet) {
+                            isOddSwitch = parseInt(lastOctet) % 2 === 1;
+                        }
+                    }
+                    
+                    html += `
+                        <div class="dashboard-section">
+                            <div class="section-header">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+                                </svg>
+                                SVI / Gateway IPs (${usedVlanProfiles.length})
+                            </div>
+                            <div class="section-content">
+                                <table class="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th>VLAN Template</th>
+                                            <th>VLAN ID</th>
+                                            <th>VRR VIP</th>
+                                            <th>Switch IP</th>
+                                            <th>VRF</th>
+                                            <th>L2VNI</th>
+                                            <th>Description</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                    `;
+                    
+                    for (const templateName of usedVlanProfiles) {
+                        const vp = vlanProfiles[templateName];
+                        const vrrVip = vp.vrr_vip || '-';
+                        let switchIp = '-';
+                        
+                        if (vp.vrr_enabled) {
+                            // VRR enabled - use even_ip or odd_ip based on switch
+                            switchIp = isOddSwitch ? (vp.odd_ip || '-') : (vp.even_ip || '-');
+                        } else {
+                            // VRR disabled - use regular ip
+                            switchIp = vp.ip || '-';
+                        }
+                        
+                        html += `
+                            <tr>
+                                <td><span class="badge badge-green">${templateName}</span></td>
+                                <td>${vp.vlan_id}</td>
+                                <td>${vrrVip !== '-' ? `<span class="badge badge-orange">${vrrVip}</span>` : '-'}</td>
+                                <td>${switchIp !== '-' ? `<span class="badge badge-blue">${switchIp}</span>` : '-'}</td>
+                                <td><span class="badge badge-blue">${vp.vrf || 'default'}</span></td>
+                                <td>${vp.l2vni || '-'}</td>
+                                <td>${vp.description || '-'}</td>
+                            </tr>
+                        `;
+                    }
+                    
+                    html += '</tbody></table></div></div>';
+                }
             }
             
             // DHCP Relay Section
