@@ -284,6 +284,11 @@
 
         <div class="footer">
             <h3 id="version-display">LLDPq</h3>
+            <div id="update-badge" style="display: none; margin-top: 8px;">
+                <a href="#" onclick="showUpdateInfo(); return false;" style="background: linear-gradient(0deg, #ff6b00 0%, #ff8c00 100%); color: white; padding: 4px 10px; border-radius: 12px; font-size: 11px; text-decoration: none; display: inline-block;">
+                    ⬆️ <span id="update-text">Update available</span>
+                </a>
+            </div>
             <h3 style="margin-top: 5px;">aaydemir@nvidia.com</h3>
         </div>
     </div>
@@ -331,15 +336,123 @@
         // Set initial active state
         document.querySelector('a[href="start.html"]').classList.add('active');
         
-        // Fetch and display version
+        // Version and update check
+        const GITHUB_VERSION_URL = 'https://raw.githubusercontent.com/aliaydemir/lldpq-src/main/VERSION';
+        const UPDATE_CHECK_INTERVAL = 24 * 60 * 60 * 1000; // 24 hours
+        
+        let localVersion = '';
+        let remoteVersion = '';
+        
+        // Fetch and display local version
         fetch('/VERSION')
             .then(response => response.text())
             .then(version => {
-                document.getElementById('version-display').textContent = 'LLDPq v' + version.trim();
+                localVersion = version.trim();
+                document.getElementById('version-display').textContent = 'LLDPq v' + localVersion;
+                // Check for updates (admin only)
+                checkForUpdates();
             })
             .catch(() => {
                 document.getElementById('version-display').textContent = 'LLDPq';
             });
+        
+        // Check for updates from GitHub
+        async function checkForUpdates() {
+            // Only check for admins
+            if (!LLDPqAuth.isAdmin()) return;
+            
+            // Check cache first
+            const cached = localStorage.getItem('lldpq_update_check');
+            if (cached) {
+                const data = JSON.parse(cached);
+                const age = Date.now() - data.timestamp;
+                if (age < UPDATE_CHECK_INTERVAL) {
+                    // Use cached result
+                    if (data.hasUpdate && data.remoteVersion) {
+                        remoteVersion = data.remoteVersion;
+                        showUpdateBadge(data.remoteVersion);
+                    }
+                    return;
+                }
+            }
+            
+            try {
+                const response = await fetch(GITHUB_VERSION_URL + '?t=' + Date.now());
+                if (!response.ok) return;
+                
+                remoteVersion = (await response.text()).trim();
+                
+                // Compare versions
+                const hasUpdate = compareVersions(remoteVersion, localVersion) > 0;
+                
+                // Cache result
+                localStorage.setItem('lldpq_update_check', JSON.stringify({
+                    timestamp: Date.now(),
+                    hasUpdate: hasUpdate,
+                    remoteVersion: remoteVersion
+                }));
+                
+                if (hasUpdate) {
+                    showUpdateBadge(remoteVersion);
+                }
+            } catch (err) {
+                console.log('Update check failed:', err);
+            }
+        }
+        
+        // Compare semantic versions (returns 1 if a > b, -1 if a < b, 0 if equal)
+        function compareVersions(a, b) {
+            const partsA = a.split('.').map(Number);
+            const partsB = b.split('.').map(Number);
+            
+            for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
+                const numA = partsA[i] || 0;
+                const numB = partsB[i] || 0;
+                if (numA > numB) return 1;
+                if (numA < numB) return -1;
+            }
+            return 0;
+        }
+        
+        // Show update badge
+        function showUpdateBadge(newVersion) {
+            const badge = document.getElementById('update-badge');
+            const text = document.getElementById('update-text');
+            if (badge && text) {
+                text.textContent = 'v' + newVersion + ' available';
+                badge.style.display = 'block';
+            }
+        }
+        
+        // Show update info popup
+        function showUpdateInfo() {
+            const modal = document.createElement('div');
+            modal.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 10000; display: flex; justify-content: center; align-items: center;';
+            
+            modal.innerHTML = `
+                <div style="background: #2d2d2d; border-radius: 8px; max-width: 500px; width: 90%; box-shadow: 0 4px 20px rgba(0,0,0,0.5);">
+                    <div style="padding: 15px 20px; background: linear-gradient(0deg, #76b900 0%, #5a8c00 100%); color: white; display: flex; justify-content: space-between; align-items: center; border-radius: 8px 8px 0 0;">
+                        <h3 style="margin: 0; font-size: 16px;">⬆️ Update Available</h3>
+                        <button onclick="this.closest('div').parentElement.parentElement.remove()" style="background: none; border: none; color: white; font-size: 24px; cursor: pointer; padding: 0; line-height: 1;">&times;</button>
+                    </div>
+                    <div style="padding: 20px; color: #d4d4d4;">
+                        <p style="margin: 0 0 15px 0;">
+                            <strong>Current:</strong> v${localVersion}<br>
+                            <strong>Latest:</strong> v${remoteVersion}
+                        </p>
+                        <p style="margin: 0 0 15px 0; color: #999;">To update, run these commands on your server:</p>
+                        <pre style="background: #1e1e1e; padding: 15px; border-radius: 4px; margin: 0; font-family: 'Consolas', monospace; font-size: 13px; overflow-x: auto;">cd ~/lldpq-src
+git pull
+./update.sh</pre>
+                    </div>
+                    <div style="padding: 15px 20px; background: #252526; text-align: right; border-top: 1px solid #404040; border-radius: 0 0 8px 8px;">
+                        <button onclick="this.closest('div').parentElement.parentElement.remove()" style="background: #404040; color: white; border: none; padding: 10px 25px; border-radius: 4px; cursor: pointer; font-size: 14px;">Close</button>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(modal);
+        }
     </script>
 </body>
 </html>
