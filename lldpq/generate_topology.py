@@ -494,7 +494,10 @@ def generate_topology_file(output_filename, directory, assets_file_path, devices
         all_discovered_hosts = set(device_nodes.keys())
         pattern_matched_hosts = apply_host_patterns(host_patterns, all_discovered_hosts)
         
-        # Add pattern-matched hosts to host_names and device_info
+        # Track existing node names for deduplication
+        existing_node_names = {node["name"] for node in topology_data["nodes"]}
+        
+        # Add pattern-matched hosts to host_names, device_info, and topology_data
         for host in pattern_matched_hosts:
             if host not in host_names:
                 host_names.add(host)
@@ -507,6 +510,21 @@ def generate_topology_file(output_filename, directory, assets_file_path, devices
                         "model": "N/A",
                         "version": "N/A"
                     }
+                
+                # Also add to topology_data["nodes"] if not already there
+                if host not in existing_node_names and host in device_nodes:
+                    node_id = device_nodes[host]
+                    topology_data["nodes"].append({
+                        "id": node_id,
+                        "name": host,
+                        "primaryIP": "N/A",
+                        "mac": "N/A",
+                        "serial_number": "N/A",
+                        "model": "N/A",
+                        "version": "N/A",
+                        "icon": "host"
+                    })
+                    existing_node_names.add(host)
 
     defined_links = parse_topology_dot_file(dot_file_path)
 
