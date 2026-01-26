@@ -283,12 +283,10 @@
         </div>
 
         <div class="footer">
-            <h3 id="version-display">LLDPq</h3>
-            <div id="update-badge" style="display: none; margin-top: 8px;">
-                <a href="#" onclick="showUpdateInfo(); return false;" style="background: linear-gradient(0deg, #ff6b00 0%, #ff8c00 100%); color: white; padding: 4px 10px; border-radius: 12px; font-size: 11px; text-decoration: none; display: inline-block;">
-                    ⬆️ <span id="update-text">Update available</span>
-                </a>
-            </div>
+            <h3 id="version-display" style="display: inline;">LLDPq</h3>
+            <a href="#" id="update-badge" onclick="showUpdateInfo(); return false;" style="display: none; background: linear-gradient(0deg, #ff6b00 0%, #ff8c00 100%); color: white; padding: 2px 8px; border-radius: 10px; font-size: 10px; text-decoration: none; margin-left: 8px; vertical-align: middle;">
+                <span id="update-text">v1.3.1</span>
+            </a>
             <h3 style="margin-top: 5px;">aaydemir@nvidia.com</h3>
         </div>
     </div>
@@ -438,8 +436,8 @@
             const badge = document.getElementById('update-badge');
             const text = document.getElementById('update-text');
             if (badge && text) {
-                text.textContent = 'v' + newVersion + ' available';
-                badge.style.display = 'block';
+                text.textContent = 'v' + newVersion;
+                badge.style.display = 'inline';
             }
         }
         
