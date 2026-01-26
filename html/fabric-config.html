@@ -229,6 +229,186 @@
             background: linear-gradient(0deg, #ff8533 0%, #e66000 100%);
         }
         
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .toolbar-separator {
+            width: 1px;
+            height: 24px;
+            background: #555;
+            margin: 0 5px;
+        }
+        
+        .btn-success {
+            background: linear-gradient(0deg, #76b900 0%, #5a8c00 100%);
+            color: white;
+        }
+        
+        .btn-success:hover {
+            background: linear-gradient(0deg, #8bd400 0%, #6ba000 100%);
+        }
+        
+        .target-label {
+            font-size: 13px;
+            color: #888;
+            margin-left: 5px;
+            display: flex;
+            align-items: center;
+        }
+        
+        .target-dropdown {
+            padding: 8px 12px;
+            background: #3c3c3c;
+            border: 1px solid #555;
+            border-radius: 4px;
+            color: #d4d4d4;
+            font-size: 13px;
+            min-width: 150px;
+            cursor: pointer;
+        }
+        
+        .target-dropdown:focus {
+            outline: none;
+            border-color: #76b900;
+        }
+        
+        .target-dropdown option {
+            background: #2d2d2d;
+            color: #d4d4d4;
+        }
+        
+        /* Loading Overlay */
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 10000;
+            flex-direction: column;
+            gap: 15px;
+        }
+        
+        .loading-overlay.visible {
+            display: flex;
+        }
+        
+        .loading-spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid #404040;
+            border-top-color: #76b900;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .loading-text {
+            color: #d4d4d4;
+            font-size: 14px;
+        }
+        
+        /* Output Modal */
+        .output-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 10000;
+        }
+        
+        .output-modal.visible {
+            display: flex;
+        }
+        
+        .output-modal-content {
+            background: #2d2d2d;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 900px;
+            max-height: 85vh;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+        }
+        
+        .output-modal-header {
+            padding: 15px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #404040;
+        }
+        
+        .output-modal-header.success {
+            background: linear-gradient(0deg, #76b900 0%, #5a8c00 100%);
+            color: #000;
+        }
+        
+        .output-modal-header.error {
+            background: linear-gradient(0deg, #c53030 0%, #9b2c2c 100%);
+            color: #fff;
+        }
+        
+        .output-modal-header.warning {
+            background: linear-gradient(0deg, #ff6b00 0%, #cc5500 100%);
+            color: #fff;
+        }
+        
+        .output-modal-header h3 {
+            margin: 0;
+            font-size: 16px;
+        }
+        
+        .output-modal-close {
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: inherit;
+            padding: 0;
+            line-height: 1;
+        }
+        
+        .output-modal-body {
+            flex: 1;
+            overflow: auto;
+            padding: 20px;
+            background: #1e1e1e;
+        }
+        
+        .output-modal-body pre {
+            margin: 0;
+            white-space: pre;
+            font-family: 'DejaVu Sans Mono', 'Consolas', 'Monaco', monospace;
+            font-size: 12px;
+            line-height: 1.5;
+            color: #d4d4d4;
+        }
+        
+        .output-modal-footer {
+            padding: 15px 20px;
+            background: #252526;
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            border-top: 1px solid #404040;
+        }
+        
         /* Content Area */
         .content-area {
             flex: 1;
@@ -465,12 +645,35 @@
                     <div class="content-title" id="content-title">Fabric Configuration</div>
                     <div class="content-subtitle" id="content-subtitle">Select a device from the left panel</div>
                 </div>
-                <div class="action-buttons" id="action-buttons" style="display: none;">
-                    <button class="btn btn-secondary" onclick="refreshDevice()">
+                <div class="action-buttons" id="action-buttons">
+                    <button class="btn btn-secondary" onclick="refreshDevice()" id="btn-refresh" style="display: none;">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                             <path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
                         </svg>
                         Refresh
+                    </button>
+                    <div class="toolbar-separator" id="separator-refresh" style="display: none;"></div>
+                    <button class="btn btn-success" onclick="runGenerate()">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+                        </svg>
+                        Generate
+                    </button>
+                    <label class="target-label">Target:</label>
+                    <select id="target-dropdown" class="target-dropdown" onchange="onTargetChange()">
+                        <option value="">All Hosts</option>
+                    </select>
+                    <button class="btn btn-secondary" onclick="runDiff()">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/>
+                        </svg>
+                        Diff
+                    </button>
+                    <button class="btn btn-warning" onclick="runDeploy()" id="btn-deploy">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/>
+                        </svg>
+                        Deploy
                     </button>
                 </div>
             </div>
@@ -505,6 +708,29 @@
                     Deploy
                 </button>
                 <div class="status" id="status-text">Ready</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Loading Overlay -->
+    <div id="loading-overlay" class="loading-overlay">
+        <div class="loading-spinner"></div>
+        <div id="loading-text" class="loading-text">Loading...</div>
+    </div>
+    
+    <!-- Output Modal -->
+    <div id="output-modal" class="output-modal" onclick="if(event.target === this) hideOutputModal()">
+        <div class="output-modal-content">
+            <div id="output-modal-header" class="output-modal-header">
+                <h3 id="output-modal-title">Output</h3>
+                <button class="output-modal-close" onclick="hideOutputModal()">&times;</button>
+            </div>
+            <div class="output-modal-body">
+                <pre id="output-modal-content"></pre>
+            </div>
+            <div class="output-modal-footer">
+                <button class="btn btn-secondary" onclick="hideOutputModal()">Close</button>
+                <button class="btn btn-primary" onclick="copyOutput()">Copy</button>
             </div>
         </div>
     </div>
@@ -583,6 +809,43 @@
             }
             
             container.innerHTML = html;
+            
+            // Populate target dropdown
+            populateTargetDropdown();
+        }
+        
+        // Populate target dropdown with all devices
+        function populateTargetDropdown() {
+            const dropdown = document.getElementById('target-dropdown');
+            let html = '<option value="">All Hosts</option>';
+            
+            // Add groups as optgroups
+            for (const [group, groupDevices] of Object.entries(devices)) {
+                html += `<optgroup label="${group}">`;
+                for (const device of groupDevices) {
+                    html += `<option value="${device.hostname}">${device.hostname}</option>`;
+                }
+                html += '</optgroup>';
+            }
+            
+            dropdown.innerHTML = html;
+        }
+        
+        // Update target dropdown selection
+        function updateTargetDropdown(hostname) {
+            const dropdown = document.getElementById('target-dropdown');
+            dropdown.value = hostname || '';
+        }
+        
+        // Handle target dropdown change
+        function onTargetChange() {
+            const dropdown = document.getElementById('target-dropdown');
+            const hostname = dropdown.value;
+            
+            if (hostname) {
+                // Select device in left panel and load its details
+                selectDevice(hostname);
+            }
         }
         
         // Toggle group collapse
@@ -622,10 +885,19 @@
             
             selectedDevice = hostname;
             
+            // Update target dropdown (without triggering change event loop)
+            const dropdown = document.getElementById('target-dropdown');
+            if (dropdown.value !== hostname) {
+                dropdown.value = hostname;
+            }
+            
+            // Show refresh button when device is selected
+            document.getElementById('btn-refresh').style.display = 'flex';
+            document.getElementById('separator-refresh').style.display = 'block';
+            
             // Update header
             document.getElementById('content-title').textContent = hostname;
             document.getElementById('content-subtitle').textContent = 'Loading configuration...';
-            document.getElementById('action-buttons').style.display = 'flex';
             
             // Show loading
             document.getElementById('content-area').innerHTML = '<div class="loading"><div class="spinner"></div>Loading device configuration...</div>';
@@ -1166,27 +1438,224 @@
             `;
         }
         
-        // Ansible actions
+        // ========== ANSIBLE ACTIONS ==========
+        
+        // Show loading overlay
+        function showLoading(show, text = 'Loading...') {
+            const overlay = document.getElementById('loading-overlay');
+            document.getElementById('loading-text').textContent = text;
+            if (show) {
+                overlay.classList.add('visible');
+            } else {
+                overlay.classList.remove('visible');
+            }
+        }
+        
+        // Show output modal
+        function showOutputModal(title, content, type = 'success') {
+            const modal = document.getElementById('output-modal');
+            const header = document.getElementById('output-modal-header');
+            document.getElementById('output-modal-title').textContent = title;
+            document.getElementById('output-modal-content').innerHTML = ansiToHtml(content);
+            
+            header.className = 'output-modal-header ' + type;
+            modal.classList.add('visible');
+        }
+        
+        // Hide output modal
+        function hideOutputModal() {
+            document.getElementById('output-modal').classList.remove('visible');
+        }
+        
+        // Copy output content
+        function copyOutput() {
+            const content = document.getElementById('output-modal-content').textContent;
+            const textarea = document.createElement('textarea');
+            textarea.value = content;
+            textarea.style.position = 'fixed';
+            textarea.style.left = '-9999px';
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+            
+            // Show feedback
+            const btn = event.target;
+            const originalText = btn.textContent;
+            btn.textContent = 'Copied!';
+            setTimeout(() => btn.textContent = originalText, 1500);
+        }
+        
+        // Convert ANSI codes to HTML
+        function ansiToHtml(text) {
+            if (!text) return '';
+            
+            // Escape HTML first
+            text = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            
+            // ANSI color codes
+            const ansiColors = {
+                '30': '#000', '31': '#e74c3c', '32': '#2ecc71', '33': '#f39c12',
+                '34': '#3498db', '35': '#9b59b6', '36': '#1abc9c', '37': '#ecf0f1',
+                '90': '#7f8c8d', '91': '#ff6b6b', '92': '#69db7c', '93': '#ffd93d',
+                '94': '#74c0fc', '95': '#da77f2', '96': '#63e6be', '97': '#ffffff'
+            };
+            
+            // Replace ANSI codes with spans
+            text = text.replace(/\x1b\[(\d+)m/g, (match, code) => {
+                if (code === '0') return '</span>';
+                if (code === '1') return '<span style="font-weight:bold">';
+                if (ansiColors[code]) return `<span style="color:${ansiColors[code]}">`;
+                return '';
+            });
+            
+            return text;
+        }
+        
+        // Ansible API call
+        async function ansibleApiCall(action, params = {}) {
+            const queryParams = new URLSearchParams({ action, ...params });
+            const response = await fetch(`/ansible-api.sh?${queryParams}`);
+            return await response.json();
+        }
+        
+        // Get target host from dropdown
+        function getTargetHost() {
+            const dropdown = document.getElementById('target-dropdown');
+            return dropdown.value || '';
+        }
+        
+        // Run Generate
         async function runGenerate() {
-            setStatus('Generating configs...');
-            // TODO: Implement
-            setTimeout(() => setStatus('Ready'), 2000);
+            const host = getTargetHost();
+            const targetMsg = host ? `for ${host}` : 'for all hosts';
+            
+            showLoading(true, `Generating configs ${targetMsg}...`);
+            setStatus('Generating...');
+            
+            try {
+                const result = await ansibleApiCall('generate', { host: host || '' });
+                
+                if (result.success) {
+                    showOutputModal(
+                        `Generate Complete ${targetMsg}`,
+                        result.output || 'Configs generated successfully',
+                        'success'
+                    );
+                } else {
+                    showOutputModal(
+                        'Generate Failed',
+                        result.error || result.output || 'Unknown error',
+                        'error'
+                    );
+                }
+            } catch (err) {
+                showOutputModal('Error', 'Failed to run generate: ' + err.message, 'error');
+            }
+            
+            showLoading(false);
+            setStatus('Ready');
         }
         
+        // Run Diff
         async function runDiff() {
-            setStatus('Running diff...');
-            // TODO: Implement
-            setTimeout(() => setStatus('Ready'), 2000);
+            const host = getTargetHost();
+            const targetMsg = host || 'all hosts';
+            
+            showLoading(true, `Running diff for ${targetMsg}...`);
+            setStatus('Comparing...');
+            
+            try {
+                const result = await ansibleApiCall('diff', { host });
+                const output = result.output || result.error || '';
+                
+                if (result.success) {
+                    // Check if there are changes
+                    const hasChanges = output.includes('DIFF SUMMARY') && output.includes('With changes:');
+                    const changesMatch = output.match(/With changes:\s*(\d+)/);
+                    const changesCount = changesMatch ? parseInt(changesMatch[1]) : 0;
+                    
+                    // Show diff popup
+                    showDiffSummaryModal(output, changesCount);
+                } else {
+                    showOutputModal('Diff Failed', output, 'error');
+                }
+            } catch (err) {
+                showOutputModal('Error', 'Failed to run diff: ' + err.message, 'error');
+            }
+            
+            showLoading(false);
+            setStatus('Ready');
         }
         
+        // Show Diff Summary Modal (special formatting)
+        function showDiffSummaryModal(output, changesCount) {
+            // Extract summary section
+            const lines = output.split('\n');
+            let summaryLines = [];
+            let inSummary = false;
+            
+            for (const line of lines) {
+                if (line.includes('PLAY RECAP')) break;
+                if (line.includes('CONFIG DIFF SUMMARY') || line.includes('╔') || inSummary) {
+                    inSummary = true;
+                    summaryLines.push(line);
+                }
+            }
+            
+            const summaryContent = summaryLines.join('\n') || output;
+            const hasChanges = changesCount > 0;
+            const title = hasChanges 
+                ? `⚠️ Configuration Changes Detected (${changesCount})`
+                : '✅ All Switches Synchronized';
+            
+            showOutputModal(title, summaryContent, hasChanges ? 'warning' : 'success');
+        }
+        
+        // Run Deploy
         async function runDeploy() {
+            const host = getTargetHost();
+            const targetMsg = host || 'ALL HOSTS';
+            
+            // Confirm deployment
+            const confirmMsg = host 
+                ? `Are you sure you want to deploy configuration to ${host}?\n\nThis will apply changes to the live network device.`
+                : `Are you sure you want to deploy configuration to ALL HOSTS?\n\n⚠️ This will apply changes to ALL network devices!`;
+            
+            if (!confirm(confirmMsg)) {
+                return;
+            }
+            
+            showLoading(true, `Deploying to ${targetMsg}...`);
             setStatus('Deploying...');
-            // TODO: Implement
-            setTimeout(() => setStatus('Ready'), 2000);
+            
+            try {
+                const result = await ansibleApiCall('deploy', { host });
+                
+                if (result.success) {
+                    showOutputModal(
+                        `Deploy Complete - ${targetMsg}`,
+                        result.output || 'Configuration deployed successfully',
+                        'success'
+                    );
+                } else {
+                    showOutputModal(
+                        `Deploy Failed - ${targetMsg}`,
+                        result.error || result.output || 'Unknown error',
+                        'error'
+                    );
+                }
+            } catch (err) {
+                showOutputModal('Error', 'Failed to deploy: ' + err.message, 'error');
+            }
+            
+            showLoading(false);
+            setStatus('Ready');
         }
         
         function setStatus(text) {
-            document.getElementById('status-text').textContent = text;
+            const statusEl = document.getElementById('status-text');
+            if (statusEl) statusEl.textContent = text;
         }
         
         // Initialize on load

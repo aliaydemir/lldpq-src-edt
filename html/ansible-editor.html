@@ -496,13 +496,22 @@
             background: #505050;
         }
         
+        .btn-success {
+            background: linear-gradient(0deg, #76b900 0%, #5a8c00 100%);
+            color: #fff;
+        }
+        
+        .btn-success:hover:not(:disabled) {
+            background: linear-gradient(0deg, #8bd400 0%, #6ba000 100%);
+        }
+        
         .btn-warning {
-            background: #b8860b;
+            background: linear-gradient(0deg, #ff6b00 0%, #cc5500 100%);
             color: #fff;
         }
         
         .btn-warning:hover:not(:disabled) {
-            background: #daa520;
+            background: linear-gradient(0deg, #ff8533 0%, #e66000 100%);
         }
         
         .btn-danger {
@@ -1212,8 +1221,11 @@
             </div>
         </div>
         <div class="bottom-right">
-            <button id="btn-generate" class="btn btn-warning" onclick="runGenerate()">
-                Generate Configs
+            <button id="btn-generate" class="btn btn-success" onclick="runGenerate()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+                </svg>
+                Generate
             </button>
             <label style="font-size: 13px; color: #888;">Target:</label>
             <div class="host-dropdown">
@@ -1224,9 +1236,15 @@
                 <div id="host-dropdown-menu" class="host-dropdown-menu"></div>
             </div>
             <button id="btn-diff" class="btn btn-secondary" onclick="runDiff()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/>
+                </svg>
                 Diff
             </button>
-            <button id="btn-deploy" class="btn btn-primary" onclick="runDeploy()">
+            <button id="btn-deploy" class="btn btn-warning" onclick="runDeploy()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/>
+                </svg>
                 Deploy
             </button>
         </div>
