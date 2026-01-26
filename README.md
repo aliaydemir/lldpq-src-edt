@@ -56,7 +56,7 @@ edit these files:
 ~/lldpq/topology.dot             # expected cable connections
 ~/lldpq/topology_config.yaml     # optional: customize device layers/icons (supports regex patterns)
 ~/lldpq/notifications.yaml       # optional: slack alerts + thresholds
-~/lldpq/hosts.ini                # optional: extra hostnames for topology
+~/lldpq/hosts.ini                # optional: extra hostnames for topology (supports wildcards)
 ~/lldpq/commands                 # optional: commands for send-cmd
 ```
 
@@ -79,6 +79,23 @@ roles are optional tags for grouping. filter by role:
 - **zzh**: type `@spine` to filter interactively
 - **send-cmd**: `send-cmd -r spine -c "uptime"` to target specific roles
 - **send-cmd**: `send-cmd --roles` to list available roles
+
+### hosts.ini format
+
+add extra hostnames for topology visualization. supports exact names and wildcard patterns:
+
+```ini
+# exact hostnames
+spine-01
+border-leaf-01
+
+# patterns - match devices discovered via LLDP
+*dgx*           # all devices containing "dgx"
+leaf-*          # all devices starting with "leaf-"
+*-gpu           # all devices ending with "-gpu"
+```
+
+patterns are matched against devices found in LLDP neighbor data.
 
 ## [04] cron jobs (auto setup)
 

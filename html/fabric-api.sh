@@ -2,9 +2,14 @@
 # Fabric Configuration API
 # Backend for fabric-config.html
 
-# Load config
-source /etc/lldpq.conf 2>/dev/null || true
+# Load config - explicitly read ANSIBLE_DIR from config file
+if [[ -f /etc/lldpq.conf ]]; then
+    ANSIBLE_DIR=$(grep "^ANSIBLE_DIR=" /etc/lldpq.conf | cut -d= -f2)
+fi
 ANSIBLE_DIR="${ANSIBLE_DIR:-$HOME/ansible}"
+
+# Export for Python scripts
+export ANSIBLE_DIR
 
 # Output JSON header
 echo "Content-Type: application/json"
@@ -106,12 +111,8 @@ get_device() {
     
     local host_vars_file="$ANSIBLE_DIR/inventory/host_vars/${hostname}.yaml"
     
-    if [[ ! -f "$host_vars_file" ]]; then
-        echo '{"success": false, "error": "Host vars file not found: '"$host_vars_file"'"}'
-        return
-    fi
-    
     # Python script to parse host_vars and find device info
+    # Host vars file is optional - some devices (like spines) may not have it
     python3 << PYTHON
 import sys
 import json
@@ -122,11 +123,15 @@ ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
 hostname = "$hostname"
 host_vars_file = f"{ansible_dir}/inventory/host_vars/{hostname}.yaml"
 hosts_file = f"{ansible_dir}/inventory/hosts"
+port_profiles_file = f"{ansible_dir}/inventory/group_vars/all/sw_port_profiles.yaml"
+vlan_profiles_file = f"{ansible_dir}/inventory/group_vars/all/vlan_profiles.yaml"
 
 try:
-    # Read host_vars
-    with open(host_vars_file, 'r') as f:
-        config = yaml.safe_load(f) or {}
+    # Read host_vars (optional - some devices like spines may not have it)
+    config = {}
+    if os.path.exists(host_vars_file):
+        with open(host_vars_file, 'r') as f:
+            config = yaml.safe_load(f) or {}
     
     # Find device info from hosts file
     device_info = {'hostname': hostname, 'group': None, 'ip': None}
@@ -163,10 +168,32 @@ try:
                 if 'vrfs' in group_config:
                     config['vrfs'] = group_config['vrfs']
     
+    # Load port profiles for VLAN resolution
+    port_profiles = {}
+    if os.path.exists(port_profiles_file):
+        with open(port_profiles_file, 'r') as f:
+            pp_config = yaml.safe_load(f) or {}
+            port_profiles = pp_config.get('sw_port_profiles', {})
+    
+    # Load VLAN profiles for VRF resolution
+    vlan_to_vrf = {}
+    if os.path.exists(vlan_profiles_file):
+        with open(vlan_profiles_file, 'r') as f:
+            vp_config = yaml.safe_load(f) or {}
+            vlan_profiles = vp_config.get('vlan_profiles', {})
+            # Build VLAN ID to VRF mapping
+            for profile_name, profile_data in vlan_profiles.items():
+                if profile_data and 'vlans' in profile_data:
+                    for vlan_id, vlan_config in profile_data['vlans'].items():
+                        if vlan_config and 'vrf' in vlan_config:
+                            vlan_to_vrf[str(vlan_id)] = vlan_config['vrf']
+    
     print(json.dumps({
         'success': True,
         'config': config,
-        'device_info': device_info
+        'device_info': device_info,
+        'port_profiles': port_profiles,
+        'vlan_to_vrf': vlan_to_vrf
     }))
 
 except Exception as e:

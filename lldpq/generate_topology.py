@@ -144,16 +144,39 @@ def parse_assets_file(assets_file_path):
     return device_info
 
 def parse_hosts_file(hosts_file_path):
+    """
+    Parse hosts.ini file and return exact hostnames and patterns.
+    Patterns are lines containing '*' (e.g., *dgx*, spine-*)
+    """
     host_names = set()
+    patterns = []
     try:
         with open(hosts_file_path, 'r') as file:
             for line in file:
                 line = line.strip()
                 if line and not line.startswith('[') and not line.startswith('#'):
-                    host_names.add(line)
+                    if '*' in line:
+                        # Convert glob pattern to regex
+                        # *dgx* -> .*dgx.*
+                        regex_pattern = line.replace('*', '.*')
+                        patterns.append(re.compile(f'^{regex_pattern}$', re.IGNORECASE))
+                    else:
+                        host_names.add(line)
     except FileNotFoundError:
         pass
-    return host_names
+    return host_names, patterns
+
+def apply_host_patterns(patterns, all_hostnames):
+    """
+    Apply patterns to a list of hostnames and return matches.
+    """
+    matched = set()
+    for hostname in all_hostnames:
+        for pattern in patterns:
+            if pattern.match(hostname):
+                matched.add(hostname)
+                break
+    return matched
 
 def get_lldp_field(section, field_name, regex_pattern=None):
     if regex_pattern:
@@ -434,10 +457,9 @@ def parse_topology_dot_file(dot_file_path):
 
 def generate_topology_file(output_filename, directory, assets_file_path, hosts_file_path, dot_file_path):
     device_info = parse_assets_file(assets_file_path)
-    host_names = parse_hosts_file(hosts_file_path)
+    host_names, host_patterns = parse_hosts_file(hosts_file_path)
 
-    hosts_only_devices = host_names - set(device_info.keys())
-
+    # First pass: add exact hostnames to device_info
     for host in host_names:
         if host not in device_info:
             device_info[host] = {
@@ -448,7 +470,29 @@ def generate_topology_file(output_filename, directory, assets_file_path, hosts_f
                 "version": "N/A"
             }
 
+    hosts_only_devices = host_names - set(device_info.keys())
+
+    # Parse LLDP to discover all devices
     topology_data, device_nodes, current_link_id, all_lldp_links_found, all_port_status, all_port_speed = parse_lldp_results(directory, device_info, hosts_only_devices)
+
+    # Apply patterns to discovered devices (from LLDP neighbors)
+    if host_patterns:
+        all_discovered_hosts = set(device_nodes.keys())
+        pattern_matched_hosts = apply_host_patterns(host_patterns, all_discovered_hosts)
+        
+        # Add pattern-matched hosts to host_names and device_info
+        for host in pattern_matched_hosts:
+            if host not in host_names:
+                host_names.add(host)
+                hosts_only_devices.add(host)
+                if host not in device_info:
+                    device_info[host] = {
+                        "primaryIP": "N/A",
+                        "mac": "N/A",
+                        "serial_number": "N/A",
+                        "model": "N/A",
+                        "version": "N/A"
+                    }
 
     defined_links = parse_topology_dot_file(dot_file_path)
 
