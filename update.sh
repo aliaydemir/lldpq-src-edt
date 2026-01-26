@@ -276,10 +276,7 @@ if [[ -d "$HOME/lldpq" ]]; then
         cp "$HOME/lldpq/devices.yaml" "$temp_dir/"
     fi
     
-    if [[ -f "$HOME/lldpq/hosts.ini" ]]; then
-        echo "     • hosts.ini"
-        cp "$HOME/lldpq/hosts.ini" "$temp_dir/"
-    fi
+    # hosts.ini deprecated - now using endpoint_hosts in devices.yaml
     
     # topology.dot is now stored in web root with symlink in ~/lldpq
     # If it's a symlink, just note it; if it's a real file, migrate to web root
@@ -363,8 +360,8 @@ echo "[06] Data preservation summary:"
 echo "   The following files/directories were preserved:"
 echo "   Configuration files:"
 # nccm.yml removed - zzh uses devices.yaml
-echo "     • ~/lldpq/devices.yaml"
-echo "     • ~/lldpq/hosts.ini"
+# hosts.ini removed - now using endpoint_hosts in devices.yaml
+echo "     • ~/lldpq/devices.yaml (includes endpoint_hosts for topology)"
 echo "     • $WEB_ROOT/topology.dot (web-editable, symlinked from ~/lldpq)"
 echo "     • ~/lldpq/topology_config.yaml"
 echo "     • ~/lldpq/notifications.yaml"

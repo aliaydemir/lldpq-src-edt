@@ -56,3 +56,47 @@ devices:
   #   hostname: AdminSwitch01
   #   username: admin
   #   role: mgmt
+
+# =============================================================================
+# ENDPOINT HOSTS - Extra Hostnames for Topology Visualization
+# =============================================================================
+#
+# PURPOSE:
+#   Define additional hostnames for topology generation that may not be present
+#   in assets.ini. Used by generate_topology.py and generate_topology_full.py
+#   to ensure all network devices are included in the topology visualization.
+#
+# FORMAT:
+#   - One hostname per line (as YAML list)
+#   - Patterns with '*' are supported (wildcard matching)
+#   - Patterns must be quoted (YAML requirement)
+#
+# USAGE:
+#   - Add device hostnames that should appear in topology but aren't in assets.ini
+#   - Useful for devices that can't be monitored but exist in LLDP neighbor data
+#   - Helps create complete network topology visualization
+#   - Use patterns to match multiple devices at once
+#
+# PATTERN EXAMPLES:
+#   - "*dgx*"      → all devices containing "dgx"
+#   - "leaf-*"     → all devices starting with "leaf-"
+#   - "*-gpu"      → all devices ending with "-gpu"
+#
+# NOTE:
+#   If a hostname exists in both assets.ini and endpoint_hosts, the assets.ini
+#   data takes precedence for device details (IP, MAC, Serial, Model, Version).
+#   Patterns are matched against devices discovered via LLDP neighbor data.
+#
+# =============================================================================
+
+endpoint_hosts:
+  # Exact hostnames
+  # - border-router-01
+  # - external-switch-01
+  # - firewall-01
+
+  # Patterns - match devices discovered via LLDP
+  # - "dgx*"          # all devices starting with "dgx"
+  # - "*dgx*"         # all devices containing "dgx"
+  # - "*-oob*"        # all devices containing "-oob"
+  # - "*-gpu"         # all devices ending with "-gpu"

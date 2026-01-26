@@ -56,7 +56,6 @@ edit these files:
 ~/lldpq/topology.dot             # expected cable connections
 ~/lldpq/topology_config.yaml     # optional: customize device layers/icons (supports regex patterns)
 ~/lldpq/notifications.yaml       # optional: slack alerts + thresholds
-~/lldpq/hosts.ini                # optional: extra hostnames for topology (supports wildcards)
 ~/lldpq/commands                 # optional: commands for send-cmd
 ```
 
@@ -80,19 +79,16 @@ roles are optional tags for grouping. filter by role:
 - **send-cmd**: `send-cmd -r spine -c "uptime"` to target specific roles
 - **send-cmd**: `send-cmd --roles` to list available roles
 
-### hosts.ini format
+### endpoint_hosts (optional)
 
-add extra hostnames for topology visualization. supports exact names and wildcard patterns:
+add extra hostnames for topology visualization in devices.yaml. supports exact names and wildcard patterns:
 
-```ini
-# exact hostnames
-spine-01
-border-leaf-01
-
-# patterns - match devices discovered via LLDP
-*dgx*           # all devices containing "dgx"
-leaf-*          # all devices starting with "leaf-"
-*-gpu           # all devices ending with "-gpu"
+```yaml
+endpoint_hosts:
+  - border-router-01      # exact hostname
+  - "*dgx*"               # pattern - all devices containing "dgx"
+  - "leaf-*"              # pattern - all devices starting with "leaf-"
+  - "*-gpu"               # pattern - all devices ending with "-gpu"
 ```
 
 patterns are matched against devices found in LLDP neighbor data.
@@ -116,7 +112,7 @@ git pull                    # get latest code
 ```
 
 ### what gets preserved:
-- **config files**: devices.yaml, hosts.ini, topology.dot, topology_config.yaml
+- **config files**: devices.yaml, topology.dot, topology_config.yaml
 - **monitoring data**: monitor-results/, lldp-results/ (optional backup)
 - **system configs**: /etc/lldpq.conf  
 

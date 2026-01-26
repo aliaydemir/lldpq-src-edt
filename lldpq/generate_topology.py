@@ -143,26 +143,40 @@ def parse_assets_file(assets_file_path):
         pass
     return device_info
 
-def parse_hosts_file(hosts_file_path):
+def parse_endpoint_hosts(devices_yaml_path):
     """
-    Parse hosts.ini file and return exact hostnames and patterns.
-    Patterns are lines containing '*' (e.g., *dgx*, spine-*)
+    Parse endpoint_hosts from devices.yaml file.
+    Returns exact hostnames and patterns.
+    Patterns are entries containing '*' (e.g., *dgx*, spine-*)
+    
+    devices.yaml format:
+        endpoint_hosts:
+          - exact-hostname
+          - "*dgx*"        # pattern
+          - "prod-cfw*"    # pattern
     """
     host_names = set()
     patterns = []
     try:
-        with open(hosts_file_path, 'r') as file:
-            for line in file:
-                line = line.strip()
-                if line and not line.startswith('[') and not line.startswith('#'):
-                    if '*' in line:
-                        # Convert glob pattern to regex
-                        # *dgx* -> .*dgx.*
-                        regex_pattern = line.replace('*', '.*')
-                        patterns.append(re.compile(f'^{regex_pattern}$', re.IGNORECASE))
-                    else:
-                        host_names.add(line)
-    except FileNotFoundError:
+        with open(devices_yaml_path, 'r') as file:
+            config = yaml.safe_load(file)
+            
+        endpoint_hosts = config.get('endpoint_hosts', [])
+        if not endpoint_hosts:
+            return host_names, patterns
+            
+        for entry in endpoint_hosts:
+            if not entry or not isinstance(entry, str):
+                continue
+            entry = entry.strip()
+            if '*' in entry:
+                # Convert glob pattern to regex
+                # *dgx* -> .*dgx.*
+                regex_pattern = entry.replace('*', '.*')
+                patterns.append(re.compile(f'^{regex_pattern}$', re.IGNORECASE))
+            else:
+                host_names.add(entry)
+    except (FileNotFoundError, yaml.YAMLError):
         pass
     return host_names, patterns
 
@@ -455,9 +469,9 @@ def parse_topology_dot_file(dot_file_path):
         pass
     return defined_links
 
-def generate_topology_file(output_filename, directory, assets_file_path, hosts_file_path, dot_file_path):
+def generate_topology_file(output_filename, directory, assets_file_path, devices_yaml_path, dot_file_path):
     device_info = parse_assets_file(assets_file_path)
-    host_names, host_patterns = parse_hosts_file(hosts_file_path)
+    host_names, host_patterns = parse_endpoint_hosts(devices_yaml_path)
 
     # First pass: add exact hostnames to device_info
     for host in host_names:
@@ -599,7 +613,7 @@ def generate_topology_file(output_filename, directory, assets_file_path, hosts_f
 if __name__ == "__main__":
     lldp_results_directory = "lldp-results"
     assets_file_path = "assets.ini"
-    hosts_file_path = "hosts.ini"
+    devices_yaml_path = "devices.yaml"
     dot_file_path = "topology.dot"
     
     # Get web root from config with fallback
@@ -610,4 +624,4 @@ if __name__ == "__main__":
     if not os.path.isdir(lldp_results_directory):
         exit(1)
 
-    generate_topology_file(output_file, lldp_results_directory, assets_file_path, hosts_file_path, dot_file_path)
+    generate_topology_file(output_file, lldp_results_directory, assets_file_path, devices_yaml_path, dot_file_path)

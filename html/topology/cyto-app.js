@@ -932,7 +932,7 @@ function toggleHostnames(show) {
 
 /**
  * Toggle endpoint (host) nodes visibility
- * Hides/shows nodes with icon type 'host' or 'server' (from hosts.ini)
+ * Hides/shows nodes with icon type 'host' or 'server' (from endpoint_hosts in devices.yaml)
  */
 function toggleEndpoints(show) {
     if (!cy) return;
