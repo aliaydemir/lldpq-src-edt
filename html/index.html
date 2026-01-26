@@ -318,6 +318,9 @@
             if (LLDPqAuth.isOperator()) {
                 document.getElementById('ansible-menu').style.display = 'none';
             }
+            
+            // Check for updates after auth is ready (admin only)
+            checkForUpdates();
         }
         
         // Run auth check
@@ -349,8 +352,6 @@
             .then(version => {
                 localVersion = version.trim();
                 document.getElementById('version-display').textContent = 'LLDPq v' + localVersion;
-                // Check for updates (admin only)
-                checkForUpdates();
             })
             .catch(() => {
                 document.getElementById('version-display').textContent = 'LLDPq';
@@ -360,6 +361,16 @@
         async function checkForUpdates() {
             // Only check for admins
             if (!LLDPqAuth.isAdmin()) return;
+            
+            // Wait for local version to be fetched
+            if (!localVersion) {
+                try {
+                    const response = await fetch('/VERSION');
+                    localVersion = (await response.text()).trim();
+                } catch (e) {
+                    return; // Can't check without local version
+                }
+            }
             
             // Check cache first
             const cached = localStorage.getItem('lldpq_update_check');
