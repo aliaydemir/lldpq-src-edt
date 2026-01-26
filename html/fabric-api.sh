@@ -178,9 +178,16 @@ try:
     # Load VLAN profiles for VRF and IP resolution
     vlan_to_vrf = {}
     vlan_profiles_data = {}
+    vxlan_int_mapping = {}  # VRF name -> VLAN ID for L3VNI interface
+    
     if os.path.exists(vlan_profiles_file):
         with open(vlan_profiles_file, 'r') as f:
             vp_config = yaml.safe_load(f) or {}
+            
+            # Load vxlan_int mapping (nscale/kddi style: vxlan_int at top level)
+            if 'vxlan_int' in vp_config and isinstance(vp_config['vxlan_int'], dict):
+                vxlan_int_mapping = {str(k): str(v) for k, v in vp_config['vxlan_int'].items()}
+            
             vlan_profiles = vp_config.get('vlan_profiles', {})
             # Build VLAN ID to VRF mapping and VLAN profile data
             for profile_name, profile_data in vlan_profiles.items():
@@ -209,7 +216,8 @@ try:
         'device_info': device_info,
         'port_profiles': port_profiles,
         'vlan_to_vrf': vlan_to_vrf,
-        'vlan_profiles': vlan_profiles_data
+        'vlan_profiles': vlan_profiles_data,
+        'vxlan_int_mapping': vxlan_int_mapping
     }))
 
 except Exception as e:

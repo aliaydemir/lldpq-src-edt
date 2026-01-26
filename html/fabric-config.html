@@ -608,6 +608,11 @@
             background: rgba(0, 122, 204, 0.2);
             color: #4fc3f7;
         }
+
+        .badge-purple {
+            background: rgba(156, 39, 176, 0.2);
+            color: #ce93d8;
+        }
         
         .badge-orange {
             background: rgba(255, 152, 0, 0.2);
@@ -1052,6 +1057,7 @@
             const portProfiles = data.port_profiles || {};
             const vlanToVrf = data.vlan_to_vrf || {};
             const vlanProfiles = data.vlan_profiles || {};
+            const vxlanIntMapping = data.vxlan_int_mapping || {};  // VRF name -> VLAN ID mapping
             
             document.getElementById('content-subtitle').textContent = deviceInfo.ip || '';
             
@@ -1163,6 +1169,7 @@
                                 <thead>
                                     <tr>
                                         <th>VRF Name</th>
+                                        <th>VXLAN Interface</th>
                                         <th>L3VNI</th>
                                         <th>BGP Profile</th>
                                         <th>ASN</th>
@@ -1172,9 +1179,29 @@
                 `;
                 
                 for (const [vrfName, vrfConfig] of Object.entries(config.vrfs)) {
+                    // Build VXLAN interface name from multiple sources:
+                    // 1. VRF config itself (dt-mvp style): vrfConfig.vxlan_int
+                    // 2. vxlan_int_mapping from vlan_profiles.yaml (nscale/kddi style)
+                    let vxlanInt = '-';
+                    let vxlanVlanId = null;
+                    
+                    // Check VRF config first
+                    if (vrfConfig.vxlan_int) {
+                        vxlanVlanId = vrfConfig.vxlan_int;
+                    }
+                    // Fallback to vxlan_int_mapping from vlan_profiles.yaml
+                    else if (vxlanIntMapping && vxlanIntMapping[vrfName]) {
+                        vxlanVlanId = vxlanIntMapping[vrfName];
+                    }
+                    
+                    if (vxlanVlanId) {
+                        vxlanInt = `vlan${vxlanVlanId}_l3`;
+                    }
+                    
                     html += `
                         <tr>
                             <td><span class="badge badge-blue">${vrfName}</span></td>
+                            <td>${vxlanInt !== '-' ? `<span class="badge badge-purple">${vxlanInt}</span>` : '-'}</td>
                             <td>${vrfConfig.l3vni || '-'}</td>
                             <td>${vrfConfig.bgp?.bgp_profile || '-'}</td>
                             <td>${vrfConfig.bgp?.asn || '-'}</td>
@@ -1345,11 +1372,11 @@
                 // Separate breakout parents from real interfaces
                 const breakouts = [];
                 const realInterfaces = [];
-                
+
                 for (const [ifName, ifConfig] of allInterfaces) {
                     const cfg = ifConfig || {};
                     const isSubInterface = /s\d+$/.test(ifName);
-                    
+
                     if (cfg.breakout && !isSubInterface) {
                         // This is a breakout parent (physical port with breakout config)
                         breakouts.push([ifName, cfg]);
@@ -1358,6 +1385,29 @@
                         realInterfaces.push([ifName, cfg]);
                     }
                 }
+                
+                // Sort function for interface names (natural sort: swp1, swp2, swp2s0, swp2s1, swp3, ...)
+                const sortInterfaces = (a, b) => {
+                    const nameA = a[0];
+                    const nameB = b[0];
+                    // Extract prefix, number, and optional sub-index
+                    const parseIf = (name) => {
+                        const match = name.match(/^([a-zA-Z]+)(\d+)(s(\d+))?$/);
+                        if (match) {
+                            return { prefix: match[1], num: parseInt(match[2]), sub: match[4] ? parseInt(match[4]) : -1 };
+                        }
+                        return { prefix: name, num: 0, sub: -1 };
+                    };
+                    const pA = parseIf(nameA);
+                    const pB = parseIf(nameB);
+                    if (pA.prefix !== pB.prefix) return pA.prefix.localeCompare(pB.prefix);
+                    if (pA.num !== pB.num) return pA.num - pB.num;
+                    return pA.sub - pB.sub;
+                };
+                
+                // Sort both arrays
+                breakouts.sort(sortInterfaces);
+                realInterfaces.sort(sortInterfaces);
                 
                 // Breakouts Section
                 if (breakouts.length > 0) {
@@ -1383,23 +1433,35 @@
                     `;
                     
                     for (const [ifName, cfg] of breakouts) {
-                        // Calculate sub-interfaces based on breakout type
                         const breakoutType = cfg.breakout || '-';
-                        let subIfCount = 1;
-                        const breakoutMatch = breakoutType.match(/^(\d+)x/);
-                        if (breakoutMatch) {
-                            subIfCount = parseInt(breakoutMatch[1]);
-                        }
-                        const subInterfaces = [];
-                        for (let i = 0; i < subIfCount; i++) {
-                            subInterfaces.push(ifName + 's' + i);
-                        }
                         
+                        // Find actual configured sub-interfaces for this port
+                        const actualSubInterfaces = realInterfaces
+                            .filter(([name, _]) => name.startsWith(ifName + 's'))
+                            .map(([name, _]) => name);
+                        
+                        // If no actual sub-interfaces configured, show expected ones based on breakout
+                        let subInterfaceText = '-';
+                        if (actualSubInterfaces.length > 0) {
+                            subInterfaceText = actualSubInterfaces.join(', ');
+                        } else {
+                            // Calculate expected sub-interfaces
+                            const breakoutMatch = breakoutType.match(/^(\d+)x/);
+                            if (breakoutMatch) {
+                                const subIfCount = parseInt(breakoutMatch[1]);
+                                const expected = [];
+                                for (let i = 0; i < subIfCount; i++) {
+                                    expected.push(ifName + 's' + i);
+                                }
+                                subInterfaceText = `<span style="color: #888;">${expected.join(', ')} (not configured)</span>`;
+                            }
+                        }
+
                         html += `
                             <tr>
                                 <td><strong>${ifName}</strong></td>
                                 <td><span class="badge badge-orange">${breakoutType}</span></td>
-                                <td>${subInterfaces.join(', ')}</td>
+                                <td>${subInterfaceText}</td>
                                 <td>${cfg.description || '-'}</td>
                             </tr>
                         `;
