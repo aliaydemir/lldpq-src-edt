@@ -186,7 +186,7 @@
         
         .action-buttons {
             display: flex;
-            gap: 10px;
+            gap: 8px;
         }
         
         .btn {
@@ -238,7 +238,7 @@
             width: 1px;
             height: 24px;
             background: #555;
-            margin: 0 5px;
+            margin: 0 12px;
         }
         
         .btn-success {
@@ -713,14 +713,12 @@
                         </svg>
                         Refresh
                     </button>
-                    <div class="toolbar-separator" id="separator-refresh" style="display: none;"></div>
                     <button class="btn btn-success" onclick="runGenerate()">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                             <path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
                         </svg>
                         Generate
                     </button>
-                    <label class="target-label">Target:</label>
                     <div class="host-dropdown">
                         <div class="host-dropdown-trigger" onclick="toggleHostDropdown()">
                             <span id="host-dropdown-text">Select hosts...</span>
@@ -1004,7 +1002,6 @@
             
             // Show refresh button when device is selected
             document.getElementById('btn-refresh').style.display = 'flex';
-            document.getElementById('separator-refresh').style.display = 'block';
             
             // Update header
             document.getElementById('content-title').textContent = hostname;
@@ -1384,24 +1381,53 @@
                         // This is a real interface (sub-interface or non-breakout)
                         realInterfaces.push([ifName, cfg]);
                     }
+                    
+                    // Check for nested subinterfaces (e.g., swp1.1001)
+                    if (cfg.subinterfaces && typeof cfg.subinterfaces === 'object') {
+                        for (const [subId, subConfig] of Object.entries(cfg.subinterfaces)) {
+                            const subIfName = `${ifName}.${subId}`;
+                            // Add subinterface with merged config
+                            realInterfaces.push([subIfName, {
+                                ...subConfig,
+                                _parentInterface: ifName,
+                                _isVlanSubInterface: true
+                            }]);
+                        }
+                    }
                 }
                 
-                // Sort function for interface names (natural sort: swp1, swp2, swp2s0, swp2s1, swp3, ...)
+                // Sort function for interface names (natural sort: swp1, swp1.1001, swp2, swp2s0, swp2s1, swp3, ...)
                 const sortInterfaces = (a, b) => {
                     const nameA = a[0];
                     const nameB = b[0];
-                    // Extract prefix, number, and optional sub-index
+                    // Extract prefix, number, and optional sub-index (handles both swp2s0 and swp1.1001 formats)
                     const parseIf = (name) => {
-                        const match = name.match(/^([a-zA-Z]+)(\d+)(s(\d+))?$/);
+                        // Try breakout format first (swp2s0)
+                        let match = name.match(/^([a-zA-Z]+)(\d+)s(\d+)$/);
                         if (match) {
-                            return { prefix: match[1], num: parseInt(match[2]), sub: match[4] ? parseInt(match[4]) : -1 };
+                            return { prefix: match[1], num: parseInt(match[2]), subType: 's', sub: parseInt(match[3]) };
                         }
-                        return { prefix: name, num: 0, sub: -1 };
+                        // Try VLAN sub-interface format (swp1.1001)
+                        match = name.match(/^([a-zA-Z]+)(\d+)\.(\d+)$/);
+                        if (match) {
+                            return { prefix: match[1], num: parseInt(match[2]), subType: '.', sub: parseInt(match[3]) };
+                        }
+                        // Regular interface (swp1)
+                        match = name.match(/^([a-zA-Z]+)(\d+)$/);
+                        if (match) {
+                            return { prefix: match[1], num: parseInt(match[2]), subType: '', sub: -1 };
+                        }
+                        return { prefix: name, num: 0, subType: '', sub: -1 };
                     };
                     const pA = parseIf(nameA);
                     const pB = parseIf(nameB);
                     if (pA.prefix !== pB.prefix) return pA.prefix.localeCompare(pB.prefix);
                     if (pA.num !== pB.num) return pA.num - pB.num;
+                    // Sub-interfaces come after parent: swp1 < swp1.1001 < swp1s0
+                    if (pA.sub === -1 && pB.sub !== -1) return -1;
+                    if (pA.sub !== -1 && pB.sub === -1) return 1;
+                    // VLAN subs (.) before breakout subs (s)
+                    if (pA.subType !== pB.subType) return pA.subType === '.' ? -1 : 1;
                     return pA.sub - pB.sub;
                 };
                 
@@ -1501,12 +1527,15 @@
                         const bondInfo = interfaceToBond[ifName];
                         const profile = cfg.sw_port_profile || (bondInfo?.profile) || '';
                         
-                        let vlan = getVlanFromProfile(profile);
+                        // Get VLAN - check direct vlan field first (for VLAN sub-interfaces), then profile
+                        let vlan = cfg.vlan ? String(cfg.vlan) : null;
+                        if (!vlan) vlan = getVlanFromProfile(profile);
                         if (!vlan && cfg.access_vlan) vlan = String(cfg.access_vlan);
                         if (!vlan && cfg.native_vlan) vlan = String(cfg.native_vlan);
                         
-                        let vrf = getVrfFromVlan(vlan);
-                        if (!vrf && cfg.vrf) vrf = cfg.vrf;
+                        // Get VRF - check direct vrf field first, then derive from VLAN
+                        let vrf = cfg.vrf || null;
+                        if (!vrf) vrf = getVrfFromVlan(vlan);
                         
                         const displayProfile = profile || '-';
                         const displayVrf = vrf || (hasDefaultVrf ? 'default' : null);
