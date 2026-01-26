@@ -196,25 +196,35 @@ def scan_lldp_neighbors(directory):
     """
     Scan LLDP result files to discover all neighbor hostnames.
     This is used to apply patterns before the full LLDP parse.
+    Parses the main lldp_results.ini file.
+    
+    Format: Port  Status  Exp-Nbr  Exp-Nbr-Port  Act-Nbr  Act-Nbr-Port  Port-Status
+    We need Act-Nbr (index 4) which is the actual neighbor hostname.
     """
     all_neighbors = set()
     try:
-        for filename in os.listdir(directory):
-            if not filename.endswith("_lldp_result.ini"):
-                continue
-            filepath = os.path.join(directory, filename)
-            try:
-                with open(filepath, 'r') as f:
-                    content = f.read()
-                # Extract neighbor names from LLDP data
-                # Pattern: look for SysName or hostname in neighbor data
-                neighbors = re.findall(r'SysName:\s*(\S+)', content, re.IGNORECASE)
-                all_neighbors.update(neighbors)
-                # Also try to extract from the standard format
-                neighbors2 = re.findall(r'(?:Chassis|System Name).*?:\s*(\S+)', content, re.IGNORECASE)
-                all_neighbors.update(neighbors2)
-            except:
-                pass
+        main_file = os.path.join(directory, "lldp_results.ini")
+        if os.path.exists(main_file):
+            with open(main_file, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    # Skip headers, separators, and empty lines
+                    if not line or line.startswith('-') or line.startswith('Port') or line.startswith('=') or line.startswith('Created'):
+                        continue
+                    parts = line.split()
+                    # Format: Port Status Exp-Nbr Exp-Nbr-Port Act-Nbr Act-Nbr-Port Port-Status
+                    # Index:  0    1      2       3            4       5            6
+                    if len(parts) >= 5:
+                        # Get Act-Nbr (actual neighbor) at index 4
+                        act_nbr = parts[4]
+                        # Skip if it's not a valid hostname
+                        if act_nbr and act_nbr not in ('None', 'N/A', '-'):
+                            all_neighbors.add(act_nbr)
+                        
+                        # Also get Exp-Nbr (expected neighbor) at index 2
+                        exp_nbr = parts[2]
+                        if exp_nbr and exp_nbr not in ('None', 'N/A', '-'):
+                            all_neighbors.add(exp_nbr)
     except:
         pass
     return all_neighbors
