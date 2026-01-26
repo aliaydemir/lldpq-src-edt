@@ -192,6 +192,33 @@ def apply_host_patterns(patterns, all_hostnames):
                 break
     return matched
 
+def scan_lldp_neighbors(directory):
+    """
+    Scan LLDP result files to discover all neighbor hostnames.
+    This is used to apply patterns before the full LLDP parse.
+    """
+    all_neighbors = set()
+    try:
+        for filename in os.listdir(directory):
+            if not filename.endswith("_lldp_result.ini"):
+                continue
+            filepath = os.path.join(directory, filename)
+            try:
+                with open(filepath, 'r') as f:
+                    content = f.read()
+                # Extract neighbor names from LLDP data
+                # Pattern: look for SysName or hostname in neighbor data
+                neighbors = re.findall(r'SysName:\s*(\S+)', content, re.IGNORECASE)
+                all_neighbors.update(neighbors)
+                # Also try to extract from the standard format
+                neighbors2 = re.findall(r'(?:Chassis|System Name).*?:\s*(\S+)', content, re.IGNORECASE)
+                all_neighbors.update(neighbors2)
+            except:
+                pass
+    except:
+        pass
+    return all_neighbors
+
 def get_lldp_field(section, field_name, regex_pattern=None):
     if regex_pattern:
         match = re.search(regex_pattern, section, re.DOTALL | re.IGNORECASE)
@@ -498,47 +525,28 @@ def generate_topology_file(output_filename, directory, assets_file_path, devices
                 "version": "N/A"
             }
 
+    # Apply patterns to LLDP neighbors BEFORE parsing
+    # This ensures pattern-matched hosts are included in the topology
+    if host_patterns:
+        all_lldp_neighbors = scan_lldp_neighbors(directory)
+        pattern_matched_hosts = apply_host_patterns(host_patterns, all_lldp_neighbors)
+        
+        # Add pattern-matched hosts to host_names and device_info
+        for host in pattern_matched_hosts:
+            host_names.add(host)
+            if host not in device_info:
+                device_info[host] = {
+                    "primaryIP": "N/A",
+                    "mac": "N/A",
+                    "serial_number": "N/A",
+                    "model": "N/A",
+                    "version": "N/A"
+                }
+
     hosts_only_devices = host_names - set(device_info.keys())
 
-    # Parse LLDP to discover all devices
+    # Parse LLDP to discover all devices (now includes pattern-matched hosts)
     topology_data, device_nodes, current_link_id, all_lldp_links_found, all_port_status, all_port_speed = parse_lldp_results(directory, device_info, hosts_only_devices)
-
-    # Apply patterns to discovered devices (from LLDP neighbors)
-    if host_patterns:
-        all_discovered_hosts = set(device_nodes.keys())
-        pattern_matched_hosts = apply_host_patterns(host_patterns, all_discovered_hosts)
-        
-        # Track existing node names for deduplication
-        existing_node_names = {node["name"] for node in topology_data["nodes"]}
-        
-        # Add pattern-matched hosts to host_names, device_info, and topology_data
-        for host in pattern_matched_hosts:
-            if host not in host_names:
-                host_names.add(host)
-                hosts_only_devices.add(host)
-                if host not in device_info:
-                    device_info[host] = {
-                        "primaryIP": "N/A",
-                        "mac": "N/A",
-                        "serial_number": "N/A",
-                        "model": "N/A",
-                        "version": "N/A"
-                    }
-                
-                # Also add to topology_data["nodes"] if not already there
-                if host not in existing_node_names and host in device_nodes:
-                    node_id = device_nodes[host]
-                    topology_data["nodes"].append({
-                        "id": node_id,
-                        "name": host,
-                        "primaryIP": "N/A",
-                        "mac": "N/A",
-                        "serial_number": "N/A",
-                        "model": "N/A",
-                        "version": "N/A",
-                        "icon": "host"
-                    })
-                    existing_node_names.add(host)
 
     defined_links = parse_topology_dot_file(dot_file_path)
 
