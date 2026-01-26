@@ -428,9 +428,28 @@
         .no-file-open {
             flex: 1;
             display: flex;
+            flex-direction: column;
             align-items: center;
             justify-content: center;
             color: #666;
+            font-size: 14px;
+            height: 100%;
+        }
+
+        .no-file-open svg {
+            width: 80px;
+            height: 80px;
+            margin-bottom: 20px;
+            opacity: 0.5;
+        }
+
+        .no-file-open h2 {
+            font-size: 24px;
+            margin-bottom: 10px;
+            color: #888;
+        }
+
+        .no-file-open p {
             font-size: 14px;
         }
         
@@ -1171,7 +1190,11 @@
             <div id="editor-preview-wrapper" class="editor-preview-split">
                 <div id="editor-container">
                     <div class="no-file-open" id="no-file-message">
-                        <span id="loading-text">Loading editor...</span>
+                        <svg viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M4 1h16a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1m0 8h16a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1m0 8h16a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1M9 5h1V3H9v2m0 8h1v-2H9v2m0 8h1v-2H9v2M5 3v2h2V3H5m0 8v2h2v-2H5m0 8v2h2v-2H5z"/>
+                        </svg>
+                        <h2>Fabric Editor</h2>
+                        <p>Select a file from the left panel to view and edit its content</p>
                     </div>
                 </div>
                 <div id="markdown-preview"></div>
@@ -1773,16 +1796,11 @@
                 saveCurrentFile();
             });
             
-            // Hide editor initially
-            document.getElementById('editor-container').style.display = 'none';
-            
-            // Update loading message
-            document.getElementById('loading-text').textContent = 'Loading files...';
-            
+            // Show welcome message initially (editor container stays visible, Monaco is not yet created)
+            document.getElementById('no-file-message').style.display = 'flex';
+
             // Load file tree
-            loadFileTree().then(() => {
-                document.getElementById('loading-text').textContent = 'Select a file from the sidebar to edit';
-            });
+            loadFileTree();
         });
         
         // YAML Validation
@@ -2207,6 +2225,11 @@
                     }
                 }
                 
+                // Save current file content before switching
+                if (state.currentFile && state.files[state.currentFile]) {
+                    state.files[state.currentFile].content = state.editor.getValue();
+                }
+                
                 // Switch to file
                 state.currentFile = path;
                 
@@ -2307,6 +2330,11 @@
         // Switch to file
         function switchToFile(path) {
             if (state.files[path]) {
+                // Save current file content before switching
+                if (state.currentFile && state.files[state.currentFile]) {
+                    state.files[state.currentFile].content = state.editor.getValue();
+                }
+                
                 state.currentFile = path;
                 state.editor.setValue(state.files[path].content);
                 state.editor.setScrollTop(0);
@@ -2459,9 +2487,14 @@
         
         function hideMarkdownPreview() {
             const preview = document.getElementById('markdown-preview');
+            const editor = document.getElementById('editor-container');
+            
             preview.classList.remove('visible');
             preview.classList.remove('full-preview');
             preview.innerHTML = ''; // Clear content
+            
+            // Show editor (it might have been hidden in full-preview mode)
+            editor.style.display = 'block';
             
             // Hide MD button and reset state
             const btnMD = document.getElementById('btn-preview');
