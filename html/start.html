@@ -5,11 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>..::LLDPQ::..</title>
     <link rel="shortcut icon" href="/png/favicon.ico">
-    <link rel="stylesheet" type="text/css" href="/css/styles2.css">
     <style>
-        html, body {
+        * {
             margin: 0;
             padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            min-height: 100vh;
             overflow-x: hidden;
             overflow-y: auto;
         }
@@ -19,189 +26,210 @@
             margin: 0 auto;
             padding: 20px;
             min-height: 100vh;
-            box-sizing: border-box;
         }
         
-        .analysis-section {
-            margin: 30px 0;
-            background: #2d2d2d;
-            border-radius: 12px;
-            padding: 25px;
-            border: 1px solid #444;
+        /* Page Header */
+        .page-header {
+            text-align: center;
+            padding: 20px 0;
+            border-bottom: 1px solid #404040;
+            margin-bottom: 25px;
         }
-        
-        .section-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-            padding-bottom: 10px;
-        }
-        
-        .section-title {
-            font-size: 22px;
-            font-weight: bold;
-            color: #b57614;
-            margin: 0;
-            background: rgba(181, 118, 20, 0.1);
-            padding: 8px 16px;
-            border-radius: 6px;
-            border: 1px solid rgba(181, 118, 20, 0.3);
-            display: inline-block;
-            transition: all 0.3s ease;
-            cursor: pointer;
-        }
-        
-        .section-title:hover {
-            background: rgba(181, 118, 20, 0.2);
-            border-color: rgba(181, 118, 20, 0.5);
-            transform: translateY(-1px);
-        }
-        
-        .summary-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin: 20px 0;
-        }
-        
-        .summary-card {
-            background: #f8f9fa;
-            padding: 20px;
-            border-radius: 10px;
-            border-left: 5px solid #007bff;
-            transition: all 0.3s ease;
-            cursor: pointer;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        
-        .summary-card:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 6px 12px rgba(0,0,0,0.15);
-        }
-        
-        .card-value {
-            font-size: 28px;
-            font-weight: bold;
-            color: #333;
-            margin-bottom: 8px;
-        }
-        
-        .card-label {
-            font-size: 14px;
-            color: #666;
-            font-weight: 500;
-        }
-        
-        /* Card Border Colors */
-        .card-total { border-left-color: #2196f3; }
-        .card-excellent { border-left-color: #4caf50; }
-        .card-good { border-left-color: #8bc34a; }
-        .card-warning { border-left-color: #ff9800; }
-        .card-critical { border-left-color: #f44336; }
-        .card-info { border-left-color: #17a2b8; }
-        
-        /* Status Colors */
-        .status-excellent { color: #4caf50; }
-        .status-good { color: #8bc34a; }
-        .status-warning { color: #ff9800; }
-        .status-critical { color: #f44336; }
-        .status-info { color: #17a2b8; }
         
         .main-title {
-            font-size: 3.2em;
+            font-size: 2.8em;
             font-weight: bold;
-            color: #b57614;
-            text-align: center;
-            margin: 20px 0;
-            text-shadow: 0 0 10px rgba(181, 118, 20, 0.3);
-        }
-        
-        .last-updated {
-            text-align: center;
-            margin: 20px 0;
-            color: #ccc;
-            font-size: 16px;
+            color: #76b900;
+            margin: 0 0 15px 0;
         }
         
         .nvidia-logo {
-            text-align: center;
-            margin: 10px 0 20px 0;
+            margin: 15px 0;
         }
         
         .nvidia-logo img {
-            max-width: 200px;
-            border-radius: 10px;
-            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+            max-width: 180px;
+            border-radius: 8px;
+            opacity: 0.9;
         }
         
+        .last-updated {
+            font-size: 13px;
+            color: #888;
+            margin-top: 10px;
+        }
+        
+        /* Dashboard Overview Stats */
         .dashboard-stats {
-            background: linear-gradient(135deg, #3d3d3d 0%, #4a4a4a 100%);
-            border: 1px solid #b57614;
-            border-radius: 12px;
+            background: #2d2d2d;
+            border-radius: 8px;
             padding: 20px;
-            margin: 30px 0;
-            text-align: center;
-            color: #e0e0e0;
-            box-shadow: 0 4px 8px rgba(181, 118, 20, 0.2);
+            margin-bottom: 25px;
+            border: 1px solid #404040;
         }
         
-        .dashboard-stats h3 {
-            margin: 0 0 15px 0;
-            font-size: 20px;
+        .dashboard-stats-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: #76b900;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 15px;
+            text-align: center;
         }
         
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
             gap: 15px;
-            margin-top: 15px;
         }
         
         .stat-item {
-            background: rgba(181, 118, 20, 0.1);
-            border: 1px solid rgba(181, 118, 20, 0.3);
+            background: #252526;
             padding: 15px;
-            border-radius: 8px;
-            transition: all 0.3s ease;
-        }
-        
-        .stat-item:hover {
-            background: rgba(181, 118, 20, 0.2);
-            border-color: rgba(181, 118, 20, 0.5);
+            border-radius: 6px;
+            border-left: 3px solid #76b900;
+            text-align: center;
         }
         
         .stat-value {
-            font-size: 24px;
+            font-size: 26px;
             font-weight: bold;
+            color: #fff;
             margin-bottom: 5px;
         }
         
         .stat-label {
-            font-size: 12px;
-            opacity: 0.9;
+            font-size: 11px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        /* Analysis Sections */
+        .analysis-section {
+            background: #2d2d2d;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            overflow: hidden;
+        }
+        
+        .section-header {
+            padding: 12px 16px;
+            background: #333;
+            border-bottom: 1px solid #404040;
+        }
+        
+        .section-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #76b900;
+            margin: 0;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            transition: color 0.2s;
+        }
+        
+        .section-title:hover {
+            color: #8bd400;
+        }
+        
+        .section-content {
+            padding: 16px;
+        }
+        
+        /* Summary Cards Grid */
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 12px;
+        }
+        
+        .summary-card {
+            background: #252526;
+            padding: 15px;
+            border-radius: 6px;
+            border-left: 3px solid #76b900;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        
+        .summary-card:hover {
+            background: #2a2d2e;
+            transform: translateY(-2px);
+        }
+        
+        .card-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #fff;
+            margin-bottom: 5px;
+        }
+        
+        .card-label {
+            font-size: 11px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        /* Card Border Colors */
+        .card-total { border-left-color: #4fc3f7; }
+        .card-excellent { border-left-color: #76b900; }
+        .card-good { border-left-color: #8bc34a; }
+        .card-warning { border-left-color: #ff9800; }
+        .card-critical { border-left-color: #f44336; }
+        .card-info { border-left-color: #4fc3f7; }
+        
+        /* Status Colors */
+        .status-excellent { color: #76b900; }
+        .status-good { color: #8bc34a; }
+        .status-warning { color: #ffb74d; }
+        .status-critical { color: #ff6b6b; }
+        .status-info { color: #4fc3f7; }
+        
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: #1e1e1e;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: #404040;
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: #555;
         }
     </style>
 </head>
 <body>
     <div class="dashboard-container">
-        <h1 class="main-title">LLDPQ</h1>
-        
-        <div class="nvidia-logo">
-            <img src="/png/nvidia-logo.jpg" alt="NVIDIA Logo">
-        </div>
-        
-        <div class="last-updated">
-            <strong>Last Updated:</strong> <span id="last-updated-time"></span>
+        <!-- Page Header -->
+        <div class="page-header">
+            <h1 class="main-title">LLDPQ</h1>
+            <div class="nvidia-logo">
+                <img src="/png/nvidia-logo.jpg" alt="NVIDIA Logo">
+            </div>
+            <div class="last-updated">
+                Last Updated: <span id="last-updated-time"></span>
+            </div>
         </div>
         
         <!-- Dashboard Overview Stats -->
         <div class="dashboard-stats">
-            <h3>Network Health Overview</h3>
+            <div class="dashboard-stats-title">Network Health Overview</div>
             <div class="stats-grid">
                 <div class="stat-item">
                     <div class="stat-value" id="total-network-devices">--</div>
-                    <div class="stat-label">Total Network Devices</div>
+                    <div class="stat-label">Total Devices</div>
                 </div>
                 <div class="stat-item">
                     <div class="stat-value" id="total-interfaces">--</div>
@@ -221,8 +249,12 @@
         <!-- Hardware Health Analysis Section -->
         <div class="analysis-section">
             <div class="section-header">
-                <h2 class="section-title" onclick="window.location.href='/monitor-results/hardware-analysis.html'">Hardware Health Analysis</h2>
+                <h2 class="section-title" onclick="window.location.href='/monitor-results/hardware-analysis.html'">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M22 9V7h-2V5a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-2h2v-2h-2v-2h2v-2h-2V9h2zM4 5h14v14H4V5zm8 12c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zm0-8c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3z"/></svg>
+                    Hardware Health Analysis
+                </h2>
             </div>
+            <div class="section-content">
             <div class="summary-grid">
                 <div class="summary-card card-total" onclick="window.location.href='/monitor-results/hardware-analysis.html'">
                     <div class="card-value" id="hardware-total">--</div>
@@ -245,13 +277,18 @@
                     <div class="card-label">Critical</div>
                 </div>
             </div>
+            </div>
         </div>
 
         <!-- Log Analysis Section -->
         <div class="analysis-section">
             <div class="section-header">
-                <h2 class="section-title" onclick="window.location.href='/monitor-results/log-analysis.html'">Log Analysis</h2>
+                <h2 class="section-title" onclick="window.location.href='/monitor-results/log-analysis.html'">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm4 18H6V4h7v5h5v11zM8 12h8v2H8v-2zm0 4h8v2H8v-2z"/></svg>
+                    Log Analysis
+                </h2>
             </div>
+            <div class="section-content">
             <div class="summary-grid">
                 <div class="summary-card card-total" onclick="window.location.href='/monitor-results/log-analysis.html'">
                     <div class="card-value" id="log-devices">--</div>
@@ -274,13 +311,18 @@
                     <div class="card-label">Info Messages</div>
                 </div>
             </div>
+            </div>
         </div>
 
         <!-- Assets Analysis Section -->
         <div class="analysis-section">
             <div class="section-header">
-                <h2 class="section-title" onclick="window.location.href='assets.html'">Asset Analysis</h2>
+                <h2 class="section-title" onclick="window.location.href='assets.html'">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M4 1h16a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1m0 8h16a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1m0 8h16a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1z"/></svg>
+                    Asset Analysis
+                </h2>
             </div>
+            <div class="section-content">
             <div class="summary-grid">
                 <div class="summary-card card-total" onclick="window.location.href='assets.html'">
                     <div class="card-value" id="assets-total">16</div>
@@ -303,13 +345,18 @@
                     <div class="card-label">No Information</div>
                 </div>
             </div>
+            </div>
         </div>
 
         <!-- LLDP Analysis Section -->
         <div class="analysis-section">
             <div class="section-header">
-                <h2 class="section-title" onclick="window.location.href='lldp.html'">LLDP Topology Analysis</h2>
+                <h2 class="section-title" onclick="window.location.href='lldp.html'">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M17 16l-4-4V8.82C14.16 8.4 15 7.3 15 6c0-1.66-1.34-3-3-3S9 4.34 9 6c0 1.3.84 2.4 2 2.82V12l-4 4H3v5h5v-3.05l4-4.2 4 4.2V21h5v-5h-4z"/></svg>
+                    LLDP Topology Analysis
+                </h2>
             </div>
+            <div class="section-content">
             <div class="summary-grid">
                 <div class="summary-card card-total" onclick="window.location.href='lldp.html'">
                     <div class="card-value" id="lldp-total">78</div>
@@ -332,13 +379,18 @@
                     <div class="card-label">No Info Links</div>
                 </div>
             </div>
+            </div>
         </div>
 
         <!-- BGP Analysis Section -->
         <div class="analysis-section">
             <div class="section-header">
-                <h2 class="section-title" onclick="window.location.href='monitor-results/bgp-analysis.html'">BGP Neighbor Analysis</h2>
+                <h2 class="section-title" onclick="window.location.href='monitor-results/bgp-analysis.html'">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
+                    BGP Neighbor Analysis
+                </h2>
             </div>
+            <div class="section-content">
             <div class="summary-grid">
                 <div class="summary-card card-total" onclick="window.location.href='monitor-results/bgp-analysis.html'">
                     <div class="card-value" id="bgp-devices">0</div>
@@ -361,13 +413,18 @@
                     <div class="card-label">Health Ratio</div>
                 </div>
             </div>
+            </div>
         </div>
 
         <!-- Link Flap Analysis Section -->
         <div class="analysis-section">
             <div class="section-header">
-                <h2 class="section-title" onclick="window.location.href='monitor-results/link-flap-analysis.html'">Link Flap Detection</h2>
+                <h2 class="section-title" onclick="window.location.href='monitor-results/link-flap-analysis.html'">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3.5 18.49l6-6.01 4 4L22 6.92l-1.41-1.41-7.09 7.97-4-4L2 16.99z"/></svg>
+                    Link Flap Detection
+                </h2>
             </div>
+            <div class="section-content">
             <div class="summary-grid">
                 <div class="summary-card card-total" onclick="window.location.href='monitor-results/link-flap-analysis.html'">
                     <div class="card-value" id="flap-devices">1</div>
@@ -390,13 +447,18 @@
                     <div class="card-label">Stability Ratio</div>
                 </div>
             </div>
+            </div>
         </div>
 
         <!-- Optical Analysis Section -->
         <div class="analysis-section">
             <div class="section-header">
-                <h2 class="section-title" onclick="window.location.href='monitor-results/optical-analysis.html'">Optical Diagnostics Analysis</h2>
+                <h2 class="section-title" onclick="window.location.href='monitor-results/optical-analysis.html'">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0 8a5 5 0 0 1-5-5 5 5 0 0 1 5-5 5 5 0 0 1 5 5 5 5 0 0 1-5 5m0-12.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5z"/></svg>
+                    Optical Diagnostics Analysis
+                </h2>
             </div>
+            <div class="section-content">
             <div class="summary-grid">
                 <div class="summary-card card-total" onclick="window.location.href='monitor-results/optical-analysis.html'">
                     <div class="card-value" id="optical-total">944</div>
@@ -419,13 +481,18 @@
                     <div class="card-label">Critical</div>
                 </div>
             </div>
+            </div>
         </div>
 
         <!-- BER Analysis Section -->
         <div class="analysis-section">
             <div class="section-header">
-                <h2 class="section-title" onclick="window.location.href='monitor-results/ber-analysis.html'">BER Analysis</h2>
+                <h2 class="section-title" onclick="window.location.href='monitor-results/ber-analysis.html'">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/></svg>
+                    BER Analysis
+                </h2>
             </div>
+            <div class="section-content">
             <div class="summary-grid">
                 <div class="summary-card card-total" onclick="window.location.href='monitor-results/ber-analysis.html'">
                     <div class="card-value" id="ber-total">0</div>
@@ -448,8 +515,8 @@
                     <div class="card-label">Critical</div>
                 </div>
             </div>
+            </div>
         </div>
-
 
     </div>
 

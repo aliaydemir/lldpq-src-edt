@@ -287,6 +287,11 @@
             padding: 16px;
         }
         
+        /* No padding for table containers */
+        .section-content-table {
+            padding: 0;
+        }
+        
         /* Info Grid */
         .info-grid {
             display: grid;
@@ -364,6 +369,11 @@
         .badge-orange {
             background: rgba(255, 152, 0, 0.2);
             color: #ffb74d;
+        }
+        
+        .badge-gray {
+            background: rgba(128, 128, 128, 0.2);
+            color: #999;
         }
         
         /* Loading */
@@ -770,7 +780,7 @@
                             </svg>
                             VRFs (${Object.keys(config.vrfs).length})
                         </div>
-                        <div class="section-content">
+                        <div class="section-content-table">
                             <table class="data-table">
                                 <thead>
                                     <tr>
@@ -835,7 +845,7 @@
                                 </svg>
                                 SVI / Gateway IPs (${usedVlanProfiles.length})
                             </div>
-                            <div class="section-content">
+                            <div class="section-content-table">
                                 <table class="data-table">
                                     <thead>
                                         <tr>
@@ -853,24 +863,30 @@
                     
                     for (const templateName of usedVlanProfiles) {
                         const vp = vlanProfiles[templateName];
-                        const vrrVip = vp.vrr_vip || '-';
-                        let switchIp = '-';
+                        const vrrVip = vp.vrr_vip || null;
+                        let switchIp = null;
                         
                         if (vp.vrr_enabled) {
                             // VRR enabled - use even_ip or odd_ip based on switch
-                            switchIp = isOddSwitch ? (vp.odd_ip || '-') : (vp.even_ip || '-');
+                            switchIp = isOddSwitch ? (vp.odd_ip || null) : (vp.even_ip || null);
                         } else {
                             // VRR disabled - use regular ip
-                            switchIp = vp.ip || '-';
+                            switchIp = vp.ip || null;
                         }
+                        
+                        // Check if this is L2-only (no IP addresses at all)
+                        const isL2Only = !vrrVip && !switchIp;
+                        
+                        // VRF display - show "-" for L2-only VLANs
+                        const vrfDisplay = isL2Only ? '-' : (vp.vrf || 'default');
                         
                         html += `
                             <tr>
                                 <td><span class="badge badge-green">${templateName}</span></td>
                                 <td>${vp.vlan_id}</td>
-                                <td>${vrrVip !== '-' ? `<span class="badge badge-orange">${vrrVip}</span>` : '-'}</td>
-                                <td>${switchIp !== '-' ? `<span class="badge badge-blue">${switchIp}</span>` : '-'}</td>
-                                <td><span class="badge badge-blue">${vp.vrf || 'default'}</span></td>
+                                <td>${vrrVip ? `<span class="badge badge-orange">${vrrVip}</span>` : '-'}</td>
+                                <td>${isL2Only ? '<span class="badge badge-gray">L2 Only</span>' : (switchIp ? `<span class="badge badge-blue">${switchIp}</span>` : '-')}</td>
+                                <td>${vrfDisplay !== '-' ? `<span class="badge badge-blue">${vrfDisplay}</span>` : '-'}</td>
                                 <td>${vp.l2vni || '-'}</td>
                                 <td>${vp.description || '-'}</td>
                             </tr>
@@ -891,7 +907,7 @@
                             </svg>
                             DHCP Relay (${config.dhcp_relay.length})
                         </div>
-                        <div class="section-content">
+                        <div class="section-content-table">
                             <table class="data-table">
                                 <thead>
                                     <tr>
@@ -975,7 +991,7 @@
                                 </svg>
                                 Port Breakouts (${breakouts.length})
                             </div>
-                            <div class="section-content">
+                            <div class="section-content-table">
                                 <table class="data-table">
                                     <thead>
                                         <tr>
@@ -1024,7 +1040,7 @@
                                 </svg>
                                 Interfaces (${realInterfaces.length})
                             </div>
-                            <div class="section-content">
+                            <div class="section-content-table">
                                 <table class="data-table">
                                     <thead>
                                         <tr>
@@ -1086,7 +1102,7 @@
                             </svg>
                             Bonds / LAG (${bonds.length})
                         </div>
-                        <div class="section-content">
+                        <div class="section-content-table">
                             <table class="data-table">
                                 <thead>
                                     <tr>

@@ -5,78 +5,169 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>..::LLDPQ::..</title>
     <link rel="shortcut icon" href="/png/favicon.ico">
-    <link rel="stylesheet" type="text/css" href="/css/styles2.css">
     <script src="/css/jszip.min.js"></script>
     <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 20px;
+            min-height: 100vh;
+        }
+        
+        /* Page Header */
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #404040;
+        }
+        
+        .page-title {
+            font-size: 24px;
+            font-weight: 600;
+            color: #76b900;
+        }
+        
+        .last-updated {
+            font-size: 13px;
+            color: #888;
+        }
+        
+        /* Dashboard Section */
+        .dashboard-section {
+            background: #2d2d2d;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            overflow: hidden;
+        }
+        
+        .section-header {
+            padding: 12px 16px;
+            background: #333;
+            font-weight: 600;
+            font-size: 14px;
+            color: #76b900;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border-bottom: 1px solid #404040;
+        }
+        
+        .section-content {
+            padding: 20px;
+        }
+        
+        /* Action Buttons */
+        .action-buttons {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(0deg, #76b900 0%, #5a8c00 100%);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: linear-gradient(0deg, #8bd400 0%, #6ba000 100%);
+            transform: translateY(-1px);
+        }
+        
+        .btn-secondary {
+            background: linear-gradient(0deg, #4fc3f7 0%, #0288d1 100%);
+            color: white;
+        }
+        
+        .btn-secondary:hover {
+            background: linear-gradient(0deg, #81d4fa 0%, #039be5 100%);
+            transform: translateY(-1px);
+        }
+        
+        /* Selectors */
         .selector-container {
-            margin: 20px 0 30px 0;
-            text-align: center;
             display: flex;
             justify-content: center;
             gap: 20px;
             flex-wrap: wrap;
-            align-items: center;
+            align-items: flex-end;
         }
         
         .selector-group {
             display: flex;
             flex-direction: column;
-            align-items: center;
             gap: 8px;
         }
         
         .selector-label {
-            font-size: 14px;
-            font-weight: bold;
-            color: #b57614;
+            font-size: 11px;
+            font-weight: 600;
+            color: #76b900;
             text-transform: uppercase;
             letter-spacing: 1px;
         }
         
         .dropdown {
-            padding: 12px 18px;
-            border: 1px solid #43453B;
-            border-radius: 8px;
-            background: linear-gradient(135deg, #2a2a2a 0%, #333333 100%);
-            color: #e0e0e0;
-            font-size: 14px;
+            padding: 10px 14px;
+            border: 1px solid #555;
+            border-radius: 4px;
+            background: #3c3c3c;
+            color: #d4d4d4;
+            font-size: 13px;
             min-width: 200px;
             cursor: pointer;
-            transition: all 0.3s ease;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            transition: all 0.2s;
         }
         
         .dropdown:focus {
             outline: none;
-            border-color: #b57614;
-            box-shadow: 0 0 0 2px rgba(181, 118, 20, 0.2);
+            border-color: #76b900;
         }
         
         .dropdown:hover {
-            border-color: #b57614;
-            transform: translateY(-1px);
+            border-color: #76b900;
         }
         
         .dropdown:disabled {
             opacity: 0.5;
             cursor: not-allowed;
-            transform: none;
         }
         
+        /* Config Content */
         .config-content {
-            background: #1a1a1a;
-            border: 1px solid #43453B;
-            border-radius: 12px;
-            margin: 30px 0;
-            padding: 25px;
+            background: #252526;
+            border: 1px solid #404040;
+            border-radius: 8px;
+            margin-top: 20px;
             min-height: 400px;
             font-family: 'Fira Code', 'Courier New', Courier, monospace;
-            font-size: 14px;
+            font-size: 13px;
             line-height: 1.6;
-            white-space: pre-wrap;
-            word-wrap: break-word;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
             display: none;
+            overflow: hidden;
         }
         
         .config-content.show {
@@ -87,71 +178,61 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 20px;
-            padding-bottom: 15px;
-            border-bottom: 2px solid #43453B;
+            padding: 12px 16px;
+            background: #333;
+            border-bottom: 1px solid #404040;
         }
         
         .config-title {
-            font-size: 18px;
-            font-weight: bold;
-            color: #b57614;
+            font-size: 14px;
+            font-weight: 600;
+            color: #76b900;
             margin: 0;
         }
         
         .config-info {
-            font-size: 12px;
+            font-size: 11px;
             color: #888;
             text-align: right;
         }
         
+        .config-text-container {
+            padding: 16px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            overflow-x: auto;
+        }
+        
+        /* Messages */
         .loading-message {
             text-align: center;
-            padding: 60px 20px;
-            color: #666;
-            font-style: italic;
-            font-size: 16px;
+            padding: 40px 20px;
+            color: #888;
         }
         
         .error-message {
             text-align: center;
-            padding: 40px 20px;
-            color: #f44336;
+            padding: 20px;
+            color: #ff6b6b;
             background: rgba(244, 67, 54, 0.1);
             border: 1px solid rgba(244, 67, 54, 0.3);
-            border-radius: 8px;
+            border-radius: 6px;
             margin: 20px 0;
         }
         
-        .placeholder-message {
-            text-align: center;
-            padding: 60px 20px;
-            color: #666;
-            font-size: 16px;
-        }
-        
-        /* Syntax highlighting for config content */
-        .config-line {
-            display: block;
-            margin: 2px 0;
-        }
-        
+        /* Syntax highlighting */
+        .config-line { display: block; margin: 1px 0; }
         .comment { color: #6a9955; font-style: italic; }
         .keyword { color: #569cd6; font-weight: bold; }
         .string { color: #ce9178; }
         .number { color: #d7ba7d; }
         .ip-number { color: #ffffff; }
         .variable { color: #9cdcfe; }
-        .operator { color: #d4d4d4; }
         .section { color: #dcdcaa; font-weight: bold; }
         .interface { color: #4ec9b0; }
-        .ip-address { color: #ffffff; }
         .default { color: #569cd6; }
-        
-        /* YAML specific */
         .yaml-key { color: #92c5f7; font-weight: bold; }
         .yaml-value { color: #ce9178; }
-        .yaml-indent { color: #808080; }
         
         /* Status indicator */
         .status-indicator {
@@ -161,12 +242,16 @@
             border-radius: 50%;
             margin-right: 8px;
         }
-        
-        .status-success { background-color: #4caf50; }
+        .status-success { background-color: #76b900; }
         .status-warning { background-color: #ff9800; }
         .status-error { background-color: #f44336; }
         
-        /* Spinning animation for loading icon */
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #1e1e1e; }
+        ::-webkit-scrollbar-thumb { background: #404040; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #555; }
+        
         @keyframes spin {
             from { transform: rotate(0deg); }
             to { transform: rotate(360deg); }
@@ -174,52 +259,60 @@
     </style>
 </head>
 <body>
-    <h1></h1>
-    <h1><font color="#b57614">Device Configurations on the Fabric</font></h1>
-    <p><strong>Last Updated:</strong> <span id="last-updated"></span></p>
-    
-    <h2>Configuration Management</h2>
-    
-    <div style="display: flex; justify-content: center; align-items: center; gap: 15px; margin: 20px 0;">
-        <button id="download-nvset" onclick="downloadAllConfigs('txt')" 
-                style="background: linear-gradient(135deg, #b57614 0%, #d49c1a 100%); color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: bold; display: flex; align-items: center; gap: 8px; transition: all 0.3s ease; box-shadow: 0 2px 4px rgba(0,0,0,0.2);"
-                onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 8px rgba(0,0,0,0.3)'" 
-                onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 2px 4px rgba(0,0,0,0.2)'">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
-            </svg>
-            Download All NV-SET
-        </button>
-        
-        <button id="download-yaml" onclick="downloadAllConfigs('yaml')" 
-                style="background: linear-gradient(135deg, #569cd6 0%, #4a90e2 100%); color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: bold; display: flex; align-items: center; gap: 8px; transition: all 0.3s ease; box-shadow: 0 2px 4px rgba(0,0,0,0.2);"
-                onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 8px rgba(0,0,0,0.3)'" 
-                onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 2px 4px rgba(0,0,0,0.2)'">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
-            </svg>
-            Download All YAML
-        </button>
-    </div>
-    
-    <div class="selector-container">
-        <div class="selector-group">
-            <label class="selector-label">Device</label>
-            <select id="deviceDropdown" class="dropdown" onchange="handleDeviceSelection()">
-                <option value="">-- Select a Device --</option>
-            </select>
-        </div>
-        
-        <div class="selector-group">
-            <label class="selector-label">Format</label>
-            <select id="fileTypeDropdown" class="dropdown" onchange="handleFileTypeSelection()" disabled>
-                <option value="">-- Select Format --</option>
-                <option value="txt">NV-SET Commands</option>
-                <option value="yaml">YAML Configuration</option>
-            </select>
+    <!-- Page Header -->
+    <div class="page-header">
+        <div>
+            <div class="page-title">Device Configurations</div>
+            <div class="last-updated">Last Updated: <span id="last-updated"></span></div>
         </div>
     </div>
     
+    <!-- Configuration Management Section -->
+    <div class="dashboard-section">
+        <div class="section-header">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
+            </svg>
+            Configuration Management
+        </div>
+        <div class="section-content">
+            <!-- Download Buttons -->
+            <div class="action-buttons">
+                <button id="download-nvset" onclick="downloadAllConfigs('txt')" class="btn btn-primary">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
+                    </svg>
+                    Download All NV-SET
+                </button>
+                <button id="download-yaml" onclick="downloadAllConfigs('yaml')" class="btn btn-secondary">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
+                    </svg>
+                    Download All YAML
+                </button>
+            </div>
+            
+            <!-- Selectors -->
+            <div class="selector-container">
+                <div class="selector-group">
+                    <label class="selector-label">Device</label>
+                    <select id="deviceDropdown" class="dropdown" onchange="handleDeviceSelection()">
+                        <option value="">-- Select a Device --</option>
+                    </select>
+                </div>
+                <div class="selector-group">
+                    <label class="selector-label">Format</label>
+                    <select id="fileTypeDropdown" class="dropdown" onchange="handleFileTypeSelection()" disabled>
+                        <option value="">-- Select Format --</option>
+                        <option value="txt">NV-SET Commands</option>
+                        <option value="yaml">YAML Configuration</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Config Display -->
     <div id="configContent" class="config-content">
         <div class="config-header">
             <h3 class="config-title" id="configTitle">Configuration File</h3>
@@ -229,7 +322,7 @@
                 <div id="configSize"></div>
             </div>
         </div>
-        <div id="configText"></div>
+        <div id="configText" class="config-text-container"></div>
     </div>
     
     <div id="loadingMessage" class="loading-message" style="display: none;">
@@ -584,12 +677,12 @@
                         
                         // Show success state
                         button.innerHTML = `
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                                 <path d="M21,7L9,19L3.5,13.5L4.91,12.09L9,16.17L19.59,5.59L21,7Z"/>
                             </svg>
                             ✓ ZIP downloaded (${formatFiles.length} files)
                         `;
-                        button.style.background = 'linear-gradient(135deg, #4caf50 0%, #45a049 100%)';
+                        button.style.background = 'linear-gradient(0deg, #76b900 0%, #5a8c00 100%)';
                         
                         setTimeout(() => resetDownloadButton(button, originalText), 3000);
                     })
@@ -630,9 +723,9 @@
             
             // Reset original background colors
             if (button.id === 'download-nvset') {
-                button.style.background = 'linear-gradient(135deg, #b57614 0%, #d49c1a 100%)';
+                button.style.background = 'linear-gradient(0deg, #76b900 0%, #5a8c00 100%)';
             } else {
-                button.style.background = 'linear-gradient(135deg, #569cd6 0%, #4a90e2 100%)';
+                button.style.background = 'linear-gradient(0deg, #4fc3f7 0%, #0288d1 100%)';
             }
         }
 

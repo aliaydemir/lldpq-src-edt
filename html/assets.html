@@ -4,133 +4,186 @@
     <link rel="shortcut icon" href="/png/favicon.ico">
     <title>..::LLDPQ::..</title>
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-    <link rel="stylesheet" type="text/css" href="/css/styles2.css">
     <link rel="stylesheet" type="text/css" href="/css/select2.min.css">
     <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 20px;
+            min-height: 100vh;
+        }
+        
+        /* Page Header */
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #404040;
+        }
+        
+        .page-title {
+            font-size: 24px;
+            font-weight: 600;
+            color: #76b900;
+        }
+        
+        .last-updated {
+            font-size: 13px;
+            color: #888;
+        }
+        
+        .action-buttons {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        /* Summary Cards Grid */
         .summary-grid { 
             display: grid; 
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); 
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); 
             gap: 15px; 
-            margin: 20px 0; 
+            margin-bottom: 25px; 
         }
+        
         .summary-card { 
-            background: #f8f9fa; 
+            background: #252526; 
             padding: 15px; 
-            border-radius: 8px; 
-            border-left: 4px solid #007bff; 
-        }
-        .card-excellent { border-left-color: #4caf50; }
-        .card-good { border-left-color: #8bc34a; }
-        .card-warning { border-left-color: #ff9800; }
-        .card-critical { border-left-color: #f44336; }
-        .card-total { border-left-color: #2196f3; }
-        
-        /* Active filter card styling */
-        .summary-card.active-filter {
-            background: #e3f2fd !important;
-            border-left-width: 6px !important;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.2) !important;
-            transform: scale(1.02);
-            cursor: default;
-        }
-        
-        /* Make cards clickable */
-        .summary-card {
+            border-radius: 6px; 
+            border-left: 3px solid #76b900;
             cursor: pointer;
-            transition: all 0.3s ease;
+            transition: all 0.2s ease;
         }
         
         .summary-card:hover:not(.active-filter) {
-            background: #f5f5f5;
+            background: #2d2d2d;
             transform: translateY(-2px);
-            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
         }
-        .card-value { font-size: 24px; font-weight: bold; color: #333; }
         
-        /* Colored card values */
-        .card-excellent .card-value { color: #4caf50; }
+        .card-excellent { border-left-color: #76b900; }
+        .card-good { border-left-color: #8bc34a; }
+        .card-warning { border-left-color: #ff9800; }
+        .card-critical { border-left-color: #f44336; }
+        .card-total { border-left-color: #4fc3f7; }
+        .card-info { border-left-color: #9e9e9e; }
+        
+        .summary-card.active-filter {
+            background: #37373d !important;
+            border-left-width: 5px !important;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3) !important;
+        }
+        
+        .card-value { 
+            font-size: 28px; 
+            font-weight: bold; 
+            color: #fff; 
+        }
+        
+        .card-excellent .card-value { color: #76b900; }
         .card-good .card-value { color: #8bc34a; }
-        .card-warning .card-value { color: #ff9800; }
-        .card-critical .card-value { color: #f44336; }
-        .card-total .card-value { color: #333; }
-        .card-info .card-value { color: #2196f3; }
-        .card-label { font-size: 14px; color: #666; margin-top: 5px; }
+        .card-warning .card-value { color: #ffb74d; }
+        .card-critical .card-value { color: #ff6b6b; }
+        .card-total .card-value { color: #fff; }
+        .card-info .card-value { color: #9e9e9e; }
         
-        .assets-excellent { color: #4caf50; font-weight: bold; }
-        .assets-good { color: #8bc34a; font-weight: bold; }
-        .assets-warning { color: #ff9800; font-weight: bold; }
-        .assets-critical { color: #f44336; font-weight: bold; }
-        .assets-unknown { color: gray; }
-        
-        .assets-table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-        .assets-table th, .assets-table td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-        .assets-table th { background-color: #f2f2f2; }
-        
-        .steelBlue { color: steelblue; }
-        .tomato { color: tomato; }
-        .red { color: red; }
-        .green { color: green; }
-        .lime { color: lime; }
-        
-        #metinAlani-1 {
-            white-space: pre;
-            font-family: monospace;
-            font-size: 15px;
+        .card-label { 
+            font-size: 12px; 
+            color: #888; 
+            margin-top: 5px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
         
-        .status-success { color: #4caf50; font-weight: bold; }
-        .status-fail { color: #f44336; font-weight: bold; }
-        .status-ssh-failed { color: #e91e63; font-weight: bold; }
-        .status-warning { color: #ff9800; font-weight: bold; }
-        .status-no-info { color: #f44336; font-weight: bold; }
-        
-        /* Device name link hover effect */
-        .assets-table .device-link {
-            color: inherit;
-            text-decoration: underline;
-            transition: all 0.3s ease;
-            position: relative;
+        /* Dashboard Section */
+        .dashboard-section {
+            background: #2d2d2d;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            overflow: hidden;
         }
         
-        .assets-table .device-link:hover {
-            color: #b57614 !important;
-            text-decoration: underline;
-            text-shadow: 0 0 8px rgba(181, 118, 20, 0.6);
-            transform: scale(1.05);
+        .section-header {
+            padding: 12px 16px;
+            background: #333;
+            font-weight: 600;
+            font-size: 14px;
+            color: #76b900;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border-bottom: 1px solid #404040;
         }
         
-        .assets-table .device-link:active {
-            transform: scale(0.98);
+        .section-content {
+            padding: 0;
         }
         
-        /* Sortable table styling */
+        /* Data Table */
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        .data-table th {
+            text-align: left;
+            padding: 12px 14px;
+            background: #252526;
+            color: #888;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: 1px solid #404040;
+        }
+        
+        .data-table td {
+            padding: 10px 14px;
+            border-bottom: 1px solid #333;
+            font-size: 13px;
+        }
+        
+        .data-table tr:hover {
+            background: #333;
+        }
+        
+        /* Sortable Headers */
         .sortable {
             cursor: pointer;
             user-select: none;
             position: relative;
-            padding-right: 20px;
+            padding-right: 20px !important;
+            transition: background 0.2s;
         }
         
         .sortable:hover {
-            background-color: #f5f5f5;
+            background: #2d2d2d;
         }
         
         .sort-arrow {
             font-size: 10px;
-            color: #999;
+            color: #555;
             margin-left: 5px;
             opacity: 0.5;
         }
         
         .sortable.asc .sort-arrow::before {
             content: '▲';
-            color: #b57614;
+            color: #76b900;
             opacity: 1;
         }
         
         .sortable.desc .sort-arrow::before {
             content: '▼';
-            color: #b57614;
+            color: #76b900;
             opacity: 1;
         }
         
@@ -139,85 +192,280 @@
             opacity: 1;
         }
         
-        /* Device Search Box - Match Run button height (padding 8px + font 14px + border) */
+        /* Badges */
+        .badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+        
+        .badge-green {
+            background: rgba(118, 185, 0, 0.2);
+            color: #76b900;
+        }
+        
+        .badge-blue {
+            background: rgba(0, 122, 204, 0.2);
+            color: #4fc3f7;
+        }
+        
+        .badge-orange {
+            background: rgba(255, 152, 0, 0.2);
+            color: #ffb74d;
+        }
+        
+        .badge-red {
+            background: rgba(244, 67, 54, 0.2);
+            color: #ff6b6b;
+        }
+        
+        .badge-gray {
+            background: rgba(158, 158, 158, 0.2);
+            color: #999;
+        }
+        
+        /* Status Badges */
+        .status-success { 
+            background: rgba(118, 185, 0, 0.2);
+            color: #76b900;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .status-fail { 
+            background: rgba(244, 67, 54, 0.2);
+            color: #ff6b6b;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .status-ssh-failed { 
+            background: rgba(233, 30, 99, 0.2);
+            color: #f48fb1;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .status-warning { 
+            background: rgba(255, 152, 0, 0.2);
+            color: #ffb74d;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .status-no-info { 
+            background: rgba(158, 158, 158, 0.2);
+            color: #999;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        
+        /* Device Link */
+        .device-link {
+            color: #4fc3f7;
+            text-decoration: none;
+            transition: all 0.2s ease;
+        }
+        
+        .device-link:hover {
+            color: #76b900;
+            text-decoration: underline;
+        }
+        
+        /* Buttons */
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(0deg, #76b900 0%, #5a8c00 100%);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: linear-gradient(0deg, #8bd400 0%, #6ba000 100%);
+        }
+        
+        .btn-secondary {
+            background: #404040;
+            color: #d4d4d4;
+        }
+        
+        .btn-secondary:hover {
+            background: #505050;
+        }
+        
+        .btn-info {
+            background: linear-gradient(0deg, #2196f3 0%, #1976d2 100%);
+            color: white;
+        }
+        
+        .btn-info:hover {
+            background: linear-gradient(0deg, #42a5f5 0%, #2196f3 100%);
+        }
+        
+        /* Device Search Box */
         .device-search-container {
             display: flex;
             align-items: center;
             gap: 8px;
         }
+        
         .device-search-container .select2-container {
-            min-width: 250px;
+            min-width: 200px;
         }
+        
         .device-search-container .select2-container--default .select2-selection--single {
-            height: 38px;
-            border: 1px solid #ccc;
-            border-radius: 6px;
+            height: 36px;
+            background: #3c3c3c;
+            border: 1px solid #555;
+            border-radius: 4px;
             display: flex;
             align-items: center;
         }
+        
         .device-search-container .select2-container--default .select2-selection--single .select2-selection__rendered {
-            line-height: 38px;
-            color: #333;
-            padding-left: 8px;
-            font-size: 14px;
+            line-height: 36px;
+            color: #d4d4d4;
+            padding-left: 10px;
+            font-size: 13px;
         }
+        
         .device-search-container .select2-container--default .select2-selection--single .select2-selection__arrow {
-            height: 38px;
+            height: 36px;
         }
+        
         .device-search-container .select2-container--default .select2-selection--single .select2-selection__placeholder {
-            color: #999;
+            color: #888;
         }
+        
         .clear-search-btn {
-            background: #ff5722;
+            background: #f44336;
             color: white;
             border: none;
             padding: 8px 12px;
-            border-radius: 6px;
+            border-radius: 4px;
             cursor: pointer;
-            font-size: 14px;
+            font-size: 13px;
             display: none;
-            transition: all 0.3s ease;
+            transition: all 0.2s;
         }
+        
         .clear-search-btn:hover {
-            background: #e64a19;
+            background: #d32f2f;
+        }
+        
+        /* Hidden elements */
+        #metinAlani-1 {
+            display: none;
+        }
+        
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: #1e1e1e;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: #404040;
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+        
+        /* Select2 Dark Theme Override */
+        .select2-dropdown {
+            background: #2d2d2d;
+            border: 1px solid #404040;
+        }
+        
+        .select2-search__field {
+            background: #3c3c3c !important;
+            color: #d4d4d4 !important;
+            border: 1px solid #555 !important;
+        }
+        
+        .select2-results__option {
+            color: #d4d4d4;
+            padding: 8px 10px;
+        }
+        
+        .select2-results__option--highlighted {
+            background: #37373d !important;
+            color: #76b900 !important;
+        }
+        
+        .select2-results__option--selected {
+            background: #404040 !important;
         }
     </style>
 </head>
 <body>
-    <h1></h1>
-    <h1><font color="#b57614">Asset Analysis Results</font></h1>
-    <p><strong>Last Updated:</strong> <span id="last-updated"></span></p>
-    
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-        <h2 style="margin: 0;">Asset Summary</h2>
-        <div style="display: flex; gap: 10px; align-items: center;">
-        <!-- Device Search Box -->
-        <div class="device-search-container">
-            <select id="deviceSearch" style="width: 250px;">
-                <option value="">Search Device...</option>
-            </select>
-            <button id="clearSearchBtn" class="clear-search-btn" onclick="clearDeviceSearch()">✕</button>
-        </div>
-        <button id="run-lldp" onclick="runLLDPCheck()" 
-                style="background: #2196f3; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 8px; transition: all 0.3s ease;"
-                onmouseover="this.style.background='#1976d2'" 
-                onmouseout="this.style.background='#2196f3'">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M8,5.14V19.14L19,12.14L8,5.14Z"/>
-            </svg>
-            <span id="run-lldp-text">Run LLDP Check</span>
-        </button>
-        <button id="download-csv" onclick="downloadCSV()" 
-                style="background: #4caf50; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 8px; transition: all 0.3s ease;"
-                onmouseover="this.style.background='#45a049'" 
-                onmouseout="this.style.background='#4caf50'">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
-            </svg>
-            Download CSV
-        </button>
+    <!-- Page Header -->
+    <div class="page-header">
+        <div>
+            <div class="page-title">Asset Analysis Results</div>
+            <div class="last-updated">Last Updated: <span id="last-updated"></span></div>
         </div>
     </div>
+    
+    <!-- Summary Section -->
+    <div class="dashboard-section" style="margin-bottom: 25px;">
+        <div class="section-header" style="display: flex; justify-content: space-between; align-items: center;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/>
+                </svg>
+                Overview
+            </div>
+            <div class="action-buttons">
+            <!-- Device Search Box -->
+            <div class="device-search-container">
+                <select id="deviceSearch" style="width: 200px;">
+                    <option value="">Search Device...</option>
+                </select>
+                <button id="clearSearchBtn" class="clear-search-btn" onclick="clearDeviceSearch()">✕</button>
+            </div>
+            <button id="run-lldp" onclick="runLLDPCheck()" class="btn btn-info">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M8,5.14V19.14L19,12.14L8,5.14Z"/>
+                </svg>
+                <span id="run-lldp-text">Run LLDP Check</span>
+            </button>
+            <button id="download-csv" onclick="downloadCSV()" class="btn btn-primary">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
+                </svg>
+                Download CSV
+            </button>
+            </div>
+        </div>
+        <div class="section-content">
+    
+    <!-- Summary Cards -->
     <div class="summary-grid">
         <div class="summary-card card-total">
             <div class="card-value" id="total-devices">0</div>
@@ -240,40 +488,52 @@
             <div class="card-label">No Information</div>
         </div>
     </div>
+        </div>
+    </div>
     
-    <h2>Device Asset Status</h2>
-    <table class="assets-table" id="assets-table">
-        <thead>
-        <tr>
-            <th class="sortable" data-column="0" data-type="string">
-                Device Name <span class="sort-arrow">▲▼</span>
-            </th>
-            <th class="sortable" data-column="1" data-type="ip">
-                IP Address <span class="sort-arrow">▲▼</span>
-            </th>
-            <th class="sortable" data-column="2" data-type="string">
-                MAC Address <span class="sort-arrow">▲▼</span>
-            </th>
-            <th class="sortable" data-column="3" data-type="string">
-                Serial Number <span class="sort-arrow">▲▼</span>
-            </th>
-            <th class="sortable" data-column="4" data-type="string">
-                Model <span class="sort-arrow">▲▼</span>
-            </th>
-            <th class="sortable" data-column="5" data-type="string">
-                Release <span class="sort-arrow">▲▼</span>
-            </th>
-            <th class="sortable" data-column="6" data-type="uptime">
-                Uptime <span class="sort-arrow">▲▼</span>
-            </th>
-            <th class="sortable" data-column="7" data-type="status">
-                Status <span class="sort-arrow">▲▼</span>
-            </th>
-        </tr>
-        </thead>
-        <tbody>
-        </tbody>
-    </table>
+    <!-- Device Table Section -->
+    <div class="dashboard-section">
+        <div class="section-header">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M4 1h16a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1m0 8h16a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1m0 8h16a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1M9 5h1V3H9v2m0 8h1v-2H9v2m0 8h1v-2H9v2M5 3v2h2V3H5m0 8v2h2v-2H5m0 8v2h2v-2H5z"/>
+            </svg>
+            Device Asset Status
+        </div>
+        <div class="section-content">
+            <table class="data-table" id="assets-table">
+                <thead>
+                <tr>
+                    <th class="sortable" data-column="0" data-type="string">
+                        Device Name <span class="sort-arrow">▲▼</span>
+                    </th>
+                    <th class="sortable" data-column="1" data-type="ip">
+                        IP Address <span class="sort-arrow">▲▼</span>
+                    </th>
+                    <th class="sortable" data-column="2" data-type="string">
+                        MAC Address <span class="sort-arrow">▲▼</span>
+                    </th>
+                    <th class="sortable" data-column="3" data-type="string">
+                        Serial Number <span class="sort-arrow">▲▼</span>
+                    </th>
+                    <th class="sortable" data-column="4" data-type="string">
+                        Model <span class="sort-arrow">▲▼</span>
+                    </th>
+                    <th class="sortable" data-column="5" data-type="string">
+                        Release <span class="sort-arrow">▲▼</span>
+                    </th>
+                    <th class="sortable" data-column="6" data-type="uptime">
+                        Uptime <span class="sort-arrow">▲▼</span>
+                    </th>
+                    <th class="sortable" data-column="7" data-type="status">
+                        Status <span class="sort-arrow">▲▼</span>
+                    </th>
+                </tr>
+                </thead>
+                <tbody>
+                </tbody>
+            </table>
+        </div>
+    </div>
     
     <div id="metinAlani-1" style="display: none;"></div>
 
@@ -636,7 +896,7 @@
             
             // Always show manual trigger instruction
             buttonText.textContent = '✓ Triggered';
-            button.style.background = '#4caf50';
+            button.style.background = 'linear-gradient(0deg, #76b900 0%, #5a8c00 100%)';
             
             // Show instruction notification
             const notification = document.createElement('div');
@@ -644,20 +904,21 @@
                 position: fixed;
                 top: 20px;
                 right: 20px;
-                background: #2196f3;
-                color: white;
+                background: #2d2d2d;
+                color: #d4d4d4;
                 padding: 15px 20px;
                 border-radius: 8px;
-                box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+                border-left: 4px solid #76b900;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.4);
                 z-index: 1000;
-                font-size: 14px;
+                font-size: 13px;
                 max-width: 350px;
-                font-family: monospace;
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             `;
             notification.innerHTML = `
-                <strong>✅ LLDP Check Started</strong><br>
+                <strong style="color: #76b900;">✅ LLDP Check Started</strong><br>
                 The topology analysis is running in the background.<br>
-                <small>Page will automatically refresh in 5 seconds to show the latest results.</small>
+                <small style="color: #888;">Page will automatically refresh in 5 seconds to show the latest results.</small>
             `;
             
             document.body.appendChild(notification);
@@ -679,7 +940,7 @@
                 button.disabled = false;
                 button.style.opacity = '1';
                 button.style.cursor = 'pointer';
-                button.style.background = '#2196f3';
+                button.style.background = 'linear-gradient(0deg, #2196f3 0%, #1976d2 100%)';
                 buttonText.textContent = originalText;
             }, 5000);
         })
@@ -696,17 +957,19 @@
                 position: fixed;
                 top: 20px;
                 right: 20px;
-                background: #f44336;
-                color: white;
+                background: #2d2d2d;
+                color: #d4d4d4;
                 padding: 15px 20px;
                 border-radius: 8px;
-                box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+                border-left: 4px solid #f44336;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.4);
                 z-index: 1000;
-                font-size: 14px;
+                font-size: 13px;
                 max-width: 300px;
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             `;
             notification.innerHTML = `
-                <strong>Error!</strong><br>
+                <strong style="color: #ff6b6b;">Error!</strong><br>
                 Could not start LLDP check. Please try again or contact administrator.
             `;
             
@@ -724,7 +987,7 @@
                 button.disabled = false;
                 button.style.opacity = '1';
                 button.style.cursor = 'pointer';
-                button.style.background = '#2196f3';
+                button.style.background = 'linear-gradient(0deg, #2196f3 0%, #1976d2 100%)';
                 buttonText.textContent = originalText;
             }, 3000);
         });

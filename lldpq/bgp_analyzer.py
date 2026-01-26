@@ -478,205 +478,246 @@ class BGPAnalyzer:
         
         html_content = f"""
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <h1></h1>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>BGP Neighbor Analysis</title>
-    <link rel="stylesheet" type="text/css" href="/css/styles2.css">
+    <link rel="shortcut icon" href="/png/favicon.ico">
     <link rel="stylesheet" type="text/css" href="/css/select2.min.css">
     <style>
-        .bgp-excellent {{ color: #4caf50; font-weight: bold; }}
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 20px;
+            min-height: 100vh;
+        }}
+        
+        /* Page Header */
+        .page-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #404040;
+        }}
+        .page-title {{ font-size: 24px; font-weight: 600; color: #76b900; }}
+        .last-updated {{ font-size: 13px; color: #888; }}
+        
+        /* Dashboard Section */
+        .dashboard-section {{
+            background: #2d2d2d;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            overflow: hidden;
+        }}
+        .section-header {{
+            padding: 12px 16px;
+            background: #333;
+            font-weight: 600;
+            font-size: 14px;
+            color: #76b900;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border-bottom: 1px solid #404040;
+        }}
+        .section-content {{ padding: 16px; }}
+        .section-content-table {{ padding: 0; }}
+        
+        /* Summary Grid */
+        .summary-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 12px;
+        }}
+        .summary-card {{
+            background: #252526;
+            padding: 15px;
+            border-radius: 6px;
+            border-left: 3px solid #76b900;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }}
+        .summary-card:hover {{ background: #2d2d2d; transform: translateY(-1px); }}
+        .summary-card.active {{ background: #333; border-left-width: 5px; }}
+        .card-excellent {{ border-left-color: #76b900; }}
+        .card-critical {{ border-left-color: #f44336; }}
+        .card-info {{ border-left-color: #4fc3f7; }}
+        .metric {{ font-size: 22px; font-weight: bold; color: #d4d4d4; }}
+        .metric-label {{ font-size: 12px; color: #888; margin-top: 4px; }}
+        
+        /* BGP Status Colors */
+        .bgp-excellent {{ color: #76b900; font-weight: bold; }}
         .bgp-good {{ color: #8bc34a; font-weight: bold; }}
         .bgp-warning {{ color: #ff9800; font-weight: bold; }}
         .bgp-critical {{ color: #f44336; font-weight: bold; }}
-        .bgp-unknown {{ color: gray; }}
-        .bgp-table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
-        .bgp-table th, .bgp-table td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
-        .bgp-table th {{ background-color: #f2f2f2; }}
-        
-        /* Sortable table styling */
-        .sortable {{
-            cursor: pointer;
-            user-select: none;
-            position: relative;
-            padding-right: 20px;
-        }}
-        
-        .sortable:hover {{
-            background-color: #f5f5f5;
-        }}
-        
-        .sort-arrow {{
-            font-size: 10px;
-            color: #999;
-            margin-left: 5px;
-            opacity: 0.5;
-        }}
-        
-        .sortable.asc .sort-arrow::before {{
-            content: '▲';
-            color: #b57614;
-            opacity: 1;
-        }}
-        
-        .sortable.desc .sort-arrow::before {{
-            content: '▼';
-            color: #b57614;
-            opacity: 1;
-        }}
-        
-        .sortable.asc .sort-arrow,
-        .sortable.desc .sort-arrow {{
-            opacity: 1;
-        }}
-        .summary-grid {{ 
-            display: grid; 
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); 
-            gap: 15px; 
-            margin: 20px 0; 
-        }}
-        .summary-card {{ 
-            background: #f8f9fa; 
-            padding: 15px; 
-            border-radius: 8px; 
-            border-left: 4px solid #007bff; 
-        }}
-        .metric {{ font-size: 24px; font-weight: bold; }}
-        .state-established {{ color: #4caf50; font-weight: bold; }}
+        .bgp-unknown {{ color: #888; }}
+        .state-established {{ color: #76b900; font-weight: bold; }}
         .state-idle {{ color: #f44336; font-weight: bold; }}
         .state-active {{ color: #f44336; font-weight: bold; }}
         .state-connect {{ color: #f44336; font-weight: bold; }}
-        .uptime-good {{ color: #4caf50; }}
-        .uptime-warning {{ color: #ff9800; }}
-        .uptime-critical {{ color: #f44336; }}
         
-        .summary-card {{
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }}
-        .summary-card:hover {{
-            transform: translateY(-2px);
-            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
-        }}
-        .summary-card.active {{
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.25);
-            border-left-width: 6px;
-        }}
+        /* Table Styling */
+        .bgp-table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
+        .bgp-table th, .bgp-table td {{ border: 1px solid #404040; padding: 10px 12px; text-align: left; }}
+        .bgp-table th {{ background: #333; color: #76b900; font-weight: 600; font-size: 12px; }}
+        .bgp-table tbody tr {{ background: #252526; }}
+        .bgp-table tbody tr:hover {{ background: #2d2d2d; }}
         
+        /* Sortable */
+        .sortable {{ cursor: pointer; user-select: none; padding-right: 20px; }}
+        .sortable:hover {{ background: #3c3c3c; }}
+        .sort-arrow {{ font-size: 10px; color: #666; margin-left: 5px; opacity: 0.5; }}
+        .sortable.asc .sort-arrow::before {{ content: '▲'; color: #76b900; opacity: 1; }}
+        .sortable.desc .sort-arrow::before {{ content: '▼'; color: #76b900; opacity: 1; }}
+        .sortable.asc .sort-arrow, .sortable.desc .sort-arrow {{ opacity: 1; }}
+        
+        /* Filter Info */
         .filter-info {{
             text-align: center;
-            padding: 10px;
-            margin: 10px 0;
-            background: #e8f4fd;
-            border-radius: 4px;
-            color: #1976d2;
-            display: none;
-        }}
-        
-        @keyframes spin {{
-            from {{ transform: rotate(0deg); }}
-            to {{ transform: rotate(360deg); }}
-        }}
-        
-        /* Device Search Box */
-        .device-search-container {{
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }}
-        .device-search-container .select2-container {{
-            min-width: 250px;
-        }}
-        .device-search-container .select2-container--default .select2-selection--single {{
-            height: 38px;
-            border: 1px solid #ccc;
+            padding: 10px 15px;
+            margin: 15px 16px;
+            background: rgba(118, 185, 0, 0.1);
+            border: 1px solid rgba(118, 185, 0, 0.3);
             border-radius: 6px;
+            color: #76b900;
+            display: none;
+            font-size: 13px;
+        }}
+        .filter-info button {{
+            margin-left: 10px;
+            padding: 4px 10px;
+            background: #76b900;
+            color: #000;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }}
+        
+        /* Anomaly Cards */
+        .anomaly-card {{
+            margin: 10px 0;
+            padding: 12px 15px;
+            background: #252526;
+            border-radius: 6px;
+            border-left: 3px solid #f44336;
+        }}
+        .anomaly-card.warning {{ border-left-color: #ff9800; }}
+        .anomaly-card h4 {{ color: #d4d4d4; margin-bottom: 8px; font-size: 14px; }}
+        .anomaly-card p {{ font-size: 13px; color: #888; margin: 4px 0; }}
+        
+        /* Buttons */
+        .btn {{
+            padding: 8px 14px;
+            border: none;
+            border-radius: 4px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
             display: flex;
             align-items: center;
+            gap: 6px;
+        }}
+        .btn-primary {{ background: linear-gradient(0deg, #76b900 0%, #5a8c00 100%); color: white; }}
+        .btn-primary:hover {{ background: linear-gradient(0deg, #8bd400 0%, #6ba000 100%); }}
+        .btn-secondary {{ background: linear-gradient(0deg, #4fc3f7 0%, #0288d1 100%); color: white; }}
+        .btn-secondary:hover {{ background: linear-gradient(0deg, #81d4fa 0%, #039be5 100%); }}
+        .action-buttons {{ display: flex; gap: 10px; align-items: center; }}
+        
+        /* Device Search - Dark Theme */
+        .device-search-container {{ display: flex; align-items: center; gap: 8px; }}
+        .device-search-container .select2-container {{ min-width: 200px; }}
+        .device-search-container .select2-container--default .select2-selection--single {{
+            height: 34px; border: 1px solid #555; border-radius: 4px; background: #3c3c3c; display: flex; align-items: center;
         }}
         .device-search-container .select2-container--default .select2-selection--single .select2-selection__rendered {{
-            line-height: 38px;
-            color: #333;
-            padding-left: 8px;
-            font-size: 14px;
+            line-height: 34px; color: #d4d4d4; padding-left: 10px; font-size: 13px;
         }}
-        .device-search-container .select2-container--default .select2-selection--single .select2-selection__arrow {{
-            height: 38px;
-        }}
-        .device-search-container .select2-container--default .select2-selection--single .select2-selection__placeholder {{
-            color: #999;
-        }}
-        .clear-search-btn {{
-            background: #ff5722;
-            color: white;
-            border: none;
-            padding: 8px 12px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 14px;
-            display: none;
-            transition: all 0.3s ease;
-        }}
-        .clear-search-btn:hover {{
-            background: #e64a19;
-        }}
+        .device-search-container .select2-container--default .select2-selection--single .select2-selection__arrow {{ height: 34px; }}
+        .device-search-container .select2-container--default .select2-selection--single .select2-selection__placeholder {{ color: #888; }}
+        .select2-dropdown {{ background: #2d2d2d; border: 1px solid #555; }}
+        .select2-container--default .select2-search--dropdown .select2-search__field {{ background: #3c3c3c; border: 1px solid #555; color: #d4d4d4; }}
+        .select2-container--default .select2-results__option {{ color: #d4d4d4; padding: 8px 12px; }}
+        .select2-container--default .select2-results__option--highlighted[aria-selected] {{ background: #76b900; color: #000; }}
+        .select2-container--default .select2-results__option[aria-selected=true] {{ background: #3c3c3c; }}
+        .clear-search-btn {{ background: #f44336; color: white; border: none; padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; display: none; }}
+        .clear-search-btn:hover {{ background: #d32f2f; }}
+        
+        /* Scrollbar */
+        ::-webkit-scrollbar {{ width: 8px; height: 8px; }}
+        ::-webkit-scrollbar-track {{ background: #1e1e1e; }}
+        ::-webkit-scrollbar-thumb {{ background: #404040; border-radius: 4px; }}
+        ::-webkit-scrollbar-thumb:hover {{ background: #555; }}
+        
+        @keyframes spin {{ from {{ transform: rotate(0deg); }} to {{ transform: rotate(360deg); }} }}
     </style>
 </head>
 <body>
-    <h1><font color="#b57614">BGP Neighbor Analysis</font></h1>
-    <p><strong>Last Updated:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
-    
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-        <h2 style="margin: 0;">BGP Summary</h2>
-        <div style="display: flex; gap: 10px; align-items: center;">
-            <!-- Device Search Box -->
+    <!-- Page Header -->
+    <div class="page-header">
+        <div>
+            <div class="page-title">BGP Neighbor Analysis</div>
+            <div class="last-updated">Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</div>
+        </div>
+        <div class="action-buttons">
             <div class="device-search-container">
-                <select id="deviceSearch" style="width: 250px;">
+                <select id="deviceSearch" style="width: 200px;">
                     <option value="">Search Device...</option>
                 </select>
                 <button id="clearSearchBtn" class="clear-search-btn" onclick="clearDeviceSearch()">✕</button>
             </div>
-            <button id="run-analysis" onclick="runAnalysis()" 
-                    style="background: #b57614; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 8px; transition: all 0.3s ease;"
-                    onmouseover="this.style.background='#a06612'" 
-                    onmouseout="this.style.background='#b57614'">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8Z"/>
+            <button id="run-analysis" onclick="runAnalysis()" class="btn btn-secondary">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4Z"/>
                 </svg>
                 Run Analysis
             </button>
-            <button id="download-csv" onclick="downloadCSV()" 
-                    style="background: #4caf50; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 8px; transition: all 0.3s ease;"
-                    onmouseover="this.style.background='#45a049'" 
-                    onmouseout="this.style.background='#4caf50'">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <button id="download-csv" onclick="downloadCSV()" class="btn btn-primary">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
                 </svg>
                 Download CSV
             </button>
         </div>
     </div>
-    <div class="summary-grid">
-        <div class="summary-card" id="total-devices-card">
-            <div class="metric" id="total-devices">{summary['total_devices']}</div>
-            <div>BGP Devices</div>
+    
+    <!-- BGP Summary Section -->
+    <div class="dashboard-section">
+        <div class="section-header">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/>
+            </svg>
+            BGP Summary
         </div>
-        <div class="summary-card" id="total-neighbors-card">
-            <div class="metric" id="total-neighbors">{summary['total_neighbors']}</div>
-            <div>Total Neighbors</div>
-        </div>
-        <div class="summary-card" id="established-card">
-            <div class="metric bgp-excellent" id="established-neighbors">{summary['established_neighbors']}</div>
-            <div>Established</div>
-        </div>
-        <div class="summary-card" id="down-card">
-            <div class="metric bgp-critical" id="down-neighbors">{summary['down_neighbors']}</div>
-            <div>Down/Problem</div>
-        </div>
-        <div class="summary-card" id="health-card">
-            <div class="metric" id="health-ratio">{summary['health_ratio']:.1f}%</div>
-            <div>Health Ratio</div>
+        <div class="section-content">
+            <div class="summary-grid">
+                <div class="summary-card card-info" id="total-devices-card">
+                    <div class="metric" id="total-devices">{summary['total_devices']}</div>
+                    <div class="metric-label">BGP Devices</div>
+                </div>
+                <div class="summary-card card-info" id="total-neighbors-card">
+                    <div class="metric" id="total-neighbors">{summary['total_neighbors']}</div>
+                    <div class="metric-label">Total Neighbors</div>
+                </div>
+                <div class="summary-card card-excellent" id="established-card">
+                    <div class="metric bgp-excellent" id="established-neighbors">{summary['established_neighbors']}</div>
+                    <div class="metric-label">Established</div>
+                </div>
+                <div class="summary-card card-critical" id="down-card">
+                    <div class="metric bgp-critical" id="down-neighbors">{summary['down_neighbors']}</div>
+                    <div class="metric-label">Down/Problem</div>
+                </div>
+                <div class="summary-card" id="health-card">
+                    <div class="metric" id="health-ratio">{summary['health_ratio']:.1f}%</div>
+                    <div class="metric-label">Health Ratio</div>
+                </div>
+            </div>
         </div>
     </div>
 """
@@ -705,61 +746,61 @@ class BGPAnalyzer:
         # Add anomalies section if any exist
         if anomalies:
             html_content += f"""
-    <h2>📋 Detailed Issue Analysis ({len(anomalies)})</h2>
+    <!-- Issues Section -->
+    <div class="dashboard-section">
+        <div class="section-header">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+            </svg>
+            Detailed Issue Analysis ({len(anomalies)})
+        </div>
+        <div class="section-content">
 """
             for anomaly in anomalies:
-                severity_class = f"bgp-{anomaly['severity']}"
+                severity_class = "warning" if anomaly['severity'] == 'warning' else ""
                 html_content += f"""
-    <div style="margin: 10px 0; padding: 10px; background-color: {'#ffebee' if anomaly['severity'] == 'critical' else '#fff3e0'}; border-left: 4px solid {'#f44336' if anomaly['severity'] == 'critical' else '#ff9800'};">
-        <h4>{anomaly['device']} - {anomaly['neighbor']}</h4>
-        <p><strong>Issue:</strong> {anomaly['message']}</p>
-        <p><strong>Recommended Action:</strong> {anomaly['action']}</p>
+            <div class="anomaly-card {severity_class}">
+                <h4>{anomaly['device']} - {anomaly['neighbor']}</h4>
+                <p><strong>Issue:</strong> {anomaly['message']}</p>
+                <p><strong>Recommended Action:</strong> {anomaly['action']}</p>
+            </div>
+"""
+            html_content += """
+        </div>
     </div>
 """
         
         # BGP neighbors table (sorted by health - problems first)
         html_content += f"""
-    <h2>BGP Neighbors Status ({len(all_neighbors)} total)</h2>
-    <div id="filter-info" class="filter-info">
-        <span id="filter-text"></span>
-        <button onclick="clearFilter()" style="margin-left: 10px; padding: 2px 8px; background: #1976d2; color: white; border: none; border-radius: 3px; cursor: pointer;">Show All</button>
-    </div>
-    <table class="bgp-table" id="bgp-table">
-        <thead>
-        <tr>
-            <th class="sortable" data-column="0" data-type="string">
-                Device <span class="sort-arrow">▲▼</span>
-            </th>
-            <th class="sortable" data-column="1" data-type="string">
-                Neighbor <span class="sort-arrow">▲▼</span>
-            </th>
-            <th class="sortable" data-column="2" data-type="port">
-                Interface <span class="sort-arrow">▲▼</span>
-            </th>
-            <th class="sortable" data-column="3" data-type="bgp-state">
-                State <span class="sort-arrow">▲▼</span>
-            </th>
-            <th class="sortable" data-column="4" data-type="number">
-                ASN <span class="sort-arrow">▲▼</span>
-            </th>
-            <th class="sortable" data-column="5" data-type="uptime">
-                Uptime <span class="sort-arrow">▲▼</span>
-            </th>
-            <th class="sortable" data-column="6" data-type="ratio">
-                Prefixes RX/TX <span class="sort-arrow">▲▼</span>
-            </th>
-            <th class="sortable" data-column="7" data-type="ratio">
-                Messages RX/TX <span class="sort-arrow">▲▼</span>
-            </th>
-            <th class="sortable" data-column="8" data-type="ratio">
-                Queue In/Out <span class="sort-arrow">▲▼</span>
-            </th>
-            <th class="sortable" data-column="9" data-type="bgp-health">
-                Health <span class="sort-arrow">▲▼</span>
-            </th>
-        </tr>
-        </thead>
-        <tbody id="bgp-data">
+    <!-- Neighbors Status Section -->
+    <div class="dashboard-section">
+        <div class="section-header">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M4,1H20A1,1 0 0,1 21,2V6A1,1 0 0,1 20,7H4A1,1 0 0,1 3,6V2A1,1 0 0,1 4,1M4,9H20A1,1 0 0,1 21,10V14A1,1 0 0,1 20,15H4A1,1 0 0,1 3,14V10A1,1 0 0,1 4,9M4,17H20A1,1 0 0,1 21,18V22A1,1 0 0,1 20,23H4A1,1 0 0,1 3,22V18A1,1 0 0,1 4,17Z"/>
+            </svg>
+            BGP Neighbors Status ({len(all_neighbors)} total)
+        </div>
+        <div class="section-content-table">
+            <div id="filter-info" class="filter-info">
+                <span id="filter-text"></span>
+                <button onclick="clearFilter()">Show All</button>
+            </div>
+            <table class="bgp-table" id="bgp-table">
+                <thead>
+                <tr>
+                    <th class="sortable" data-column="0" data-type="string">Device <span class="sort-arrow">▲▼</span></th>
+                    <th class="sortable" data-column="1" data-type="string">Neighbor <span class="sort-arrow">▲▼</span></th>
+                    <th class="sortable" data-column="2" data-type="port">Interface <span class="sort-arrow">▲▼</span></th>
+                    <th class="sortable" data-column="3" data-type="bgp-state">State <span class="sort-arrow">▲▼</span></th>
+                    <th class="sortable" data-column="4" data-type="number">ASN <span class="sort-arrow">▲▼</span></th>
+                    <th class="sortable" data-column="5" data-type="uptime">Uptime <span class="sort-arrow">▲▼</span></th>
+                    <th class="sortable" data-column="6" data-type="ratio">Prefixes RX/TX <span class="sort-arrow">▲▼</span></th>
+                    <th class="sortable" data-column="7" data-type="ratio">Messages RX/TX <span class="sort-arrow">▲▼</span></th>
+                    <th class="sortable" data-column="8" data-type="ratio">Queue In/Out <span class="sort-arrow">▲▼</span></th>
+                    <th class="sortable" data-column="9" data-type="bgp-health">Health <span class="sort-arrow">▲▼</span></th>
+                </tr>
+                </thead>
+                <tbody id="bgp-data">
 """
         
         # Add all neighbor data (sorted by health - problems first, then good ones)
@@ -797,17 +838,33 @@ class BGPAnalyzer:
 """
         
         html_content += """
-        </tbody>
-    </table>
+                </tbody>
+            </table>
+        </div>
+    </div>
     
-    <h2>BGP Health Thresholds</h2>
-    <table class="bgp-table">
-        <tr><th>Parameter</th><th>Threshold</th><th>Description</th></tr>
-        <tr><td>Critical Down Time</td><td>1+ hours</td><td>Neighbor down for extended period</td></tr>
-        <tr><td>High Queue Depth</td><td>10+ messages</td><td>Processing delays or congestion</td></tr>
-        <tr><td>Low Prefix Count</td><td>&lt; 1 prefix</td><td>Potential route advertisement issues</td></tr>
-        <tr><td>Message Ratio</td><td>&lt; 80%</td><td>Imbalanced message exchange</td></tr>
-    </table>
+    <!-- Thresholds Section -->
+    <div class="dashboard-section">
+        <div class="section-header">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12,15.5A3.5,3.5 0 0,1 8.5,12A3.5,3.5 0 0,1 12,8.5A3.5,3.5 0 0,1 15.5,12A3.5,3.5 0 0,1 12,15.5M19.43,12.97C19.47,12.65 19.5,12.33 19.5,12C19.5,11.67 19.47,11.34 19.43,11L21.54,9.37C21.73,9.22 21.78,8.95 21.66,8.73L19.66,5.27C19.54,5.05 19.27,4.96 19.05,5.05L16.56,6.05C16.04,5.66 15.5,5.32 14.87,5.07L14.5,2.42C14.46,2.18 14.25,2 14,2H10C9.75,2 9.54,2.18 9.5,2.42L9.13,5.07C8.5,5.32 7.96,5.66 7.44,6.05L4.95,5.05C4.73,4.96 4.46,5.05 4.34,5.27L2.34,8.73C2.21,8.95 2.27,9.22 2.46,9.37L4.57,11C4.53,11.34 4.5,11.67 4.5,12C4.5,12.33 4.53,12.65 4.57,12.97L2.46,14.63C2.27,14.78 2.21,15.05 2.34,15.27L4.34,18.73C4.46,18.95 4.73,19.03 4.95,18.95L7.44,17.94C7.96,18.34 8.5,18.68 9.13,18.93L9.5,21.58C9.54,21.82 9.75,22 10,22H14C14.25,22 14.46,21.82 14.5,21.58L14.87,18.93C15.5,18.67 16.04,18.34 16.56,17.94L19.05,18.95C19.27,19.03 19.54,18.95 19.66,18.73L21.66,15.27C21.78,15.05 21.73,14.78 21.54,14.63L19.43,12.97Z"/>
+            </svg>
+            BGP Health Thresholds
+        </div>
+        <div class="section-content-table">
+            <table class="bgp-table">
+                <thead>
+                    <tr><th>Parameter</th><th>Threshold</th><th>Description</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>Critical Down Time</td><td>1+ hours</td><td>Neighbor down for extended period</td></tr>
+                    <tr><td>High Queue Depth</td><td>10+ messages</td><td>Processing delays or congestion</td></tr>
+                    <tr><td>Low Prefix Count</td><td>&lt; 1 prefix</td><td>Potential route advertisement issues</td></tr>
+                    <tr><td>Message Ratio</td><td>&lt; 80%</td><td>Imbalanced message exchange</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
 
     <!-- jQuery and Select2 for device search -->
     <script src="/css/jquery-3.5.1.min.js"></script>
@@ -1204,20 +1261,20 @@ class BGPAnalyzer:
                         position: fixed;
                         top: 20px;
                         right: 20px;
-                        background: #c87f0a;
-                        color: white;
+                        background: #2d2d2d;
+                        color: #d4d4d4;
                         padding: 15px 20px;
                         border-radius: 8px;
-                        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+                        border-left: 4px solid #76b900;
+                        box-shadow: 0 4px 12px rgba(0,0,0,0.4);
                         z-index: 1000;
-                        font-size: 14px;
+                        font-size: 13px;
                         max-width: 350px;
-                        font-family: monospace;
                     `;
                     notification.innerHTML = `
-                        <strong>✅ Monitor Analysis Started</strong><br>
+                        <strong style="color: #76b900;">✅ Monitor Analysis Started</strong><br>
                         The full system analysis is running in the background.<br>
-                        <small>Page will automatically refresh in 35 seconds to show the latest results.</small>
+                        <small style="color: #888;">Page will automatically refresh in 35 seconds to show the latest results.</small>
                     `;
                     document.body.appendChild(notification);
                     // Auto-refresh page after 35 seconds

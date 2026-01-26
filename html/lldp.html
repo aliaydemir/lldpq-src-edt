@@ -6,284 +6,457 @@
     <title>..::LLDPQ::..</title>
     <link rel="shortcut icon" href="/png/favicon.ico">
     <script src="/css/auth.js"></script>
-    <link rel="stylesheet" type="text/css" href="/css/styles2.css">
     <link rel="stylesheet" type="text/css" href="/css/select2.min.css">
     <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 20px;
+            min-height: 100vh;
+        }
+        
+        /* Page Header */
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #404040;
+        }
+        
+        .page-title {
+            font-size: 24px;
+            font-weight: 600;
+            color: #76b900;
+        }
+        
+        .last-updated {
+            font-size: 13px;
+            color: #888;
+        }
+        
+        /* Dashboard Section */
+        .dashboard-section {
+            background: #2d2d2d;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            overflow: hidden;
+        }
+        
+        .section-header {
+            padding: 12px 16px;
+            background: #333;
+            font-weight: 600;
+            font-size: 14px;
+            color: #76b900;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border-bottom: 1px solid #404040;
+        }
+        
+        .section-content {
+            padding: 16px;
+        }
+        
+        /* Summary Grid */
         .summary-grid { 
             display: grid; 
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); 
-            gap: 15px; 
-            margin: 20px 0; 
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); 
+            gap: 12px; 
         }
+        
         .summary-card { 
-            background: #f8f9fa; 
+            background: #252526; 
             padding: 15px; 
-            border-radius: 8px; 
-            border-left: 4px solid #007bff; 
+            border-radius: 6px; 
+            border-left: 3px solid #76b900;
+            cursor: pointer;
+            transition: all 0.2s ease;
         }
-        .card-excellent { border-left-color: #4caf50; }
+        
+        .summary-card:hover {
+            background: #2d2d2d;
+            transform: translateY(-1px);
+        }
+        
+        .summary-card.active {
+            background: #333;
+            border-left-width: 5px;
+        }
+        
+        .card-excellent { border-left-color: #76b900; }
         .card-good { border-left-color: #8bc34a; }
         .card-warning { border-left-color: #ff9800; }
         .card-critical { border-left-color: #f44336; }
-        .card-total { border-left-color: #2196f3; }
-        .card-info { border-left-color: #2196f3; }
-        .card-value { font-size: 24px; font-weight: bold; color: #333; }
+        .card-total { border-left-color: #4fc3f7; }
+        .card-info { border-left-color: #4fc3f7; }
         
-        /* Colored card values */
-        .card-excellent .card-value { color: #4caf50; }
+        .card-value { font-size: 22px; font-weight: bold; color: #d4d4d4; }
+        .card-excellent .card-value { color: #76b900; }
         .card-good .card-value { color: #8bc34a; }
         .card-warning .card-value { color: #ff9800; }
         .card-critical .card-value { color: #f44336; }
-        .card-total .card-value { color: #333; }
-        .card-info .card-value { color: #2196f3; }
-        .card-label { font-size: 14px; color: #666; margin-top: 5px; }
+        .card-total .card-value { color: #4fc3f7; }
+        .card-info .card-value { color: #4fc3f7; }
+        .card-label { font-size: 12px; color: #888; margin-top: 4px; }
         
-        .summary-card {
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }
-        .summary-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
-        }
-        .summary-card.active {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.25);
-            border-left-width: 6px;
-        }
-        
+        /* Filter Info */
         .filter-info {
             text-align: center;
-            padding: 10px;
-            margin: 10px 0;
-            background: #e8f4fd;
-            border-radius: 4px;
-            color: #1976d2;
+            padding: 10px 15px;
+            margin: 15px 0;
+            background: rgba(118, 185, 0, 0.1);
+            border: 1px solid rgba(118, 185, 0, 0.3);
+            border-radius: 6px;
+            color: #76b900;
             display: none;
+            font-size: 13px;
         }
         
-        .status-success { color: #4caf50; font-weight: bold; }
+        .filter-info button {
+            margin-left: 10px;
+            padding: 4px 10px;
+            background: #76b900;
+            color: #000;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        
+        /* Status Colors */
+        .status-success { color: #76b900; font-weight: bold; }
         .status-fail { color: #f44336; font-weight: bold; }
         .status-warning { color: #ff9800; font-weight: bold; }
         .status-no-info { color: #f44336; font-weight: bold; }
-        
-        .port-status-up { color: #4caf50; font-weight: bold; }
+        .port-status-up { color: #76b900; font-weight: bold; }
         .port-status-down { color: #f44336; font-weight: bold; }
         
-        .lldp-table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-        .lldp-table th, .lldp-table td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-        .lldp-table th { background-color: #f2f2f2; }
+        /* Table Styling */
+        .lldp-table { 
+            width: 100%; 
+            border-collapse: collapse; 
+            font-size: 13px;
+        }
         
+        .lldp-table th, .lldp-table td { 
+            border: 1px solid #404040; 
+            padding: 10px 12px; 
+            text-align: left; 
+        }
+        
+        .lldp-table th { 
+            background: #333; 
+            color: #76b900;
+            font-weight: 600;
+            font-size: 12px;
+        }
+        
+        .lldp-table tbody tr {
+            background: #252526;
+        }
+        
+        .lldp-table tbody tr:hover {
+            background: #2d2d2d;
+        }
+        
+        /* Messages */
         .loading {
             text-align: center;
             padding: 40px;
-            color: #666;
-        }
-        .error {
-            text-align: center;
-            padding: 40px;
-            color: #f44336;
-            background: #ffeaea;
-            border-radius: 8px;
-            margin: 20px 0;
+            color: #888;
         }
         
-        /* Sortable table styling */
+        .error {
+            text-align: center;
+            padding: 30px;
+            color: #ff6b6b;
+            background: rgba(244, 67, 54, 0.1);
+            border: 1px solid rgba(244, 67, 54, 0.3);
+            border-radius: 6px;
+            margin: 15px 0;
+        }
+        
+        /* Sortable */
         .sortable {
             cursor: pointer;
             user-select: none;
-            position: relative;
             padding-right: 20px;
         }
         
         .sortable:hover {
-            background-color: #f5f5f5;
+            background: #3c3c3c;
         }
         
         .sort-arrow {
             font-size: 10px;
-            color: #999;
+            color: #666;
             margin-left: 5px;
             opacity: 0.5;
         }
         
-        .sortable.asc .sort-arrow::before {
-            content: '▲';
-            color: #b57614;
-            opacity: 1;
+        .sortable.asc .sort-arrow::before { content: '▲'; color: #76b900; opacity: 1; }
+        .sortable.desc .sort-arrow::before { content: '▼'; color: #76b900; opacity: 1; }
+        .sortable.asc .sort-arrow, .sortable.desc .sort-arrow { opacity: 1; }
+        
+        /* Buttons */
+        .btn {
+            padding: 8px 14px;
+            border: none;
+            border-radius: 4px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
         }
         
-        .sortable.desc .sort-arrow::before {
-            content: '▼';
-            color: #b57614;
-            opacity: 1;
+        .btn-primary {
+            background: linear-gradient(0deg, #76b900 0%, #5a8c00 100%);
+            color: white;
         }
         
-        .sortable.asc .sort-arrow,
-        .sortable.desc .sort-arrow {
-            opacity: 1;
+        .btn-primary:hover {
+            background: linear-gradient(0deg, #8bd400 0%, #6ba000 100%);
         }
         
-        /* Device Search Box - Match Run button height (padding 8px + font 14px + border) */
+        .btn-secondary {
+            background: linear-gradient(0deg, #4fc3f7 0%, #0288d1 100%);
+            color: white;
+        }
+        
+        .btn-secondary:hover {
+            background: linear-gradient(0deg, #81d4fa 0%, #039be5 100%);
+        }
+        
+        .btn-gray {
+            background: #607d8b;
+            color: white;
+        }
+        
+        .btn-gray:hover {
+            background: #546e7a;
+        }
+        
+        .action-buttons {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        /* Device Search - Dark Theme */
         .device-search-container {
             display: flex;
             align-items: center;
             gap: 8px;
         }
-        .device-search-container .select2-container {
-            min-width: 250px;
-        }
+        
+        .device-search-container .select2-container { min-width: 220px; }
         .device-search-container .select2-container--default .select2-selection--single {
-            height: 38px;
-            border: 1px solid #ccc;
-            border-radius: 6px;
+            height: 34px;
+            border: 1px solid #555;
+            border-radius: 4px;
+            background: #3c3c3c;
             display: flex;
             align-items: center;
         }
         .device-search-container .select2-container--default .select2-selection--single .select2-selection__rendered {
-            line-height: 38px;
-            color: #333;
-            padding-left: 8px;
-            font-size: 14px;
+            line-height: 34px;
+            color: #d4d4d4;
+            padding-left: 10px;
+            font-size: 13px;
         }
         .device-search-container .select2-container--default .select2-selection--single .select2-selection__arrow {
-            height: 38px;
+            height: 34px;
         }
         .device-search-container .select2-container--default .select2-selection--single .select2-selection__placeholder {
-            color: #999;
+            color: #888;
         }
+        
+        /* Select2 Dropdown Dark Theme */
+        .select2-dropdown {
+            background: #2d2d2d;
+            border: 1px solid #555;
+        }
+        .select2-container--default .select2-search--dropdown .select2-search__field {
+            background: #3c3c3c;
+            border: 1px solid #555;
+            color: #d4d4d4;
+        }
+        .select2-container--default .select2-results__option {
+            color: #d4d4d4;
+            padding: 8px 12px;
+        }
+        .select2-container--default .select2-results__option--highlighted[aria-selected] {
+            background: #76b900;
+            color: #000;
+        }
+        .select2-container--default .select2-results__option[aria-selected=true] {
+            background: #3c3c3c;
+        }
+        
         .clear-search-btn {
-            background: #ff5722;
+            background: #f44336;
             color: white;
             border: none;
-            padding: 8px 12px;
-            border-radius: 6px;
+            padding: 6px 10px;
+            border-radius: 4px;
             cursor: pointer;
-            font-size: 14px;
+            font-size: 12px;
             display: none;
-            transition: all 0.3s ease;
         }
+        
         .clear-search-btn:hover {
-            background: #e64a19;
+            background: #d32f2f;
         }
+        
         .highlight-row {
-            background-color: #fff3cd !important;
+            background-color: rgba(118, 185, 0, 0.15) !important;
         }
+        
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #1e1e1e; }
+        ::-webkit-scrollbar-thumb { background: #404040; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #555; }
     </style>
 </head>
 <body>
-    <h1></h1>
-    <h1><font color="#b57614">LLDP Network Topology Analysis</font></h1>
-    <p><strong>Last Updated:</strong> <span id="last-updated"></span></p>
-    
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-        <h2 style="margin: 0;">LLDP Connection Summary</h2>
-        <div style="display: flex; gap: 10px; align-items: center;">
-            <!-- Device Search Box -->
+    <!-- Page Header -->
+    <div class="page-header">
+        <div>
+            <div class="page-title">LLDP Network Topology Analysis</div>
+            <div class="last-updated">Last Updated: <span id="last-updated"></span></div>
+        </div>
+        <div class="action-buttons">
             <div class="device-search-container">
-                <select id="deviceSearch" style="width: 250px;">
+                <select id="deviceSearch" style="width: 220px;">
                     <option value="">Search Device...</option>
                 </select>
                 <button id="clearSearchBtn" class="clear-search-btn" onclick="clearDeviceSearch()">✕</button>
             </div>
-            <button id="run-lldp" onclick="runLLDPCheck()" 
-                    style="background: #2196f3; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 8px; transition: all 0.3s ease;"
-                    onmouseover="this.style.background='#1976d2'" 
-                    onmouseout="this.style.background='#2196f3'">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <button id="run-lldp" onclick="runLLDPCheck()" class="btn btn-secondary">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M8,5.14V19.14L19,12.14L8,5.14Z"/>
                 </svg>
                 <span id="run-lldp-text">Run LLDP Check</span>
             </button>
-            <button id="edit-topology" onclick="openTopologyEditor()" 
-                    style="background: #607d8b; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; display: none; align-items: center; gap: 8px; transition: all 0.3s ease;"
-                    onmouseover="this.style.background='#546e7a'" 
-                    onmouseout="this.style.background='#607d8b'">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <button id="edit-topology" onclick="openTopologyEditor()" class="btn btn-gray" style="display: none;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M20.71,7.04C21.1,6.65 21.1,6 20.71,5.63L18.37,3.29C18,2.9 17.35,2.9 16.96,3.29L15.12,5.12L18.87,8.87M3,17.25V21H6.75L17.81,9.93L14.06,6.18L3,17.25Z"/>
                 </svg>
                 Edit Topology
             </button>
-            <button id="download-csv" onclick="downloadCSV()" 
-                    style="background: #4caf50; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 8px; transition: all 0.3s ease;"
-                    onmouseover="this.style.background='#45a049'" 
-                    onmouseout="this.style.background='#4caf50'">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <button id="download-csv" onclick="downloadCSV()" class="btn btn-primary">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
                 </svg>
                 Download CSV
             </button>
         </div>
     </div>
-    <div class="summary-grid">
-        <div class="summary-card card-total">
-            <div class="card-value" id="total-connections">0</div>
-            <div class="card-label">Total Connections</div>
+    
+    <!-- Summary Section -->
+    <div class="dashboard-section">
+        <div class="section-header">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/>
+            </svg>
+            LLDP Connection Summary
         </div>
-        <div class="summary-card card-excellent">
-            <div class="card-value" id="success-connections">0</div>
-            <div class="card-label">Successful Links</div>
-        </div>
-        <div class="summary-card card-critical">
-            <div class="card-value" id="failed-connections">0</div>
-            <div class="card-label">Failed Links</div>
-        </div>
-        <div class="summary-card card-warning">
-            <div class="card-value" id="warning-connections">0</div>
-            <div class="card-label">Warning Links</div>
-        </div>
-        <div class="summary-card card-info">
-            <div class="card-value" id="no-info-connections">0</div>
-            <div class="card-label">No Information</div>
+        <div class="section-content">
+            <div class="summary-grid">
+                <div class="summary-card card-total">
+                    <div class="card-value" id="total-connections">0</div>
+                    <div class="card-label">Total Connections</div>
+                </div>
+                <div class="summary-card card-excellent">
+                    <div class="card-value" id="success-connections">0</div>
+                    <div class="card-label">Successful Links</div>
+                </div>
+                <div class="summary-card card-critical">
+                    <div class="card-value" id="failed-connections">0</div>
+                    <div class="card-label">Failed Links</div>
+                </div>
+                <div class="summary-card card-warning">
+                    <div class="card-value" id="warning-connections">0</div>
+                    <div class="card-label">Warning Links</div>
+                </div>
+                <div class="summary-card card-info">
+                    <div class="card-value" id="no-info-connections">0</div>
+                    <div class="card-label">No Information</div>
+                </div>
+            </div>
         </div>
     </div>
     
-    <h2>LLDP Connection Status</h2>
-    <div id="filter-info" class="filter-info">
-        <span id="filter-text"></span>
-        <button onclick="clearFilter()" style="margin-left: 10px; padding: 2px 8px; background: #1976d2; color: white; border: none; border-radius: 3px; cursor: pointer;">Show All</button>
+    <!-- Connection Status Section -->
+    <div class="dashboard-section">
+        <div class="section-header">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M4,1H20A1,1 0 0,1 21,2V6A1,1 0 0,1 20,7H4A1,1 0 0,1 3,6V2A1,1 0 0,1 4,1M4,9H20A1,1 0 0,1 21,10V14A1,1 0 0,1 20,15H4A1,1 0 0,1 3,14V10A1,1 0 0,1 4,9M4,17H20A1,1 0 0,1 21,18V22A1,1 0 0,1 20,23H4A1,1 0 0,1 3,22V18A1,1 0 0,1 4,17M9,5H10V3H9V5M9,13H10V11H9V13M9,21H10V19H9V21M5,3V5H7V3H5M5,11V13H7V11H5M5,19V21H7V19H5Z"/>
+            </svg>
+            LLDP Connection Status
+        </div>
+        <div class="section-content" style="padding: 0;">
+            <div id="filter-info" class="filter-info" style="margin: 16px;">
+                <span id="filter-text"></span>
+                <button onclick="clearFilter()">Show All</button>
+            </div>
+            <div id="loading" class="loading">
+                <p>Loading LLDP topology data...</p>
+            </div>
+            <div id="error" class="error" style="display: none; margin: 16px;">
+                <p>Error loading LLDP data. Please check if the data file exists.</p>
+            </div>
+            <table class="lldp-table" id="lldp-table" style="display: none;">
+                <thead>
+                <tr>
+                    <th class="sortable" data-column="0" data-type="string">
+                        Local Device <span class="sort-arrow">▲▼</span>
+                    </th>
+                    <th class="sortable" data-column="1" data-type="port">
+                        Local Port <span class="sort-arrow">▲▼</span>
+                    </th>
+                    <th class="sortable" data-column="2" data-type="port-status">
+                        Port Status <span class="sort-arrow">▲▼</span>
+                    </th>
+                    <th class="sortable" data-column="3" data-type="string">
+                        Expected Neighbor <span class="sort-arrow">▲▼</span>
+                    </th>
+                    <th class="sortable" data-column="4" data-type="port">
+                        Expected Port <span class="sort-arrow">▲▼</span>
+                    </th>
+                    <th class="sortable" data-column="5" data-type="string">
+                        Active Neighbor <span class="sort-arrow">▲▼</span>
+                    </th>
+                    <th class="sortable" data-column="6" data-type="port">
+                        Active Port <span class="sort-arrow">▲▼</span>
+                    </th>
+                    <th class="sortable" data-column="7" data-type="lldp-status">
+                        Status <span class="sort-arrow">▲▼</span>
+                    </th>
+                    <th class="sortable" data-column="8" data-type="string">
+                        Connection Health <span class="sort-arrow">▲▼</span>
+                    </th>
+                </tr>
+                </thead>
+                <tbody id="lldp-data">
+                </tbody>
+            </table>
+        </div>
     </div>
-    <div id="loading" class="loading">
-        <p>Loading LLDP topology data...</p>
-    </div>
-    <div id="error" class="error" style="display: none;">
-        <p>Error loading LLDP data. Please check if the data file exists.</p>
-    </div>
-    <table class="lldp-table" id="lldp-table" style="display: none;">
-        <thead>
-        <tr>
-            <th class="sortable" data-column="0" data-type="string">
-                Local Device <span class="sort-arrow">▲▼</span>
-            </th>
-            <th class="sortable" data-column="1" data-type="port">
-                Local Port <span class="sort-arrow">▲▼</span>
-            </th>
-            <th class="sortable" data-column="2" data-type="port-status">
-                Port Status <span class="sort-arrow">▲▼</span>
-            </th>
-            <th class="sortable" data-column="3" data-type="string">
-                Expected Neighbor <span class="sort-arrow">▲▼</span>
-            </th>
-            <th class="sortable" data-column="4" data-type="port">
-                Expected Neighbor Port <span class="sort-arrow">▲▼</span>
-            </th>
-            <th class="sortable" data-column="5" data-type="string">
-                Active Neighbor <span class="sort-arrow">▲▼</span>
-            </th>
-            <th class="sortable" data-column="6" data-type="port">
-                Active Neighbor Port <span class="sort-arrow">▲▼</span>
-            </th>
-            <th class="sortable" data-column="7" data-type="lldp-status">
-                Status <span class="sort-arrow">▲▼</span>
-            </th>
-            <th class="sortable" data-column="8" data-type="string">
-                Connection Health <span class="sort-arrow">▲▼</span>
-            </th>
-        </tr>
-        </thead>
-        <tbody id="lldp-data">
-        </tbody>
-    </table>
 
     <!-- jQuery and Select2 for device search -->
     <script src="/css/jquery-3.5.1.min.js"></script>
@@ -854,7 +1027,7 @@
                 
                 // Always show manual trigger instruction
                 buttonText.textContent = '✓ Triggered';
-                button.style.background = '#4caf50';
+                button.style.background = 'linear-gradient(0deg, #76b900 0%, #5a8c00 100%)';
                 
                 // Show instruction notification
                 const notification = document.createElement('div');
@@ -862,20 +1035,20 @@
                     position: fixed;
                     top: 20px;
                     right: 20px;
-                    background: #2196f3;
-                    color: white;
+                    background: #2d2d2d;
+                    color: #d4d4d4;
                     padding: 15px 20px;
                     border-radius: 8px;
-                    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+                    border-left: 4px solid #76b900;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
                     z-index: 1000;
-                    font-size: 14px;
+                    font-size: 13px;
                     max-width: 350px;
-                    font-family: monospace;
                 `;
                 notification.innerHTML = `
-                    <strong>✅ LLDP Check Started</strong><br>
+                    <strong style="color: #76b900;">✅ LLDP Check Started</strong><br>
                     The topology analysis is running in the background.<br>
-                    <small>Page will automatically refresh in 5 seconds to show the latest results.</small>
+                    <small style="color: #888;">Page will automatically refresh in 5 seconds to show the latest results.</small>
                 `;
                 
                 document.body.appendChild(notification);
@@ -897,7 +1070,7 @@
                     button.disabled = false;
                     button.style.opacity = '1';
                     button.style.cursor = 'pointer';
-                    button.style.background = '#2196f3';
+                    button.style.background = 'linear-gradient(0deg, #4fc3f7 0%, #0288d1 100%)';
                     buttonText.textContent = originalText;
                 }, 5000);
             })
@@ -914,17 +1087,18 @@
                     position: fixed;
                     top: 20px;
                     right: 20px;
-                    background: #f44336;
-                    color: white;
+                    background: #2d2d2d;
+                    color: #d4d4d4;
                     padding: 15px 20px;
                     border-radius: 8px;
-                    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+                    border-left: 4px solid #f44336;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
                     z-index: 1000;
-                    font-size: 14px;
+                    font-size: 13px;
                     max-width: 300px;
                 `;
                 notification.innerHTML = `
-                    <strong>Error!</strong><br>
+                    <strong style="color: #f44336;">Error!</strong><br>
                     Could not start LLDP check. Please try again or contact administrator.
                 `;
                 
@@ -942,7 +1116,7 @@
                     button.disabled = false;
                     button.style.opacity = '1';
                     button.style.cursor = 'pointer';
-                    button.style.background = '#2196f3';
+                    button.style.background = 'linear-gradient(0deg, #4fc3f7 0%, #0288d1 100%)';
                     buttonText.textContent = originalText;
                 }, 3000);
             });
