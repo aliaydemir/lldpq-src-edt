@@ -496,7 +496,8 @@ if not profile_name:
     sys.exit(0)
 
 # Paths
-inventory_base = "$INVENTORY"
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+inventory_base = os.path.join(ansible_dir, 'inventory')
 vlan_profiles_file = os.path.join(inventory_base, 'group_vars', 'all', 'vlan_profiles.yaml')
 port_profiles_file = os.path.join(inventory_base, 'group_vars', 'all', 'sw_port_profiles.yaml')
 
@@ -580,21 +581,22 @@ if not vlans:
     sys.exit(0)
 
 # Path to host_vars
-inventory_base = "$INVENTORY"
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+inventory_base = os.path.join(ansible_dir, 'inventory')
 host_vars_file = os.path.join(inventory_base, 'host_vars', device + '.yaml')
 
 if not os.path.exists(host_vars_file):
     # Also try without .yaml
     host_vars_file = os.path.join(inventory_base, 'host_vars', device + '.yml')
 
-if not os.path.exists(host_vars_file):
-    print(json.dumps({'success': False, 'error': f'Host vars file not found for {device}'}))
-    sys.exit(0)
-
-# Load host_vars
+# Load host_vars or create empty config
 host_config = {}
-with open(host_vars_file, 'r') as f:
-    host_config = yaml.safe_load(f) or {}
+if os.path.exists(host_vars_file):
+    with open(host_vars_file, 'r') as f:
+        host_config = yaml.safe_load(f) or {}
+else:
+    # Create new file with .yaml extension
+    host_vars_file = os.path.join(inventory_base, 'host_vars', device + '.yaml')
 
 # Add VLANs to vlan_templates
 if 'vlan_templates' not in host_config:
@@ -616,6 +618,167 @@ print(json.dumps({
     'device': device,
     'added_vlans': added,
     'total_vlans': len(host_config['vlan_templates'])
+}))
+PYTHON
+}
+
+unassign_vlan() {
+    # Read POST data
+    local post_data
+    read -r post_data
+
+    python3 << PYTHON
+import json
+import yaml
+import os
+import sys
+
+# Parse POST data
+post_data = '''$post_data'''
+data = json.loads(post_data)
+
+device = data.get('device', '')
+vlan = data.get('vlan', '')
+
+if not device:
+    print(json.dumps({'success': False, 'error': 'Device name is required'}))
+    sys.exit(0)
+
+if not vlan:
+    print(json.dumps({'success': False, 'error': 'VLAN name is required'}))
+    sys.exit(0)
+
+# Path to host_vars
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+inventory_base = os.path.join(ansible_dir, 'inventory')
+host_vars_file = os.path.join(inventory_base, 'host_vars', device + '.yaml')
+
+# Try .yaml first, then .yml
+if not os.path.exists(host_vars_file):
+    host_vars_file = os.path.join(inventory_base, 'host_vars', device + '.yml')
+
+# Load host_vars (create empty if doesn't exist)
+host_config = {}
+if os.path.exists(host_vars_file):
+    with open(host_vars_file, 'r') as f:
+        host_config = yaml.safe_load(f) or {}
+else:
+    # File doesn't exist - check if we should create it
+    # Use .yaml extension for new files
+    host_vars_file = os.path.join(inventory_base, 'host_vars', device + '.yaml')
+    host_config = {}
+
+# Check if VLAN is in vlan_templates
+if 'vlan_templates' not in host_config or vlan not in host_config.get('vlan_templates', []):
+    print(json.dumps({'success': False, 'error': f'VLAN {vlan} not found in device config (may be inherited from group_vars)'}))
+    sys.exit(0)
+
+# Remove VLAN from vlan_templates
+host_config['vlan_templates'].remove(vlan)
+
+# Save host_vars
+with open(host_vars_file, 'w') as f:
+    yaml.dump(host_config, f, default_flow_style=False, sort_keys=False)
+
+print(json.dumps({
+    'success': True,
+    'device': device,
+    'removed_vlan': vlan
+}))
+PYTHON
+}
+
+update_vlan() {
+    # Read POST data
+    local post_data
+    read -r post_data
+
+    python3 << PYTHON
+import json
+import yaml
+import os
+import sys
+
+# Parse POST data
+post_data = '''$post_data'''
+data = json.loads(post_data)
+
+original_name = data.get('original_name', '')
+profile_name = data.get('profile_name', original_name)
+vlan_id = data.get('vlan_id')
+description = data.get('description', '')
+l2vni = data.get('l2vni')
+svi_enabled = data.get('svi_enabled', False)
+vrr_enabled = data.get('vrr_enabled', False)
+vrf = data.get('vrf', 'default')
+vrr_vip = data.get('vrr_vip', '')
+even_ip = data.get('even_ip', '')
+odd_ip = data.get('odd_ip', '')
+gateway_ip = data.get('gateway_ip', '')
+
+if not original_name:
+    print(json.dumps({'success': False, 'error': 'Original profile name is required'}))
+    sys.exit(0)
+
+# Paths
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+inventory_base = os.path.join(ansible_dir, 'inventory')
+vlan_profiles_file = os.path.join(inventory_base, 'group_vars', 'all', 'vlan_profiles.yaml')
+
+# Load vlan_profiles
+vlan_config = {}
+if os.path.exists(vlan_profiles_file):
+    with open(vlan_profiles_file, 'r') as f:
+        vlan_config = yaml.safe_load(f) or {}
+
+if 'vlan_profiles' not in vlan_config or original_name not in vlan_config['vlan_profiles']:
+    print(json.dumps({'success': False, 'error': f'VLAN profile {original_name} not found'}))
+    sys.exit(0)
+
+# Get existing profile data
+existing = vlan_config['vlan_profiles'][original_name]
+
+# Build updated VLAN entry
+vlan_entry = {
+    'description': description,
+    'l2vni': l2vni if l2vni else existing.get('vlans', {}).get(vlan_id, {}).get('l2vni', 100000 + vlan_id)
+}
+
+if svi_enabled:
+    vlan_entry['vrf'] = vrf
+    vlan_entry['ipv6'] = False
+    
+    if vrr_enabled:
+        if vrr_vip:
+            vlan_entry['vrr_vip'] = vrr_vip
+        if even_ip:
+            vlan_entry['even_ip'] = even_ip
+        if odd_ip:
+            vlan_entry['odd_ip'] = odd_ip
+    else:
+        if gateway_ip:
+            vlan_entry['ip'] = gateway_ip
+
+# Update profile
+profile_entry = {
+    'vrr': {'state': vrr_enabled if svi_enabled else False},
+    'vlans': {vlan_id: vlan_entry}
+}
+
+# If profile name changed, remove old and add new
+if profile_name != original_name:
+    del vlan_config['vlan_profiles'][original_name]
+
+vlan_config['vlan_profiles'][profile_name] = profile_entry
+
+# Save
+with open(vlan_profiles_file, 'w') as f:
+    yaml.dump(vlan_config, f, default_flow_style=False, sort_keys=False)
+
+print(json.dumps({
+    'success': True,
+    'profile_name': profile_name,
+    'renamed': profile_name != original_name
 }))
 PYTHON
 }
@@ -647,6 +810,12 @@ case "$ACTION" in
         ;;
     "assign-vlans")
         assign_vlans
+        ;;
+    "unassign-vlan")
+        unassign_vlan
+        ;;
+    "update-vlan")
+        update_vlan
         ;;
     *)
         echo '{"success": false, "error": "Unknown action: '"$ACTION"'"}'
