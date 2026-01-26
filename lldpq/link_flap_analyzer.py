@@ -355,6 +355,35 @@ class LinkFlapAnalyzer:
         ::-webkit-scrollbar-thumb {{ background: #404040; border-radius: 4px; }}
         ::-webkit-scrollbar-thumb:hover {{ background: #555; }}
         @keyframes spin {{ from {{ transform: rotate(0deg); }} to {{ transform: rotate(360deg); }} }}
+        
+        /* Custom fast tooltip */
+        .info-tooltip {{
+            position: relative;
+            cursor: help;
+        }}
+        .info-tooltip::after {{
+            content: attr(data-tooltip);
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #333;
+            color: #fff;
+            padding: 6px 10px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: normal;
+            white-space: nowrap;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.1s, visibility 0.1s;
+            z-index: 1000;
+            pointer-events: none;
+        }}
+        .info-tooltip:hover::after {{
+            opacity: 1;
+            visibility: visible;
+        }}
     </style>
 </head>
 <body>
@@ -474,7 +503,7 @@ class LinkFlapAnalyzer:
                     <th class="sortable" data-column="6" data-type="number">1h <span class="sort-arrow">▲▼</span></th>
                     <th class="sortable" data-column="7" data-type="number">12h <span class="sort-arrow">▲▼</span></th>
                     <th class="sortable" data-column="8" data-type="number">24h <span class="sort-arrow">▲▼</span></th>
-                    <th class="sortable" data-column="9" data-type="number">Total <span class="sort-arrow">▲▼</span></th>
+                    <th class="sortable" data-column="9" data-type="number">Total <span class="info-tooltip" data-tooltip="Cumulative count since last device reboot">ⓘ</span> <span class="sort-arrow">▲▼</span></th>
                 </tr>
                 </thead>
                 <tbody id="flap-data">
