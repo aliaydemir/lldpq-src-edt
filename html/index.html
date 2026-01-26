@@ -375,9 +375,10 @@
             if (cached) {
                 const data = JSON.parse(cached);
                 const age = Date.now() - data.timestamp;
-                if (age < UPDATE_CHECK_INTERVAL) {
-                    // Use cached result
-                    if (data.hasUpdate && data.remoteVersion) {
+                // Cache valid only if: not expired AND local version hasn't changed
+                if (age < UPDATE_CHECK_INTERVAL && data.localVersion === localVersion) {
+                    // Use cached result - only show if remote is actually newer
+                    if (data.hasUpdate && data.remoteVersion && compareVersions(data.remoteVersion, localVersion) > 0) {
                         remoteVersion = data.remoteVersion;
                         showUpdateBadge(data.remoteVersion);
                     }
@@ -406,7 +407,8 @@
                 localStorage.setItem('lldpq_update_check', JSON.stringify({
                     timestamp: Date.now(),
                     hasUpdate: hasUpdate,
-                    remoteVersion: remoteVersion
+                    remoteVersion: remoteVersion,
+                    localVersion: localVersion
                 }));
                 
                 if (hasUpdate) {
