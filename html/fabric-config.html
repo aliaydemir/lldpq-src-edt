@@ -714,6 +714,9 @@
                 }
             }
             
+            // Check if device has a "default" VRF defined
+            const hasDefaultVrf = config.vrfs && config.vrfs['default'];
+            
             let html = '';
             
             // Overview Section
@@ -875,80 +878,134 @@
                 `;
             }
             
-            // Interfaces Section (always at bottom)
+            // Separate interfaces into breakouts and real interfaces
             if (config.interfaces && Object.keys(config.interfaces).length > 0) {
-                const interfaces = Object.entries(config.interfaces);
-                const total = interfaces.length;
+                const allInterfaces = Object.entries(config.interfaces);
                 
-                html += `
-                    <div class="dashboard-section">
-                        <div class="section-header">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                                <path d="M7.77 6.76L6.23 5.48.82 12l5.41 6.52 1.54-1.28L3.42 12l4.35-5.24zM7 13h2v-2H7v2zm10-2h-2v2h2v-2zm-6 2h2v-2h-2v2zm6.77-7.52l-1.54 1.28L20.58 12l-4.35 5.24 1.54 1.28L23.18 12l-5.41-6.52z"/>
-                            </svg>
-                            Interfaces (${total})
-                        </div>
-                        <div class="section-content">
-                            <table class="data-table">
-                                <thead>
-                                    <tr>
-                                        <th>Interface</th>
-                                        <th>Bond</th>
-                                        <th>IP</th>
-                                        <th>Profile</th>
-                                        <th>VLAN</th>
-                                        <th>VRF</th>
-                                        <th>Description</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                `;
+                // Separate breakout parents from real interfaces
+                const breakouts = [];
+                const realInterfaces = [];
                 
-                for (const [ifName, ifConfig] of interfaces) {
-                    // Handle null/empty interface configs
+                for (const [ifName, ifConfig] of allInterfaces) {
                     const cfg = ifConfig || {};
+                    const isSubInterface = /s\d+$/.test(ifName);
                     
-                    // Check if interface is a bond member
-                    const bondInfo = interfaceToBond[ifName];
-                    
-                    // Get profile from interface config OR from bond
-                    const profile = cfg.sw_port_profile || (bondInfo?.profile) || '';
-                    
-                    // Get VLAN - check profile first, then direct assignment on interface
-                    let vlan = getVlanFromProfile(profile);
-                    if (!vlan && cfg.access_vlan) vlan = String(cfg.access_vlan);
-                    if (!vlan && cfg.native_vlan) vlan = String(cfg.native_vlan);
-                    
-                    // Get VRF - check vlan_to_vrf mapping first, then direct VRF assignment on interface
-                    let vrf = getVrfFromVlan(vlan);
-                    if (!vrf && cfg.vrf) vrf = cfg.vrf;
-                    
-                    const displayProfile = profile || cfg.breakout || '-';
-                    
-                    // If VLAN or profile exists but no VRF found, it's in default VRF
-                    const hasVlanContext = vlan || profile;
-                    const displayVrf = vrf || (hasVlanContext ? 'default' : null);
-                    
-                    // IP address
-                    const ipAddr = cfg.ip || '-';
-                    
-                    // Description from interface or bond
-                    const description = cfg.description || (bondInfo?.description) || '-';
-                    
-                    html += `
-                        <tr>
-                            <td>${ifName}</td>
-                            <td>${bondInfo ? `<span class="badge badge-orange">${bondInfo.bondName}</span>` : '-'}</td>
-                            <td>${ipAddr !== '-' ? `<span class="badge badge-blue">${ipAddr}</span>` : '-'}</td>
-                            <td>${displayProfile}</td>
-                            <td>${vlan ? `<span class="badge badge-green">${vlan}</span>` : '-'}</td>
-                            <td>${displayVrf ? `<span class="badge badge-blue">${displayVrf}</span>` : '-'}</td>
-                            <td>${description}</td>
-                        </tr>
-                    `;
+                    if (cfg.breakout && !isSubInterface) {
+                        // This is a breakout parent (physical port with breakout config)
+                        breakouts.push([ifName, cfg]);
+                    } else {
+                        // This is a real interface (sub-interface or non-breakout)
+                        realInterfaces.push([ifName, cfg]);
+                    }
                 }
                 
-                html += '</tbody></table></div></div>';
+                // Breakouts Section
+                if (breakouts.length > 0) {
+                    html += `
+                        <div class="dashboard-section">
+                            <div class="section-header">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M4 14h4v-4H4v4zm0 5h4v-4H4v4zM4 9h4V5H4v4zm5 5h12v-4H9v4zm0 5h12v-4H9v4zM9 5v4h12V5H9z"/>
+                                </svg>
+                                Port Breakouts (${breakouts.length})
+                            </div>
+                            <div class="section-content">
+                                <table class="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Physical Port</th>
+                                            <th>Breakout</th>
+                                            <th>Sub-Interfaces</th>
+                                            <th>Description</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                    `;
+                    
+                    for (const [ifName, cfg] of breakouts) {
+                        // Calculate sub-interfaces based on breakout type
+                        const breakoutType = cfg.breakout || '-';
+                        let subIfCount = 1;
+                        const breakoutMatch = breakoutType.match(/^(\d+)x/);
+                        if (breakoutMatch) {
+                            subIfCount = parseInt(breakoutMatch[1]);
+                        }
+                        const subInterfaces = [];
+                        for (let i = 0; i < subIfCount; i++) {
+                            subInterfaces.push(ifName + 's' + i);
+                        }
+                        
+                        html += `
+                            <tr>
+                                <td><strong>${ifName}</strong></td>
+                                <td><span class="badge badge-orange">${breakoutType}</span></td>
+                                <td>${subInterfaces.join(', ')}</td>
+                                <td>${cfg.description || '-'}</td>
+                            </tr>
+                        `;
+                    }
+                    
+                    html += '</tbody></table></div></div>';
+                }
+                
+                // Interfaces Section (real interfaces only)
+                if (realInterfaces.length > 0) {
+                    html += `
+                        <div class="dashboard-section">
+                            <div class="section-header">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M7.77 6.76L6.23 5.48.82 12l5.41 6.52 1.54-1.28L3.42 12l4.35-5.24zM7 13h2v-2H7v2zm10-2h-2v2h2v-2zm-6 2h2v-2h-2v2zm6.77-7.52l-1.54 1.28L20.58 12l-4.35 5.24 1.54 1.28L23.18 12l-5.41-6.52z"/>
+                                </svg>
+                                Interfaces (${realInterfaces.length})
+                            </div>
+                            <div class="section-content">
+                                <table class="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Interface</th>
+                                            <th>Bond</th>
+                                            <th>IP</th>
+                                            <th>Profile</th>
+                                            <th>VLAN</th>
+                                            <th>VRF</th>
+                                            <th>Description</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                    `;
+                    
+                    for (const [ifName, ifConfig] of realInterfaces) {
+                        const cfg = ifConfig || {};
+                        const bondInfo = interfaceToBond[ifName];
+                        const profile = cfg.sw_port_profile || (bondInfo?.profile) || '';
+                        
+                        let vlan = getVlanFromProfile(profile);
+                        if (!vlan && cfg.access_vlan) vlan = String(cfg.access_vlan);
+                        if (!vlan && cfg.native_vlan) vlan = String(cfg.native_vlan);
+                        
+                        let vrf = getVrfFromVlan(vlan);
+                        if (!vrf && cfg.vrf) vrf = cfg.vrf;
+                        
+                        const displayProfile = profile || '-';
+                        const displayVrf = vrf || (hasDefaultVrf ? 'default' : null);
+                        const ipAddr = cfg.ip || '-';
+                        const description = cfg.description || (bondInfo?.description) || '-';
+                        
+                        html += `
+                            <tr>
+                                <td>${ifName}</td>
+                                <td>${bondInfo ? `<span class="badge badge-orange">${bondInfo.bondName}</span>` : '-'}</td>
+                                <td>${ipAddr !== '-' ? `<span class="badge badge-blue">${ipAddr}</span>` : '-'}</td>
+                                <td>${displayProfile}</td>
+                                <td>${vlan ? `<span class="badge badge-green">${vlan}</span>` : '-'}</td>
+                                <td>${displayVrf ? `<span class="badge badge-blue">${displayVrf}</span>` : '-'}</td>
+                                <td>${description}</td>
+                            </tr>
+                        `;
+                    }
+                    
+                    html += '</tbody></table></div></div>';
+                }
             }
             
             // Bonds Section (after interfaces)
