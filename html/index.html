@@ -30,8 +30,11 @@
         }
         
         #sidebar.collapsed {
-            width: 70px;
-            padding: 15px 10px;
+            width: 58px;
+            padding: 15px 8px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
         }
         
         #content-iframe {
@@ -45,8 +48,8 @@
         }
         
         #sidebar.collapsed ~ #content-iframe {
-            margin-left: 70px;
-            width: calc(100% - 70px);
+            margin-left: 58px;
+            width: calc(100% - 58px);
         }
         
         /* Toggle Button */
@@ -124,42 +127,41 @@
             display: inline;
         }
         
+        /* ========== COLLAPSED STATE ========== */
         #sidebar.collapsed .menu-item .menu-text {
-            opacity: 0;
-            width: 0;
-            display: none;
+            display: none !important;
         }
         
         #sidebar.collapsed .menu-item {
-            justify-content: center;
-            padding: 12px 0;
-            gap: 0;
-            margin: 5px auto;
-            width: 44px;
+            width: 42px !important;
+            height: 42px !important;
+            padding: 0 !important;
+            margin: 4px auto !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            gap: 0 !important;
+            position: relative;
         }
         
         #sidebar.collapsed .menu-item .menu-icon {
-            width: 100%;
-            justify-content: center;
-            margin: 0;
-            padding: 0;
+            margin: 0 !important;
+            padding: 0 !important;
         }
         
         #sidebar.collapsed .menu-group {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
             margin-bottom: 8px;
+            padding: 0;
         }
         
-        /* Collapsed state adjustments */
         #sidebar.collapsed .logo-section {
             margin-bottom: 10px;
             padding: 5px 0;
+            text-align: center;
         }
         
         #sidebar.collapsed .logo-section img {
-            max-width: 45px;
+            max-width: 40px;
             border-radius: 8px;
         }
         
@@ -172,17 +174,9 @@
             opacity: 0.6;
         }
         
-        #sidebar.collapsed .footer {
-            display: none;
-        }
-        
+        #sidebar.collapsed .footer,
         #sidebar.collapsed #user-menu-container {
             display: none;
-        }
-        
-        /* Tooltip for collapsed state */
-        #sidebar.collapsed .menu-item {
-            position: relative;
         }
         
         #sidebar.collapsed .menu-item:hover::after {
@@ -352,17 +346,6 @@
             transform: translateY(-2px);
         }
         
-        /* Icons for menu items */
-        .menu-item::before {
-            content: '';
-            display: inline-block;
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            margin-right: 10px;
-            background: currentColor;
-            opacity: 0.7;
-        }
     </style>
 </head>
 <body>
