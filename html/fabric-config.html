@@ -1893,7 +1893,7 @@
                                     <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
                                         <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
                                     </svg>
-                                    + Subif
+                                    Subif
                                 </button>
                             </div>
                             <div class="section-content-table">
@@ -3850,16 +3850,24 @@
             const modal = document.getElementById('interface-edit-modal');
             const config = ifConfig ? JSON.parse(decodeURIComponent(ifConfig)) : {};
             
+            // Reset subif option visibility (might have been hidden from previous edit)
+            const modeSelect = document.getElementById('interface-edit-mode');
+            const subifOption = modeSelect.querySelector('option[value="subif"]');
+            if (subifOption) subifOption.style.display = '';
+            
             // Store current bond for later comparison
             currentInterfaceBond = bondName || '';
+            
+            // Check if this is an existing subinterface (name contains dot like swp1s0.1002)
+            const isExistingSubif = config._isVlanSubInterface || ifName.includes('.');
             
             // Determine interface mode based on current config
             let mode = 'l2';
             
-            if (bondName) {
-                mode = 'bond-member';
-            } else if (config._isVlanSubInterface) {
+            if (isExistingSubif) {
                 mode = 'subif';
+            } else if (bondName) {
+                mode = 'bond-member';
             } else if (config.ip) {
                 mode = 'l3';
             } else if (config.subinterfaces) {
@@ -3872,12 +3880,16 @@
             document.getElementById('interface-edit-display-name').value = ifName;
             document.getElementById('interface-edit-modal-title').textContent = 'Edit Interface';
             
-            // Set mode selector
-            const modeSelect = document.getElementById('interface-edit-mode');
-            modeSelect.value = mode;
-            
-            // Show appropriate fields
-            showInterfaceFields(mode, true);
+            // Configure mode selector based on interface type
+            if (isExistingSubif) {
+                // For existing subinterfaces: hide mode selector, show only subif fields
+                showInterfaceFields(mode, false);  // false = don't show mode selector
+            } else {
+                // For physical interfaces: hide "Subinterface" option from dropdown
+                if (subifOption) subifOption.style.display = 'none';
+                modeSelect.value = mode;
+                showInterfaceFields(mode, true);
+            }
             
             // Populate fields based on mode
             if (mode === 'l2') {
