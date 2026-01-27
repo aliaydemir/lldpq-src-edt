@@ -1326,6 +1326,26 @@
         // Autocomplete state (OFF by default)
         let autocompleteEnabled = false;
         
+        // Project-specific Jinja variables (fetched from API)
+        let projectVariables = [];
+        
+        // Fetch Jinja variables from project
+        async function fetchProjectVariables() {
+            try {
+                const response = await fetch('/ansible-api?action=get-jinja-variables');
+                const data = await response.json();
+                if (data.success && data.variables) {
+                    projectVariables = data.variables;
+                    console.log('Loaded', projectVariables.length, 'project variables for autocomplete');
+                }
+            } catch (e) {
+                console.warn('Failed to load project variables:', e);
+            }
+        }
+        
+        // Load variables on startup
+        fetchProjectVariables();
+        
         // Toggle autocomplete function
         function toggleAutocomplete() {
             autocompleteEnabled = !autocompleteEnabled;
@@ -1576,8 +1596,13 @@
                     };
                     
                     if (/\{\{\s*$/.test(textUntilPosition)) {
+                        // Built-in Ansible/Jinja variables
                         ['item', 'loop', 'loop.index', 'loop.first', 'loop.last', 'ansible_host', 'ansible_hostname', 'inventory_hostname', 'hostvars', 'groups', 'group_names'].forEach(v => {
-                            suggestions.push({ label: v, kind: monaco.languages.CompletionItemKind.Variable, insertText: v + ' }}', range: range });
+                            suggestions.push({ label: v, kind: monaco.languages.CompletionItemKind.Variable, insertText: v + ' }}', range: range, detail: 'built-in' });
+                        });
+                        // Project-specific variables
+                        projectVariables.forEach(v => {
+                            suggestions.push({ label: v, kind: monaco.languages.CompletionItemKind.Field, insertText: v + ' }}', range: range, detail: 'project' });
                         });
                     }
                     if (/\|\s*$/.test(textUntilPosition)) {
@@ -1604,13 +1629,34 @@
             // YAML (ANSIBLE) COMPLETION PROVIDER
             // ============================================
             monaco.languages.registerCompletionItemProvider('yaml', {
-                triggerCharacters: [' ', ':', '-', '\n'],
+                triggerCharacters: [' ', ':', '-', '\n', '{'],
                 provideCompletionItems: function(model, position) {
                     if (!autocompleteEnabled) return { suggestions: [] };
                     const lineContent = model.getLineContent(position.lineNumber);
                     const textUntilPosition = lineContent.substring(0, position.column - 1);
                     const suggestions = [];
                     const range = { startLineNumber: position.lineNumber, endLineNumber: position.lineNumber, startColumn: position.column, endColumn: position.column };
+                    
+                    // Jinja variables inside YAML (when typing {{ )
+                    if (/\{\{\s*$/.test(textUntilPosition)) {
+                        // Built-in Ansible/Jinja variables
+                        ['item', 'loop', 'loop.index', 'loop.first', 'loop.last', 'ansible_host', 'ansible_hostname', 'inventory_hostname', 'hostvars', 'groups', 'group_names'].forEach(v => {
+                            suggestions.push({ label: v, kind: monaco.languages.CompletionItemKind.Variable, insertText: v + ' }}', range: range, detail: 'built-in' });
+                        });
+                        // Project-specific variables
+                        projectVariables.forEach(v => {
+                            suggestions.push({ label: v, kind: monaco.languages.CompletionItemKind.Field, insertText: v + ' }}', range: range, detail: 'project' });
+                        });
+                        return { suggestions: suggestions };
+                    }
+                    
+                    // Jinja filters (when typing | )
+                    if (/\|\s*$/.test(textUntilPosition)) {
+                        ['default', 'lower', 'upper', 'title', 'trim', 'length', 'first', 'last', 'join', 'sort', 'unique', 'to_yaml', 'to_json', 'from_yaml', 'from_json', 'ipaddr'].forEach(f => {
+                            suggestions.push({ label: f, kind: monaco.languages.CompletionItemKind.Function, insertText: f, range: range });
+                        });
+                        return { suggestions: suggestions };
+                    }
                     
                     if (/^\s*-\s*$/.test(textUntilPosition)) {
                         ['name', 'hosts', 'tasks', 'roles', 'vars', 'handlers', 'gather_facts', 'become', 'become_user', 'serial', 'connection'].forEach(k => {
@@ -1630,6 +1676,12 @@
                     if (/:\s*$/.test(textUntilPosition)) {
                         ['true', 'false', 'yes', 'no'].forEach(v => {
                             suggestions.push({ label: v, kind: monaco.languages.CompletionItemKind.Value, insertText: v, range: range });
+                        });
+                    }
+                    // Top-level YAML keys - suggest project variables
+                    if (/^[a-zA-Z_]*$/.test(textUntilPosition.trim())) {
+                        projectVariables.forEach(v => {
+                            suggestions.push({ label: v, kind: monaco.languages.CompletionItemKind.Field, insertText: v + ': ', range: range, detail: 'project var' });
                         });
                     }
                     return { suggestions: suggestions };

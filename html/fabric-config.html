@@ -1372,7 +1372,11 @@
                             </div>
                             <div class="info-item">
                                 <div class="info-label">VTEP</div>
-                                <div class="info-value">${config.vtep?.state ? '<span class="badge badge-green">Enabled</span>' : '<span class="badge badge-orange">Disabled</span>'}</div>
+                                <div class="info-value">${config.vtep?.state ? '<span class="badge badge-green">Enabled</span>' : '<span class="badge badge-gray">Disabled</span>'}</div>
+                            </div>
+                            <div class="info-item">
+                                <div class="info-label">Multihoming</div>
+                                <div class="info-value">${config.evpn_mh ? '<span class="badge badge-green">Enabled</span>' : '<span class="badge badge-gray">Disabled</span>'}</div>
                             </div>
                             <div class="info-item">
                                 <div class="info-label">Group</div>

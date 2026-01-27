@@ -533,6 +533,52 @@ case "$ACTION" in
         fi
         exit 0
         ;;
+    get-jinja-variables)
+        # Extract Jinja2 variables from templates, group_vars, and host_vars
+        cd "$ANSIBLE_DIR" || { json_response '{"success": false, "error": "Cannot access ansible directory"}'; exit 0; }
+        
+        # Collect all variables
+        all_vars=""
+        
+        # 1. Scan .j2 templates for {{ variable }} patterns
+        if [ -d "templates" ] || [ -d "roles" ]; then
+            template_vars=$(find . -name "*.j2" -type f 2>/dev/null | xargs grep -ohE '\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)' 2>/dev/null | sed 's/{{[[:space:]]*//' | sort -u || true)
+            all_vars="${all_vars}${template_vars}"$'\n'
+        fi
+        
+        # 2. Scan group_vars YAML files for top-level keys
+        if [ -d "inventory/group_vars" ]; then
+            group_vars=$(find inventory/group_vars -name "*.yaml" -o -name "*.yml" 2>/dev/null | xargs grep -ohE '^[a-zA-Z_][a-zA-Z0-9_]*:' 2>/dev/null | sed 's/://' | sort -u || true)
+            all_vars="${all_vars}${group_vars}"$'\n'
+        fi
+        
+        # 3. Scan one host_vars file for schema (top-level keys)
+        if [ -d "inventory/host_vars" ]; then
+            sample_host=$(find inventory/host_vars -name "*.yaml" -type f 2>/dev/null | head -1)
+            if [ -n "$sample_host" ]; then
+                host_vars=$(grep -ohE '^[a-zA-Z_][a-zA-Z0-9_]*:' "$sample_host" 2>/dev/null | sed 's/://' | sort -u || true)
+                all_vars="${all_vars}${host_vars}"$'\n'
+            fi
+        fi
+        
+        # 4. Scan roles defaults and vars
+        if [ -d "roles" ]; then
+            role_vars=$(find roles -path "*/defaults/*.yml" -o -path "*/defaults/*.yaml" -o -path "*/vars/*.yml" -o -path "*/vars/*.yaml" 2>/dev/null | xargs grep -ohE '^[a-zA-Z_][a-zA-Z0-9_]*:' 2>/dev/null | sed 's/://' | sort -u || true)
+            all_vars="${all_vars}${role_vars}"$'\n'
+        fi
+        
+        # Combine, deduplicate, filter
+        unique_vars=$(echo "$all_vars" | grep -v "^$" | sort -u | grep -v "^#" | head -200)
+        
+        # Build JSON array
+        if [ -z "$unique_vars" ]; then
+            json_response '{"success": true, "variables": [], "count": 0}'
+        else
+            vars_json=$(echo "$unique_vars" | while read -r v; do [ -n "$v" ] && printf '"%s",' "$v"; done | sed 's/,$//')
+            count=$(echo "$unique_vars" | wc -l | tr -d ' ')
+            json_response "{\"success\": true, \"variables\": [${vars_json}], \"count\": ${count}}"
+        fi
+        ;;
     *)
         json_response '{"success": false, "error": "Unknown action"}'
         ;;

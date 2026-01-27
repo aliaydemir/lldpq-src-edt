@@ -167,9 +167,23 @@
             text-align: center;
         }
         
-        #sidebar.collapsed .logo-section img {
-            max-width: 40px;
-            border-radius: 8px;
+        /* Logo switching for collapsed state */
+        .logo-section .logo-icon {
+            display: none;
+            width: 34px;
+            height: 34px;
+            object-fit: cover;
+            object-position: left center;
+            border-radius: 6px;
+        }
+        
+        #sidebar.collapsed .logo-section .logo-full {
+            display: none;
+        }
+        
+        #sidebar.collapsed .logo-section .logo-icon {
+            display: block;
+            margin: 0 auto;
         }
         
         #sidebar.collapsed .group-title {
@@ -365,7 +379,8 @@
         </button>
         
         <div class="logo-section">
-            <img src="/png/nvidia.png" alt="NVIDIA Logo">
+            <img src="/png/nvidia.png" alt="NVIDIA Logo" class="logo-full">
+            <img src="/png/nvidia.png" alt="NVIDIA" class="logo-icon">
         </div>
         
         <!-- User Menu -->
