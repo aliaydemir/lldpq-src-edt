@@ -349,6 +349,78 @@ print(json.dumps({'success': True, 'message': f'Created {count} VLANs in profile
 PYTHON
 }
 
+# ==================== BGP PROFILES ====================
+
+# Get VRFs that can be used for leaking (those that have profiles with route_import)
+get_leaking_vrfs() {
+    python3 << PYTHON
+import json
+import yaml
+import os
+import glob
+
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+bgp_file = os.path.join(ansible_dir, 'inventory', 'group_vars', 'all', 'bgp_profiles.yaml')
+host_vars_dir = os.path.join(ansible_dir, 'inventory', 'host_vars')
+
+leaking_vrfs = []
+
+try:
+    # First, find BGP profiles that have route_import.from_vrf
+    if os.path.exists(bgp_file):
+        with open(bgp_file, 'r') as f:
+            data = yaml.safe_load(f) or {}
+            bgp_profiles = data.get('bgp_profiles', {})
+            
+            # Find all VRFs mentioned in from_vrf across all profiles
+            imported_vrfs = set()
+            for profile_name, profile_config in bgp_profiles.items():
+                ipv4_af = profile_config.get('ipv4_unicast_af', {})
+                route_import = ipv4_af.get('route_import', {})
+                from_vrf = route_import.get('from_vrf', [])
+                for vrf in from_vrf:
+                    imported_vrfs.add(vrf)
+            
+            # These VRFs can be leaked into
+            for vrf_name in sorted(imported_vrfs):
+                leaking_vrfs.append({'name': vrf_name})
+    
+    print(json.dumps({'success': True, 'vrfs': leaking_vrfs}))
+except Exception as e:
+    print(json.dumps({'success': False, 'error': str(e)}))
+PYTHON
+}
+
+# Get BGP profiles (filtered - exclude VxLAN_UNDERLAY*)
+get_bgp_profiles() {
+    python3 << PYTHON
+import json
+import yaml
+import os
+
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+bgp_file = os.path.join(ansible_dir, 'inventory', 'group_vars', 'all', 'bgp_profiles.yaml')
+
+profiles = []
+
+try:
+    if os.path.exists(bgp_file):
+        with open(bgp_file, 'r') as f:
+            data = yaml.safe_load(f) or {}
+            bgp_profiles = data.get('bgp_profiles', {})
+            
+            for name in sorted(bgp_profiles.keys()):
+                # Filter out underlay profiles
+                if name.startswith('VxLAN_UNDERLAY'):
+                    continue
+                profiles.append({'name': name})
+    
+    print(json.dumps({'success': True, 'profiles': profiles}))
+except Exception as e:
+    print(json.dumps({'success': False, 'error': str(e)}))
+PYTHON
+}
+
 # ==================== VRF MANAGEMENT ====================
 
 # Get available VRFs from all devices
@@ -415,6 +487,8 @@ l3vni = data.get('l3vni')
 vxlan_int = data.get('vxlan_int')
 bgp_asn = data.get('bgp_asn')
 bgp_profile = data.get('bgp_profile')
+leaking_enabled = data.get('leaking_enabled', False)
+leak_from_vrf = data.get('leak_from_vrf')
 
 if not device or not vrf_name:
     print(json.dumps({'success': False, 'error': 'Device and VRF name are required'}))
@@ -425,11 +499,62 @@ if not l3vni:
     sys.exit(0)
 
 ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+bgp_profiles_file = os.path.join(ansible_dir, 'inventory', 'group_vars', 'all', 'bgp_profiles.yaml')
 host_file = os.path.join(ansible_dir, 'inventory', 'host_vars', f'{device}.yaml')
 
 # Try .yml if .yaml doesn't exist
 if not os.path.exists(host_file):
     host_file = os.path.join(ansible_dir, 'inventory', 'host_vars', f'{device}.yml')
+
+# If leaking is enabled, find the appropriate profiles
+tenant_profile = None
+shared_profile = None
+leaking_configured = False
+
+if leaking_enabled and leak_from_vrf:
+    try:
+        with open(bgp_profiles_file, 'r') as f:
+            bgp_data = yaml.safe_load(f) or {}
+            bgp_profiles = bgp_data.get('bgp_profiles', {})
+            
+            # Find profile that imports FROM the leak_from_vrf (this is for new tenant)
+            # Find profile that imports FROM other tenants (this is for shared VRF, needs updating)
+            for profile_name, profile_config in bgp_profiles.items():
+                if profile_name.startswith('VxLAN_UNDERLAY'):
+                    continue
+                    
+                ipv4_af = profile_config.get('ipv4_unicast_af', {})
+                route_import = ipv4_af.get('route_import', {})
+                from_vrf_list = route_import.get('from_vrf', [])
+                
+                if leak_from_vrf in from_vrf_list:
+                    # This profile imports from leak_from_vrf -> use for new tenant
+                    tenant_profile = profile_name
+                elif from_vrf_list and leak_from_vrf not in from_vrf_list:
+                    # This profile imports from other VRFs -> this is the shared profile
+                    shared_profile = profile_name
+            
+            # Update the shared profile to include the new tenant
+            if shared_profile and shared_profile in bgp_profiles:
+                ipv4_af = bgp_profiles[shared_profile].setdefault('ipv4_unicast_af', {})
+                route_import = ipv4_af.setdefault('route_import', {})
+                from_vrf_list = route_import.setdefault('from_vrf', [])
+                
+                if vrf_name not in from_vrf_list:
+                    from_vrf_list.append(vrf_name)
+                    
+                    # Write updated bgp_profiles.yaml
+                    with open(bgp_profiles_file, 'w') as f:
+                        yaml.dump(bgp_data, f, default_flow_style=False, sort_keys=False)
+                    leaking_configured = True
+            
+            # Use tenant_profile if found
+            if tenant_profile:
+                bgp_profile = tenant_profile
+                
+    except Exception as e:
+        print(json.dumps({'success': False, 'error': f'Failed to configure leaking: {str(e)}'}))
+        sys.exit(0)
 
 # Load existing host_vars
 host_data = {}
@@ -468,7 +593,15 @@ host_data['vrfs'][vrf_name] = vrf_entry
 with open(host_file if os.path.exists(host_file) else os.path.join(ansible_dir, 'inventory', 'host_vars', f'{device}.yaml'), 'w') as f:
     yaml.dump(host_data, f, default_flow_style=False, sort_keys=False)
 
-print(json.dumps({'success': True, 'vrf_name': vrf_name}))
+result = {'success': True, 'vrf_name': vrf_name}
+if leaking_enabled:
+    result['leaking_configured'] = leaking_configured
+    result['tenant_profile'] = tenant_profile
+    result['shared_profile'] = shared_profile
+    if not tenant_profile:
+        result['warning'] = f'No profile found that imports from {leak_from_vrf}'
+
+print(json.dumps(result))
 PYTHON
 }
 
@@ -1276,6 +1409,12 @@ case "$ACTION" in
         ;;
     "get-available-vrfs")
         get_available_vrfs
+        ;;
+    "get-bgp-profiles")
+        get_bgp_profiles
+        ;;
+    "get-leaking-vrfs")
+        get_leaking_vrfs
         ;;
     "create-vrf")
         create_vrf

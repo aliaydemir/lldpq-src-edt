@@ -3066,9 +3066,28 @@
             // Get current device's BGP ASN
             if (selectedDevice && currentDeviceConfig) {
                 const asn = getBgpAsn(currentDeviceConfig);
-                if (asn) {
+                if (asn && asn !== 'N/A') {
                     document.getElementById('vrf-bgp-asn').value = asn;
                 }
+            }
+            
+            // Load BGP profiles dynamically
+            const select = document.getElementById('vrf-bgp-profile');
+            select.innerHTML = '<option value="">Loading...</option>';
+            
+            try {
+                const response = await fetch('/fabric-api.sh?action=get-bgp-profiles');
+                const data = await response.json();
+                
+                if (data.success && data.profiles.length > 0) {
+                    select.innerHTML = data.profiles.map(p => 
+                        `<option value="${p.name}" ${p.name === 'OVERLAY_LEAF' ? 'selected' : ''}>${p.name}</option>`
+                    ).join('');
+                } else {
+                    select.innerHTML = '<option value="OVERLAY_LEAF">OVERLAY_LEAF</option>';
+                }
+            } catch (e) {
+                select.innerHTML = '<option value="OVERLAY_LEAF">OVERLAY_LEAF</option>';
             }
             
             document.getElementById('vrf-modal').classList.add('visible');
@@ -3078,11 +3097,47 @@
             document.getElementById('vrf-modal').classList.remove('visible');
         }
         
+        // Toggle leaking options
+        async function toggleLeakingOptions() {
+            const checkbox = document.getElementById('vrf-leaking-enabled');
+            const optionsDiv = document.getElementById('vrf-leaking-options');
+            const profileGroup = document.getElementById('vrf-profile-group');
+            const profileHint = document.getElementById('vrf-profile-hint');
+            
+            if (checkbox.checked) {
+                optionsDiv.style.display = 'block';
+                profileGroup.style.display = 'none'; // Hide manual profile selection
+                
+                // Load VRFs for leaking dropdown
+                const leakFromSelect = document.getElementById('vrf-leak-from');
+                leakFromSelect.innerHTML = '<option value="">Loading...</option>';
+                
+                try {
+                    const response = await fetch('/fabric-api.sh?action=get-leaking-vrfs');
+                    const data = await response.json();
+                    
+                    if (data.success && data.vrfs.length > 0) {
+                        leakFromSelect.innerHTML = '<option value="">Select VRF...</option>' +
+                            data.vrfs.map(v => `<option value="${v.name}">${v.name}</option>`).join('');
+                    } else {
+                        leakFromSelect.innerHTML = '<option value="">No leaking-enabled VRFs found</option>';
+                    }
+                } catch (e) {
+                    leakFromSelect.innerHTML = '<option value="">Error loading VRFs</option>';
+                }
+            } else {
+                optionsDiv.style.display = 'none';
+                profileGroup.style.display = 'block';
+            }
+        }
+        
         // Create VRF
         async function createVrf() {
             const createBtn = document.getElementById('btn-create-vrf');
             const vrfName = document.getElementById('vrf-name').value.trim();
             const l3vni = parseInt(document.getElementById('vrf-l3vni').value);
+            const leakingEnabled = document.getElementById('vrf-leaking-enabled').checked;
+            const leakFromVrf = document.getElementById('vrf-leak-from').value;
             
             if (!vrfName) {
                 alert('VRF name is required');
@@ -3094,13 +3149,20 @@
                 return;
             }
             
+            if (leakingEnabled && !leakFromVrf) {
+                alert('Please select a VRF to leak from');
+                return;
+            }
+            
             const data = {
                 device: selectedDevice,
                 vrf_name: vrfName,
                 l3vni: l3vni,
                 vxlan_int: parseInt(document.getElementById('vrf-vxlan-int').value) || null,
                 bgp_asn: parseInt(document.getElementById('vrf-bgp-asn').value) || null,
-                bgp_profile: document.getElementById('vrf-bgp-profile').value.trim() || null
+                bgp_profile: leakingEnabled ? null : (document.getElementById('vrf-bgp-profile').value.trim() || null),
+                leaking_enabled: leakingEnabled,
+                leak_from_vrf: leakingEnabled ? leakFromVrf : null
             };
             
             createBtn.disabled = true;
@@ -3117,10 +3179,20 @@
                 
                 if (result.success) {
                     closeVrfModal();
-                    showOutputModal('VRF Created', 
-                        `<div style="color: #76b900; margin-bottom: 15px;">✓ VRF "${vrfName}" created successfully!</div>` +
-                        `<div style="color: #888;">Run <strong>Deploy</strong> to apply changes.</div>`,
-                        'success', true);
+                    
+                    let message = `<div style="color: #76b900; margin-bottom: 15px;">✓ VRF "${vrfName}" created successfully!</div>`;
+                    
+                    if (result.leaking_configured) {
+                        message += `<div style="color: #4fc3f7; margin-bottom: 10px;">✓ Route leaking configured:</div>`;
+                        message += `<div style="color: #888; margin-left: 15px; margin-bottom: 5px;">• New VRF uses profile: <strong>${result.tenant_profile}</strong></div>`;
+                        message += `<div style="color: #888; margin-left: 15px; margin-bottom: 10px;">• Updated <strong>${result.shared_profile}</strong> to import from ${vrfName}</div>`;
+                    } else if (result.warning) {
+                        message += `<div style="color: #ff9800; margin-bottom: 10px;">⚠ ${result.warning}</div>`;
+                    }
+                    
+                    message += `<div style="color: #888;">Run <strong>Deploy</strong> to apply changes.</div>`;
+                    
+                    showOutputModal('VRF Created', message, 'success', true);
                     selectDevice(selectedDevice);
                 } else {
                     alert('Error: ' + (result.error || 'Unknown error'));
@@ -3675,8 +3747,28 @@
                     </div>
                     
                     <div class="form-group">
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <input type="checkbox" id="vrf-leaking-enabled" onchange="toggleLeakingOptions()" style="width: 16px; height: 16px;">
+                            Enable Route Leaking
+                        </label>
+                    </div>
+                    
+                    <div id="vrf-leaking-options" style="display: none; padding: 12px; background: #252526; border-radius: 6px; margin-bottom: 15px;">
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label>Leak FROM VRF</label>
+                            <select id="vrf-leak-from" style="width: 100%; padding: 10px 12px; background: #1e1e1e; border: 1px solid #404040; border-radius: 4px; color: #fff; font-size: 14px;">
+                                <option value="">Select VRF...</option>
+                            </select>
+                            <div class="form-hint">Routes will be exchanged between new VRF and selected VRF</div>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group" id="vrf-profile-group">
                         <label>BGP Profile</label>
-                        <input type="text" id="vrf-bgp-profile" placeholder="e.g., OVERLAY_LEAF">
+                        <select id="vrf-bgp-profile" style="width: 100%; padding: 10px 12px; background: #1e1e1e; border: 1px solid #404040; border-radius: 4px; color: #fff; font-size: 14px;">
+                            <option value="">Loading...</option>
+                        </select>
+                        <div class="form-hint" id="vrf-profile-hint">Overlay BGP profiles (VxLAN_UNDERLAY* excluded)</div>
                     </div>
                 </form>
             </div>

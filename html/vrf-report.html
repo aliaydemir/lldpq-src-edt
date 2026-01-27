@@ -544,7 +544,8 @@
             const vrfNames = Object.keys(vrfData);
             const totalVrfs = vrfNames.length;
             const unusedVrfs = vrfNames.filter(v => !vrfData[v].devices || vrfData[v].devices.length === 0).length;
-            const tenantVrfs = vrfNames.filter(v => v !== 'default').length;
+            const excludedVrfs = ['default', 'oob', 'shared-hss'];
+            const tenantVrfs = vrfNames.filter(v => !excludedVrfs.includes(v)).length;
             
             document.getElementById('total-vrfs').textContent = totalVrfs;
             document.getElementById('total-devices').textContent = totalDeviceCount;
