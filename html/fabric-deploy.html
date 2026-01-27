@@ -435,12 +435,6 @@
                 </svg>
                 Scan Fabric
             </button>
-            <button class="btn btn-secondary" onclick="loadDevices()">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
-                </svg>
-                Refresh
-            </button>
         </div>
     </div>
     
@@ -510,6 +504,12 @@
                 <span class="selected-count">
                     <strong id="action-selected-count">0</strong> devices selected
                 </span>
+                <button class="btn btn-secondary" onclick="clearOutput(); resetOutputPlaceholder()" style="margin-left: auto;">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+                    </svg>
+                    Clear
+                </button>
             </div>
             <div class="output-area" id="output-area">
                 <div class="output-placeholder">
@@ -535,6 +535,10 @@
         let totalDeviceCount = 0;
         let modifiedDevices = new Set();
         
+        // Cache configuration
+        const CACHE_KEY = 'fabricDeploy_scanCache';
+        const CACHE_STALE_THRESHOLD = 60 * 60 * 1000; // 1 hour in ms
+        
         // Load devices on page load
         document.addEventListener('DOMContentLoaded', loadDevices);
         
@@ -547,21 +551,86 @@
                     devices = devicesData.devices;
                 }
                 
-                // Clear modified devices - will be populated by Scan Fabric
-                modifiedDevices = new Set();
-                
                 renderDeviceList();
                 updateLastUpdated();
                 
-                // Show "?" for pending/synced until scan is done
-                document.getElementById('pending-changes').textContent = '?';
-                document.getElementById('synced-devices').textContent = '?';
-                document.getElementById('pending-changes').title = 'Click "Scan Fabric" to detect pending changes';
-                document.getElementById('synced-devices').title = 'Click "Scan Fabric" to detect pending changes';
+                // Try to load cached scan results
+                const cached = loadScanCache();
+                if (cached) {
+                    // Restore cached modified devices
+                    modifiedDevices = new Set(cached.pendingDevices);
+                    renderDeviceList();
+                    updateSummaryCards();
+                    showScanAge(cached.timestamp);
+                    
+                    // Warn if cache is stale
+                    if (Date.now() - cached.timestamp > CACHE_STALE_THRESHOLD) {
+                        showStaleWarning();
+                    }
+                } else {
+                    // No cache - show "?" and prompt for scan
+                    document.getElementById('pending-changes').textContent = '?';
+                    document.getElementById('synced-devices').textContent = '?';
+                    document.getElementById('pending-changes').title = 'Click "Scan Fabric" to detect pending changes';
+                    document.getElementById('synced-devices').title = 'Click "Scan Fabric" to detect pending changes';
+                }
             } catch (e) {
                 document.getElementById('device-list').innerHTML = 
                     `<div class="output-placeholder" style="color: #f44336;">Error loading devices: ${e.message}</div>`;
             }
+        }
+        
+        // Cache management functions
+        function saveScanCache(pendingDevices) {
+            const cache = {
+                timestamp: Date.now(),
+                pendingDevices: Array.from(pendingDevices),
+                totalDevices: totalDeviceCount
+            };
+            try {
+                localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
+            } catch (e) {
+                console.warn('Failed to save scan cache:', e);
+            }
+        }
+        
+        function loadScanCache() {
+            try {
+                const cached = localStorage.getItem(CACHE_KEY);
+                if (cached) {
+                    return JSON.parse(cached);
+                }
+            } catch (e) {
+                console.warn('Failed to load scan cache:', e);
+            }
+            return null;
+        }
+        
+        function showScanAge(timestamp) {
+            const age = Date.now() - timestamp;
+            const minutes = Math.floor(age / 60000);
+            const hours = Math.floor(minutes / 60);
+            
+            let ageText;
+            if (hours > 0) {
+                ageText = `${hours}h ${minutes % 60}m ago`;
+            } else if (minutes > 0) {
+                ageText = `${minutes}m ago`;
+            } else {
+                ageText = 'just now';
+            }
+            
+            document.getElementById('last-updated').textContent = `Last scan: ${ageText}`;
+            document.getElementById('last-updated').title = new Date(timestamp).toLocaleString();
+        }
+        
+        function showStaleWarning() {
+            const pendingEl = document.getElementById('pending-changes');
+            const syncedEl = document.getElementById('synced-devices');
+            pendingEl.style.opacity = '0.6';
+            syncedEl.style.opacity = '0.6';
+            pendingEl.title = 'Data may be stale - click Scan Fabric to refresh';
+            syncedEl.title = 'Data may be stale - click Scan Fabric to refresh';
         }
         
         function updateSummaryCards() {
@@ -784,6 +853,19 @@
             document.getElementById('output-area').innerHTML = '';
         }
         
+        function resetOutputPlaceholder() {
+            document.getElementById('output-area').innerHTML = `
+                <div class="output-placeholder">
+                    <svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/>
+                    </svg>
+                    <h2>Fabric Deployment Center</h2>
+                    <p>Click <strong>Scan Fabric</strong> to detect pending changes across all devices</p>
+                    <p style="margin-top: 8px; font-size: 12px; color: #666;">Then select devices and run Generate, Diff, or Deploy</p>
+                </div>
+            `;
+        }
+        
         async function ansibleApiCall(action, hosts) {
             const params = new URLSearchParams({ action });
             if (hosts) params.append('host', hosts);
@@ -888,26 +970,53 @@
                 
                 if (result.success) {
                     const output = result.output || '';
+                    const cleanedOutput = parseAnsiOutput(output);
                     
-                    // Parse PLAY RECAP to find devices with changes
-                    // Format: hostname : ok=X changed=Y unreachable=Z failed=W
+                    // Parse "SWITCHES WITH CHANGES:" section
+                    // Format: ✗ hostname: X changes (+Y -Z)
                     const pendingDevices = new Set();
-                    const lines = output.split('\n');
+                    const lines = cleanedOutput.split('\n');
                     
+                    let inChangesSection = false;
                     for (const line of lines) {
-                        // Match lines in PLAY RECAP format
-                        const match = line.match(/^\s*(\S+)\s+:\s+.*changed=(\d+)/);
-                        if (match) {
-                            const hostname = match[1];
-                            const changedCount = parseInt(match[2]);
-                            if (changedCount > 0 && hostname !== 'localhost') {
-                                pendingDevices.add(hostname);
+                        // Detect start of changes section
+                        if (line.includes('SWITCHES WITH CHANGES')) {
+                            inChangesSection = true;
+                            continue;
+                        }
+                        
+                        // End of section (empty line or new section starts)
+                        if (inChangesSection && (line.includes('PLAY RECAP') || line.includes('TASKS RECAP') || line.includes('PLAYBOOK RECAP'))) {
+                            inChangesSection = false;
+                        }
+                        
+                        // Parse device lines in changes section
+                        // Match: any_char hostname: X changes  (e.g., "✗ lsw-3na-05-29: 2 changes")
+                        // More flexible: look for hostname pattern followed by ": N change"
+                        if (inChangesSection) {
+                            const match = line.match(/([a-z]{2,4}-[a-z0-9-]+):\s*\d+\s+change/i);
+                            if (match) {
+                                const hostname = match[1];
+                                if (hostname && hostname !== 'localhost') {
+                                    pendingDevices.add(hostname);
+                                    console.log('Found pending device:', hostname);
+                                }
                             }
                         }
                     }
                     
+                    console.log('Total pending devices found:', pendingDevices.size, Array.from(pendingDevices));
+                    
                     // Update modifiedDevices with real diff results
                     modifiedDevices = pendingDevices;
+                    
+                    // Save to cache
+                    saveScanCache(pendingDevices);
+                    showScanAge(Date.now());
+                    
+                    // Remove stale styling
+                    document.getElementById('pending-changes').style.opacity = '1';
+                    document.getElementById('synced-devices').style.opacity = '1';
                     
                     // Re-render device list with new status
                     renderDeviceList();
@@ -971,15 +1080,20 @@
                 if (result.success) {
                     appendOutput('Deployment completed!', 'success');
                     appendFormattedOutput(result.output || '');
+                    
+                    // Auto-scan after successful deploy to update status
+                    appendOutput('\n=== Auto-scanning to update status... ===', 'info');
+                    showLoading(false);
+                    await scanFabric();
                 } else {
                     appendOutput('Deployment failed!', 'error');
                     appendFormattedOutput(result.error || result.output || 'Unknown error');
+                    showLoading(false);
                 }
             } catch (e) {
                 appendOutput('Error: ' + e.message, 'error');
+                showLoading(false);
             }
-            
-            showLoading(false);
         }
     </script>
 </body>
