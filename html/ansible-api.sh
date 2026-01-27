@@ -72,31 +72,22 @@ validate_path() {
 
 # List editable files
 list_files() {
-    # Cache file for faster subsequent loads
-    local cache_file="/tmp/ansible-files-cache.txt"
-    local cache_age=60  # seconds
-    
-    # Check if cache is fresh
-    if [ -f "$cache_file" ] && [ $(($(date +%s) - $(stat -c %Y "$cache_file" 2>/dev/null || echo 0))) -lt $cache_age ]; then
-        local files_json=$(cat "$cache_file")
+    # Find all files quickly using find with optimized options (no cache for fresh results)
+    local files_json=""
+    if [ -d "$ANSIBLE_DIR" ]; then
+        files_json=$(find "$ANSIBLE_DIR" -type f \
+            ! -path "*/.git/*" \
+            ! -path "*/.vscode/*" \
+            ! -path "*/.crossnote/*" \
+            ! -path "*/__pycache__/*" \
+            ! -path "*/.ansible/*" \
+            ! -name "*.pyc" \
+            ! -name "*.swp" \
+            ! -name "*.bak" \
+            ! -name "*~" \
+            2>/dev/null | sed "s|^$ANSIBLE_DIR/||" | sort | python3 -c 'import sys,json; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))')
     else
-        # Find all files quickly using find with optimized options
-        local files_json=""
-        if [ -d "$ANSIBLE_DIR" ]; then
-            files_json=$(find "$ANSIBLE_DIR" -type f \
-                ! -path "*/.git/*" \
-                ! -path "*/.vscode/*" \
-                ! -path "*/.crossnote/*" \
-                ! -path "*/__pycache__/*" \
-                ! -path "*/.ansible/*" \
-                ! -name "*.pyc" \
-                ! -name "*.swp" \
-                ! -name "*~" \
-                2>/dev/null | sed "s|^$ANSIBLE_DIR/||" | sort | python3 -c 'import sys,json; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))')
-            echo "$files_json" > "$cache_file"
-        else
-            files_json="[]"
-        fi
+        files_json="[]"
     fi
     
     # Get groups from inventory/hosts file

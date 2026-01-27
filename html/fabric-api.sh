@@ -402,6 +402,7 @@ ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
 bgp_file = os.path.join(ansible_dir, 'inventory', 'group_vars', 'all', 'bgp_profiles.yaml')
 
 profiles = []
+infra_vrfs = ['default']  # Default fallback
 
 try:
     if os.path.exists(bgp_file):
@@ -409,13 +410,16 @@ try:
             data = yaml.safe_load(f) or {}
             bgp_profiles = data.get('bgp_profiles', {})
             
+            # Get infra_vrfs list from config
+            infra_vrfs = data.get('infra_vrfs', ['default'])
+            
             for name in sorted(bgp_profiles.keys()):
                 # Filter out underlay profiles
                 if name.startswith('VxLAN_UNDERLAY'):
                     continue
                 profiles.append({'name': name})
     
-    print(json.dumps({'success': True, 'profiles': profiles}))
+    print(json.dumps({'success': True, 'profiles': profiles, 'infra_vrfs': infra_vrfs}))
 except Exception as e:
     print(json.dumps({'success': False, 'error': str(e)}))
 PYTHON
@@ -605,6 +609,152 @@ print(json.dumps(result))
 PYTHON
 }
 
+# Create VRF on multiple devices (bulk)
+create_vrf_bulk() {
+    read -r POST_DATA
+    python3 << PYTHON
+import json
+import yaml
+import os
+import sys
+import glob
+
+try:
+    data = json.loads('''$POST_DATA''')
+except:
+    data = {}
+
+devices = data.get('devices', [])
+vrf_name = data.get('vrf_name')
+l3vni = data.get('l3vni')
+vxlan_int = data.get('vxlan_int')
+bgp_profile = data.get('bgp_profile', 'OVERLAY_LEAF')
+leaking_enabled = data.get('leaking_enabled', False)
+leak_from_vrf = data.get('leak_from_vrf')
+
+if not devices or not isinstance(devices, list):
+    print(json.dumps({'success': False, 'error': 'No devices specified'}))
+    sys.exit(0)
+
+if not vrf_name or not l3vni:
+    print(json.dumps({'success': False, 'error': 'VRF name and L3VNI are required'}))
+    sys.exit(0)
+
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+host_vars_dir = os.path.join(ansible_dir, 'inventory', 'host_vars')
+bgp_profiles_file = os.path.join(ansible_dir, 'inventory', 'group_vars', 'all', 'bgp_profiles.yaml')
+
+# Handle leaking profile detection
+leaking_configured = False
+tenant_profile = None
+shared_profile = None
+
+if leaking_enabled and leak_from_vrf:
+    try:
+        with open(bgp_profiles_file, 'r') as f:
+            bgp_data = yaml.safe_load(f) or {}
+        
+        bgp_profiles = bgp_data.get('bgp_profiles', {})
+        
+        # Find profile that imports from leak_from_vrf (this is tenant profile)
+        for profile_name, profile_config in bgp_profiles.items():
+            ipv4_af = profile_config.get('ipv4_unicast_af', {})
+            route_import = ipv4_af.get('route_import', {})
+            from_vrf_list = route_import.get('from_vrf', [])
+            if leak_from_vrf in from_vrf_list:
+                tenant_profile = profile_name
+                break
+        
+        # Find profile for shared VRF (has from_vrf list without leak_from_vrf)
+        for profile_name, profile_config in bgp_profiles.items():
+            ipv4_af = profile_config.get('ipv4_unicast_af', {})
+            route_import = ipv4_af.get('route_import', {})
+            from_vrf_list = route_import.get('from_vrf', [])
+            if from_vrf_list and leak_from_vrf not in from_vrf_list:
+                shared_profile = profile_name
+                # Add new VRF to shared profile's from_vrf list
+                from_vrf_list.append(vrf_name)
+                leaking_configured = True
+                break
+        
+        if leaking_configured:
+            with open(bgp_profiles_file, 'w') as f:
+                yaml.dump(bgp_data, f, default_flow_style=False, sort_keys=False)
+        
+        if tenant_profile:
+            bgp_profile = tenant_profile
+    except Exception as e:
+        pass
+
+# Create VRF entry
+vrf_entry = {
+    'l3vni': l3vni,
+    'bgp_profile': bgp_profile
+}
+
+if vxlan_int:
+    vrf_entry['vxlan_int'] = vxlan_int
+
+devices_created = []
+
+for device in devices:
+    try:
+        host_file = os.path.join(host_vars_dir, f'{device}.yaml')
+        if not os.path.exists(host_file):
+            alt_file = os.path.join(host_vars_dir, f'{device}.yml')
+            if os.path.exists(alt_file):
+                host_file = alt_file
+        
+        # Load host_vars
+        host_data = {}
+        if os.path.exists(host_file):
+            with open(host_file, 'r') as f:
+                host_data = yaml.safe_load(f) or {}
+        
+        # Get device's BGP ASN
+        device_asn = None
+        bgp_config = host_data.get('bgp', {})
+        if isinstance(bgp_config, dict):
+            device_asn = bgp_config.get('asn')
+        
+        # Initialize vrfs if not exists
+        if 'vrfs' not in host_data:
+            host_data['vrfs'] = {}
+        
+        # Create device-specific VRF entry with its own ASN
+        device_vrf_entry = vrf_entry.copy()
+        if device_asn:
+            device_vrf_entry['bgp_asn'] = device_asn
+        
+        host_data['vrfs'][vrf_name] = device_vrf_entry
+        
+        # Write back
+        target_file = host_file if os.path.exists(host_file) else os.path.join(host_vars_dir, f'{device}.yaml')
+        with open(target_file, 'w') as f:
+            yaml.dump(host_data, f, default_flow_style=False, sort_keys=False)
+        
+        devices_created.append(device)
+    except Exception as e:
+        pass  # Skip failed devices
+
+result = {
+    'success': True,
+    'vrf_name': vrf_name,
+    'devices_created': len(devices_created),
+    'devices_list': devices_created
+}
+
+if leaking_enabled:
+    result['leaking_configured'] = leaking_configured
+    result['tenant_profile'] = tenant_profile
+    result['shared_profile'] = shared_profile
+    if not tenant_profile:
+        result['warning'] = f'No profile found that imports from {leak_from_vrf}'
+
+print(json.dumps(result))
+PYTHON
+}
+
 # Assign VRFs to device
 assign_vrfs() {
     read -r POST_DATA
@@ -706,6 +856,7 @@ if vrf_name == 'default':
 
 ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
 host_vars_dir = os.path.join(ansible_dir, 'inventory', 'host_vars')
+bgp_profiles_file = os.path.join(ansible_dir, 'inventory', 'group_vars', 'all', 'bgp_profiles.yaml')
 host_file = os.path.join(host_vars_dir, f'{device}.yaml')
 
 # Try .yml if .yaml doesn't exist
@@ -729,11 +880,130 @@ if 'vrfs' not in host_data or vrf_name not in host_data['vrfs']:
 # Remove VRF
 del host_data['vrfs'][vrf_name]
 
-# Write back
+# Write back host_vars
 with open(host_file, 'w') as f:
     yaml.dump(host_data, f, default_flow_style=False, sort_keys=False)
 
-print(json.dumps({'success': True}))
+# Check if any other devices still have this VRF
+import glob
+remaining_devices = 0
+for hf in glob.glob(os.path.join(host_vars_dir, '*.yaml')) + glob.glob(os.path.join(host_vars_dir, '*.yml')):
+    try:
+        with open(hf, 'r') as f:
+            hd = yaml.safe_load(f) or {}
+        if vrf_name in hd.get('vrfs', {}):
+            remaining_devices += 1
+    except:
+        pass
+
+# Only remove VRF from bgp_profiles.yaml if this was the LAST device
+leaking_removed = False
+if remaining_devices == 0:
+    try:
+        if os.path.exists(bgp_profiles_file):
+            with open(bgp_profiles_file, 'r') as f:
+                bgp_data = yaml.safe_load(f) or {}
+            
+            bgp_profiles = bgp_data.get('bgp_profiles', {})
+            modified = False
+            
+            for profile_name, profile_config in bgp_profiles.items():
+                ipv4_af = profile_config.get('ipv4_unicast_af', {})
+                route_import = ipv4_af.get('route_import', {})
+                from_vrf_list = route_import.get('from_vrf', [])
+                
+                if vrf_name in from_vrf_list:
+                    from_vrf_list.remove(vrf_name)
+                    modified = True
+                    leaking_removed = True
+            
+            if modified:
+                with open(bgp_profiles_file, 'w') as f:
+                    yaml.dump(bgp_data, f, default_flow_style=False, sort_keys=False)
+    except:
+        pass  # Don't fail if bgp_profiles update fails
+
+print(json.dumps({'success': True, 'leaking_removed': leaking_removed, 'remaining_devices': remaining_devices}))
+PYTHON
+}
+
+# Delete VRF globally (from all devices)
+delete_vrf_global() {
+    read -r POST_DATA
+    python3 << PYTHON
+import json
+import yaml
+import os
+import sys
+import glob
+
+try:
+    data = json.loads('''$POST_DATA''')
+except:
+    data = {}
+
+vrf_name = data.get('vrf_name')
+
+if not vrf_name:
+    print(json.dumps({'success': False, 'error': 'VRF name is required'}))
+    sys.exit(0)
+
+if vrf_name == 'default':
+    print(json.dumps({'success': False, 'error': 'Cannot delete default VRF'}))
+    sys.exit(0)
+
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+host_vars_dir = os.path.join(ansible_dir, 'inventory', 'host_vars')
+bgp_profiles_file = os.path.join(ansible_dir, 'inventory', 'group_vars', 'all', 'bgp_profiles.yaml')
+
+devices_updated = []
+
+# Remove VRF from all host_vars files
+for host_file in glob.glob(os.path.join(host_vars_dir, '*.yaml')) + glob.glob(os.path.join(host_vars_dir, '*.yml')):
+    try:
+        with open(host_file, 'r') as f:
+            host_data = yaml.safe_load(f) or {}
+        
+        if 'vrfs' in host_data and vrf_name in host_data['vrfs']:
+            del host_data['vrfs'][vrf_name]
+            with open(host_file, 'w') as f:
+                yaml.dump(host_data, f, default_flow_style=False, sort_keys=False)
+            hostname = os.path.basename(host_file).replace('.yaml', '').replace('.yml', '')
+            devices_updated.append(hostname)
+    except:
+        pass
+
+# Remove VRF from bgp_profiles.yaml (leaking references)
+leaking_removed = False
+try:
+    if os.path.exists(bgp_profiles_file):
+        with open(bgp_profiles_file, 'r') as f:
+            bgp_data = yaml.safe_load(f) or {}
+        
+        bgp_profiles = bgp_data.get('bgp_profiles', {})
+        modified = False
+        
+        for profile_name, profile_config in bgp_profiles.items():
+            ipv4_af = profile_config.get('ipv4_unicast_af', {})
+            route_import = ipv4_af.get('route_import', {})
+            from_vrf_list = route_import.get('from_vrf', [])
+            
+            if vrf_name in from_vrf_list:
+                from_vrf_list.remove(vrf_name)
+                modified = True
+                leaking_removed = True
+        
+        if modified:
+            with open(bgp_profiles_file, 'w') as f:
+                yaml.dump(bgp_data, f, default_flow_style=False, sort_keys=False)
+except:
+    pass
+
+print(json.dumps({
+    'success': True,
+    'devices_updated': devices_updated,
+    'leaking_removed': leaking_removed
+}))
 PYTHON
 }
 
@@ -1419,14 +1689,349 @@ case "$ACTION" in
     "create-vrf")
         create_vrf
         ;;
+    "create-vrf-bulk")
+        create_vrf_bulk
+        ;;
     "assign-vrfs")
         assign_vrfs
         ;;
     "unassign-vrf")
         unassign_vrf
         ;;
+    "delete-vrf-global")
+        delete_vrf_global
+        ;;
     "get-vrf-report")
         get_vrf_report
+        ;;
+    "get-all-leaked-subnets")
+        # Get all leaked subnets with their target VRFs
+        python3 << 'PYTHON'
+import json
+import yaml
+import os
+import glob
+
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+host_vars_dir = f"{ansible_dir}/inventory/host_vars"
+bgp_file = f"{ansible_dir}/inventory/group_vars/all/bgp_profiles.yaml"
+
+try:
+    with open(bgp_file, 'r') as f:
+        bgp_data = yaml.safe_load(f)
+    
+    profiles = bgp_data.get('bgp_profiles', {})
+    route_map_to_target = {}
+    
+    # Scan devices to find route_map -> target_vrf mapping
+    for yaml_file in glob.glob(f"{host_vars_dir}/*.yaml"):
+        try:
+            with open(yaml_file, 'r') as f:
+                device_data = yaml.safe_load(f)
+            if not device_data:
+                continue
+            vrfs = device_data.get('vrfs', {})
+            for vrf_name, vrf_config in vrfs.items():
+                if isinstance(vrf_config, dict):
+                    bgp = vrf_config.get('bgp', {})
+                    bgp_profile = bgp.get('bgp_profile', '')
+                    if bgp_profile in profiles:
+                        profile = profiles[bgp_profile]
+                        ipv4_af = profile.get('ipv4_unicast_af', {})
+                        route_import = ipv4_af.get('route_import', {})
+                        route_map = route_import.get('route_map', '')
+                        if route_map and route_map not in route_map_to_target:
+                            route_map_to_target[route_map] = vrf_name
+        except:
+            continue
+    
+    # Collect all leaked subnets
+    leaked_subnets = {}  # subnet -> {target_vrf, route_map}
+    
+    for yaml_file in glob.glob(f"{host_vars_dir}/*.yaml"):
+        try:
+            with open(yaml_file, 'r') as f:
+                device_data = yaml.safe_load(f)
+            if not device_data:
+                continue
+            
+            policies = device_data.get('policies', {})
+            prefix_lists = policies.get('prefix_list', {})
+            
+            for pl_name, pl_entries in prefix_lists.items():
+                if pl_name in route_map_to_target:
+                    target_vrf = route_map_to_target[pl_name]
+                    for seq, entry in pl_entries.items():
+                        subnet = entry.get('match', '')
+                        if subnet and subnet not in leaked_subnets:
+                            leaked_subnets[subnet] = {
+                                'target_vrf': target_vrf,
+                                'route_map': pl_name
+                            }
+        except:
+            continue
+    
+    print(json.dumps({'success': True, 'leaked_subnets': leaked_subnets}))
+except Exception as e:
+    print(json.dumps({'success': False, 'error': str(e)}))
+PYTHON
+        ;;
+    "check-subnet-leak")
+        # Check if a subnet is already leaked to any VRF
+        read -r POST_DATA
+        python3 << PYTHON
+import json
+import yaml
+import os
+import glob
+
+try:
+    params = json.loads('''$POST_DATA''')
+except:
+    params = {}
+
+subnet = params.get('subnet', '')
+
+if not subnet:
+    print(json.dumps({'success': False, 'error': 'Missing subnet'}))
+    exit()
+
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+host_vars_dir = f"{ansible_dir}/inventory/host_vars"
+bgp_file = f"{ansible_dir}/inventory/group_vars/all/bgp_profiles.yaml"
+
+# Build route_map -> target_vrf mapping from bgp_profiles
+try:
+    with open(bgp_file, 'r') as f:
+        bgp_data = yaml.safe_load(f)
+    
+    profiles = bgp_data.get('bgp_profiles', {})
+    route_map_to_target = {}  # route_map -> source_vrf (the VRF that imports)
+    
+    for profile_name, profile in profiles.items():
+        ipv4_af = profile.get('ipv4_unicast_af', {})
+        route_import = ipv4_af.get('route_import', {})
+        from_vrfs = route_import.get('from_vrf', [])
+        route_map = route_import.get('route_map', '')
+        if route_map and from_vrfs:
+            # This profile imports from these VRFs using this route_map
+            # We need to find which VRF uses this profile
+            pass
+    
+    # Scan devices to find route_map -> target_vrf
+    for yaml_file in glob.glob(f"{host_vars_dir}/*.yaml"):
+        try:
+            with open(yaml_file, 'r') as f:
+                device_data = yaml.safe_load(f)
+            if not device_data:
+                continue
+            vrfs = device_data.get('vrfs', {})
+            for vrf_name, vrf_config in vrfs.items():
+                if isinstance(vrf_config, dict):
+                    bgp = vrf_config.get('bgp', {})
+                    bgp_profile = bgp.get('bgp_profile', '')
+                    if bgp_profile in profiles:
+                        profile = profiles[bgp_profile]
+                        ipv4_af = profile.get('ipv4_unicast_af', {})
+                        route_import = ipv4_af.get('route_import', {})
+                        route_map = route_import.get('route_map', '')
+                        if route_map:
+                            route_map_to_target[route_map] = vrf_name
+        except:
+            continue
+    
+    # Now check if subnet exists in any prefix-list
+    leaked_to = None
+    route_map_found = None
+    
+    for yaml_file in glob.glob(f"{host_vars_dir}/*.yaml"):
+        try:
+            with open(yaml_file, 'r') as f:
+                device_data = yaml.safe_load(f)
+            if not device_data:
+                continue
+            
+            policies = device_data.get('policies', {})
+            prefix_lists = policies.get('prefix_list', {})
+            
+            for pl_name, pl_entries in prefix_lists.items():
+                for seq, entry in pl_entries.items():
+                    if entry.get('match') == subnet:
+                        route_map_found = pl_name
+                        if pl_name in route_map_to_target:
+                            leaked_to = route_map_to_target[pl_name]
+                        break
+                if leaked_to:
+                    break
+            if leaked_to:
+                break
+        except:
+            continue
+    
+    print(json.dumps({
+        'success': True,
+        'leaked': leaked_to is not None,
+        'target_vrf': leaked_to,
+        'route_map': route_map_found
+    }))
+except Exception as e:
+    print(json.dumps({'success': False, 'error': str(e)}))
+PYTHON
+        ;;
+    "get-leaking-targets")
+        # Get VRFs that can receive leaked routes (from a source VRF)
+        python3 << 'PYTHON'
+import json
+import yaml
+import os
+import glob
+
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+bgp_file = f"{ansible_dir}/inventory/group_vars/all/bgp_profiles.yaml"
+host_vars_dir = f"{ansible_dir}/inventory/host_vars"
+
+try:
+    with open(bgp_file, 'r') as f:
+        data = yaml.safe_load(f)
+    
+    profiles = data.get('bgp_profiles', {})
+    
+    # Build profile -> route_map mapping
+    profile_route_map = {}
+    for profile_name, profile in profiles.items():
+        ipv4_af = profile.get('ipv4_unicast_af', {})
+        route_import = ipv4_af.get('route_import', {})
+        from_vrfs = route_import.get('from_vrf', [])
+        route_map = route_import.get('route_map', '')
+        if from_vrfs and route_map:
+            profile_route_map[profile_name] = {
+                'from_vrfs': from_vrfs,
+                'route_map': route_map
+            }
+    
+    # Scan host_vars to find which VRF uses which profile
+    vrf_profile_map = {}  # vrf_name -> profile_name
+    for yaml_file in glob.glob(f"{host_vars_dir}/*.yaml"):
+        try:
+            with open(yaml_file, 'r') as f:
+                device_data = yaml.safe_load(f)
+            if not device_data:
+                continue
+            vrfs = device_data.get('vrfs', {})
+            for vrf_name, vrf_config in vrfs.items():
+                if isinstance(vrf_config, dict):
+                    bgp = vrf_config.get('bgp', {})
+                    bgp_profile = bgp.get('bgp_profile', '')
+                    if bgp_profile and bgp_profile in profile_route_map:
+                        vrf_profile_map[vrf_name] = bgp_profile
+        except:
+            continue
+    
+    # Build leaking_map: source_vrf -> [target_vrfs with route_map]
+    leaking_map = {}
+    for vrf_name, profile_name in vrf_profile_map.items():
+        if profile_name in profile_route_map:
+            info = profile_route_map[profile_name]
+            for src_vrf in info['from_vrfs']:
+                if src_vrf not in leaking_map:
+                    leaking_map[src_vrf] = []
+                # Check if this target VRF is already added
+                existing = [x for x in leaking_map[src_vrf] if x['target_vrf'] == vrf_name]
+                if not existing:
+                    leaking_map[src_vrf].append({
+                        'target_vrf': vrf_name,
+                        'route_map': info['route_map']
+                    })
+    
+    print(json.dumps({'success': True, 'leaking_map': leaking_map}))
+except Exception as e:
+    print(json.dumps({'success': False, 'error': str(e)}))
+PYTHON
+        ;;
+    "add-subnet-leak")
+        # Add a subnet to prefix-list for leaking
+        read -r POST_DATA
+        python3 << PYTHON
+import json
+import yaml
+import os
+import sys
+import glob
+
+# Read POST data
+try:
+    params = json.loads('''$POST_DATA''')
+except:
+    params = {}
+
+subnet = params.get('subnet', '')
+route_map = params.get('route_map', '')
+
+if not subnet or not route_map:
+    print(json.dumps({'success': False, 'error': 'Missing subnet or route_map'}))
+    sys.exit(0)
+
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+host_vars_dir = f"{ansible_dir}/inventory/host_vars"
+
+# Find all devices that have this prefix_list and add the subnet
+devices_updated = []
+errors = []
+
+try:
+    for yaml_file in glob.glob(f"{host_vars_dir}/*.yaml"):
+        hostname = os.path.basename(yaml_file).replace('.yaml', '')
+        
+        with open(yaml_file, 'r') as f:
+            content = f.read()
+            device_data = yaml.safe_load(content)
+        
+        if not device_data:
+            continue
+        
+        policies = device_data.get('policies', {})
+        prefix_lists = policies.get('prefix_list', {})
+        
+        if route_map not in prefix_lists:
+            continue
+        
+        # This device has the prefix_list, add the subnet
+        prefix_list = prefix_lists[route_map]
+        
+        # Find the next sequence number (increment by 10)
+        existing_seqs = [int(seq) for seq in prefix_list.keys()]
+        next_seq = str(max(existing_seqs) + 10) if existing_seqs else "10"
+        
+        # Check if subnet already exists
+        subnet_exists = any(
+            entry.get('match') == subnet 
+            for entry in prefix_list.values()
+        )
+        
+        if subnet_exists:
+            continue
+        
+        # Add the new entry
+        prefix_list[next_seq] = {
+            'match': subnet,
+            'max_prefix_len': 32
+        }
+        
+        # Write back
+        with open(yaml_file, 'w') as f:
+            yaml.dump(device_data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+        
+        devices_updated.append(hostname)
+    
+    print(json.dumps({
+        'success': True,
+        'devices_updated': devices_updated,
+        'count': len(devices_updated),
+        'message': f"Subnet {subnet} added to prefix-list {route_map} on {len(devices_updated)} device(s)"
+    }))
+except Exception as e:
+    print(json.dumps({'success': False, 'error': str(e)}))
+PYTHON
         ;;
     *)
         echo '{"success": false, "error": "Unknown action: '"$ACTION"'"}'

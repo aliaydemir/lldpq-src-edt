@@ -180,6 +180,8 @@
         .badge-purple { background: rgba(156, 39, 176, 0.2); color: #ce93d8; }
         .badge-orange { background: rgba(255, 152, 0, 0.2); color: #ffb74d; }
         .badge-gray { background: rgba(158, 158, 158, 0.2); color: #9e9e9e; }
+        .badge-cyan { background: rgba(0, 188, 212, 0.2); color: #4dd0e1; }
+        .badge-pink { background: rgba(233, 30, 99, 0.2); color: #f48fb1; }
         
         /* Action buttons in table */
         .row-actions {
@@ -256,6 +258,25 @@
             padding: 4px 10px;
             border-radius: 4px;
             font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .device-chip .remove-btn {
+            background: none;
+            border: none;
+            color: #f44336;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+            padding: 0 2px;
+            opacity: 0.7;
+            transition: opacity 0.2s;
+        }
+        
+        .device-chip .remove-btn:hover {
+            opacity: 1;
             color: #76b900;
         }
         
@@ -356,20 +377,23 @@
         
         .modal-header {
             padding: 15px 20px;
-            background: #333;
-            border-bottom: 1px solid #404040;
+            background: #76b900;
+            border-bottom: none;
             display: flex;
             justify-content: space-between;
             align-items: center;
+            border-radius: 8px 8px 0 0;
         }
         
         .modal-header h3 {
-            color: #76b900;
+            color: #fff;
             font-size: 16px;
+            font-weight: 600;
         }
         
         .modal-close {
             background: none;
+            color: rgba(255,255,255,0.8) !important;
             border: none;
             color: #888;
             font-size: 24px;
@@ -591,6 +615,14 @@
                         <input type="number" id="vlan-l2vni" placeholder="Auto: 100000 + VLAN ID">
                     </div>
                     
+                    <!-- STP BPDU Guard -->
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="vlan-stp-guard" checked>
+                            <span>Enable STP BPDU Guard (for access ports)</span>
+                        </label>
+                    </div>
+                    
                     <!-- SVI only for single VLAN -->
                     <div id="svi-section">
                         <div class="form-group">
@@ -603,7 +635,7 @@
                         <div id="svi-fields" class="conditional-fields">
                             <div class="form-group">
                                 <label>VRF</label>
-                                <select id="vlan-vrf">
+                                <select id="vlan-vrf" onchange="onVrfChange()">
                                     <option value="default">default</option>
                                 </select>
                             </div>
@@ -638,13 +670,68 @@
                                 </div>
                             </div>
                         </div>
+                        
+                        <!-- Leaking Section -->
+                        <div class="form-group" style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #404040;">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="vlan-leaking-enabled" onchange="toggleLeakingFields()">
+                                <span>Enable Leaking</span>
+                            </label>
+                        </div>
+                        
+                        <div id="leaking-fields" class="conditional-fields">
+                            <div class="form-group">
+                                <label>Leak To VRF</label>
+                                <select id="vlan-leak-target-vrf">
+                                    <option value="">Select VRF...</option>
+                                </select>
+                                <div class="form-hint">Subnet will be leaked to the selected VRF</div>
+                            </div>
+                        </div>
                     </div>
                     </div><!-- end svi-section -->
+                    
+                    <!-- Target Devices -->
+                    <div class="form-group" style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #404040;">
+                        <label style="display: flex; justify-content: space-between;">
+                            <span>Target Devices</span>
+                            <span style="font-size: 11px; color: #888;">
+                                <a href="#" onclick="selectAllCreateDevices(true); return false;" style="color: #4fc3f7;">All</a> | 
+                                <a href="#" onclick="selectAllCreateDevices(false); return false;" style="color: #4fc3f7;">None</a>
+                            </span>
+                        </label>
+                        <div id="create-device-list" style="max-height: 150px; overflow-y: auto; background: #1a1a1a; border: 1px solid #404040; border-radius: 4px; padding: 8px;">
+                            <div style="color: #888; font-size: 12px;">Loading devices...</div>
+                        </div>
+                        <div class="form-hint">Select devices to assign this VLAN</div>
+                    </div>
                 </form>
             </div>
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="closeCreateModal()">Cancel</button>
                 <button class="btn btn-primary" id="btn-create" onclick="createVlan()">Create VLAN</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Remove VLAN from Device Modal -->
+    <div class="modal" id="remove-vlan-modal">
+        <div class="modal-content" style="max-width: 400px;">
+            <div class="modal-header">
+                <h3>Remove VLAN from Device</h3>
+                <button class="modal-close" onclick="closeRemoveVlanModal()">×</button>
+            </div>
+            <div class="modal-body" style="text-align: center; padding: 25px;">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="#ff9800" style="margin-bottom: 15px;">
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+                </svg>
+                <p style="color: #ccc; margin-bottom: 10px;">Remove VLAN from this device?</p>
+                <p style="color: #76b900; font-weight: bold; font-size: 16px;" id="remove-vlan-name"></p>
+                <p style="color: #888; font-size: 13px; margin-top: 10px;">Device: <span id="remove-vlan-device" style="color: #4fc3f7;"></span></p>
+            </div>
+            <div class="modal-footer" style="justify-content: center; gap: 15px;">
+                <button class="btn btn-secondary" onclick="closeRemoveVlanModal()">Cancel</button>
+                <button class="btn" onclick="executeRemoveVlanFromDevice()" style="background: #ff9800; color: #fff;">Remove</button>
             </div>
         </div>
     </div>
@@ -727,6 +814,24 @@
                                 </div>
                             </div>
                         </div>
+                        
+                        <!-- Leaking Section for Edit -->
+                        <div class="form-group" style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #404040;">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="edit-vlan-leaking-enabled" onchange="toggleEditLeakingFields()">
+                                <span>Add Subnet to Leaking</span>
+                            </label>
+                        </div>
+                        
+                        <div id="edit-leaking-fields" class="conditional-fields">
+                            <div class="form-group">
+                                <label>Leak To VRF</label>
+                                <select id="edit-vlan-leak-target-vrf">
+                                    <option value="">Select VRF...</option>
+                                </select>
+                                <div class="form-hint">Subnet will be leaked to the selected VRF</div>
+                            </div>
+                        </div>
                     </div>
                 </form>
             </div>
@@ -768,6 +873,7 @@
         let totalDeviceCount = 0;
         let vrfCount = 0;
         let availableVrfs = ['default'];
+        let leakedSubnets = {};  // subnet -> {target_vrf, route_map}
         
         // Initialize
         async function init() {
@@ -786,8 +892,18 @@
             document.getElementById('content-area').innerHTML = '<div class="loading"><div class="spinner"></div>Loading VLAN data...</div>';
             
             try {
-                const response = await fetch('/fabric-api.sh?action=get-vlan-report');
-                const data = await response.json();
+                // Fetch VLAN data and leaked subnets in parallel
+                const [vlanResponse, leakResponse] = await Promise.all([
+                    fetch('/fabric-api.sh?action=get-vlan-report'),
+                    fetch('/fabric-api.sh?action=get-all-leaked-subnets')
+                ]);
+                
+                const data = await vlanResponse.json();
+                const leakData = await leakResponse.json();
+                
+                if (leakData.success) {
+                    leakedSubnets = leakData.leaked_subnets || {};
+                }
                 
                 if (data.success) {
                     vlanProfiles = data.vlan_profiles || {};
@@ -823,6 +939,8 @@
             let vrf = null;  // null means L2 Only
             let description = '-';
             let l2vni = '-';
+            let vrrVip = '-';
+            let ip = '-';
             let vlanCount = 0;
             let hasL3 = false;  // Track if any VLAN has L3 config
             
@@ -842,6 +960,9 @@
                         }
                         description = vlanInfo.description || '-';
                         l2vni = vlanInfo.l2vni || '-';
+                        vrrVip = vlanInfo.vrr_vip || '-';
+                        // If VRR VIP exists, IP should be '-' (IPs are per-device as even/odd)
+                        ip = vlanInfo.vrr_vip ? '-' : (vlanInfo.ip || '-');
                     }
                 } else if (vlanCount > 1) {
                     // Multiple VLANs - show range
@@ -881,6 +1002,12 @@
             if (vlanData.ip || vlanData.vrr_vip) hasL3 = true;
             if (vlanData.description) description = vlanData.description;
             if (vlanData.l2vni) l2vni = vlanData.l2vni;
+            if (vlanData.vrr_vip) {
+                vrrVip = vlanData.vrr_vip;
+                ip = '-';  // If VRR VIP exists, IP is per-device (even/odd)
+            } else if (vlanData.ip) {
+                ip = vlanData.ip;
+            }
             
             // If no L3 config found, mark as L2 Only
             if (!hasL3) {
@@ -889,7 +1016,54 @@
                 vrf = 'default';
             }
             
-            return { vlanId, vrf, description, l2vni, vlanCount, hasL3 };
+            // Calculate subnet for leak checking
+            let subnet = '-';
+            const ipForSubnet = vrrVip !== '-' ? vrrVip : ip;
+            if (ipForSubnet !== '-') {
+                subnet = ipToNetwork(ipForSubnet);
+            }
+            
+            return { vlanId, vrf, description, l2vni, vrrVip, ip, vlanCount, hasL3, subnet };
+        }
+        
+        // Convert IP/mask to network address
+        function ipToNetwork(ipWithMask) {
+            const parts = ipWithMask.split('/');
+            if (parts.length !== 2) return ipWithMask;
+            const ip = parts[0];
+            const mask = parseInt(parts[1]);
+            const ipOctets = ip.split('.').map(Number);
+            const maskBits = 32 - mask;
+            const hostBits = Math.pow(2, maskBits) - 1;
+            const ipInt = (ipOctets[0] << 24) + (ipOctets[1] << 16) + (ipOctets[2] << 8) + ipOctets[3];
+            const networkInt = ipInt & ~hostBits;
+            const networkOctets = [
+                (networkInt >> 24) & 255,
+                (networkInt >> 16) & 255,
+                (networkInt >> 8) & 255,
+                networkInt & 255
+            ];
+            return networkOctets.join('.') + '/' + mask;
+        }
+        
+        // Get badge class for VRF name
+        // Dynamic VRF badge colors - uses hash for consistent colors
+        function getVrfBadgeClass(vrfName) {
+            if (!vrfName || vrfName === 'L2 Only' || vrfName === 'default') return 'badge-gray';
+            
+            // Infra VRFs get blue
+            if (vrfName === 'oob' || vrfName.toLowerCase().includes('mgmt') || vrfName.toLowerCase().includes('management')) {
+                return 'badge-blue';
+            }
+            
+            // Hash the VRF name to get consistent color
+            const colors = ['badge-green', 'badge-purple', 'badge-orange', 'badge-cyan', 'badge-pink'];
+            let hash = 0;
+            for (let i = 0; i < vrfName.length; i++) {
+                hash = ((hash << 5) - hash) + vrfName.charCodeAt(i);
+                hash = hash & hash;
+            }
+            return colors[Math.abs(hash) % colors.length];
         }
         
         // Render table
@@ -915,9 +1089,13 @@
                             <th style="width: 30px;"></th>
                             <th class="sortable">VLAN Profile <span class="sort-arrow">▲▼</span></th>
                             <th class="sortable">ID <span class="sort-arrow">▲▼</span></th>
+                            <th>VRR VIP</th>
+                            <th>IP</th>
                             <th class="sortable">VRF <span class="sort-arrow">▲▼</span></th>
-                            <th class="sortable">Devices <span class="sort-arrow">▲▼</span></th>
+                            <th class="sortable">L2VNI <span class="sort-arrow">▲▼</span></th>
+                            <th>Leak To</th>
                             <th>Description</th>
+                            <th class="sortable">Devices <span class="sort-arrow">▲▼</span></th>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -930,23 +1108,24 @@
                 const devices = vlanDeviceMap[vlanName] || [];
                 const deviceCount = devices.length;
                 
-                const vrfBadgeClass = details.vrf === 'L2 Only' ? 'badge-gray' :
-                                      details.vrf === 'default' ? 'badge-gray' : 
-                                      details.vrf === 'oob' ? 'badge-blue' : 
-                                      details.vrf === 'tenant1' ? 'badge-green' : 'badge-purple';
+                const vrfBadgeClass = getVrfBadgeClass(details.vrf);
                 
                 html += `
                     <tr class="expandable" onclick="toggleDeviceList('${vlanName}')">
                         <td><span class="expand-icon" id="icon-${vlanName}">›</span></td>
                         <td><span class="vlan-name">${vlanName}</span></td>
                         <td>${details.vlanId}</td>
+                        <td>${details.vrrVip !== '-' ? `<span class="badge badge-orange">${details.vrrVip}</span>` : '-'}</td>
+                        <td>${details.ip !== '-' ? `<span class="badge badge-blue">${details.ip}</span>` : '-'}</td>
                         <td><span class="badge ${vrfBadgeClass}">${details.vrf}</span></td>
+                        <td>${details.l2vni !== '-' ? details.l2vni : '-'}</td>
+                        <td>${details.subnet !== '-' && leakedSubnets[details.subnet] ? `<span class="badge ${getVrfBadgeClass(leakedSubnets[details.subnet].target_vrf)}">${leakedSubnets[details.subnet].target_vrf}</span>` : '-'}</td>
+                        <td>${details.description}</td>
                         <td>
                             <span class="badge ${deviceCount > 0 ? 'badge-green' : 'badge-gray'}">
                                 ${deviceCount} device${deviceCount !== 1 ? 's' : ''}
                             </span>
                         </td>
-                        <td>${details.description}</td>
                         <td>
                             <div class="row-actions">
                                 <button class="btn-icon btn-icon-edit" onclick="event.stopPropagation(); editVlan('${vlanName}')" title="Edit">
@@ -963,10 +1142,10 @@
                         </td>
                     </tr>
                     <tr class="device-list-row" id="devices-${vlanName}">
-                        <td colspan="7">
+                        <td colspan="11">
                             ${devices.length > 0 ? `
                                 <div class="device-chips">
-                                    ${devices.map(d => `<span class="device-chip">${d}</span>`).join('')}
+                                    ${devices.map(d => `<span class="device-chip">${d}<button class="remove-btn" onclick="event.stopPropagation(); confirmRemoveVlanFromDevice('${vlanName}', '${d}')" title="Remove from ${d}">×</button></span>`).join('')}
                                 </div>
                             ` : '<span style="color: #888;">No devices assigned</span>'}
                         </td>
@@ -995,6 +1174,7 @@
         // Modal functions
         function openCreateModal() {
             loadVrfs();
+            loadCreateDeviceList();
             document.getElementById('create-form').reset();
             document.getElementById('vlan-range-mode').checked = false;
             document.getElementById('single-vlan-fields').style.display = 'block';
@@ -1002,11 +1182,62 @@
             document.getElementById('svi-section').style.display = 'block';
             document.getElementById('svi-fields').classList.remove('visible');
             document.getElementById('vrr-fields').classList.remove('visible');
+            document.getElementById('leaking-fields').classList.remove('visible');
+            document.getElementById('vlan-leaking-enabled').checked = false;
             document.getElementById('single-ip-field').style.display = 'block';
             document.getElementById('range-preview').style.display = 'none';
             document.getElementById('l2vni-label-suffix').textContent = '';
             document.getElementById('btn-create').textContent = 'Create VLAN';
             document.getElementById('create-modal').classList.add('visible');
+        }
+        
+        async function loadCreateDeviceList() {
+            const container = document.getElementById('create-device-list');
+            container.innerHTML = '<div style="color: #888; font-size: 12px;">Loading...</div>';
+            
+            try {
+                const response = await fetch('/fabric-api.sh?action=list-devices');
+                const data = await response.json();
+                
+                if (data.success && data.devices) {
+                    let html = '';
+                    for (const [group, devices] of Object.entries(data.devices)) {
+                        const groupId = group.replace(/[^a-zA-Z0-9]/g, '_');
+                        html += `<div style="display: flex; align-items: center; gap: 6px; color: #76b900; font-size: 11px; padding: 5px 0 3px 0; border-bottom: 1px solid #333; cursor: pointer;" onclick="toggleGroupDevices('${groupId}', 'create-vlan-devices')">
+                            <input type="checkbox" id="group-${groupId}" style="width: 12px; height: 12px;" onclick="event.stopPropagation(); toggleGroupDevices('${groupId}', 'create-vlan-devices')">
+                            <span>${group}</span>
+                        </div>`;
+                        devices.forEach(device => {
+                            const hostname = device.hostname || device;
+                            html += `<label style="display: flex; align-items: center; gap: 6px; padding: 4px 8px 4px 20px; cursor: pointer; font-size: 12px; color: #ccc;">
+                                <input type="checkbox" name="create-vlan-devices" data-group="${groupId}" value="${hostname}" style="width: 14px; height: 14px;" onchange="updateGroupCheckbox('${groupId}', 'create-vlan-devices')">
+                                ${hostname}
+                            </label>`;
+                        });
+                    }
+                    container.innerHTML = html;
+                }
+            } catch (e) {
+                container.innerHTML = '<div style="color: #f44336; font-size: 12px;">Error loading devices</div>';
+            }
+        }
+        
+        function toggleGroupDevices(groupId, inputName) {
+            const groupCb = document.getElementById('group-' + groupId);
+            const devices = document.querySelectorAll(`input[name="${inputName}"][data-group="${groupId}"]`);
+            devices.forEach(cb => cb.checked = groupCb.checked);
+        }
+        
+        function updateGroupCheckbox(groupId, inputName) {
+            const devices = document.querySelectorAll(`input[name="${inputName}"][data-group="${groupId}"]`);
+            const allChecked = Array.from(devices).every(cb => cb.checked);
+            const groupCb = document.getElementById('group-' + groupId);
+            if (groupCb) groupCb.checked = allChecked;
+        }
+        
+        function selectAllCreateDevices(all) {
+            document.querySelectorAll('input[name="create-vlan-devices"]').forEach(cb => cb.checked = all);
+            document.querySelectorAll('input[id^="group-"]').forEach(cb => cb.checked = all);
         }
         
         function closeCreateModal() {
@@ -1099,6 +1330,54 @@
             }
         }
         
+        function toggleLeakingFields() {
+            const leakingFields = document.getElementById('leaking-fields');
+            const leakingEnabled = document.getElementById('vlan-leaking-enabled').checked;
+            
+            if (leakingEnabled) {
+                leakingFields.classList.add('visible');
+                loadLeakingTargets();
+            } else {
+                leakingFields.classList.remove('visible');
+            }
+        }
+        
+        function onVrfChange() {
+            // Reload leaking options if leaking is enabled
+            if (document.getElementById('vlan-leaking-enabled').checked) {
+                loadLeakingTargets();
+            }
+        }
+        
+        let leakingMap = {};
+        
+        async function loadLeakingTargets() {
+            const select = document.getElementById('vlan-leak-target-vrf');
+            const selectedVrf = document.getElementById('vlan-vrf').value;
+            
+            try {
+                const response = await fetch('/fabric-api.sh?action=get-leaking-targets');
+                const data = await response.json();
+                
+                if (data.success && data.leaking_map) {
+                    leakingMap = data.leaking_map;
+                    // Get target VRFs for the selected source VRF
+                    const targets = leakingMap[selectedVrf] || [];
+                    
+                    select.innerHTML = '<option value="">Select VRF...</option>';
+                    targets.forEach(t => {
+                        select.innerHTML += `<option value="${t.target_vrf}" data-routemap="${t.route_map}">${t.target_vrf}</option>`;
+                    });
+                    
+                    if (targets.length === 0) {
+                        select.innerHTML = '<option value="">No leaking configured for this VRF</option>';
+                    }
+                }
+            } catch (e) {
+                select.innerHTML = '<option value="">Error loading VRFs</option>';
+            }
+        }
+        
         async function createVlan() {
             const createBtn = document.getElementById('btn-create');
             const isRangeMode = document.getElementById('vlan-range-mode').checked;
@@ -1158,8 +1437,30 @@
                     const result = await response.json();
                     
                     if (result.success) {
-                        closeCreateModal();
-                        alert(`${count} VLANs created successfully! Run Deploy to apply changes.`);
+                        // Assign to selected devices
+                        const selectedDevices = Array.from(document.querySelectorAll('input[name="create-vlan-devices"]:checked')).map(cb => cb.value);
+                        const createdVlans = result.created_vlans || [];
+                        
+                        if (selectedDevices.length > 0 && createdVlans.length > 0) {
+                            createBtn.textContent = 'Assigning to devices...';
+                            let assignedCount = 0;
+                            for (const device of selectedDevices) {
+                                try {
+                                    const assignResp = await fetch('/fabric-api.sh?action=assign-vlans', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ device: device, vlans: createdVlans })
+                                    });
+                                    const assignResult = await assignResp.json();
+                                    if (assignResult.success) assignedCount++;
+                                } catch (e) {}
+                            }
+                            closeCreateModal();
+                            alert(`${count} VLANs created and assigned to ${assignedCount} device(s)! Run Deploy to apply changes.`);
+                        } else {
+                            closeCreateModal();
+                            alert(`${count} VLANs created successfully! Run Deploy to apply changes.`);
+                        }
                         await loadData();
                     } else {
                         alert('Error: ' + (result.error || 'Unknown error'));
@@ -1217,8 +1518,84 @@
                 const result = await response.json();
                 
                 if (result.success) {
+                    // Assign to selected devices
+                    const selectedDevices = Array.from(document.querySelectorAll('input[name="create-vlan-devices"]:checked')).map(cb => cb.value);
+                    const profileName = data.profile_name;
+                    
+                    let assignedCount = 0;
+                    if (selectedDevices.length > 0) {
+                        for (const device of selectedDevices) {
+                            try {
+                                const assignResp = await fetch('/fabric-api.sh?action=assign-vlans', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ device: device, vlans: [profileName] })
+                                });
+                                const assignResult = await assignResp.json();
+                                if (assignResult.success) assignedCount++;
+                            } catch (e) {}
+                        }
+                    }
+                    
+                    // Handle leaking if enabled
+                    let leakingMsg = '';
+                    const leakingEnabled = document.getElementById('vlan-leaking-enabled').checked;
+                    const leakTargetSelect = document.getElementById('vlan-leak-target-vrf');
+                    const leakTargetVrf = leakTargetSelect.value;
+                    const leakRouteMap = leakTargetSelect.selectedOptions[0]?.dataset?.routemap || '';
+                    
+                    if (leakingEnabled && leakTargetVrf && leakRouteMap && sviEnabled) {
+                        // Get the subnet from IP
+                        let subnet = '';
+                        if (vrrEnabled) {
+                            subnet = document.getElementById('vlan-vrr-vip').value.trim();
+                        } else {
+                            subnet = document.getElementById('vlan-gateway-ip').value.trim();
+                        }
+                        
+                        if (subnet) {
+                            // Convert IP to network (e.g., 192.168.175.1/24 -> 192.168.175.0/24)
+                            const ipParts = subnet.split('/');
+                            if (ipParts.length === 2) {
+                                const ip = ipParts[0];
+                                const mask = parseInt(ipParts[1]);
+                                const ipOctets = ip.split('.').map(Number);
+                                // Calculate network address based on mask
+                                const maskBits = 32 - mask;
+                                const hostBits = Math.pow(2, maskBits) - 1;
+                                const ipInt = (ipOctets[0] << 24) + (ipOctets[1] << 16) + (ipOctets[2] << 8) + ipOctets[3];
+                                const networkInt = ipInt & ~hostBits;
+                                const networkOctets = [
+                                    (networkInt >> 24) & 255,
+                                    (networkInt >> 16) & 255,
+                                    (networkInt >> 8) & 255,
+                                    networkInt & 255
+                                ];
+                                const networkAddr = networkOctets.join('.') + '/' + mask;
+                                
+                                try {
+                                    const leakResp = await fetch('/fabric-api.sh?action=add-subnet-leak', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ subnet: networkAddr, route_map: leakRouteMap })
+                                    });
+                                    const leakResult = await leakResp.json();
+                                    if (leakResult.success && leakResult.count > 0) {
+                                        leakingMsg = ` Leaking configured on ${leakResult.count} device(s).`;
+                                    }
+                                } catch (e) {
+                                    console.error('Leaking error:', e);
+                                }
+                            }
+                        }
+                    }
+                    
                     closeCreateModal();
-                    alert('VLAN created successfully! Run Deploy to apply changes.');
+                    if (assignedCount > 0) {
+                        alert(`VLAN created and assigned to ${assignedCount} device(s)!${leakingMsg} Run Deploy to apply changes.`);
+                    } else {
+                        alert(`VLAN created successfully!${leakingMsg} Run Deploy to apply changes.`);
+                    }
                     await loadData();
                 } else {
                     alert('Error: ' + (result.error || 'Unknown error'));
@@ -1306,6 +1683,28 @@
                 document.getElementById('edit-svi-fields').classList.remove('visible');
             }
             
+            // Check if subnet is already leaked and pre-populate
+            const editDetails = getVlanDetails(vp);
+            if (editDetails.subnet !== '-' && leakedSubnets[editDetails.subnet]) {
+                const leakInfo = leakedSubnets[editDetails.subnet];
+                document.getElementById('edit-vlan-leaking-enabled').checked = true;
+                document.getElementById('edit-leaking-fields').classList.add('visible');
+                
+                // Load targets and select the current one
+                loadEditLeakingTargets().then(() => {
+                    const select = document.getElementById('edit-vlan-leak-target-vrf');
+                    for (let opt of select.options) {
+                        if (opt.value === leakInfo.target_vrf) {
+                            opt.selected = true;
+                            break;
+                        }
+                    }
+                });
+            } else {
+                document.getElementById('edit-vlan-leaking-enabled').checked = false;
+                document.getElementById('edit-leaking-fields').classList.remove('visible');
+            }
+            
             document.getElementById('edit-modal').classList.add('visible');
         }
         
@@ -1336,6 +1735,43 @@
             } else {
                 vrrFields.classList.remove('visible');
                 singleIpField.style.display = 'block';
+            }
+        }
+        
+        function toggleEditLeakingFields() {
+            const leakingFields = document.getElementById('edit-leaking-fields');
+            const leakingEnabled = document.getElementById('edit-vlan-leaking-enabled').checked;
+            
+            if (leakingEnabled) {
+                leakingFields.classList.add('visible');
+                loadEditLeakingTargets();
+            } else {
+                leakingFields.classList.remove('visible');
+            }
+        }
+        
+        async function loadEditLeakingTargets() {
+            const select = document.getElementById('edit-vlan-leak-target-vrf');
+            const selectedVrf = document.getElementById('edit-vlan-vrf').value;
+            
+            try {
+                const response = await fetch('/fabric-api.sh?action=get-leaking-targets');
+                const data = await response.json();
+                
+                if (data.success && data.leaking_map) {
+                    const targets = data.leaking_map[selectedVrf] || [];
+                    
+                    select.innerHTML = '<option value="">Select VRF...</option>';
+                    targets.forEach(t => {
+                        select.innerHTML += `<option value="${t.target_vrf}" data-routemap="${t.route_map}">${t.target_vrf}</option>`;
+                    });
+                    
+                    if (targets.length === 0) {
+                        select.innerHTML = '<option value="">No leaking configured for this VRF</option>';
+                    }
+                }
+            } catch (e) {
+                select.innerHTML = '<option value="">Error loading VRFs</option>';
             }
         }
         
@@ -1380,8 +1816,60 @@
                 const result = await response.json();
                 
                 if (result.success) {
+                    // Handle leaking if enabled
+                    let leakingMsg = '';
+                    const leakingEnabled = document.getElementById('edit-vlan-leaking-enabled').checked;
+                    const leakTargetSelect = document.getElementById('edit-vlan-leak-target-vrf');
+                    const leakTargetVrf = leakTargetSelect.value;
+                    const leakRouteMap = leakTargetSelect.selectedOptions[0]?.dataset?.routemap || '';
+                    
+                    if (leakingEnabled && leakTargetVrf && leakRouteMap && sviEnabled) {
+                        // Get the subnet from IP
+                        let subnet = '';
+                        if (vrrEnabled) {
+                            subnet = document.getElementById('edit-vlan-vrr-vip').value.trim();
+                        } else {
+                            subnet = document.getElementById('edit-vlan-gateway-ip').value.trim();
+                        }
+                        
+                        if (subnet) {
+                            // Convert IP to network
+                            const ipParts = subnet.split('/');
+                            if (ipParts.length === 2) {
+                                const ip = ipParts[0];
+                                const mask = parseInt(ipParts[1]);
+                                const ipOctets = ip.split('.').map(Number);
+                                const maskBits = 32 - mask;
+                                const hostBits = Math.pow(2, maskBits) - 1;
+                                const ipInt = (ipOctets[0] << 24) + (ipOctets[1] << 16) + (ipOctets[2] << 8) + ipOctets[3];
+                                const networkInt = ipInt & ~hostBits;
+                                const networkOctets = [
+                                    (networkInt >> 24) & 255,
+                                    (networkInt >> 16) & 255,
+                                    (networkInt >> 8) & 255,
+                                    networkInt & 255
+                                ];
+                                const networkAddr = networkOctets.join('.') + '/' + mask;
+                                
+                                try {
+                                    const leakResp = await fetch('/fabric-api.sh?action=add-subnet-leak', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ subnet: networkAddr, route_map: leakRouteMap })
+                                    });
+                                    const leakResult = await leakResp.json();
+                                    if (leakResult.success && leakResult.count > 0) {
+                                        leakingMsg = ` Leaking configured on ${leakResult.count} device(s).`;
+                                    }
+                                } catch (e) {
+                                    console.error('Leaking error:', e);
+                                }
+                            }
+                        }
+                    }
+                    
                     closeEditModal();
-                    alert('VLAN updated successfully! Run Deploy to apply changes.');
+                    alert(`VLAN updated successfully!${leakingMsg} Run Deploy to apply changes.`);
                     await loadData();
                 } else {
                     alert('Error: ' + (result.error || 'Unknown error'));
@@ -1453,6 +1941,51 @@
             deleteBtn.textContent = 'Delete';
         }
         
+        
+        // ===== Remove VLAN from Single Device =====
+        let removeVlanName = '';
+        let removeDeviceName = '';
+        
+        function confirmRemoveVlanFromDevice(vlanName, deviceName) {
+            removeVlanName = vlanName;
+            removeDeviceName = deviceName;
+            document.getElementById('remove-vlan-name').textContent = vlanName;
+            document.getElementById('remove-vlan-device').textContent = deviceName;
+            document.getElementById('remove-vlan-modal').classList.add('visible');
+        }
+        
+        function closeRemoveVlanModal() {
+            document.getElementById('remove-vlan-modal').classList.remove('visible');
+            removeVlanName = '';
+            removeDeviceName = '';
+        }
+        
+        async function executeRemoveVlanFromDevice() {
+            if (!removeVlanName || !removeDeviceName) return;
+            
+            const vlanName = removeVlanName;
+            const deviceName = removeDeviceName;
+            closeRemoveVlanModal();
+            
+            try {
+                const response = await fetch('/fabric-api.sh?action=unassign-vlan', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ device: deviceName, vlan: vlanName })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    alert(`VLAN "${vlanName}" removed from ${deviceName}`);
+                    loadData();
+                } else {
+                    alert('Error: ' + (result.error || 'Unknown error'));
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
         
         // Init on load
         document.addEventListener('DOMContentLoaded', init);
