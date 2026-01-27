@@ -310,17 +310,31 @@
         .output-area .changed { color: #ffb74d; }
         
         .output-placeholder {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
             color: #666;
-            text-align: center;
-            padding: 40px;
-            font-family: 'Segoe UI', sans-serif;
         }
         
         .output-placeholder svg {
-            width: 48px;
-            height: 48px;
-            fill: #444;
-            margin-bottom: 15px;
+            width: 80px;
+            height: 80px;
+            margin-bottom: 20px;
+            opacity: 0.5;
+        }
+        
+        .output-placeholder h2 {
+            font-size: 24px;
+            font-style: italic;
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #888;
+        }
+        
+        .output-placeholder p {
+            font-size: 14px;
         }
         
         /* Loading Overlay */
@@ -415,6 +429,12 @@
         </div>
         <div class="action-buttons">
             <span class="last-updated" id="last-updated"></span>
+            <button class="btn btn-primary" onclick="scanFabric()" id="btn-scan">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
+                </svg>
+                Scan Fabric
+            </button>
             <button class="btn btn-secondary" onclick="loadDevices()">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
@@ -493,15 +513,12 @@
             </div>
             <div class="output-area" id="output-area">
                 <div class="output-placeholder">
-                    <svg viewBox="0 0 24 24">
+                    <svg viewBox="0 0 24 24" fill="currentColor">
                         <path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/>
                     </svg>
-                    <div style="margin-top: 10px;">Select devices and run Generate, Diff, or Deploy</div>
-                    <div style="color: #555; font-size: 11px; margin-top: 8px;">
-                        Generate: Create configs from Ansible templates<br>
-                        Diff: Compare generated vs running config<br>
-                        Deploy: Apply configuration to devices
-                    </div>
+                    <h2>Fabric Deployment Center</h2>
+                    <p>Click <strong>Scan Fabric</strong> to detect pending changes across all devices</p>
+                    <p style="margin-top: 8px; font-size: 12px; color: #666;">Then select devices and run Generate, Diff, or Deploy</p>
                 </div>
             </div>
         </div>
@@ -523,28 +540,24 @@
         
         async function loadDevices() {
             try {
-                // Fetch devices and modified status in parallel
-                const [devicesResp, modifiedResp] = await Promise.all([
-                    fetch('/fabric-api.sh?action=list-devices'),
-                    fetch('/ansible-api?action=get-modified-devices')
-                ]);
-                
+                const devicesResp = await fetch('/fabric-api.sh?action=list-devices');
                 const devicesData = await devicesResp.json();
-                const modifiedData = await modifiedResp.json();
                 
                 if (devicesData.success && devicesData.devices) {
                     devices = devicesData.devices;
                 }
                 
-                // Update modified devices set
+                // Clear modified devices - will be populated by Scan Fabric
                 modifiedDevices = new Set();
-                if (modifiedData.success && modifiedData.modified_devices) {
-                    modifiedData.modified_devices.forEach(d => modifiedDevices.add(d));
-                }
                 
                 renderDeviceList();
                 updateLastUpdated();
-                updateSummaryCards();
+                
+                // Show "?" for pending/synced until scan is done
+                document.getElementById('pending-changes').textContent = '?';
+                document.getElementById('synced-devices').textContent = '?';
+                document.getElementById('pending-changes').title = 'Click "Scan Fabric" to detect pending changes';
+                document.getElementById('synced-devices').title = 'Click "Scan Fabric" to detect pending changes';
             } catch (e) {
                 document.getElementById('device-list').innerHTML = 
                     `<div class="output-placeholder" style="color: #f44336;">Error loading devices: ${e.message}</div>`;
@@ -699,6 +712,18 @@
                 'Last updated: ' + now.toLocaleTimeString();
         }
         
+        // Strip ANSI escape codes and convert to HTML with colors
+        function parseAnsiOutput(text) {
+            // Remove ANSI escape codes
+            let cleaned = text.replace(/\x1b\[[0-9;]*m/g, '');
+            // Also handle the escaped version [0;32m etc
+            cleaned = cleaned.replace(/\[0;3[0-9]m/g, '');
+            cleaned = cleaned.replace(/\[0m/g, '');
+            cleaned = cleaned.replace(/\[1;3[0-9]m/g, '');
+            cleaned = cleaned.replace(/\[0;1;3[0-9]m/g, '');
+            return cleaned;
+        }
+        
         function appendOutput(text, type = '') {
             const output = document.getElementById('output-area');
             // Clear placeholder if exists
@@ -706,27 +731,57 @@
                 output.innerHTML = '';
             }
             
+            // Clean ANSI codes
+            const cleanedText = parseAnsiOutput(text);
+            
             const span = document.createElement('span');
             if (type) span.className = type;
-            span.textContent = text + '\n';
+            span.textContent = cleanedText + '\n';
             output.appendChild(span);
+            output.scrollTop = output.scrollHeight;
+        }
+        
+        function appendFormattedOutput(text) {
+            const output = document.getElementById('output-area');
+            if (output.querySelector('.output-placeholder')) {
+                output.innerHTML = '';
+            }
+            
+            // Clean ANSI codes first
+            const cleaned = parseAnsiOutput(text);
+            
+            // Split by lines and colorize
+            const lines = cleaned.split('\n');
+            for (const line of lines) {
+                const span = document.createElement('span');
+                
+                // Determine color based on content
+                if (line.includes('ok=') && !line.includes('ok=0')) {
+                    span.className = 'success';
+                } else if (line.includes('changed=') && !line.includes('changed=0')) {
+                    span.className = 'changed';
+                } else if (line.includes('failed=') && !line.includes('failed=0')) {
+                    span.className = 'error';
+                } else if (line.includes('unreachable=') && !line.includes('unreachable=0')) {
+                    span.className = 'error';
+                } else if (line.includes('PLAY [') || line.includes('TASK [')) {
+                    span.className = 'info';
+                } else if (line.includes('CONFIG DIFF SUMMARY') || line.includes('TOTAL:')) {
+                    span.className = 'info';
+                } else if (line.includes('No changes') || line.includes('✓')) {
+                    span.className = 'success';
+                } else if (line.includes('With changes') || line.includes('✗')) {
+                    span.className = 'warning';
+                }
+                
+                span.textContent = line + '\n';
+                output.appendChild(span);
+            }
             output.scrollTop = output.scrollHeight;
         }
         
         function clearOutput() {
             document.getElementById('output-area').innerHTML = '';
-        }
-        
-        function formatOutput(text) {
-            // Add color classes based on content
-            return text
-                .replace(/ok=/g, '<span class="success">ok=</span>')
-                .replace(/changed=/g, '<span class="changed">changed=</span>')
-                .replace(/failed=/g, '<span class="error">failed=</span>')
-                .replace(/PLAY \[/g, '<span class="info">PLAY [</span>')
-                .replace(/TASK \[/g, '<span class="info">TASK [</span>')
-                .replace(/\+\+\+/g, '<span class="success">+++</span>')
-                .replace(/---/g, '<span class="error">---</span>');
         }
         
         async function ansibleApiCall(action, hosts) {
@@ -754,10 +809,10 @@
                 
                 if (result.success) {
                     appendOutput('Generation completed successfully!', 'success');
-                    appendOutput('\n' + (result.output || ''));
+                    appendFormattedOutput(result.output || '');
                 } else {
                     appendOutput('Generation failed!', 'error');
-                    appendOutput('\n' + (result.error || result.output || 'Unknown error'));
+                    appendFormattedOutput(result.error || result.output || 'Unknown error');
                 }
             } catch (e) {
                 appendOutput('Error: ' + e.message, 'error');
@@ -796,16 +851,96 @@
                         appendOutput('All devices are synchronized!', 'success');
                     }
                     
-                    appendOutput('\n' + output);
+                    appendFormattedOutput(output);
                 } else {
                     appendOutput('Diff failed!', 'error');
-                    appendOutput('\n' + (result.error || result.output || 'Unknown error'));
+                    appendFormattedOutput(result.error || result.output || 'Unknown error');
                 }
             } catch (e) {
                 appendOutput('Error: ' + e.message, 'error');
             }
             
             showLoading(false);
+        }
+        
+        async function scanFabric() {
+            // Get all unique device hostnames
+            const allDevices = new Set();
+            for (const [group, groupDevices] of Object.entries(devices)) {
+                for (const device of groupDevices) {
+                    allDevices.add(device.hostname || device);
+                }
+            }
+            
+            if (allDevices.size === 0) {
+                alert('No devices loaded. Please refresh first.');
+                return;
+            }
+            
+            const hosts = Array.from(allDevices).join(',');
+            showLoading(true, `Scanning ${allDevices.size} devices for pending changes...`);
+            clearOutput();
+            appendOutput(`=== FABRIC SCAN: ${allDevices.size} device(s) ===`, 'info');
+            appendOutput('Running diff against all devices to detect pending changes...\n');
+            
+            try {
+                const result = await ansibleApiCall('diff', hosts);
+                
+                if (result.success) {
+                    const output = result.output || '';
+                    
+                    // Parse PLAY RECAP to find devices with changes
+                    // Format: hostname : ok=X changed=Y unreachable=Z failed=W
+                    const pendingDevices = new Set();
+                    const lines = output.split('\n');
+                    
+                    for (const line of lines) {
+                        // Match lines in PLAY RECAP format
+                        const match = line.match(/^\s*(\S+)\s+:\s+.*changed=(\d+)/);
+                        if (match) {
+                            const hostname = match[1];
+                            const changedCount = parseInt(match[2]);
+                            if (changedCount > 0 && hostname !== 'localhost') {
+                                pendingDevices.add(hostname);
+                            }
+                        }
+                    }
+                    
+                    // Update modifiedDevices with real diff results
+                    modifiedDevices = pendingDevices;
+                    
+                    // Re-render device list with new status
+                    renderDeviceList();
+                    updateSummaryCards();
+                    
+                    // Show summary
+                    const pendingCount = pendingDevices.size;
+                    const syncedCount = allDevices.size - pendingCount;
+                    
+                    appendOutput(`\n=== SCAN COMPLETE ===`, 'info');
+                    if (pendingCount > 0) {
+                        appendOutput(`Pending Changes: ${pendingCount} device(s)`, 'warning');
+                        appendOutput(`Synchronized: ${syncedCount} device(s)`, 'success');
+                        appendOutput(`\nDevices with pending changes:`, 'warning');
+                        for (const d of pendingDevices) {
+                            appendOutput(`  • ${d}`, 'warning');
+                        }
+                    } else {
+                        appendOutput(`All ${allDevices.size} devices are synchronized!`, 'success');
+                    }
+                    
+                    appendOutput('\n--- Full Diff Output ---\n');
+                    appendFormattedOutput(output);
+                } else {
+                    appendOutput('Scan failed!', 'error');
+                    appendFormattedOutput(result.error || result.output || 'Unknown error');
+                }
+            } catch (e) {
+                appendOutput('Error: ' + e.message, 'error');
+            }
+            
+            showLoading(false);
+            updateLastUpdated();
         }
         
         async function runDeploy() {
@@ -835,10 +970,10 @@
                 
                 if (result.success) {
                     appendOutput('Deployment completed!', 'success');
-                    appendOutput('\n' + (result.output || ''));
+                    appendFormattedOutput(result.output || '');
                 } else {
                     appendOutput('Deployment failed!', 'error');
-                    appendOutput('\n' + (result.error || result.output || 'Unknown error'));
+                    appendFormattedOutput(result.error || result.output || 'Unknown error');
                 }
             } catch (e) {
                 appendOutput('Error: ' + e.message, 'error');

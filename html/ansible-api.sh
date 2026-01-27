@@ -493,27 +493,21 @@ case "$ACTION" in
         git config --global --add safe.directory "$ANSIBLE_DIR" 2>/dev/null || true
         
         # Get modified files in inventory/host_vars/
-        modified_files=$(git diff --name-only 2>/dev/null | grep "^inventory/host_vars/" | grep "\.yaml$" || true)
+        modified_files=$(git diff --name-only 2>/dev/null | grep "inventory/host_vars/.*\.yaml$" || true)
+        untracked_files=$(git ls-files --others --exclude-standard 2>/dev/null | grep "inventory/host_vars/.*\.yaml$" || true)
         
-        # Also check untracked new files
-        untracked_files=$(git ls-files --others --exclude-standard 2>/dev/null | grep "^inventory/host_vars/" | grep "\.yaml$" || true)
+        # Combine, extract hostnames, make unique
+        all_hostnames=$(echo -e "${modified_files}\n${untracked_files}" | grep -v "^$" | xargs -I{} basename {} .yaml 2>/dev/null | sort -u | grep -v "^$" || true)
         
-        # Combine and extract hostnames
-        all_files=$(echo -e "${modified_files}\n${untracked_files}" | grep -v "^$" | sort -u)
-        
-        # Extract device names from file paths (inventory/host_vars/HOSTNAME.yaml)
-        devices_json=$(echo "$all_files" | while read -r file; do
-            if [ -n "$file" ]; then
-                hostname=$(basename "$file" .yaml)
-                echo "\"$hostname\""
-            fi
-        done | paste -sd, -)
-        
-        if [ -z "$devices_json" ]; then
-            devices_json=""
+        # Build JSON array
+        if [ -z "$all_hostnames" ]; then
+            json_response '{"success": true, "modified_devices": [], "count": 0}'
+        else
+            # Convert to JSON array using printf
+            devices_json=$(echo "$all_hostnames" | while read -r h; do printf '"%s",' "$h"; done | sed 's/,$//')
+            count=$(echo "$all_hostnames" | wc -l | tr -d ' ')
+            json_response "{\"success\": true, \"modified_devices\": [${devices_json}], \"count\": ${count}}"
         fi
-        
-        json_response "{\"success\": true, \"modified_devices\": [${devices_json}], \"count\": $(echo "$all_files" | grep -c . || echo 0)}"
         ;;
     image)
         # Serve image file
