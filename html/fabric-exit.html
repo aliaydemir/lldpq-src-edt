@@ -538,6 +538,7 @@
                 </div>
             </div>
             <div class="modal-footer">
+                <button class="btn" style="background: #c62828; color: white; margin-right: auto;" onclick="deletePeer()">Delete Peer</button>
                 <button class="btn btn-secondary" onclick="closeModal('edit-peer-modal')">Cancel</button>
                 <button class="btn btn-primary" onclick="savePeerEdit()">Save Changes</button>
             </div>
@@ -912,6 +913,44 @@
                     alert('Peer updated successfully!');
                 } else {
                     alert('Error: ' + (result.error || 'Failed to update peer'));
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+        
+        async function deletePeer() {
+            const device = document.getElementById('edit-original-device').value;
+            const vrf = document.getElementById('edit-original-vrf').value;
+            const remotePeer = document.getElementById('edit-original-peer').value;
+            const interfaceName = document.getElementById('edit-interface').value;
+            
+            if (!confirm(`Are you sure you want to delete peer ${remotePeer} from ${device}?\n\nThis will also remove the associated subinterface (${interfaceName}).`)) {
+                return;
+            }
+            
+            const data = {
+                device,
+                vrf,
+                interface: interfaceName,
+                remote_peer: remotePeer
+            };
+            
+            try {
+                const response = await fetch('/fabric-api.sh?action=delete-external-peer', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    closeModal('edit-peer-modal');
+                    loadExternalPeers();
+                    alert('Peer deleted successfully!');
+                } else {
+                    alert('Error: ' + (result.error || 'Failed to delete peer'));
                 }
             } catch (e) {
                 alert('Error: ' + e.message);

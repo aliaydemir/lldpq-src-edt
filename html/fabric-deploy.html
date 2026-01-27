@@ -674,11 +674,14 @@
         // (because group_vars changes require Fabric Scan to determine which devices are affected)
         async function quickGitScan() {
             try {
+                console.log('[quickGitScan] Starting...');
                 const response = await fetch('/ansible-api.sh?action=git-status');
                 const data = await response.json();
+                console.log('[quickGitScan] API response:', data.success ? 'success' : 'failed');
                 
                 if (data.success && data.output) {
                     const output = data.output;
+                    console.log('[quickGitScan] Git output lines:', output.split('\n').length);
                     const gitPendingDevices = new Set();
                     const modifiedGroups = new Set();
                     
@@ -702,11 +705,15 @@
                         }
                     }
                     
+                    console.log('[quickGitScan] Detected host_vars devices:', Array.from(gitPendingDevices));
+                    console.log('[quickGitScan] Detected group_vars:', Array.from(modifiedGroups));
+                    
                     // MERGE with existing Fabric Scan results (don't overwrite)
                     // Git-detected changes ADD to Fabric Scan results
                     for (const device of gitPendingDevices) {
                         modifiedDevices.add(device);
                     }
+                    console.log('[quickGitScan] Total modifiedDevices:', modifiedDevices.size);
                     
                     // Show banner if group_vars changed (requires Fabric Scan for accurate detection)
                     const banner = document.getElementById('group-vars-banner');
@@ -738,7 +745,7 @@
                                 modifiedGroups.size > 0 ? `(+${modifiedGroups.size} group_vars - needs Fabric Scan)` : '');
                 }
             } catch (e) {
-                console.warn('Quick git scan failed:', e);
+                console.error('[quickGitScan] FAILED:', e.message, e);
             }
         }
         
