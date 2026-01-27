@@ -426,6 +426,17 @@ echo "0 */12 * * * $(whoami) /usr/local/bin/get-conf" | sudo tee -a /etc/crontab
 echo "* * * * * $(whoami) /usr/local/bin/lldpq-trigger" | sudo tee -a /etc/crontab
 echo "0 0 * * * $(whoami) cd $HOME/lldpq && cp /var/www/html/topology.dot topology.dot.bkp 2>/dev/null; cp /var/www/html/topology_config.yaml topology_config.yaml.bkp 2>/dev/null; git add -A; git diff --cached --quiet || git commit -m 'auto: \$(date +\\%Y-\\%m-\\%d)'" | sudo tee -a /etc/crontab
 
+# Add Fabric Scan cron job if Ansible directory exists
+if [[ -d "$ANSIBLE_DIR" ]] && [[ -d "$ANSIBLE_DIR/playbooks" ]]; then
+    echo "33 3 * * * $(whoami) $HOME/lldpq/fabric-scan-cron.sh" | sudo tee -a /etc/crontab
+    chmod +x ~/lldpq/fabric-scan-cron.sh
+    # Create cache file with user write permission
+    sudo touch "$WEB_ROOT/fabric-scan-cache.json"
+    sudo chown $(whoami):www-data "$WEB_ROOT/fabric-scan-cache.json"
+    sudo chmod 664 "$WEB_ROOT/fabric-scan-cache.json"
+    echo "   - fabric-scan:     daily at 03:33 (Ansible diff check)"
+fi
+
 echo "Cron jobs added:"
 echo "   - lldpq:           every 5 minutes (system monitoring)"  
 echo "   - get-conf:        every 12 hours"

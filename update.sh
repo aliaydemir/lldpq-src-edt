@@ -401,13 +401,32 @@ if [[ -n "$backup_data_dir" ]] && [[ -d "$backup_data_dir" ]]; then
 fi
 
 echo ""
-echo "[05] Restarting web services..."
+echo "[05] Updating cron jobs..."
+# Add Fabric Scan cron job if Ansible directory exists and not already configured
+if [[ -d "$ANSIBLE_DIR" ]] && [[ -d "$ANSIBLE_DIR/playbooks" ]]; then
+    if ! grep -q "fabric-scan-cron.sh" /etc/crontab 2>/dev/null; then
+        echo "33 3 * * * $(whoami) $HOME/lldpq/fabric-scan-cron.sh" | sudo tee -a /etc/crontab > /dev/null
+        echo "   ✅ Added Fabric Scan cron job (daily at 03:33)"
+    else
+        echo "   Fabric Scan cron job already configured"
+    fi
+    chmod +x ~/lldpq/fabric-scan-cron.sh 2>/dev/null || true
+    # Ensure cache file exists with correct permissions
+    if [[ ! -f "$WEB_ROOT/fabric-scan-cache.json" ]]; then
+        sudo touch "$WEB_ROOT/fabric-scan-cache.json"
+    fi
+    sudo chown $(whoami):www-data "$WEB_ROOT/fabric-scan-cache.json" 2>/dev/null || true
+    sudo chmod 664 "$WEB_ROOT/fabric-scan-cache.json" 2>/dev/null || true
+fi
+
+echo ""
+echo "[06] Restarting web services..."
 sudo systemctl restart nginx
 sudo systemctl restart fcgiwrap
 echo "nginx and fcgiwrap restarted"
 
 echo ""
-echo "[06] Data preservation summary:"
+echo "[07] Data preservation summary:"
 echo "   The following files/directories were preserved:"
 echo "   Configuration files:"
 # nccm.yml removed - zzh uses devices.yaml
@@ -424,7 +443,7 @@ if [[ -n "$backup_data_dir" ]] || [[ -d "$HOME/lldpq/monitor-results" ]] || [[ -
 fi
 
 echo ""
-echo "[07] Testing updated tools..."
+echo "[08] Testing updated tools..."
 echo "   You can test the updated tools:"
 echo "   - lldpq"
 echo "   - get-conf"

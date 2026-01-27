@@ -686,9 +686,16 @@
                 renderDeviceList();
                 updateLastUpdated();
                 
-                // First: Load cached Fabric Scan results (if any)
-                const cached = loadScanCache();
-                if (cached) {
+                // Load cached Fabric Scan results - prefer server cache (from cron), fallback to localStorage
+                let cached = await loadServerCache();
+                const localCache = loadScanCache();
+                
+                // Use whichever cache is newer
+                if (localCache && (!cached || localCache.timestamp > cached.timestamp)) {
+                    cached = localCache;
+                }
+                
+                if (cached && cached.pendingDevices) {
                     modifiedDevices = new Set(cached.pendingDevices);
                     renderDeviceList();
                     updateSummaryCards();
@@ -726,6 +733,22 @@
                 }
             } catch (e) {
                 console.warn('Failed to load scan cache:', e);
+            }
+            return null;
+        }
+        
+        // Load server-side cache from cron job
+        async function loadServerCache() {
+            try {
+                const response = await fetch('/fabric-scan-cache.json?t=' + Date.now());
+                if (response.ok) {
+                    const text = await response.text();
+                    if (text && text.trim()) {
+                        return JSON.parse(text);
+                    }
+                }
+            } catch (e) {
+                // No server cache yet - that's OK
             }
             return null;
         }
