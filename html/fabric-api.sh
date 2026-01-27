@@ -2162,6 +2162,275 @@ except Exception as e:
     print(json.dumps({'success': False, 'error': str(e)}))
 PYTHON
         ;;
+    update-interface)
+        # Update interface or bond settings
+        python3 << PYTHON
+import json
+import yaml
+import sys
+import os
+
+# Read POST data
+post_data = sys.stdin.read()
+try:
+    data = json.loads(post_data)
+except:
+    print(json.dumps({'success': False, 'error': 'Invalid JSON data'}))
+    sys.exit(0)
+
+device = data.get('device', '')
+interface_name = data.get('interface_name', '')
+interface_type = data.get('interface_type', '')  # 'l2', 'l3', 'subif', 'bond'
+description = data.get('description', '')
+
+if not device or not interface_name:
+    print(json.dumps({'success': False, 'error': 'Missing device or interface_name'}))
+    sys.exit(0)
+
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+host_file = f"{ansible_dir}/inventory/host_vars/{device}.yaml"
+
+try:
+    # Load host file
+    with open(host_file, 'r') as f:
+        host_data = yaml.safe_load(f) or {}
+    
+    if interface_type == 'bond':
+        # Update bond
+        if 'bonds' not in host_data:
+            host_data['bonds'] = {}
+        if interface_name not in host_data['bonds']:
+            host_data['bonds'][interface_name] = {}
+        
+        bond = host_data['bonds'][interface_name]
+        
+        # Update profile
+        profile = data.get('profile', '')
+        if profile:
+            bond['sw_port_profile'] = profile
+        elif 'sw_port_profile' in bond:
+            del bond['sw_port_profile']
+        
+        # Update description
+        if description:
+            bond['description'] = description
+        elif 'description' in bond:
+            del bond['description']
+        
+        # Update bond_members
+        bond_members = data.get('bond_members', [])
+        if bond_members:
+            bond['bond_members'] = bond_members
+        elif 'bond_members' in bond:
+            del bond['bond_members']
+        
+        # Update evpn_mh_id
+        mh_id = data.get('evpn_mh_id', '')
+        if mh_id:
+            bond['evpn_mh_id'] = int(mh_id)
+        elif 'evpn_mh_id' in bond:
+            del bond['evpn_mh_id']
+        
+        # Update bond_mode
+        bond_mode = data.get('bond_mode', '')
+        if bond_mode:
+            bond['bond_mode'] = bond_mode
+        elif 'bond_mode' in bond:
+            del bond['bond_mode']
+        
+        # Update lacp_bypass
+        lacp_bypass = data.get('lacp_bypass', False)
+        if lacp_bypass:
+            bond['lacp_bypass'] = True
+        elif 'lacp_bypass' in bond:
+            del bond['lacp_bypass']
+    
+    elif interface_type == 'breakout':
+        # Physical port with breakout config
+        if 'interfaces' not in host_data:
+            host_data['interfaces'] = {}
+        if interface_name not in host_data['interfaces']:
+            host_data['interfaces'][interface_name] = {}
+        
+        iface = host_data['interfaces'][interface_name]
+        
+        # Update breakout
+        breakout = data.get('breakout', '')
+        if breakout:
+            iface['breakout'] = breakout
+        elif 'breakout' in iface:
+            del iface['breakout']
+        
+        # Update description
+        if description:
+            iface['description'] = description
+        elif 'description' in iface:
+            del iface['description']
+    
+    elif interface_type == 'bond-member':
+        # Bond member - manage bond membership
+        target_bond = data.get('target_bond', '')
+        previous_bond = data.get('previous_bond', '')
+        
+        # Remove from previous bond if different
+        if previous_bond and previous_bond != target_bond:
+            if 'bonds' in host_data and previous_bond in host_data['bonds']:
+                old_bond = host_data['bonds'][previous_bond]
+                if 'bond_members' in old_bond and interface_name in old_bond['bond_members']:
+                    old_bond['bond_members'].remove(interface_name)
+        
+        # Add to target bond
+        if target_bond:
+            if 'bonds' not in host_data:
+                host_data['bonds'] = {}
+            if target_bond not in host_data['bonds']:
+                host_data['bonds'][target_bond] = {}
+            
+            bond = host_data['bonds'][target_bond]
+            if 'bond_members' not in bond:
+                bond['bond_members'] = []
+            
+            if interface_name not in bond['bond_members']:
+                bond['bond_members'].append(interface_name)
+        
+        # Update description on interface
+        if 'interfaces' not in host_data:
+            host_data['interfaces'] = {}
+        if interface_name not in host_data['interfaces']:
+            host_data['interfaces'][interface_name] = {}
+        
+        iface = host_data['interfaces'][interface_name]
+        if description:
+            iface['description'] = description
+        elif 'description' in iface:
+            del iface['description']
+            
+    elif interface_type == 'l3':
+        # L3 interface
+        # First, remove from any previous bond
+        previous_bond = data.get('previous_bond', '')
+        if previous_bond:
+            if 'bonds' in host_data and previous_bond in host_data['bonds']:
+                old_bond = host_data['bonds'][previous_bond]
+                if 'bond_members' in old_bond and interface_name in old_bond['bond_members']:
+                    old_bond['bond_members'].remove(interface_name)
+        
+        if 'interfaces' not in host_data:
+            host_data['interfaces'] = {}
+        if interface_name not in host_data['interfaces']:
+            host_data['interfaces'][interface_name] = {}
+        
+        iface = host_data['interfaces'][interface_name]
+        
+        # Update IP
+        ip = data.get('ip', '')
+        if ip:
+            iface['ip'] = ip
+        elif 'ip' in iface:
+            del iface['ip']
+        
+        # Update VRF
+        vrf = data.get('vrf', '')
+        if vrf:
+            iface['vrf'] = vrf
+        elif 'vrf' in iface:
+            del iface['vrf']
+        
+        # Update description
+        if description:
+            iface['description'] = description
+        elif 'description' in iface:
+            del iface['description']
+            
+    elif interface_type == 'subif':
+        # Subinterface - format: swp1.1001
+        # First, remove from any previous bond
+        previous_bond = data.get('previous_bond', '')
+        if previous_bond:
+            if 'bonds' in host_data and previous_bond in host_data['bonds']:
+                old_bond = host_data['bonds'][previous_bond]
+                if 'bond_members' in old_bond and interface_name in old_bond['bond_members']:
+                    old_bond['bond_members'].remove(interface_name)
+        
+        if '.' in interface_name:
+            parent_if, sub_id = interface_name.rsplit('.', 1)
+            
+            if 'interfaces' not in host_data:
+                host_data['interfaces'] = {}
+            if parent_if not in host_data['interfaces']:
+                host_data['interfaces'][parent_if] = {}
+            if 'subinterfaces' not in host_data['interfaces'][parent_if]:
+                host_data['interfaces'][parent_if]['subinterfaces'] = {}
+            
+            subif = host_data['interfaces'][parent_if]['subinterfaces'].get(sub_id, {})
+            
+            # Update VLAN ID
+            vlan_id = data.get('vlan_id', '')
+            if vlan_id:
+                subif['vlan'] = int(vlan_id)
+            
+            # Update IP
+            ip = data.get('ip', '')
+            if ip:
+                subif['ip'] = ip
+            elif 'ip' in subif:
+                del subif['ip']
+            
+            # Update VRF
+            vrf = data.get('vrf', '')
+            if vrf:
+                subif['vrf'] = vrf
+            elif 'vrf' in subif:
+                del subif['vrf']
+            
+            host_data['interfaces'][parent_if]['subinterfaces'][sub_id] = subif
+            
+            # Update parent description
+            if description:
+                host_data['interfaces'][parent_if]['description'] = description
+        else:
+            print(json.dumps({'success': False, 'error': 'Invalid subinterface format'}))
+            sys.exit(0)
+            
+    else:
+        # L2 interface (default)
+        # First, remove from any previous bond
+        previous_bond = data.get('previous_bond', '')
+        if previous_bond:
+            if 'bonds' in host_data and previous_bond in host_data['bonds']:
+                old_bond = host_data['bonds'][previous_bond]
+                if 'bond_members' in old_bond and interface_name in old_bond['bond_members']:
+                    old_bond['bond_members'].remove(interface_name)
+        
+        if 'interfaces' not in host_data:
+            host_data['interfaces'] = {}
+        if interface_name not in host_data['interfaces']:
+            host_data['interfaces'][interface_name] = {}
+        
+        iface = host_data['interfaces'][interface_name]
+        
+        # Update profile
+        profile = data.get('profile', '')
+        if profile:
+            iface['sw_port_profile'] = profile
+        elif 'sw_port_profile' in iface:
+            del iface['sw_port_profile']
+        
+        # Update description
+        if description:
+            iface['description'] = description
+        elif 'description' in iface:
+            del iface['description']
+    
+    # Write back
+    with open(host_file, 'w') as f:
+        yaml.dump(host_data, f, default_flow_style=False, sort_keys=False)
+    
+    print(json.dumps({'success': True, 'message': f'{interface_type} {interface_name} updated'}))
+except Exception as e:
+    print(json.dumps({'success': False, 'error': str(e)}))
+PYTHON
+        ;;
     *)
         echo '{"success": false, "error": "Unknown action: '"$ACTION"'"}'
         ;;
