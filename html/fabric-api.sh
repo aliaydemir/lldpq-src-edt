@@ -2033,6 +2033,135 @@ except Exception as e:
     print(json.dumps({'success': False, 'error': str(e)}))
 PYTHON
         ;;
+    "save-dhcp-relay")
+        # Save (create or update) DHCP relay entry
+        read -r POST_DATA
+        python3 << PYTHON
+import json
+import yaml
+import os
+import sys
+
+try:
+    params = json.loads('''$POST_DATA''')
+except:
+    params = {}
+
+device = params.get('device', '')
+index = params.get('index')  # None for create, number for update
+vrf = params.get('vrf', '')
+interfaces = params.get('interfaces', [])
+servers = params.get('servers', [])
+upstream = params.get('upstream', [])
+
+if not device or not vrf:
+    print(json.dumps({'success': False, 'error': 'Device and VRF are required'}))
+    sys.exit(0)
+
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+host_vars_dir = f"{ansible_dir}/inventory/host_vars"
+host_file = f"{host_vars_dir}/{device}.yaml"
+
+# Try .yml if .yaml doesn't exist
+if not os.path.exists(host_file):
+    alt_file = f"{host_vars_dir}/{device}.yml"
+    if os.path.exists(alt_file):
+        host_file = alt_file
+
+try:
+    # Load host_vars
+    host_data = {}
+    if os.path.exists(host_file):
+        with open(host_file, 'r') as f:
+            host_data = yaml.safe_load(f) or {}
+    
+    # Initialize dhcp_relay if not exists
+    if 'dhcp_relay' not in host_data:
+        host_data['dhcp_relay'] = []
+    
+    # Build relay entry
+    relay_entry = {
+        'vrf': vrf,
+        'interfaces': interfaces,
+        'servers': servers
+    }
+    if upstream:
+        relay_entry['upstream'] = upstream
+    
+    if index is not None and isinstance(index, int) and 0 <= index < len(host_data['dhcp_relay']):
+        # Update existing
+        host_data['dhcp_relay'][index] = relay_entry
+    else:
+        # Create new
+        host_data['dhcp_relay'].append(relay_entry)
+    
+    # Write back
+    with open(host_file, 'w') as f:
+        yaml.dump(host_data, f, default_flow_style=False, sort_keys=False)
+    
+    print(json.dumps({'success': True, 'message': 'DHCP relay saved'}))
+except Exception as e:
+    print(json.dumps({'success': False, 'error': str(e)}))
+PYTHON
+        ;;
+    "delete-dhcp-relay")
+        # Delete DHCP relay entry
+        read -r POST_DATA
+        python3 << PYTHON
+import json
+import yaml
+import os
+import sys
+
+try:
+    params = json.loads('''$POST_DATA''')
+except:
+    params = {}
+
+device = params.get('device', '')
+index = params.get('index')
+
+if not device or index is None:
+    print(json.dumps({'success': False, 'error': 'Device and index are required'}))
+    sys.exit(0)
+
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+host_vars_dir = f"{ansible_dir}/inventory/host_vars"
+host_file = f"{host_vars_dir}/{device}.yaml"
+
+# Try .yml if .yaml doesn't exist
+if not os.path.exists(host_file):
+    alt_file = f"{host_vars_dir}/{device}.yml"
+    if os.path.exists(alt_file):
+        host_file = alt_file
+
+try:
+    # Load host_vars
+    host_data = {}
+    if os.path.exists(host_file):
+        with open(host_file, 'r') as f:
+            host_data = yaml.safe_load(f) or {}
+    
+    if 'dhcp_relay' not in host_data or not isinstance(index, int) or index < 0 or index >= len(host_data['dhcp_relay']):
+        print(json.dumps({'success': False, 'error': 'DHCP relay entry not found'}))
+        sys.exit(0)
+    
+    # Delete the entry
+    del host_data['dhcp_relay'][index]
+    
+    # If empty, remove the key
+    if len(host_data['dhcp_relay']) == 0:
+        del host_data['dhcp_relay']
+    
+    # Write back
+    with open(host_file, 'w') as f:
+        yaml.dump(host_data, f, default_flow_style=False, sort_keys=False)
+    
+    print(json.dumps({'success': True, 'message': 'DHCP relay deleted'}))
+except Exception as e:
+    print(json.dumps({'success': False, 'error': str(e)}))
+PYTHON
+        ;;
     *)
         echo '{"success": false, "error": "Unknown action: '"$ACTION"'"}'
         ;;

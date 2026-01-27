@@ -1159,6 +1159,7 @@
         let devices = {};
         let selectedDevice = null;
         let currentDeviceConfig = null;  // Current device's config
+        let currentVxlanIntMapping = {};  // VRF -> VXLAN interface VLAN mapping
         let ansibleDir = '';
         let vlanProfiles = {};  // Global VLAN profiles
         let leakedSubnets = {};  // Subnet -> {target_vrf, route_map}
@@ -1446,6 +1447,7 @@
                 
                 if (data.success) {
                     currentDeviceConfig = data.config;  // Save for VRF creation
+                    currentVxlanIntMapping = data.vxlan_int_mapping || {};  // Save for DHCP relay
                     renderDeviceDashboard(data);
                 } else {
                     showError('Failed to load device: ' + data.error);
@@ -1826,16 +1828,28 @@
                     html += '</tbody></table></div></div>';
             }
             
-            // DHCP Relay Section
-            if (config.dhcp_relay && config.dhcp_relay.length > 0) {
+            // DHCP Relay Section - show if device has at least 1 VLAN
+            if (config.vlan_templates && config.vlan_templates.length > 0) {
+                const dhcpRelays = config.dhcp_relay || [];
                 html += `
                     <div class="dashboard-section">
                         <div class="section-header">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
                                 <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14l-5-5 1.41-1.41L12 14.17l7.59-7.59L21 8l-9 9z"/>
                             </svg>
-                            DHCP Relay (${config.dhcp_relay.length})
-                        </div>
+                            DHCP Relay (${dhcpRelays.length})
+                            <div style="margin-left: auto; display: flex; gap: 8px;">
+                                <button class="btn-add-small" onclick="openDhcpRelayModal()">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                                        <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                                    </svg>
+                                    Create
+                                </button>
+                            </div>
+                        </div>`;
+                
+                if (dhcpRelays.length > 0) {
+                    html += `
                         <div class="section-content-table">
                             <table class="data-table">
                                 <thead>
@@ -1844,23 +1858,48 @@
                                         <th>Interfaces</th>
                                         <th>Servers</th>
                                         <th>Upstream</th>
+                                        <th style="width: 80px;">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                `;
-                
-                for (const relay of config.dhcp_relay) {
+                    `;
+                    
+                    for (let idx = 0; idx < dhcpRelays.length; idx++) {
+                        const relay = dhcpRelays[idx];
+                        const vrfBadgeClass = getVrfBadgeClass(relay.vrf);
+                        html += `
+                            <tr>
+                                <td><span class="badge ${vrfBadgeClass}">${relay.vrf}</span></td>
+                                <td>${relay.interfaces?.join(', ') || '-'}</td>
+                                <td>${relay.servers?.join(', ') || '-'}</td>
+                                <td>${relay.upstream?.join(', ') || '-'}</td>
+                                <td>
+                                    <div style="display: flex; gap: 6px;">
+                                        <button class="btn-icon btn-icon-edit" onclick="editDhcpRelay(${idx})" title="Edit">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                                <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+                                            </svg>
+                                        </button>
+                                        <button class="btn-icon btn-icon-delete" onclick="confirmDeleteDhcpRelay(${idx})" title="Delete">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                                <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+                                            </svg>
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                        `;
+                    }
+                    
+                    html += '</tbody></table></div>';
+                } else {
                     html += `
-                        <tr>
-                            <td><span class="badge badge-blue">${relay.vrf}</span></td>
-                            <td>${relay.interfaces?.join(', ') || '-'}</td>
-                            <td>${relay.servers?.join(', ') || '-'}</td>
-                            <td>${relay.upstream?.join(', ') || '-'}</td>
-                        </tr>
+                        <div class="section-content">
+                            <div style="color: #888; padding: 10px 0;">No DHCP Relay configured. Click Create to add one.</div>
+                        </div>
                     `;
                 }
-                
-                html += '</tbody></table></div></div>';
+                html += '</div>';
             }
             
             // EVPN Multihoming Section
@@ -3915,6 +3954,235 @@
             }
         }
         
+        // ==================== DHCP RELAY ====================
+        let editingDhcpRelayIdx = null;
+        
+        async function openDhcpRelayModal(editIdx = null) {
+            if (!selectedDevice) {
+                alert('Please select a device first');
+                return;
+            }
+            
+            editingDhcpRelayIdx = editIdx;
+            const modal = document.getElementById('dhcp-relay-modal');
+            const form = document.getElementById('dhcp-relay-form');
+            form.reset();
+            
+            // Set modal title
+            document.getElementById('dhcp-relay-modal-title').textContent = editIdx !== null ? 'Edit DHCP Relay' : 'Create DHCP Relay';
+            document.getElementById('btn-save-dhcp-relay').textContent = editIdx !== null ? 'Save Changes' : 'Create';
+            
+            // Load VRFs dropdown
+            const vrfSelect = document.getElementById('dhcp-relay-vrf');
+            vrfSelect.innerHTML = '<option value="">Loading...</option>';
+            
+            // Load L3 interfaces dropdown
+            const interfaceSelect = document.getElementById('dhcp-relay-interface');
+            interfaceSelect.innerHTML = '<option value="">Loading...</option>';
+            
+            try {
+                // Get current device config for VRFs and interfaces
+                const config = currentDeviceConfig;
+                
+                // Populate VRFs (exclude 'default' - DHCP relay is for tenant VRFs)
+                const vrfs = config.vrfs ? Object.keys(config.vrfs).filter(v => v !== 'default') : [];
+                if (vrfs.length === 0) {
+                    vrfSelect.innerHTML = '<option value="">No tenant VRFs available</option>';
+                } else {
+                    vrfSelect.innerHTML = vrfs.map(v => `<option value="${v}">${v}</option>`).join('');
+                }
+                
+                // Populate L3 interfaces (vlanXX interfaces from vlan_templates)
+                const vlanInterfaces = [];
+                if (config.vlan_templates && vlanProfiles) {
+                    for (const templateName of config.vlan_templates) {
+                        const vp = vlanProfiles[templateName];
+                        if (vp && vp.vlan_id) {
+                            // For range profiles, add all VLANs
+                            if (vp.vlans && typeof vp.vlans === 'object') {
+                                for (const vid of Object.keys(vp.vlans)) {
+                                    vlanInterfaces.push(`vlan${vid}`);
+                                }
+                            } else {
+                                vlanInterfaces.push(`vlan${vp.vlan_id}`);
+                            }
+                        }
+                    }
+                }
+                
+                // Sort numerically
+                vlanInterfaces.sort((a, b) => {
+                    const numA = parseInt(a.replace('vlan', ''));
+                    const numB = parseInt(b.replace('vlan', ''));
+                    return numA - numB;
+                });
+                
+                interfaceSelect.innerHTML = vlanInterfaces.map(v => `<option value="${v}">${v}</option>`).join('');
+                
+                // If editing, populate form with existing values
+                if (editIdx !== null && config.dhcp_relay && config.dhcp_relay[editIdx]) {
+                    const relay = config.dhcp_relay[editIdx];
+                    vrfSelect.value = relay.vrf || '';
+                    if (relay.interfaces && relay.interfaces.length > 0) {
+                        interfaceSelect.value = relay.interfaces[0];
+                    }
+                    document.getElementById('dhcp-relay-servers').value = relay.servers?.join(', ') || '';
+                    // Upstream is auto-calculated from VRF
+                    updateDhcpUpstream();
+                }
+                
+            } catch (e) {
+                console.error('Error loading DHCP relay data:', e);
+            }
+            
+            modal.classList.add('visible');
+            updateDhcpUpstream();
+        }
+        
+        function closeDhcpRelayModal() {
+            document.getElementById('dhcp-relay-modal').classList.remove('visible');
+            editingDhcpRelayIdx = null;
+        }
+        
+        function updateDhcpUpstream() {
+            const vrfSelect = document.getElementById('dhcp-relay-vrf');
+            const upstreamField = document.getElementById('dhcp-relay-upstream');
+            const selectedVrf = vrfSelect.value;
+            
+            if (!selectedVrf || !currentDeviceConfig) {
+                upstreamField.value = '';
+                return;
+            }
+            
+            // Get vxlan_int from VRF config
+            const vrfConfig = currentDeviceConfig.vrfs?.[selectedVrf];
+            if (vrfConfig && vrfConfig.vxlan_int) {
+                upstreamField.value = `vlan${vrfConfig.vxlan_int}_l3`;
+            } else {
+                // Try to get from currentVxlanIntMapping (loaded from vlan_profiles.yaml)
+                if (currentVxlanIntMapping[selectedVrf]) {
+                    upstreamField.value = `vlan${currentVxlanIntMapping[selectedVrf]}_l3`;
+                } else {
+                    upstreamField.value = '';
+                }
+            }
+        }
+        
+        async function saveDhcpRelay() {
+            const vrf = document.getElementById('dhcp-relay-vrf').value;
+            const interfaceVal = document.getElementById('dhcp-relay-interface').value;
+            const serversStr = document.getElementById('dhcp-relay-servers').value.trim();
+            const upstream = document.getElementById('dhcp-relay-upstream').value.trim();
+            
+            if (!vrf) {
+                alert('Please select a VRF');
+                return;
+            }
+            if (!interfaceVal) {
+                alert('Please select an interface');
+                return;
+            }
+            if (!serversStr) {
+                alert('Please enter at least one DHCP server');
+                return;
+            }
+            
+            // Parse servers (comma or space separated)
+            const servers = serversStr.split(/[,\s]+/).map(s => s.trim()).filter(s => s);
+            
+            const saveBtn = document.getElementById('btn-save-dhcp-relay');
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Saving...';
+            
+            try {
+                const response = await fetch('/fabric-api.sh?action=save-dhcp-relay', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        device: selectedDevice,
+                        index: editingDhcpRelayIdx,
+                        vrf: vrf,
+                        interfaces: [interfaceVal],
+                        servers: servers,
+                        upstream: upstream ? [upstream] : []
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    closeDhcpRelayModal();
+                    await selectDevice(selectedDevice);
+                    showOutputModal('DHCP Relay Saved', 
+                        `<div style="color: #76b900; margin-bottom: 15px;">✓ DHCP Relay ${editingDhcpRelayIdx !== null ? 'updated' : 'created'} successfully</div>` +
+                        `<div style="color: #888;">Run <strong>Deploy</strong> to apply changes.</div>`,
+                        'success', true);
+                } else {
+                    alert('Error: ' + (result.error || 'Unknown error'));
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+            
+            saveBtn.disabled = false;
+            saveBtn.textContent = editingDhcpRelayIdx !== null ? 'Save Changes' : 'Create';
+        }
+        
+        function editDhcpRelay(idx) {
+            openDhcpRelayModal(idx);
+        }
+        
+        let deletingDhcpRelayIdx = null;
+        
+        function confirmDeleteDhcpRelay(idx) {
+            if (!currentDeviceConfig || !currentDeviceConfig.dhcp_relay || !currentDeviceConfig.dhcp_relay[idx]) {
+                return;
+            }
+            
+            deletingDhcpRelayIdx = idx;
+            const relay = currentDeviceConfig.dhcp_relay[idx];
+            document.getElementById('delete-dhcp-relay-vrf').textContent = relay.vrf;
+            document.getElementById('delete-dhcp-relay-interface').textContent = relay.interfaces?.join(', ') || '-';
+            document.getElementById('delete-dhcp-relay-modal').classList.add('visible');
+        }
+        
+        function closeDeleteDhcpRelayModal() {
+            document.getElementById('delete-dhcp-relay-modal').classList.remove('visible');
+            deletingDhcpRelayIdx = null;
+        }
+        
+        async function executeDeleteDhcpRelay() {
+            if (deletingDhcpRelayIdx === null) return;
+            
+            const idx = deletingDhcpRelayIdx;
+            closeDeleteDhcpRelayModal();
+            
+            try {
+                const response = await fetch('/fabric-api.sh?action=delete-dhcp-relay', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        device: selectedDevice,
+                        index: idx
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    await selectDevice(selectedDevice);
+                    showOutputModal('DHCP Relay Deleted', 
+                        `<div style="color: #76b900; margin-bottom: 15px;">✓ DHCP Relay deleted successfully</div>` +
+                        `<div style="color: #888;">Run <strong>Deploy</strong> to apply changes.</div>`,
+                        'success', true);
+                } else {
+                    alert('Error: ' + (result.error || 'Unknown error'));
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+        
         // Initialize on load
         init();
     </script>
@@ -4418,6 +4686,73 @@
             </div>
             <div class="vlan-modal-footer">
                 <button class="btn-cancel" onclick="closeEditVrfModal()">Close</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- DHCP Relay Create/Edit Modal -->
+    <div class="vlan-modal" id="dhcp-relay-modal">
+        <div class="vlan-modal-content" style="max-width: 500px;">
+            <div class="vlan-modal-header">
+                <h3 id="dhcp-relay-modal-title">Create DHCP Relay</h3>
+                <button class="vlan-modal-close" onclick="closeDhcpRelayModal()">×</button>
+            </div>
+            <div class="vlan-modal-body">
+                <form id="dhcp-relay-form" onsubmit="event.preventDefault(); saveDhcpRelay();">
+                    <div class="form-group">
+                        <label>VRF *</label>
+                        <select id="dhcp-relay-vrf" onchange="updateDhcpUpstream()" style="width: 100%; padding: 10px 12px; background: #1e1e1e; border: 1px solid #404040; border-radius: 4px; color: #fff; font-size: 14px;">
+                            <option value="">Select VRF...</option>
+                        </select>
+                        <div class="form-hint">VRF for the DHCP relay</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Interface *</label>
+                        <select id="dhcp-relay-interface" style="width: 100%; padding: 10px 12px; background: #1e1e1e; border: 1px solid #404040; border-radius: 4px; color: #fff; font-size: 14px;">
+                            <option value="">Select Interface...</option>
+                        </select>
+                        <div class="form-hint">L3 interface (SVI) to enable DHCP relay on</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>DHCP Servers *</label>
+                        <input type="text" id="dhcp-relay-servers" placeholder="192.168.75.11, 192.168.75.12" style="width: 100%; padding: 10px 12px; background: #1e1e1e; border: 1px solid #404040; border-radius: 4px; color: #fff; font-size: 14px;">
+                        <div class="form-hint">One or more DHCP server IPs (comma or space separated)</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Upstream Interface</label>
+                        <input type="text" id="dhcp-relay-upstream" readonly style="width: 100%; padding: 10px 12px; background: #333; border: 1px solid #404040; border-radius: 4px; color: #76b900; font-size: 14px; cursor: not-allowed;">
+                        <div class="form-hint">Auto-filled from VRF's VXLAN interface</div>
+                    </div>
+                </form>
+            </div>
+            <div class="vlan-modal-footer">
+                <button class="btn-cancel" onclick="closeDhcpRelayModal()">Cancel</button>
+                <button class="btn-create" id="btn-save-dhcp-relay" onclick="saveDhcpRelay()">Create</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- DHCP Relay Delete Confirmation Modal -->
+    <div class="vlan-modal" id="delete-dhcp-relay-modal">
+        <div class="vlan-modal-content" style="max-width: 400px;">
+            <div class="vlan-modal-header">
+                <h3>Delete DHCP Relay</h3>
+                <button class="vlan-modal-close" onclick="closeDeleteDhcpRelayModal()">×</button>
+            </div>
+            <div class="vlan-modal-body" style="text-align: center; padding: 25px;">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="#f44336" style="margin-bottom: 15px;">
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+                </svg>
+                <p style="color: #ccc; margin-bottom: 10px;">Delete this DHCP Relay?</p>
+                <p style="color: #76b900; font-weight: bold; font-size: 16px;" id="delete-dhcp-relay-vrf"></p>
+                <p style="color: #888; font-size: 13px; margin-top: 5px;">Interface: <span id="delete-dhcp-relay-interface" style="color: #4fc3f7;"></span></p>
+            </div>
+            <div class="vlan-modal-footer" style="justify-content: center; gap: 15px;">
+                <button class="btn-cancel" onclick="closeDeleteDhcpRelayModal()">Cancel</button>
+                <button class="btn-create" onclick="executeDeleteDhcpRelay()" style="background: #f44336;">Delete</button>
             </div>
         </div>
     </div>
