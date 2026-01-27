@@ -12,6 +12,12 @@ cd "$ANSIBLE_DIR" || exit 1
 OUTPUT=$(ansible-playbook playbooks/diff_switch_configs.yaml 2>&1)
 
 # Parse pending devices from output
+# Get valid hostnames from inventory for matching
+VALID_HOSTS=""
+if [[ -d "$ANSIBLE_DIR/inventory/host_vars" ]]; then
+    VALID_HOSTS=$(ls "$ANSIBLE_DIR/inventory/host_vars/" 2>/dev/null | sed 's/\.yaml$//' | tr '\n' '|' | sed 's/|$//')
+fi
+
 PENDING=""
 IN_SECTION=false
 while IFS= read -r line; do
@@ -23,11 +29,15 @@ while IFS= read -r line; do
         if [[ "$line" == *"PLAY RECAP"* ]]; then
             break
         fi
-        # Extract hostname from lines like "✗ lsw-3na-05-29: 2 changes"
-        if [[ "$line" =~ ([a-z]{2,4}-[a-z0-9-]+):[[:space:]]*[0-9]+[[:space:]]+change ]]; then
+        # Extract hostname - match any word followed by : and "change(s)"
+        # Generic pattern: "✗ HOSTNAME: N change(s)" or "HOSTNAME: N changes"
+        if [[ "$line" =~ ([A-Za-z0-9_-]+):[[:space:]]*[0-9]+[[:space:]]+change ]]; then
             HOSTNAME="${BASH_REMATCH[1]}"
-            [[ -n "$PENDING" ]] && PENDING="$PENDING,"
-            PENDING="$PENDING\"$HOSTNAME\""
+            # Validate against inventory if available
+            if [[ -z "$VALID_HOSTS" ]] || [[ "$HOSTNAME" =~ ^($VALID_HOSTS)$ ]]; then
+                [[ -n "$PENDING" ]] && PENDING="$PENDING,"
+                PENDING="$PENDING\"$HOSTNAME\""
+            fi
         fi
     fi
 done <<< "$OUTPUT"

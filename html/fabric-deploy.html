@@ -1222,13 +1222,14 @@
                         }
                         
                         // Parse device lines in changes section
-                        // Match: any_char hostname: X changes  (e.g., "✗ lsw-3na-05-29: 2 changes")
-                        // More flexible: look for hostname pattern followed by ": N change"
+                        // Match: "✗ HOSTNAME: N change(s)" or "HOSTNAME: N changes"
+                        // Generic pattern: any alphanumeric hostname followed by ": N change"
                         if (inChangesSection) {
-                            const match = line.match(/([a-z]{2,4}-[a-z0-9-]+):\s*\d+\s+change/i);
+                            const match = line.match(/([A-Za-z0-9_-]+):\s*\d+\s+change/i);
                             if (match) {
                                 const hostname = match[1];
-                                if (hostname && hostname !== 'localhost') {
+                                // Skip common non-device names
+                                if (hostname && hostname !== 'localhost' && !hostname.match(/^(ok|changed|unreachable|failed|skipped|rescued|ignored)$/i)) {
                                     pendingDevices.add(hostname);
                                     console.log('Found pending device:', hostname);
                                 }
