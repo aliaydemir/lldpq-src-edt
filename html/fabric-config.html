@@ -258,90 +258,6 @@
             align-items: center;
         }
         
-        /* Host Multi-Select Dropdown */
-        .host-dropdown {
-            position: relative;
-            display: inline-block;
-        }
-        
-        .host-dropdown-trigger {
-            background: #3c3c3c;
-            border: 1px solid #555;
-            color: #d4d4d4;
-            padding: 8px 12px;
-            border-radius: 4px;
-            min-width: 160px;
-            cursor: pointer;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 10px;
-            font-size: 13px;
-        }
-        
-        .host-dropdown-trigger:hover {
-            border-color: #76b900;
-        }
-        
-        .host-dropdown-trigger .arrow {
-            font-size: 10px;
-            color: #888;
-        }
-        
-        .host-dropdown-menu {
-            display: none;
-            position: absolute;
-            top: 100%;
-            left: 0;
-            background: #2d2d2d;
-            border: 1px solid #404040;
-            border-radius: 4px;
-            min-width: 220px;
-            max-height: 300px;
-            overflow-y: auto;
-            z-index: 1000;
-            margin-top: 5px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
-        }
-        
-        .host-dropdown-menu.show {
-            display: block;
-        }
-        
-        .host-dropdown-item {
-            padding: 8px 12px;
-            cursor: pointer;
-            color: #d4d4d4;
-            font-size: 13px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            transition: background 0.15s;
-        }
-        
-        .host-dropdown-item:hover {
-            background: #404040;
-        }
-        
-        .host-dropdown-item.selected {
-            background: linear-gradient(0deg, #76b900 0%, #5a8c00 100%);
-            color: white;
-        }
-        
-        .host-dropdown-group {
-            padding: 6px 12px;
-            color: #888;
-            font-size: 11px;
-            font-weight: bold;
-            text-transform: uppercase;
-            border-top: 1px solid #404040;
-            background: #252526;
-        }
-        
-        .host-dropdown-group:first-child {
-            border-top: none;
-        }
-        
         /* Loading Overlay */
         .loading-overlay {
             position: fixed;
@@ -1095,13 +1011,6 @@
                         </svg>
                         Generate
                     </button>
-                    <div class="host-dropdown">
-                        <div class="host-dropdown-trigger" onclick="toggleHostDropdown()">
-                            <span id="host-dropdown-text">Select hosts...</span>
-                            <span class="arrow">▼</span>
-                        </div>
-                        <div id="host-dropdown-menu" class="host-dropdown-menu"></div>
-                    </div>
                     <button class="btn btn-secondary" onclick="runDiff()">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                             <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/>
@@ -1273,112 +1182,7 @@
             }
             
             container.innerHTML = html;
-            
-            // Populate host dropdown
-            populateHostDropdown();
         }
-        
-        // Multi-select host dropdown
-        let selectedHosts = [];
-        
-        function toggleHostDropdown() {
-            const menu = document.getElementById('host-dropdown-menu');
-            menu.classList.toggle('show');
-        }
-        
-        function toggleHostSelection(host) {
-            // If "all" is selected, clear everything else and close menu
-            if (host === 'all') {
-                selectedHosts = ['all'];
-                updateHostDropdownUI();
-                document.getElementById('host-dropdown-menu').classList.remove('show');
-                return;
-            }
-            
-            // If selecting something other than "all", remove "all" if it was selected
-            const allIndex = selectedHosts.indexOf('all');
-            if (allIndex !== -1) {
-                selectedHosts.splice(allIndex, 1);
-            }
-            
-            const index = selectedHosts.indexOf(host);
-            if (index === -1) {
-                selectedHosts.push(host);
-            } else {
-                selectedHosts.splice(index, 1);
-            }
-            updateHostDropdownUI();
-        }
-        
-        function updateHostDropdownUI() {
-            const text = document.getElementById('host-dropdown-text');
-            if (selectedHosts.length === 0) {
-                text.textContent = 'Select hosts...';
-            } else if (selectedHosts.length === 1 && selectedHosts[0] === 'all') {
-                text.textContent = 'ALL HOSTS';
-            } else if (selectedHosts.length === 1) {
-                text.textContent = selectedHosts[0];
-            } else {
-                text.textContent = selectedHosts.length + ' hosts selected';
-            }
-            
-            // Update item selection styling
-            document.querySelectorAll('.host-dropdown-item').forEach(item => {
-                if (selectedHosts.includes(item.dataset.value)) {
-                    item.classList.add('selected');
-                } else {
-                    item.classList.remove('selected');
-                }
-            });
-        }
-        
-        // Populate host dropdown menu
-        function populateHostDropdown() {
-            const menu = document.getElementById('host-dropdown-menu');
-            menu.innerHTML = '';
-            
-            // Add "ALL HOSTS" option
-            const allItem = document.createElement('div');
-            allItem.className = 'host-dropdown-item';
-            allItem.dataset.value = 'all';
-            allItem.textContent = '-- ALL HOSTS --';
-            allItem.onclick = () => toggleHostSelection('all');
-            menu.appendChild(allItem);
-            
-            // Add groups and hosts
-            for (const [group, groupDevices] of Object.entries(devices)) {
-                // Group header
-                const groupLabel = document.createElement('div');
-                groupLabel.className = 'host-dropdown-group';
-                groupLabel.textContent = group + ' (' + groupDevices.length + ')';
-                menu.appendChild(groupLabel);
-                
-                // Group item (select all in group)
-                const groupItem = document.createElement('div');
-                groupItem.className = 'host-dropdown-item';
-                groupItem.dataset.value = group;
-                groupItem.textContent = '▸ ' + group + ' (all)';
-                groupItem.onclick = () => toggleHostSelection(group);
-                menu.appendChild(groupItem);
-                
-                // Individual hosts
-                for (const device of groupDevices) {
-                    const item = document.createElement('div');
-                    item.className = 'host-dropdown-item';
-                    item.dataset.value = device.hostname;
-                    item.textContent = '    ' + device.hostname;
-                    item.onclick = () => toggleHostSelection(device.hostname);
-                    menu.appendChild(item);
-                }
-            }
-        }
-        
-        // Close dropdown when clicking outside
-        document.addEventListener('click', function(e) {
-            if (!e.target.closest('.host-dropdown')) {
-                document.getElementById('host-dropdown-menu').classList.remove('show');
-            }
-        });
         
         // Toggle group collapse
         function toggleGroup(header) {
@@ -1416,10 +1220,6 @@
             });
             
             selectedDevice = hostname;
-            
-            // Update host dropdown selection
-            selectedHosts = [hostname];
-            updateHostDropdownUI();
             
             // Show refresh button when device is selected
             document.getElementById('btn-refresh').style.display = 'flex';
@@ -2309,28 +2109,29 @@
             return await response.json();
         }
         
-        // Get target host(s) from dropdown
+        // Get target host - returns currently selected device
         function getTargetHost() {
-            if (selectedHosts.length === 0) return '';
-            if (selectedHosts.length === 1 && selectedHosts[0] === 'all') return '';
-            return selectedHosts.join(',');
+            return selectedDevice || '';
         }
         
         // Run Generate
         async function runGenerate() {
             const host = getTargetHost();
-            const targetMsg = host ? `for ${host}` : 'for all hosts';
+            if (!host) {
+                showOutputModal('Error', 'Please select a device first', 'error');
+                return;
+            }
             
-            showLoading(true, `Generating configs ${targetMsg}...`);
+            showLoading(true, `Generating config for ${host}...`);
             setStatus('Generating...');
             
             try {
-                const result = await ansibleApiCall('generate', { host: host || '' });
+                const result = await ansibleApiCall('generate', { host });
                 
                 if (result.success) {
                     showOutputModal(
-                        `Generate Complete ${targetMsg}`,
-                        result.output || 'Configs generated successfully',
+                        `Generate Complete for ${host}`,
+                        result.output || 'Config generated successfully',
                         'success'
                     );
                 } else {
@@ -2351,9 +2152,12 @@
         // Run Diff
         async function runDiff() {
             const host = getTargetHost();
-            const targetMsg = host || 'all hosts';
+            if (!host) {
+                showOutputModal('Error', 'Please select a device first', 'error');
+                return;
+            }
             
-            showLoading(true, `Running diff for ${targetMsg}...`);
+            showLoading(true, `Running diff for ${host}...`);
             setStatus('Comparing...');
             
             try {
@@ -2367,7 +2171,7 @@
                     const changesCount = changesMatch ? parseInt(changesMatch[1]) : 0;
                     
                     // Show diff popup
-                    showDiffSummaryModal(output, changesCount);
+                    showDiffSummaryModal(output, changesCount, host);
                 } else {
                     showOutputModal('Diff Failed', output, 'error');
                 }
@@ -2380,7 +2184,7 @@
         }
         
         // Show Diff Summary Modal (special formatting)
-        function showDiffSummaryModal(output, changesCount) {
+        function showDiffSummaryModal(output, changesCount, host = '') {
             // Extract summary section
             const lines = output.split('\n');
             let summaryLines = [];
@@ -2396,9 +2200,10 @@
             
             const summaryContent = summaryLines.join('\n') || output;
             const hasChanges = changesCount > 0;
+            const hostInfo = host ? ` - ${host}` : '';
             const title = hasChanges 
-                ? `⚠️ Configuration Changes Detected (${changesCount})`
-                : '✅ All Switches Synchronized';
+                ? `⚠️ Changes Detected${hostInfo}`
+                : `✅ Synchronized${hostInfo}`;
             
             showOutputModal(title, summaryContent, hasChanges ? 'warning' : 'success');
         }
@@ -2406,18 +2211,19 @@
         // Run Deploy
         async function runDeploy() {
             const host = getTargetHost();
-            const targetMsg = host || 'ALL HOSTS';
+            if (!host) {
+                showOutputModal('Error', 'Please select a device first', 'error');
+                return;
+            }
             
             // Confirm deployment
-            const confirmMsg = host 
-                ? `Are you sure you want to deploy configuration to ${host}?\n\nThis will apply changes to the live network device.`
-                : `Are you sure you want to deploy configuration to ALL HOSTS?\n\n⚠️ This will apply changes to ALL network devices!`;
+            const confirmMsg = `Are you sure you want to deploy configuration to ${host}?\n\nThis will apply changes to the live network device.`;
             
             if (!confirm(confirmMsg)) {
                 return;
             }
             
-            showLoading(true, `Deploying to ${targetMsg}...`);
+            showLoading(true, `Deploying to ${host}...`);
             setStatus('Deploying...');
             
             try {
@@ -2425,13 +2231,13 @@
                 
                 if (result.success) {
                     showOutputModal(
-                        `Deploy Complete - ${targetMsg}`,
+                        `Deploy Complete - ${host}`,
                         result.output || 'Configuration deployed successfully',
                         'success'
                     );
                 } else {
                     showOutputModal(
-                        `Deploy Failed - ${targetMsg}`,
+                        `Deploy Failed - ${host}`,
                         result.error || result.output || 'Unknown error',
                         'error'
                     );
@@ -2497,62 +2303,9 @@
                 document.getElementById('vlan-leaking-enabled').checked = false;
                 document.getElementById('vlan-leaking-fields').classList.remove('visible');
                 
-                // Load devices
-                loadVlanDeviceList();
-                
                 // Show modal
                 document.getElementById('vlan-modal').classList.add('visible');
             });
-        }
-        
-        async function loadVlanDeviceList() {
-            const container = document.getElementById('vlan-device-list');
-            container.innerHTML = '<div style="color: #888; font-size: 12px;">Loading...</div>';
-            
-            try {
-                const response = await fetch('/fabric-api.sh?action=list-devices');
-                const data = await response.json();
-                
-                if (data.success && data.devices) {
-                    let html = '';
-                    for (const [group, devices] of Object.entries(data.devices)) {
-                        const groupId = group.replace(/[^a-zA-Z0-9]/g, '_');
-                        html += `<div style="display: flex; align-items: center; gap: 6px; color: #76b900; font-size: 11px; padding: 5px 0 3px 0; border-bottom: 1px solid #333; cursor: pointer;" onclick="toggleVlanGroupDevices('${groupId}')">
-                            <input type="checkbox" id="vlan-group-${groupId}" style="width: 12px; height: 12px;" onclick="event.stopPropagation(); toggleVlanGroupDevices('${groupId}')">
-                            <span>${group}</span>
-                        </div>`;
-                        devices.forEach(device => {
-                            const hostname = device.hostname || device;
-                            const isSelected = hostname === selectedDevice;
-                            html += `<label style="display: flex; align-items: center; gap: 6px; padding: 4px 8px 4px 20px; cursor: pointer; font-size: 12px; color: #ccc;">
-                                <input type="checkbox" name="create-vlan-devices" data-group="${groupId}" value="${hostname}" ${isSelected ? 'checked' : ''} style="width: 14px; height: 14px;" onchange="updateVlanGroupCheckbox('${groupId}')">
-                                ${hostname}
-                            </label>`;
-                        });
-                    }
-                    container.innerHTML = html;
-                }
-            } catch (e) {
-                container.innerHTML = '<div style="color: #f44336; font-size: 12px;">Error loading devices</div>';
-            }
-        }
-        
-        function toggleVlanGroupDevices(groupId) {
-            const groupCb = document.getElementById('vlan-group-' + groupId);
-            const devices = document.querySelectorAll(`input[name="create-vlan-devices"][data-group="${groupId}"]`);
-            devices.forEach(cb => cb.checked = groupCb.checked);
-        }
-        
-        function updateVlanGroupCheckbox(groupId) {
-            const devices = document.querySelectorAll(`input[name="create-vlan-devices"][data-group="${groupId}"]`);
-            const allChecked = Array.from(devices).every(cb => cb.checked);
-            const groupCb = document.getElementById('vlan-group-' + groupId);
-            if (groupCb) groupCb.checked = allChecked;
-        }
-        
-        function selectAllVlanDevices(all) {
-            document.querySelectorAll('input[name="create-vlan-devices"]').forEach(cb => cb.checked = all);
-            document.querySelectorAll('input[id^="vlan-group-"]').forEach(cb => cb.checked = all);
         }
         
         function closeVlanModal() {
@@ -3260,24 +3013,21 @@
                     const result = await response.json();
                     
                     if (result.success) {
-                        // Assign to selected devices
-                        const selectedDevices = Array.from(document.querySelectorAll('input[name="create-vlan-devices"]:checked')).map(cb => cb.value);
+                        // Assign to current device
                         const createdVlans = result.created_vlans || [];
                         
                         let assignedCount = 0;
-                        if (selectedDevices.length > 0 && createdVlans.length > 0) {
-                            createBtn.textContent = 'Assigning to devices...';
-                            for (const device of selectedDevices) {
-                                try {
-                                    const assignResp = await fetch('/fabric-api.sh?action=assign-vlans', {
-                                        method: 'POST',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ device: device, vlans: createdVlans })
-                                    });
-                                    const assignResult = await assignResp.json();
-                                    if (assignResult.success) assignedCount++;
-                                } catch (e) {}
-                            }
+                        if (selectedDevice && createdVlans.length > 0) {
+                            createBtn.textContent = 'Assigning to device...';
+                            try {
+                                const assignResp = await fetch('/fabric-api.sh?action=assign-vlans', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ device: selectedDevice, vlans: createdVlans })
+                                });
+                                const assignResult = await assignResp.json();
+                                if (assignResult.success) assignedCount = 1;
+                            } catch (e) {}
                         }
                         
                         closeVlanModal();
@@ -3286,7 +3036,7 @@
                             `<p><strong>Profile:</strong> ${profileName}</p>` +
                             `<p><strong>Range:</strong> ${startId} - ${endId}</p>`;
                         if (assignedCount > 0) {
-                            msg += `<p><strong>Assigned to:</strong> ${assignedCount} device(s)</p>`;
+                            msg += `<p><strong>Assigned to:</strong> ${selectedDevice}</p>`;
                         }
                         msg += `<p style="margin-top: 15px; color: #888;">Run <strong>Deploy</strong> to apply changes.</p>` +
                             `</div>`;
@@ -3358,24 +3108,21 @@
                 const result = await response.json();
                 
                 if (result.success) {
-                    // Assign to selected devices
-                    const selectedDevices = Array.from(document.querySelectorAll('input[name="create-vlan-devices"]:checked')).map(cb => cb.value);
+                    // Assign to current device
                     const profileName = data.profile_name;
                     
                     let assignedCount = 0;
-                    if (selectedDevices.length > 0) {
-                        createBtn.textContent = 'Assigning to devices...';
-                        for (const device of selectedDevices) {
-                            try {
-                                const assignResp = await fetch('/fabric-api.sh?action=assign-vlans', {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ device: device, vlans: [profileName] })
-                                });
-                                const assignResult = await assignResp.json();
-                                if (assignResult.success) assignedCount++;
-                            } catch (e) {}
-                        }
+                    if (selectedDevice) {
+                        createBtn.textContent = 'Assigning to device...';
+                        try {
+                            const assignResp = await fetch('/fabric-api.sh?action=assign-vlans', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ device: selectedDevice, vlans: [profileName] })
+                            });
+                            const assignResult = await assignResp.json();
+                            if (assignResult.success) assignedCount = 1;
+                        } catch (e) {}
                     }
                     
                     // Handle leaking if enabled
@@ -3419,7 +3166,7 @@
                         '<p><strong>VLAN Profile:</strong> ' + result.vlan_profile + '</p>' +
                         '<p><strong>Port Profile:</strong> ' + result.port_profile + '</p>';
                     if (assignedCount > 0) {
-                        msg += '<p><strong>Assigned to:</strong> ' + assignedCount + ' device(s)</p>';
+                        msg += '<p><strong>Assigned to:</strong> ' + selectedDevice + '</p>';
                     }
                     if (leakingMsg) {
                         msg += leakingMsg;
@@ -3479,62 +3226,7 @@
                 select.innerHTML = '<option value="OVERLAY_LEAF">OVERLAY_LEAF</option>';
             }
             
-            // Load devices for multi-select
-            await loadVrfDeviceList();
-            
             document.getElementById('vrf-modal').classList.add('visible');
-        }
-        
-        async function loadVrfDeviceList() {
-            const container = document.getElementById('vrf-device-list');
-            container.innerHTML = '<div style="color: #888; font-size: 12px;">Loading devices...</div>';
-            
-            try {
-                const response = await fetch('/fabric-api.sh?action=list-devices');
-                const data = await response.json();
-                
-                if (data.success && data.devices) {
-                    let html = '';
-                    for (const [group, devices] of Object.entries(data.devices)) {
-                        const groupId = group.replace(/[^a-zA-Z0-9]/g, '_');
-                        html += `<div style="display: flex; align-items: center; gap: 6px; color: #76b900; font-size: 11px; padding: 5px 0 3px 0; border-bottom: 1px solid #333; cursor: pointer;" onclick="toggleVrfGroupDevices('${groupId}')">
-                            <input type="checkbox" id="vrf-group-${groupId}" style="width: 12px; height: 12px;" onclick="event.stopPropagation(); toggleVrfGroupDevices('${groupId}')">
-                            <span>${group}</span>
-                        </div>`;
-                        devices.forEach(device => {
-                            const hostname = device.hostname || device;
-                            const isSelected = hostname === selectedDevice;
-                            html += `<label style="display: flex; align-items: center; gap: 6px; padding: 4px 8px 4px 20px; cursor: pointer; font-size: 12px; color: #ccc;">
-                                <input type="checkbox" name="vrf-devices" data-group="${groupId}" value="${hostname}" ${isSelected ? 'checked' : ''} style="width: 14px; height: 14px;" onchange="updateVrfGroupCheckbox('${groupId}')">
-                                ${hostname}
-                            </label>`;
-                        });
-                    }
-                    container.innerHTML = html;
-                } else {
-                    container.innerHTML = '<div style="color: #888; font-size: 12px;">No devices found</div>';
-                }
-            } catch (e) {
-                container.innerHTML = '<div style="color: #f44336; font-size: 12px;">Error loading devices</div>';
-            }
-        }
-        
-        function toggleVrfGroupDevices(groupId) {
-            const groupCb = document.getElementById('vrf-group-' + groupId);
-            const devices = document.querySelectorAll(`input[name="vrf-devices"][data-group="${groupId}"]`);
-            devices.forEach(cb => cb.checked = groupCb.checked);
-        }
-        
-        function updateVrfGroupCheckbox(groupId) {
-            const devices = document.querySelectorAll(`input[name="vrf-devices"][data-group="${groupId}"]`);
-            const allChecked = Array.from(devices).every(cb => cb.checked);
-            const groupCb = document.getElementById('vrf-group-' + groupId);
-            if (groupCb) groupCb.checked = allChecked;
-        }
-        
-        function selectAllVrfDevices(selectAll) {
-            document.querySelectorAll('input[name="vrf-devices"]').forEach(cb => cb.checked = selectAll);
-            document.querySelectorAll('input[id^="vrf-group-"]').forEach(cb => cb.checked = selectAll);
         }
         
         function closeVrfModal() {
@@ -3583,8 +3275,10 @@
             const leakingEnabled = document.getElementById('vrf-leaking-enabled').checked;
             const leakFromVrf = document.getElementById('vrf-leak-from').value;
             
-            // Get selected devices
-            const selectedDevices = Array.from(document.querySelectorAll('input[name="vrf-devices"]:checked')).map(cb => cb.value);
+            if (!selectedDevice) {
+                alert('Please select a device first');
+                return;
+            }
             
             if (!vrfName) {
                 alert('VRF name is required');
@@ -3596,18 +3290,13 @@
                 return;
             }
             
-            if (selectedDevices.length === 0) {
-                alert('Please select at least one device');
-                return;
-            }
-            
             if (leakingEnabled && !leakFromVrf) {
                 alert('Please select a VRF to leak from');
                 return;
             }
             
             const data = {
-                devices: selectedDevices,
+                devices: [selectedDevice],
                 vrf_name: vrfName,
                 l3vni: l3vni,
                 vxlan_int: parseInt(document.getElementById('vrf-vxlan-int').value) || null,
@@ -3617,7 +3306,7 @@
             };
             
             createBtn.disabled = true;
-            createBtn.textContent = `Creating on ${selectedDevices.length} device(s)...`;
+            createBtn.textContent = `Creating on ${selectedDevice}...`;
             
             try {
                 const response = await fetch('/fabric-api.sh?action=create-vrf-bulk', {
@@ -3631,12 +3320,7 @@
                 if (result.success) {
                     closeVrfModal();
                     
-                    let message = `<div style="color: #76b900; margin-bottom: 15px;">✓ VRF "${vrfName}" created on ${result.devices_created || selectedDevices.length} device(s)</div>`;
-                    
-                    if (result.devices_created > 0) {
-                        message += `<div style="color: #888; margin-bottom: 5px;">Devices:</div>`;
-                        message += `<div style="color: #4fc3f7; margin-bottom: 10px; padding-left: 10px; font-size: 12px;">${(result.devices_list || selectedDevices).join(', ')}</div>`;
-                    }
+                    let message = `<div style="color: #76b900; margin-bottom: 15px;">✓ VRF "${vrfName}" created on ${selectedDevice}</div>`;
                     
                     if (result.leaking_configured) {
                         message += `<div style="color: #4fc3f7; margin-bottom: 10px;">✓ Route leaking configured:</div>`;
@@ -3823,45 +3507,52 @@
             }
         }
         
-        // Edit VRF Modal (list all VRFs)
+        // Edit VRF Modal (list device's VRFs only, exclude default)
         async function openEditVrfModal() {
             const modal = document.getElementById('edit-vrf-modal');
             const listDiv = document.getElementById('edit-vrf-list');
             
-            listDiv.innerHTML = '<div style="color: #888; padding: 20px; text-align: center;">Loading VRFs...</div>';
+            if (!currentDeviceConfig || !currentDeviceConfig.vrfs) {
+                listDiv.innerHTML = '<div style="color: #888; padding: 20px; text-align: center;">No VRFs configured on this device.</div>';
+                modal.classList.add('visible');
+                return;
+            }
+            
+            // Get device's VRFs, excluding 'default'
+            const deviceVrfs = Object.entries(currentDeviceConfig.vrfs)
+                .filter(([name, _]) => name !== 'default')
+                .map(([name, config]) => ({
+                    name: name,
+                    l3vni: config.vxlan_int || config.l3vni || '-'
+                }));
+            
+            if (deviceVrfs.length === 0) {
+                listDiv.innerHTML = '<div style="color: #888; padding: 20px; text-align: center;">No tenant VRFs configured on this device.</div>';
+                modal.classList.add('visible');
+                return;
+            }
+            
             modal.classList.add('visible');
             
-            try {
-                const response = await fetch('/fabric-api.sh?action=get-available-vrfs');
-                const data = await response.json();
-                
-                if (!data.success || !data.vrfs || data.vrfs.length === 0) {
-                    listDiv.innerHTML = '<div style="color: #888; padding: 20px; text-align: center;">No VRF profiles found.</div>';
-                    return;
-                }
-                
-                listDiv.innerHTML = `
-                    <div class="vlan-edit-list">
-                        ${data.vrfs.map(v => `
-                            <div class="vlan-edit-item">
-                                <div class="vlan-edit-info">
-                                    <span class="vlan-name">${v.name}</span>
-                                    <span class="vlan-info">L3VNI: ${v.l3vni || '-'} | Devices: ${v.device_count || 0}</span>
-                                </div>
-                                <div class="vlan-edit-actions">
-                                    <button class="btn-icon btn-icon-delete" onclick="closeEditVrfModal(); confirmDeleteVrf('${v.name}')" title="Delete">
-                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                                            <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
-                                        </svg>
-                                    </button>
-                                </div>
+            listDiv.innerHTML = `
+                <div class="vlan-edit-list">
+                    ${deviceVrfs.map(v => `
+                        <div class="vlan-edit-item">
+                            <div class="vlan-edit-info">
+                                <span class="vlan-name">${v.name}</span>
+                                <span class="vlan-info">L3VNI: ${v.l3vni}</span>
                             </div>
-                        `).join('')}
-                    </div>
-                `;
-            } catch (e) {
-                listDiv.innerHTML = `<div style="color: #ff6b6b;">Error: ${e.message}</div>`;
-            }
+                            <div class="vlan-edit-actions">
+                                <button class="btn-icon btn-icon-delete" onclick="closeEditVrfModal(); confirmUnassignVrf('${v.name}')" title="Remove from device">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                        <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
         }
         
         function closeEditVrfModal() {
@@ -4328,20 +4019,6 @@
                         </div>
                     </div>
                     
-                    <!-- Target Devices -->
-                    <div class="form-group" style="margin-top: 15px; padding-top: 12px; border-top: 1px solid #404040;">
-                        <label style="display: flex; justify-content: space-between;">
-                            <span>Target Devices</span>
-                            <span style="font-size: 11px; color: #888;">
-                                <a href="#" onclick="selectAllVlanDevices(true); return false;" style="color: #4fc3f7;">All</a> | 
-                                <a href="#" onclick="selectAllVlanDevices(false); return false;" style="color: #4fc3f7;">None</a>
-                            </span>
-                        </label>
-                        <div id="vlan-device-list" style="max-height: 150px; overflow-y: auto; background: #1a1a1a; border: 1px solid #404040; border-radius: 4px; padding: 8px;">
-                            <div style="color: #888; font-size: 12px;">Loading devices...</div>
-                        </div>
-                        <div class="form-hint">Select devices to assign this VLAN (current device pre-selected)</div>
-                    </div>
                 </form>
             </div>
             <div class="vlan-modal-footer">
@@ -4589,19 +4266,6 @@
                         <div class="form-hint" id="vrf-profile-hint">Overlay BGP profiles (VxLAN_UNDERLAY* excluded)</div>
                     </div>
                     
-                    <div class="form-group">
-                        <label style="display: flex; align-items: center; justify-content: space-between;">
-                            <span>Target Devices</span>
-                            <span style="font-size: 11px; color: #888;">
-                                <a href="#" onclick="selectAllVrfDevices(true); return false;" style="color: #4fc3f7;">All</a> | 
-                                <a href="#" onclick="selectAllVrfDevices(false); return false;" style="color: #4fc3f7;">None</a>
-                            </span>
-                        </label>
-                        <div id="vrf-device-list" style="max-height: 200px; overflow-y: auto; background: #1a1a1a; border: 1px solid #404040; border-radius: 4px; padding: 8px;">
-                            <div style="color: #888; font-size: 12px;">Loading devices...</div>
-                        </div>
-                        <div class="form-hint">Select devices to create VRF on (each device will use its own BGP ASN)</div>
-                    </div>
                 </form>
             </div>
             <div class="vlan-modal-footer">
@@ -4678,7 +4342,7 @@
     <div class="vlan-modal" id="edit-vrf-modal">
         <div class="vlan-modal-content" style="max-width: 500px;">
             <div class="vlan-modal-header">
-                <h3>Edit / Delete VRFs</h3>
+                <h3>Device VRFs</h3>
                 <button class="vlan-modal-close" onclick="closeEditVrfModal()">×</button>
             </div>
             <div class="vlan-modal-body">
