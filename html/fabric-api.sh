@@ -2164,6 +2164,7 @@ PYTHON
         ;;
     update-interface)
         # Update interface or bond settings
+        read -r POST_DATA
         python3 << PYTHON
 import json
 import yaml
@@ -2171,12 +2172,14 @@ import sys
 import os
 
 # Read POST data
-post_data = sys.stdin.read()
 try:
-    data = json.loads(post_data)
+    data = json.loads('''$POST_DATA''')
 except:
-    print(json.dumps({'success': False, 'error': 'Invalid JSON data'}))
-    sys.exit(0)
+    try:
+        data = json.loads(sys.stdin.read())
+    except:
+        print(json.dumps({'success': False, 'error': 'Invalid JSON data'}))
+        sys.exit(0)
 
 device = data.get('device', '')
 interface_name = data.get('interface_name', '')

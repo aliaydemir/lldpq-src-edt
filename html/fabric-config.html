@@ -1882,11 +1882,19 @@
                 if (realInterfaces.length > 0) {
                     html += `
                         <div class="dashboard-section">
-                            <div class="section-header">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                                    <path d="M7.77 6.76L6.23 5.48.82 12l5.41 6.52 1.54-1.28L3.42 12l4.35-5.24zM7 13h2v-2H7v2zm10-2h-2v2h2v-2zm-6 2h2v-2h-2v2zm6.77-7.52l-1.54 1.28L20.58 12l-4.35 5.24 1.54 1.28L23.18 12l-5.41-6.52z"/>
-                                </svg>
-                                Interfaces (${realInterfaces.length})
+                            <div class="section-header" style="display: flex; justify-content: space-between; align-items: center;">
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                                        <path d="M7.77 6.76L6.23 5.48.82 12l5.41 6.52 1.54-1.28L3.42 12l4.35-5.24zM7 13h2v-2H7v2zm10-2h-2v2h2v-2zm-6 2h2v-2h-2v2zm6.77-7.52l-1.54 1.28L20.58 12l-4.35 5.24 1.54 1.28L23.18 12l-5.41-6.52z"/>
+                                    </svg>
+                                    Interfaces (${realInterfaces.length})
+                                </div>
+                                <button class="btn-add-small" onclick="openCreateSubifModal()" title="Create Subinterface">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                                        <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                                    </svg>
+                                    + Subif
+                                </button>
                             </div>
                             <div class="section-content-table">
                                 <table class="data-table">
@@ -3690,6 +3698,98 @@
             }
         }
         
+        // ==================== CREATE SUBINTERFACE ====================
+        
+        function openCreateSubifModal() {
+            const modal = document.getElementById('create-subif-modal');
+            
+            // Populate parent interface dropdown with physical ports (not breakout sub-ports)
+            const parentSelect = document.getElementById('subif-parent');
+            parentSelect.innerHTML = '<option value="">Select parent interface...</option>';
+            
+            if (currentDeviceConfig && currentDeviceConfig.interfaces) {
+                // Get physical ports (swp1, swp2, etc. - not swp1s0)
+                const physicalPorts = Object.keys(currentDeviceConfig.interfaces)
+                    .filter(name => /^swp\d+$/.test(name))
+                    .sort((a, b) => {
+                        const numA = parseInt(a.replace('swp', ''));
+                        const numB = parseInt(b.replace('swp', ''));
+                        return numA - numB;
+                    });
+                
+                for (const port of physicalPorts) {
+                    parentSelect.innerHTML += `<option value="${port}">${port}</option>`;
+                }
+            }
+            
+            // Populate VRF dropdown
+            populateVrfDropdown('subif-vrf', '');
+            
+            // Clear form
+            document.getElementById('subif-id').value = '';
+            document.getElementById('subif-vlan').value = '';
+            document.getElementById('subif-ip').value = '';
+            document.getElementById('subif-description').value = '';
+            
+            modal.classList.add('visible');
+        }
+        
+        function closeCreateSubifModal() {
+            document.getElementById('create-subif-modal').classList.remove('visible');
+        }
+        
+        async function saveCreateSubif() {
+            const parentIf = document.getElementById('subif-parent').value;
+            const subifId = document.getElementById('subif-id').value;
+            const vlanId = document.getElementById('subif-vlan').value;
+            const ip = document.getElementById('subif-ip').value.trim();
+            const vrf = document.getElementById('subif-vrf').value;
+            const description = document.getElementById('subif-description').value.trim();
+            
+            if (!parentIf || !subifId || !vlanId) {
+                alert('Please fill in Parent Interface, Subinterface ID, and VLAN ID');
+                return;
+            }
+            
+            const saveBtn = document.getElementById('btn-create-subif');
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Creating...';
+            
+            try {
+                const response = await fetch('/fabric-api.sh?action=update-interface', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        device: selectedDevice,
+                        interface_name: `${parentIf}.${subifId}`,
+                        interface_type: 'subif',
+                        vlan_id: vlanId,
+                        ip: ip,
+                        vrf: vrf,
+                        description: description
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    closeCreateSubifModal();
+                    await selectDevice(selectedDevice);
+                    showOutputModal('Subinterface Created', 
+                        `<div style="color: #76b900; margin-bottom: 15px;">✓ Subinterface ${parentIf}.${subifId} created successfully</div>` +
+                        `<div style="color: #888;">Run <strong>Deploy</strong> to apply changes.</div>`,
+                        'success', true);
+                } else {
+                    alert('Error: ' + (result.error || 'Unknown error'));
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+            
+            saveBtn.disabled = false;
+            saveBtn.textContent = 'Create Subinterface';
+        }
+        
         // ==================== INTERFACE / BOND EDIT ====================
         
         function showInterfaceFields(mode, showModeSelector = true) {
@@ -4665,6 +4765,60 @@
             </div>
             <div class="vlan-modal-footer">
                 <button class="btn-cancel" onclick="closeEditVrfModal()">Close</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Create Subinterface Modal -->
+    <div class="vlan-modal" id="create-subif-modal">
+        <div class="vlan-modal-content" style="max-width: 500px;">
+            <div class="vlan-modal-header">
+                <h3>Create Subinterface</h3>
+                <button class="vlan-modal-close" onclick="closeCreateSubifModal()">×</button>
+            </div>
+            <div class="vlan-modal-body">
+                <form id="create-subif-form" onsubmit="event.preventDefault(); saveCreateSubif();">
+                    <div class="form-group">
+                        <label>Parent Interface *</label>
+                        <select id="subif-parent" style="width: 100%; padding: 10px 12px; background: #1e1e1e; border: 1px solid #404040; border-radius: 4px; color: #fff; font-size: 14px;">
+                            <option value="">Select parent interface...</option>
+                        </select>
+                        <div class="form-hint">Physical port that will have the subinterface</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Subinterface ID *</label>
+                        <input type="number" id="subif-id" min="1" max="4094" placeholder="e.g., 1001" style="width: 100%; padding: 10px 12px; background: #1e1e1e; border: 1px solid #404040; border-radius: 4px; color: #fff; font-size: 14px;">
+                        <div class="form-hint">Subinterface identifier (usually same as VLAN ID)</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>VLAN ID *</label>
+                        <input type="number" id="subif-vlan" min="1" max="4094" placeholder="e.g., 1001" style="width: 100%; padding: 10px 12px; background: #1e1e1e; border: 1px solid #404040; border-radius: 4px; color: #fff; font-size: 14px;">
+                        <div class="form-hint">802.1Q VLAN tag for this subinterface</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>IP Address</label>
+                        <input type="text" id="subif-ip" placeholder="e.g., 10.0.0.1/24" style="width: 100%; padding: 10px 12px; background: #1e1e1e; border: 1px solid #404040; border-radius: 4px; color: #fff; font-size: 14px;">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>VRF</label>
+                        <select id="subif-vrf" style="width: 100%; padding: 10px 12px; background: #1e1e1e; border: 1px solid #404040; border-radius: 4px; color: #fff; font-size: 14px;">
+                            <option value="">default</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Description</label>
+                        <input type="text" id="subif-description" placeholder="e.g., External BGP to Provider" style="width: 100%; padding: 10px 12px; background: #1e1e1e; border: 1px solid #404040; border-radius: 4px; color: #fff; font-size: 14px;">
+                    </div>
+                </form>
+            </div>
+            <div class="vlan-modal-footer">
+                <button type="button" class="btn-secondary" onclick="closeCreateSubifModal()">Cancel</button>
+                <button type="submit" class="btn-primary" id="btn-create-subif" onclick="saveCreateSubif()">Create Subinterface</button>
             </div>
         </div>
     </div>
