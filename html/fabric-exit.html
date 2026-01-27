@@ -89,6 +89,22 @@
             letter-spacing: 0.5px;
         }
         
+        /* VRF Badges */
+        .vrf-badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .badge-gray { background: #3c3c3c; color: #888; border: 1px solid #555; }
+        .badge-blue { background: rgba(79, 195, 247, 0.15); color: #4fc3f7; border: 1px solid rgba(79, 195, 247, 0.3); }
+        .badge-green { background: rgba(129, 199, 132, 0.15); color: #81c784; border: 1px solid rgba(129, 199, 132, 0.3); }
+        .badge-purple { background: rgba(206, 147, 216, 0.15); color: #ce93d8; border: 1px solid rgba(206, 147, 216, 0.3); }
+        .badge-orange { background: rgba(255, 183, 77, 0.15); color: #ffb74d; border: 1px solid rgba(255, 183, 77, 0.3); }
+        .badge-cyan { background: rgba(77, 208, 225, 0.15); color: #4dd0e1; border: 1px solid rgba(77, 208, 225, 0.3); }
+        .badge-pink { background: rgba(244, 143, 177, 0.15); color: #f48fb1; border: 1px solid rgba(244, 143, 177, 0.3); }
+        
         /* Buttons */
         .btn {
             padding: 8px 16px;
@@ -211,8 +227,9 @@
         }
         
         .data-table .profile-name {
-            color: #ce93d8;
+            color: #e0e0e0;
             font-size: 12px;
+            font-family: 'Consolas', 'Monaco', 'SF Mono', monospace;
         }
         
         .data-table .interface-name {
@@ -602,32 +619,103 @@
         </div>
     </div>
 
+    <!-- Success/Error Modal -->
+    <div class="modal" id="result-modal">
+        <div class="modal-content" style="width: 400px;">
+            <div class="modal-header" id="result-modal-header">
+                <h3 id="result-modal-title">Result</h3>
+                <button class="modal-close" onclick="closeModal('result-modal')">&times;</button>
+            </div>
+            <div class="modal-body" style="text-align: center; padding: 30px;">
+                <div id="result-modal-icon"></div>
+                <p style="color: #ccc; margin-top: 15px;" id="result-modal-message"></p>
+                <p style="color: #888; font-size: 12px; margin-top: 10px;" id="result-modal-details"></p>
+            </div>
+            <div class="modal-footer" style="justify-content: center;">
+                <button class="btn btn-primary" onclick="closeModal('result-modal')">OK</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div class="modal" id="delete-peer-modal">
+        <div class="modal-content" style="width: 400px;">
+            <div class="modal-header" style="background: linear-gradient(0deg, #c62828 0%, #e53935 100%);">
+                <h3>Delete External Peer</h3>
+                <button class="modal-close" onclick="closeModal('delete-peer-modal')">&times;</button>
+            </div>
+            <div class="modal-body" style="text-align: center; padding: 30px;">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="#e57373" style="margin-bottom: 15px;">
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+                </svg>
+                <p style="color: #ccc; margin-bottom: 15px;">Are you sure you want to delete this peer?</p>
+                <p style="color: #ffb74d; font-family: monospace; font-size: 16px; margin-bottom: 10px;" id="delete-peer-ip"></p>
+                <p style="color: #888; font-size: 12px;">Device: <span id="delete-peer-device" style="color: #4fc3f7;"></span></p>
+                <p style="color: #888; font-size: 12px;">Interface: <span id="delete-peer-interface" style="color: #81c784;"></span></p>
+                <p style="color: #ff9800; font-size: 12px; margin-top: 15px; padding: 10px; background: rgba(255, 152, 0, 0.1); border-radius: 4px;">
+                    This will also remove the associated subinterface
+                </p>
+            </div>
+            <div class="modal-footer" style="justify-content: center; gap: 15px;">
+                <button class="btn btn-secondary" onclick="closeModal('delete-peer-modal')">Cancel</button>
+                <button class="btn" style="background: #c62828; color: white;" onclick="confirmDeletePeer()">Delete Peer</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         // Global data
         let allPeers = [];
+        let pendingDeletePeer = null;  // Store peer data for deletion
         let allDevices = [];
+        let allLeafDevices = [];  // All leaf devices for Add Peer
         let bgpProfiles = {};
+        let currentDeviceConfig = null;  // Current device config for Add Peer
         
-        // VRF color function
-        const vrfColors = {
-            'default': '#888888',
-            'mgmt': '#4fc3f7',
-            'oob': '#4fc3f7',
-            'tenant1': '#81c784',
-            'tenant2': '#ce93d8',
-            'tenant3': '#ffb74d',
-            'shared-hss': '#f48fb1',
-            'shared': '#f48fb1'
-        };
+        // Show result modal (success/error)
+        function showResult(success, title, message, details = '') {
+            const modal = document.getElementById('result-modal');
+            const header = document.getElementById('result-modal-header');
+            const titleEl = document.getElementById('result-modal-title');
+            const iconEl = document.getElementById('result-modal-icon');
+            const msgEl = document.getElementById('result-modal-message');
+            const detailsEl = document.getElementById('result-modal-details');
+            
+            titleEl.textContent = title;
+            msgEl.textContent = message;
+            detailsEl.textContent = details;
+            
+            if (success) {
+                header.style.background = 'linear-gradient(0deg, #2e7d32 0%, #43a047 100%)';
+                iconEl.innerHTML = `<svg width="48" height="48" viewBox="0 0 24 24" fill="#81c784">
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                </svg>`;
+            } else {
+                header.style.background = 'linear-gradient(0deg, #c62828 0%, #e53935 100%)';
+                iconEl.innerHTML = `<svg width="48" height="48" viewBox="0 0 24 24" fill="#e57373">
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+                </svg>`;
+            }
+            
+            modal.classList.add('visible');
+        }
         
-        function getVrfColor(vrfName) {
-            if (vrfColors[vrfName]) return vrfColors[vrfName];
-            // Generate consistent color based on name hash
+        // VRF badge class function - consistent with other pages
+        function getVrfBadgeClass(vrfName) {
+            if (!vrfName || vrfName === 'default') return 'badge-gray';
+            
+            // Infra VRFs get blue
+            if (vrfName === 'oob' || vrfName.toLowerCase().includes('mgmt') || vrfName.toLowerCase().includes('management')) {
+                return 'badge-blue';
+            }
+            
+            // Hash the VRF name to get consistent color
+            const colors = ['badge-green', 'badge-purple', 'badge-orange', 'badge-cyan', 'badge-pink'];
             let hash = 0;
             for (let i = 0; i < vrfName.length; i++) {
-                hash = vrfName.charCodeAt(i) + ((hash << 5) - hash);
+                hash = ((hash << 5) - hash) + vrfName.charCodeAt(i);
+                hash = hash & hash;
             }
-            const colors = ['#81c784', '#ce93d8', '#ffb74d', '#4fc3f7', '#f48fb1', '#a5d6a7', '#b39ddb'];
             return colors[Math.abs(hash) % colors.length];
         }
         
@@ -636,6 +724,7 @@
         
         async function loadExternalPeers() {
             try {
+                // Load external peers
                 const response = await fetch('/fabric-api.sh?action=list-external-peers');
                 const data = await response.json();
                 
@@ -649,6 +738,15 @@
                     renderTable();
                 } else {
                     showError(data.error || 'Failed to load external peers');
+                }
+                
+                // Also load ALL VTEP devices for Add Peer modal
+                // VTEP = devices that have VRFs configured (not spines)
+                const vtepResp = await fetch('/fabric-api.sh?action=list-vtep-devices');
+                const vtepData = await vtepResp.json();
+                
+                if (vtepData.success && vtepData.devices) {
+                    allLeafDevices = vtepData.devices;
                 }
             } catch (e) {
                 showError('Error loading data: ' + e.message);
@@ -742,7 +840,7 @@
             tbody.innerHTML = filtered.map(peer => `
                 <tr>
                     <td class="device-name">${peer.device}</td>
-                    <td class="vrf-name" style="color: ${getVrfColor(peer.vrf)}">${peer.vrf}</td>
+                    <td><span class="vrf-badge ${getVrfBadgeClass(peer.vrf)}">${peer.vrf}</span></td>
                     <td class="profile-name">${peer.bgp_profile}</td>
                     <td class="interface-name">${peer.interface || '-'}</td>
                     <td class="ip-address">${peer.local_ip || '-'}</td>
@@ -825,6 +923,16 @@
             document.getElementById('add-vlan-id').value = '';
             document.getElementById('add-local-ip').value = '';
             document.getElementById('add-remote-peer').value = '';
+            currentDeviceConfig = null;
+            
+            // Populate device dropdown with ALL leaf devices
+            const deviceSelect = document.getElementById('add-device');
+            deviceSelect.innerHTML = '<option value="">Select device...</option>';
+            
+            for (const device of allLeafDevices) {
+                const lastOctet = device.ip ? device.ip.split('.').pop() : '';
+                deviceSelect.innerHTML += `<option value="${device.hostname}" data-ip="${device.ip}">${device.hostname}</option>`;
+            }
             
             document.getElementById('add-peer-modal').classList.add('visible');
         }
@@ -833,58 +941,61 @@
             const device = document.getElementById('add-device').value;
             if (!device) return;
             
-            // Fetch device config to get VRFs with External profiles
+            // Fetch device config to get ALL VRFs (not just External ones)
             try {
                 const response = await fetch(`/fabric-api.sh?action=get-device&hostname=${encodeURIComponent(device)}`);
                 const data = await response.json();
+                currentDeviceConfig = data;
                 
                 if (data.success && data.config) {
                     const vrfSelect = document.getElementById('add-vrf');
                     vrfSelect.innerHTML = '<option value="">Select VRF...</option>';
                     
-                    // Find VRFs that use External BGP profiles
-                    // Check which profiles have External by looking at our loaded data
+                    // Show ALL VRFs (except default/mgmt/oob)
                     const vrfs = data.config.vrfs || {};
                     for (const [vrfName, vrfConfig] of Object.entries(vrfs)) {
-                        const profileName = vrfConfig.bgp?.bgp_profile || '';
-                        // Check if this profile has external peers (from our bgpProfiles data)
-                        const hasExternal = bgpProfiles[profileName]?.has_external || false;
-                        if (profileName && hasExternal) {
-                            vrfSelect.innerHTML += `<option value="${vrfName}" data-profile="${profileName}" style="color: ${getVrfColor(vrfName)}">${vrfName}</option>`;
+                        if (vrfName !== 'default' && vrfName !== 'mgmt' && vrfName !== 'oob') {
+                            const profileName = vrfConfig.bgp?.bgp_profile || '';
+                            const hasExternal = bgpProfiles[profileName]?.has_external || false;
+                            vrfSelect.innerHTML += `<option value="${vrfName}" data-profile="${profileName}" data-has-external="${hasExternal}">${vrfName}</option>`;
                         }
                     }
                     
-                    // If no VRFs with external found, show all VRFs (except default/mgmt)
-                    if (vrfSelect.options.length === 1) {
-                        for (const [vrfName, vrfConfig] of Object.entries(vrfs)) {
-                            if (vrfName !== 'default' && vrfName !== 'mgmt' && vrfName !== 'oob') {
-                                const profileName = vrfConfig.bgp?.bgp_profile || '';
-                                vrfSelect.innerHTML += `<option value="${vrfName}" data-profile="${profileName}">${vrfName}</option>`;
-                            }
-                        }
-                    }
-                    
-                    // Populate interfaces (physical ports only)
+                    // Populate interfaces (physical ports only - swp1-swp16 range for external)
                     const interfaceSelect = document.getElementById('add-parent-interface');
                     interfaceSelect.innerHTML = '<option value="">Select interface...</option>';
-                    const interfaces = data.config.interfaces || {};
-                    for (const ifName of Object.keys(interfaces).sort()) {
-                        if (ifName.match(/^swp\d+$/)) {
-                            interfaceSelect.innerHTML += `<option value="${ifName}">${ifName}</option>`;
-                        }
+                    
+                    // Add swp1-swp16 for external connections (common range)
+                    for (let i = 1; i <= 16; i++) {
+                        interfaceSelect.innerHTML += `<option value="swp${i}">swp${i}</option>`;
                     }
                 }
             } catch (e) {
                 console.error('Failed to load device config:', e);
-                alert('Failed to load device configuration: ' + e.message);
+                showResult(false, 'Error', 'Failed to load device configuration', e.message);
             }
         }
         
         function onAddVrfChange() {
             const vrfSelect = document.getElementById('add-vrf');
             const selectedOption = vrfSelect.options[vrfSelect.selectedIndex];
-            const profile = selectedOption.dataset.profile || '';
-            document.getElementById('add-profile').value = profile;
+            const currentProfile = selectedOption.dataset.profile || '';
+            const hasExternal = selectedOption.dataset.hasExternal === 'true';
+            
+            // Get device IP for OVERLAY_BORDER_XX naming
+            const deviceSelect = document.getElementById('add-device');
+            const deviceOption = deviceSelect.options[deviceSelect.selectedIndex];
+            const deviceIp = deviceOption.dataset.ip || '';
+            const lastOctet = deviceIp ? deviceIp.split('.').pop() : '00';
+            
+            if (hasExternal) {
+                // Profile already has External - use it
+                document.getElementById('add-profile').value = currentProfile;
+            } else {
+                // No External - will create OVERLAY_BORDER_XX
+                const newProfile = `OVERLAY_BORDER_${lastOctet}`;
+                document.getElementById('add-profile').value = `${newProfile} (will be created)`;
+            }
         }
         
         async function savePeerEdit() {
@@ -919,41 +1030,47 @@
             }
         }
         
-        async function deletePeer() {
-            const device = document.getElementById('edit-original-device').value;
-            const vrf = document.getElementById('edit-original-vrf').value;
-            const remotePeer = document.getElementById('edit-original-peer').value;
-            const interfaceName = document.getElementById('edit-interface').value;
-            
-            if (!confirm(`Are you sure you want to delete peer ${remotePeer} from ${device}?\n\nThis will also remove the associated subinterface (${interfaceName}).`)) {
-                return;
-            }
-            
-            const data = {
-                device,
-                vrf,
-                interface: interfaceName,
-                remote_peer: remotePeer
+        function deletePeer() {
+            // Store peer data for confirmation
+            pendingDeletePeer = {
+                device: document.getElementById('edit-original-device').value,
+                vrf: document.getElementById('edit-original-vrf').value,
+                remote_peer: document.getElementById('edit-original-peer').value,
+                interface: document.getElementById('edit-interface').value
             };
+            
+            // Populate delete modal
+            document.getElementById('delete-peer-ip').textContent = pendingDeletePeer.remote_peer;
+            document.getElementById('delete-peer-device').textContent = pendingDeletePeer.device;
+            document.getElementById('delete-peer-interface').textContent = pendingDeletePeer.interface || '-';
+            
+            // Close edit modal and open delete confirmation
+            closeModal('edit-peer-modal');
+            document.getElementById('delete-peer-modal').classList.add('visible');
+        }
+        
+        async function confirmDeletePeer() {
+            if (!pendingDeletePeer) return;
             
             try {
                 const response = await fetch('/fabric-api.sh?action=delete-external-peer', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(data)
+                    body: JSON.stringify(pendingDeletePeer)
                 });
                 
                 const result = await response.json();
                 
                 if (result.success) {
-                    closeModal('edit-peer-modal');
+                    closeModal('delete-peer-modal');
+                    pendingDeletePeer = null;
                     loadExternalPeers();
-                    alert('Peer deleted successfully!');
+                    showResult(true, 'Peer Deleted', 'External peer removed successfully');
                 } else {
-                    alert('Error: ' + (result.error || 'Failed to delete peer'));
+                    showResult(false, 'Delete Failed', result.error || 'Failed to delete peer');
                 }
             } catch (e) {
-                alert('Error: ' + e.message);
+                showResult(false, 'Error', e.message);
             }
         }
         
@@ -966,9 +1083,20 @@
             const remotePeer = document.getElementById('add-remote-peer').value;
             
             if (!device || !vrf || !parentInterface || !vlanId || !localIp || !remotePeer) {
-                alert('Please fill all fields');
+                showResult(false, 'Missing Fields', 'Please fill all required fields');
                 return;
             }
+            
+            // Check if we need to create OVERLAY_BORDER_XX profile
+            const vrfSelect = document.getElementById('add-vrf');
+            const selectedOption = vrfSelect.options[vrfSelect.selectedIndex];
+            const hasExternal = selectedOption.dataset.hasExternal === 'true';
+            
+            // Get device IP for profile naming
+            const deviceSelect = document.getElementById('add-device');
+            const deviceOption = deviceSelect.options[deviceSelect.selectedIndex];
+            const deviceIp = deviceOption.dataset.ip || '';
+            const lastOctet = deviceIp ? deviceIp.split('.').pop() : '00';
             
             const data = {
                 device,
@@ -976,7 +1104,9 @@
                 interface: `${parentInterface}.${vlanId}`,
                 vlan_id: vlanId,
                 local_ip: localIp,
-                remote_peer: remotePeer
+                remote_peer: remotePeer,
+                create_border_profile: !hasExternal,
+                border_profile_suffix: lastOctet
             };
             
             try {
@@ -991,12 +1121,13 @@
                 if (result.success) {
                     closeModal('add-peer-modal');
                     loadExternalPeers();
-                    alert('Peer added successfully!');
+                    const details = result.profile_created ? `Created profile: ${result.bgp_profile}` : `Using profile: ${result.bgp_profile}`;
+                    showResult(true, 'Peer Added', 'External peer configured successfully', details);
                 } else {
-                    alert('Error: ' + (result.error || 'Failed to add peer'));
+                    showResult(false, 'Add Failed', result.error || 'Failed to add peer');
                 }
             } catch (e) {
-                alert('Error: ' + e.message);
+                showResult(false, 'Error', e.message);
             }
         }
     </script>

@@ -2437,6 +2437,7 @@ PYTHON
     add-external-peer)
         # Add a new external BGP peer
         # Creates subinterface + adds peer to BGP profile
+        # If create_border_profile=true, creates OVERLAY_BORDER_XX profile with External peer group
         read -r POST_DATA
         python3 << PYTHON
 import json
@@ -2458,6 +2459,8 @@ try:
     vlan_id = data.get('vlan_id', '')
     local_ip = data.get('local_ip', '')
     remote_peer = data.get('remote_peer', '')
+    create_border_profile = data.get('create_border_profile', False)
+    border_profile_suffix = data.get('border_profile_suffix', '00')
     
     if not all([device, vrf, interface, local_ip, remote_peer]):
         print(json.dumps({'success': False, 'error': 'Missing required fields'}))
@@ -2480,15 +2483,69 @@ try:
     with open(host_file, 'r') as f:
         host_data = yaml.safe_load(f) or {}
     
-    # Get VRF's BGP profile
+    # Get VRF config
     vrfs = host_data.get('vrfs', {})
     if vrf not in vrfs:
         print(json.dumps({'success': False, 'error': f'VRF {vrf} not found on device'}))
         exit(0)
     
-    bgp_profile = vrfs[vrf].get('bgp', {}).get('bgp_profile', '')
-    if not bgp_profile:
-        print(json.dumps({'success': False, 'error': f'No BGP profile configured for VRF {vrf}'}))
+    vrf_config = vrfs[vrf]
+    bgp_profile = vrf_config.get('bgp', {}).get('bgp_profile', '')
+    profile_created = False
+    
+    # Load BGP profiles
+    bgp_profiles_file = os.path.join(ansible_dir, 'inventory', 'group_vars', 'all', 'bgp_profiles.yaml')
+    with open(bgp_profiles_file, 'r') as f:
+        bgp_data = yaml.safe_load(f) or {}
+    
+    profiles = bgp_data.get('bgp_profiles', {})
+    
+    # Check if current profile has External peer group
+    has_external = False
+    if bgp_profile and bgp_profile in profiles:
+        peer_groups = profiles[bgp_profile].get('peer_groups', {})
+        has_external = 'External' in peer_groups
+    
+    # If no External and create_border_profile requested, create new OVERLAY_BORDER_XX profile
+    if not has_external and create_border_profile:
+        new_profile_name = f'OVERLAY_BORDER_{border_profile_suffix}'
+        
+        # Create new profile with External peer group (template from OVERLAY_BORDER_XX)
+        profiles[new_profile_name] = {
+            'ipv4_unicast_af': {
+                'redistribute_connected_routes': True,
+                'redistribute_static_routes': False,
+                'export_to_evpn_type5': True
+            },
+            'peer_groups': {
+                'External': {
+                    'description': 'External-Connections',
+                    'peer_type': 'external',
+                    'enable_bfd': False,
+                    'peers': {
+                        remote_peer: None
+                    }
+                }
+            }
+        }
+        
+        # Update VRF to use new profile
+        if 'bgp' not in vrf_config:
+            vrf_config['bgp'] = {}
+        vrf_config['bgp']['bgp_profile'] = new_profile_name
+        bgp_profile = new_profile_name
+        profile_created = True
+        
+        # Save updated host_vars with new bgp_profile
+        with open(host_file, 'w') as f:
+            yaml.dump(host_data, f, default_flow_style=False, sort_keys=False)
+        
+        # Save bgp_profiles with new profile
+        with open(bgp_profiles_file, 'w') as f:
+            yaml.dump(bgp_data, f, default_flow_style=False, sort_keys=False)
+    
+    elif not has_external:
+        print(json.dumps({'success': False, 'error': f'External peer group not found in profile {bgp_profile}. Enable "Create Border Profile" option.'}))
         exit(0)
     
     # Create subinterface
@@ -2512,47 +2569,36 @@ try:
     with open(host_file, 'w') as f:
         yaml.dump(host_data, f, default_flow_style=False, sort_keys=False)
     
-    # 2. Update BGP profile - add peer to External group
-    bgp_profiles_file = os.path.join(ansible_dir, 'inventory', 'group_vars', 'all', 'bgp_profiles.yaml')
-    
-    with open(bgp_profiles_file, 'r') as f:
-        bgp_data = yaml.safe_load(f) or {}
-    
-    profiles = bgp_data.get('bgp_profiles', {})
-    
-    if bgp_profile not in profiles:
-        print(json.dumps({'success': False, 'error': f'BGP profile {bgp_profile} not found'}))
-        exit(0)
-    
-    profile = profiles[bgp_profile]
-    peer_groups = profile.get('peer_groups', {})
-    
-    if 'External' not in peer_groups:
-        print(json.dumps({'success': False, 'error': f'External peer group not found in profile {bgp_profile}'}))
-        exit(0)
-    
-    external_pg = peer_groups['External']
-    
-    # Initialize peers dict if needed
-    if 'peers' not in external_pg:
-        external_pg['peers'] = {}
-    
-    # Handle both list and dict formats
-    if isinstance(external_pg['peers'], list):
-        if remote_peer not in external_pg['peers']:
-            external_pg['peers'].append(remote_peer)
-    else:
-        # Dict format - add peer with empty value (or could add config)
-        external_pg['peers'][remote_peer] = None
-    
-    # Save bgp_profiles
-    with open(bgp_profiles_file, 'w') as f:
-        yaml.dump(bgp_data, f, default_flow_style=False, sort_keys=False)
+    # If profile already had External, add peer to it
+    if has_external and not profile_created:
+        # Reload bgp_profiles (might have been saved)
+        with open(bgp_profiles_file, 'r') as f:
+            bgp_data = yaml.safe_load(f) or {}
+        
+        profiles = bgp_data.get('bgp_profiles', {})
+        profile = profiles[bgp_profile]
+        external_pg = profile['peer_groups']['External']
+        
+        # Initialize peers dict if needed
+        if 'peers' not in external_pg:
+            external_pg['peers'] = {}
+        
+        # Handle both list and dict formats
+        if isinstance(external_pg['peers'], list):
+            if remote_peer not in external_pg['peers']:
+                external_pg['peers'].append(remote_peer)
+        else:
+            external_pg['peers'][remote_peer] = None
+        
+        # Save bgp_profiles
+        with open(bgp_profiles_file, 'w') as f:
+            yaml.dump(bgp_data, f, default_flow_style=False, sort_keys=False)
     
     print(json.dumps({
         'success': True, 
         'message': f'Added external peer {remote_peer} on {device} ({interface})',
-        'bgp_profile': bgp_profile
+        'bgp_profile': bgp_profile,
+        'profile_created': profile_created
     }))
 
 except Exception as e:
@@ -2631,6 +2677,8 @@ try:
     
     # 3. Remove peer from BGP profile External group
     peer_removed = False
+    profile_deleted = False
+    
     if bgp_profile:
         bgp_profiles_file = os.path.join(ansible_dir, 'inventory', 'group_vars', 'all', 'bgp_profiles.yaml')
         
@@ -2656,15 +2704,37 @@ try:
                         del peers[remote_peer]
                         peer_removed = True
                 
-                if peer_removed:
-                    with open(bgp_profiles_file, 'w') as f:
-                        yaml.dump(bgp_data, f, default_flow_style=False, sort_keys=False)
+                # Check if no peers left and profile is OVERLAY_BORDER_XX
+                remaining_peers = len(peers) if isinstance(peers, (list, dict)) else 0
+                is_border_profile = bgp_profile.startswith('OVERLAY_BORDER_')
+                
+                if peer_removed and remaining_peers == 0 and is_border_profile:
+                    # Delete the empty OVERLAY_BORDER_XX profile
+                    del profiles[bgp_profile]
+                    profile_deleted = True
+                    
+                    # Update VRF to use OVERLAY_LEAF instead
+                    with open(host_file, 'r') as f:
+                        host_data = yaml.safe_load(f) or {}
+                    
+                    if vrf in host_data.get('vrfs', {}):
+                        vrf_config = host_data['vrfs'][vrf]
+                        if 'bgp' in vrf_config:
+                            vrf_config['bgp']['bgp_profile'] = 'OVERLAY_LEAF'
+                        
+                        with open(host_file, 'w') as f:
+                            yaml.dump(host_data, f, default_flow_style=False, sort_keys=False)
+                
+                # Save bgp_profiles (with or without deleted profile)
+                with open(bgp_profiles_file, 'w') as f:
+                    yaml.dump(bgp_data, f, default_flow_style=False, sort_keys=False)
     
     print(json.dumps({
         'success': True, 
         'message': f'Deleted external peer {remote_peer} from {device}',
         'subinterface_removed': subif_removed,
-        'peer_removed': peer_removed
+        'peer_removed': peer_removed,
+        'profile_deleted': profile_deleted
     }))
 
 except Exception as e:
@@ -2799,6 +2869,68 @@ try:
         'message': f'Updated external peer {remote_peer} on {device} ({interface})',
         'bgp_profile': bgp_profile,
         'bfd_updated': True
+    }))
+
+except Exception as e:
+    import traceback
+    print(json.dumps({'success': False, 'error': str(e), 'trace': traceback.format_exc()}))
+PYTHON
+        ;;
+    list-vtep-devices)
+        # List all VTEP devices (devices with vtep.state: true)
+        python3 << 'PYTHON'
+import json
+import yaml
+import os
+import glob
+
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+
+try:
+    host_vars_dir = os.path.join(ansible_dir, 'inventory', 'host_vars')
+    hosts_file = os.path.join(ansible_dir, 'inventory', 'hosts')
+    
+    # Build hostname -> IP mapping from hosts file
+    host_ips = {}
+    if os.path.exists(hosts_file):
+        with open(hosts_file, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and not line.startswith('[') and '=' in line:
+                    parts = line.split()
+                    hostname = parts[0]
+                    for part in parts[1:]:
+                        if part.startswith('ansible_host='):
+                            host_ips[hostname] = part.split('=')[1]
+                            break
+    
+    # Find all devices with vtep.state: true
+    vtep_devices = []
+    
+    for host_file in glob.glob(os.path.join(host_vars_dir, '*.yaml')):
+        hostname = os.path.basename(host_file).replace('.yaml', '')
+        
+        try:
+            with open(host_file, 'r') as f:
+                host_data = yaml.safe_load(f) or {}
+            
+            # Check if vtep.state is true
+            vtep_config = host_data.get('vtep', {})
+            if vtep_config.get('state', False):
+                vtep_devices.append({
+                    'hostname': hostname,
+                    'ip': host_ips.get(hostname, '')
+                })
+        except:
+            pass
+    
+    # Sort by hostname
+    vtep_devices.sort(key=lambda x: x['hostname'])
+    
+    print(json.dumps({
+        'success': True,
+        'devices': vtep_devices,
+        'count': len(vtep_devices)
     }))
 
 except Exception as e:
