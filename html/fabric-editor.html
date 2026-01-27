@@ -1494,6 +1494,13 @@
             return extMap[ext] || 'plaintext';
         }
         
+        // Pre-fetch file list while Monaco loads (parallel)
+        let prefetchedFiles = null;
+        fetch('/ansible-api.sh?action=list')
+            .then(r => r.json())
+            .then(data => { prefetchedFiles = data; })
+            .catch(() => {});
+        
         // Initialize Monaco Editor (offline)
         require.config({ paths: { vs: '/monaco/vs' } });
         
@@ -1851,8 +1858,8 @@
             // Show welcome message initially (editor container stays visible, Monaco is not yet created)
             document.getElementById('no-file-message').style.display = 'flex';
 
-            // Load file tree
-            loadFileTree();
+            // Load file tree - use prefetched data if available
+            loadFileTree(prefetchedFiles);
         });
         
         // YAML Validation
@@ -1949,11 +1956,11 @@
             return response.json();
         }
         
-        // Load file tree
-        async function loadFileTree() {
+        // Load file tree (accepts prefetched data for faster initial load)
+        async function loadFileTree(prefetched = null) {
             showLoading(true, 'Loading files...');
             try {
-                const result = await apiCall('list');
+                const result = prefetched || await apiCall('list');
                 if (result.success) {
                     renderFileTree(result.files);
                     state.groups = result.groups || [];
