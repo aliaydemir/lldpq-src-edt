@@ -115,7 +115,7 @@ fi
 echo ""
 echo "[02] Installing required packages..."
 sudo apt update
-sudo apt install -y nginx fcgiwrap python3 python3-pip python3-yaml util-linux bsdextrautils sshpass unzip
+sudo apt install -y nginx fcgiwrap python3 python3-pip python3-yaml util-linux bsdextrautils sshpass unzip acl
 sudo systemctl enable --now nginx
 sudo systemctl enable --now fcgiwrap
 
@@ -304,6 +304,30 @@ if [[ -n "$ANSIBLE_DIR" ]] && [[ -d "$ANSIBLE_DIR" ]]; then
     # Ensure ansible directory has group write permission (for file editing/delete)
     chmod -R g+rw "$ANSIBLE_DIR" 2>/dev/null || true
     echo "   ✅ Group write permission set on ansible directory"
+    
+    # Set default ACL so new files also get group write permission (survives git operations)
+    if command -v setfacl &> /dev/null; then
+        setfacl -R -d -m g::rwX "$ANSIBLE_DIR" 2>/dev/null || true
+        echo "   ✅ Default ACL set (new files will inherit group write permission)"
+    fi
+    
+    # If git repo exists, add hooks to fix permissions after git operations
+    if [[ -d "$ANSIBLE_DIR/.git" ]]; then
+        echo "   Setting up git hooks for permission management..."
+        
+        # Create post-merge hook
+        cat > "$ANSIBLE_DIR/.git/hooks/post-merge" << 'HOOKEOF'
+#!/bin/bash
+# Fix permissions after git pull/merge
+chmod -R g+rw "$(git rev-parse --show-toplevel)" 2>/dev/null || true
+HOOKEOF
+        chmod +x "$ANSIBLE_DIR/.git/hooks/post-merge"
+        
+        # Create post-checkout hook (for git checkout, git reset)
+        cp "$ANSIBLE_DIR/.git/hooks/post-merge" "$ANSIBLE_DIR/.git/hooks/post-checkout"
+        
+        echo "   ✅ Git hooks created (post-merge, post-checkout)"
+    fi
     
     # Add git safe.directory for www-data user (for git operations from web)
     # First ensure www-data can write to /var/www for .gitconfig

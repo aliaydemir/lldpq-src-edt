@@ -176,6 +176,25 @@ if [[ -n "$ANSIBLE_DIR_EXISTING" ]] && [[ -d "$ANSIBLE_DIR_EXISTING" ]]; then
     # Ensure ansible directory has group write permission
     chmod -R g+rw "$ANSIBLE_DIR" 2>/dev/null || true
     
+    # Set default ACL so new files also get group write permission (survives git operations)
+    if command -v setfacl &> /dev/null; then
+        setfacl -R -d -m g::rwX "$ANSIBLE_DIR" 2>/dev/null || true
+    fi
+    
+    # If git repo exists, add hooks to fix permissions after git operations
+    if [[ -d "$ANSIBLE_DIR/.git" ]]; then
+        # Create post-merge hook
+        cat > "$ANSIBLE_DIR/.git/hooks/post-merge" << 'HOOKEOF'
+#!/bin/bash
+# Fix permissions after git pull/merge
+chmod -R g+rw "$(git rev-parse --show-toplevel)" 2>/dev/null || true
+HOOKEOF
+        chmod +x "$ANSIBLE_DIR/.git/hooks/post-merge" 2>/dev/null || true
+        
+        # Create post-checkout hook (for git checkout, git reset)
+        cp "$ANSIBLE_DIR/.git/hooks/post-merge" "$ANSIBLE_DIR/.git/hooks/post-checkout" 2>/dev/null || true
+    fi
+    
     # Add git safe.directory for www-data user
     # First ensure www-data can write to /var/www for .gitconfig
     sudo chmod 775 /var/www 2>/dev/null || true
@@ -206,11 +225,30 @@ else
         echo "     Ensuring web access permissions..."
         sudo usermod -a -G $(whoami) www-data 2>/dev/null || true
         
-        # Ensure ansible directory has group write permission
-        chmod -R g+rw "$ANSIBLE_DIR" 2>/dev/null || true
+    # Ensure ansible directory has group write permission
+    chmod -R g+rw "$ANSIBLE_DIR" 2>/dev/null || true
+    
+    # Set default ACL so new files also get group write permission (survives git operations)
+    if command -v setfacl &> /dev/null; then
+        setfacl -R -d -m g::rwX "$ANSIBLE_DIR" 2>/dev/null || true
+    fi
+    
+    # If git repo exists, add hooks to fix permissions after git operations
+    if [[ -d "$ANSIBLE_DIR/.git" ]]; then
+        # Create post-merge hook
+        cat > "$ANSIBLE_DIR/.git/hooks/post-merge" << 'HOOKEOF'
+#!/bin/bash
+# Fix permissions after git pull/merge
+chmod -R g+rw "$(git rev-parse --show-toplevel)" 2>/dev/null || true
+HOOKEOF
+        chmod +x "$ANSIBLE_DIR/.git/hooks/post-merge" 2>/dev/null || true
         
-        # Add git safe.directory for www-data user
-        sudo -u www-data git config --global --add safe.directory "$ANSIBLE_DIR" 2>/dev/null || true
+        # Create post-checkout hook (for git checkout, git reset)
+        cp "$ANSIBLE_DIR/.git/hooks/post-merge" "$ANSIBLE_DIR/.git/hooks/post-checkout" 2>/dev/null || true
+    fi
+    
+    # Add git safe.directory for www-data user
+    sudo -u www-data git config --global --add safe.directory "$ANSIBLE_DIR" 2>/dev/null || true
         
         echo "     ✅ Ansible directory configured: $ANSIBLE_DIR"
     else

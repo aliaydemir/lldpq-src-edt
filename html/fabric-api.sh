@@ -2434,6 +2434,245 @@ except Exception as e:
     print(json.dumps({'success': False, 'error': str(e)}))
 PYTHON
         ;;
+    add-external-peer)
+        # Add a new external BGP peer
+        # Creates subinterface + adds peer to BGP profile
+        read -r POST_DATA
+        python3 << PYTHON
+import json
+import yaml
+import os
+
+try:
+    data = json.loads('''$POST_DATA''')
+except:
+    import sys
+    data = json.loads(sys.stdin.read()) if not sys.stdin.isatty() else {}
+
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+
+try:
+    device = data.get('device', '')
+    vrf = data.get('vrf', '')
+    interface = data.get('interface', '')  # e.g., swp1.1002
+    vlan_id = data.get('vlan_id', '')
+    local_ip = data.get('local_ip', '')
+    remote_peer = data.get('remote_peer', '')
+    
+    if not all([device, vrf, interface, local_ip, remote_peer]):
+        print(json.dumps({'success': False, 'error': 'Missing required fields'}))
+        exit(0)
+    
+    # Parse interface name
+    if '.' in interface:
+        parent_if, sub_id = interface.split('.', 1)
+    else:
+        print(json.dumps({'success': False, 'error': 'Invalid interface format, expected swpX.VLAN'}))
+        exit(0)
+    
+    # 1. Update host_vars - add subinterface
+    host_file = os.path.join(ansible_dir, 'inventory', 'host_vars', f'{device}.yaml')
+    
+    if not os.path.exists(host_file):
+        print(json.dumps({'success': False, 'error': f'Device file not found: {device}.yaml'}))
+        exit(0)
+    
+    with open(host_file, 'r') as f:
+        host_data = yaml.safe_load(f) or {}
+    
+    # Get VRF's BGP profile
+    vrfs = host_data.get('vrfs', {})
+    if vrf not in vrfs:
+        print(json.dumps({'success': False, 'error': f'VRF {vrf} not found on device'}))
+        exit(0)
+    
+    bgp_profile = vrfs[vrf].get('bgp', {}).get('bgp_profile', '')
+    if not bgp_profile:
+        print(json.dumps({'success': False, 'error': f'No BGP profile configured for VRF {vrf}'}))
+        exit(0)
+    
+    # Create subinterface
+    if 'interfaces' not in host_data:
+        host_data['interfaces'] = {}
+    
+    if parent_if not in host_data['interfaces']:
+        host_data['interfaces'][parent_if] = {'description': 'External BGP'}
+    
+    if 'subinterfaces' not in host_data['interfaces'][parent_if]:
+        host_data['interfaces'][parent_if]['subinterfaces'] = {}
+    
+    # Add subinterface
+    host_data['interfaces'][parent_if]['subinterfaces'][int(sub_id)] = {
+        'ip': local_ip,
+        'vlan': int(sub_id),
+        'vrf': vrf
+    }
+    
+    # Save host_vars
+    with open(host_file, 'w') as f:
+        yaml.dump(host_data, f, default_flow_style=False, sort_keys=False)
+    
+    # 2. Update BGP profile - add peer to External group
+    bgp_profiles_file = os.path.join(ansible_dir, 'inventory', 'group_vars', 'all', 'bgp_profiles.yaml')
+    
+    with open(bgp_profiles_file, 'r') as f:
+        bgp_data = yaml.safe_load(f) or {}
+    
+    profiles = bgp_data.get('bgp_profiles', {})
+    
+    if bgp_profile not in profiles:
+        print(json.dumps({'success': False, 'error': f'BGP profile {bgp_profile} not found'}))
+        exit(0)
+    
+    profile = profiles[bgp_profile]
+    peer_groups = profile.get('peer_groups', {})
+    
+    if 'External' not in peer_groups:
+        print(json.dumps({'success': False, 'error': f'External peer group not found in profile {bgp_profile}'}))
+        exit(0)
+    
+    external_pg = peer_groups['External']
+    
+    # Initialize peers dict if needed
+    if 'peers' not in external_pg:
+        external_pg['peers'] = {}
+    
+    # Handle both list and dict formats
+    if isinstance(external_pg['peers'], list):
+        if remote_peer not in external_pg['peers']:
+            external_pg['peers'].append(remote_peer)
+    else:
+        # Dict format - add peer with empty value (or could add config)
+        external_pg['peers'][remote_peer] = None
+    
+    # Save bgp_profiles
+    with open(bgp_profiles_file, 'w') as f:
+        yaml.dump(bgp_data, f, default_flow_style=False, sort_keys=False)
+    
+    print(json.dumps({
+        'success': True, 
+        'message': f'Added external peer {remote_peer} on {device} ({interface})',
+        'bgp_profile': bgp_profile
+    }))
+
+except Exception as e:
+    import traceback
+    print(json.dumps({'success': False, 'error': str(e), 'trace': traceback.format_exc()}))
+PYTHON
+        ;;
+    list-external-peers)
+        # List all external BGP peers across all devices
+        python3 << 'PYTHON'
+import json
+import yaml
+import os
+import glob
+
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+
+try:
+    # Load BGP profiles
+    bgp_profiles_file = os.path.join(ansible_dir, 'inventory', 'group_vars', 'all', 'bgp_profiles.yaml')
+    bgp_profiles = {}
+    profiles_with_external = {}
+    
+    if os.path.exists(bgp_profiles_file):
+        with open(bgp_profiles_file, 'r') as f:
+            bgp_data = yaml.safe_load(f) or {}
+            bgp_profiles = bgp_data.get('bgp_profiles', {})
+    
+    # Find profiles that have "External" peer group
+    for profile_name, profile_config in bgp_profiles.items():
+        peer_groups = profile_config.get('peer_groups', {})
+        if 'External' in peer_groups:
+            external_pg = peer_groups['External']
+            profiles_with_external[profile_name] = {
+                'peers': list(external_pg.get('peers', {}).keys()) if isinstance(external_pg.get('peers'), dict) else external_pg.get('peers', []),
+                'bfd_enabled': external_pg.get('enable_bfd', False),
+                'description': external_pg.get('description', ''),
+                'has_external': True
+            }
+    
+    # Load all devices and find those using external profiles
+    peers = []
+    devices = []
+    host_vars_dir = os.path.join(ansible_dir, 'inventory', 'host_vars')
+    
+    for host_file in glob.glob(os.path.join(host_vars_dir, '*.yaml')):
+        hostname = os.path.basename(host_file).replace('.yaml', '')
+        
+        with open(host_file, 'r') as f:
+            host_data = yaml.safe_load(f) or {}
+        
+        # Check VRFs for external BGP profiles
+        vrfs = host_data.get('vrfs', {})
+        interfaces = host_data.get('interfaces', {})
+        has_external = False
+        
+        for vrf_name, vrf_config in vrfs.items():
+            bgp_config = vrf_config.get('bgp', {})
+            profile_name = bgp_config.get('bgp_profile', '')
+            
+            if profile_name in profiles_with_external:
+                has_external = True
+                external_info = profiles_with_external[profile_name]
+                
+                # Get peer IPs from the profile
+                peer_ips = external_info['peers']
+                
+                # Try to match subinterfaces to find local IPs
+                for peer_ip in peer_ips:
+                    # Find matching subinterface (same /31 network)
+                    local_ip = ''
+                    interface_name = ''
+                    
+                    for if_name, if_config in interfaces.items():
+                        subinterfaces = if_config.get('subinterfaces', {})
+                        for sub_id, sub_config in subinterfaces.items():
+                            sub_ip = sub_config.get('ip', '')
+                            sub_vrf = sub_config.get('vrf', '')
+                            
+                            # Check if this subinterface is in the same VRF
+                            if sub_vrf == vrf_name and sub_ip:
+                                # Check if IPs are in same /31 (simple check)
+                                local_base = sub_ip.split('/')[0].rsplit('.', 1)[0]
+                                peer_base = str(peer_ip).rsplit('.', 1)[0]
+                                
+                                if local_base == peer_base:
+                                    local_ip = sub_ip
+                                    interface_name = f"{if_name}.{sub_id}"
+                                    break
+                        if local_ip:
+                            break
+                    
+                    peers.append({
+                        'device': hostname,
+                        'vrf': vrf_name,
+                        'bgp_profile': profile_name,
+                        'interface': interface_name,
+                        'local_ip': local_ip.split('/')[0] if local_ip else '',
+                        'remote_peer': str(peer_ip),
+                        'bfd_enabled': external_info['bfd_enabled']
+                    })
+        
+        if has_external:
+            devices.append({'hostname': hostname})
+    
+    # Sort peers by device, then vrf
+    peers.sort(key=lambda x: (x['device'], x['vrf'], x['remote_peer']))
+    
+    print(json.dumps({
+        'success': True,
+        'peers': peers,
+        'devices': devices,
+        'bgp_profiles': {k: {'has_external': True, 'bfd_enabled': v['bfd_enabled']} for k, v in profiles_with_external.items()}
+    }))
+
+except Exception as e:
+    import traceback
+    print(json.dumps({'success': False, 'error': str(e), 'trace': traceback.format_exc()}))
+PYTHON
+        ;;
     *)
         echo '{"success": false, "error": "Unknown action: '"$ACTION"'"}'
         ;;
