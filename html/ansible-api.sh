@@ -487,6 +487,34 @@ case "$ACTION" in
     git-diff)
         git_diff
         ;;
+    get-modified-devices)
+        # Get list of modified device hostnames from git diff
+        cd "$ANSIBLE_DIR" || { json_response '{"success": false, "error": "Cannot access ansible directory"}'; exit 0; }
+        git config --global --add safe.directory "$ANSIBLE_DIR" 2>/dev/null || true
+        
+        # Get modified files in inventory/host_vars/
+        modified_files=$(git diff --name-only 2>/dev/null | grep "^inventory/host_vars/" | grep "\.yaml$" || true)
+        
+        # Also check untracked new files
+        untracked_files=$(git ls-files --others --exclude-standard 2>/dev/null | grep "^inventory/host_vars/" | grep "\.yaml$" || true)
+        
+        # Combine and extract hostnames
+        all_files=$(echo -e "${modified_files}\n${untracked_files}" | grep -v "^$" | sort -u)
+        
+        # Extract device names from file paths (inventory/host_vars/HOSTNAME.yaml)
+        devices_json=$(echo "$all_files" | while read -r file; do
+            if [ -n "$file" ]; then
+                hostname=$(basename "$file" .yaml)
+                echo "\"$hostname\""
+            fi
+        done | paste -sd, -)
+        
+        if [ -z "$devices_json" ]; then
+            devices_json=""
+        fi
+        
+        json_response "{\"success\": true, \"modified_devices\": [${devices_json}], \"count\": $(echo "$all_files" | grep -c . || echo 0)}"
+        ;;
     image)
         # Serve image file
         FILE=$(echo "$QUERY_STRING" | sed -n 's/.*file=\([^&]*\).*/\1/p' | python3 -c "import sys, urllib.parse; print(urllib.parse.unquote(sys.stdin.read().strip()))")
