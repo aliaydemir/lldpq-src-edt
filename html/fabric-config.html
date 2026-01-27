@@ -205,6 +205,13 @@
         .btn-primary {
             background: linear-gradient(0deg, #76b900 0%, #5a8c00 100%);
             color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            outline: none;
         }
         
         .btn-primary:hover {
@@ -214,15 +221,40 @@
         .btn-secondary {
             background: #404040;
             color: #d4d4d4;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            outline: none;
         }
         
         .btn-secondary:hover {
             background: #505050;
         }
         
+        .btn-danger {
+            background: linear-gradient(0deg, #dc3545 0%, #c82333 100%);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            outline: none;
+        }
+        
+        .btn-danger:hover {
+            background: linear-gradient(0deg, #e4606d 0%, #d63344 100%);
+        }
+
         .btn-warning {
             background: linear-gradient(0deg, #ff6b00 0%, #cc5500 100%);
             color: white;
+            border: none;
+            outline: none;
         }
         
         .btn-warning:hover {
@@ -244,6 +276,8 @@
         .btn-success {
             background: linear-gradient(0deg, #76b900 0%, #5a8c00 100%);
             color: white;
+            border: none;
+            outline: none;
         }
         
         .btn-success:hover {
@@ -566,6 +600,11 @@
             color: #ffb74d;
         }
         
+        .badge-red {
+            background: rgba(244, 67, 54, 0.2);
+            color: #ef5350;
+        }
+        
         .badge-gray {
             background: rgba(128, 128, 128, 0.2);
             color: #aaa;
@@ -870,38 +909,12 @@
             border-radius: 0 0 8px 8px;
         }
         
-        .btn-cancel {
-            background: #444;
-            color: #fff;
-            border: none;
-            border-radius: 4px;
-            padding: 10px 20px;
-            cursor: pointer;
-            font-size: 14px;
-        }
-        
-        .btn-cancel:hover {
-            background: #555;
-        }
-        
-        .btn-create {
-            background: #76b900;
-            color: #fff;
-            border: none;
-            border-radius: 4px;
-            padding: 10px 20px;
-            cursor: pointer;
-            font-size: 14px;
-            font-weight: 500;
-        }
-        
-        .btn-create:hover {
-            background: #8fcf00;
-        }
-        
-        .btn-create:disabled {
+        .btn-primary:disabled,
+        .btn-secondary:disabled,
+        .btn-danger:disabled {
             background: #444;
             cursor: not-allowed;
+            opacity: 0.7;
         }
         
         .vrr-fields {
@@ -1059,6 +1072,23 @@
             <div class="output-modal-footer">
                 <button class="btn btn-secondary" onclick="hideOutputModal()">Close</button>
                 <button class="btn btn-primary" onclick="copyOutput()">Copy</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Confirm Modal -->
+    <div id="confirm-modal" class="vlan-modal" onclick="if(event.target === this) closeConfirmModal()">
+        <div class="vlan-modal-content" style="max-width: 450px;">
+            <div class="vlan-modal-header" style="background: linear-gradient(135deg, #f57c00 0%, #e65100 100%);">
+                <h3 id="confirm-modal-title">Confirm</h3>
+                <button class="vlan-modal-close" onclick="closeConfirmModal()">×</button>
+            </div>
+            <div class="vlan-modal-body">
+                <p id="confirm-modal-message" style="color: #ccc; line-height: 1.6;"></p>
+            </div>
+            <div class="vlan-modal-footer">
+                <button type="button" class="btn-secondary" onclick="closeConfirmModal()">Cancel</button>
+                <button type="button" class="btn-danger" onclick="executeConfirm()">Confirm</button>
             </div>
         </div>
     </div>
@@ -1889,12 +1919,20 @@
                                     </svg>
                                     Interfaces (${realInterfaces.length})
                                 </div>
-                                <button class="btn-add-small" onclick="openCreateSubifModal()" title="Create Subinterface">
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                                        <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
-                                    </svg>
-                                    Subif
-                                </button>
+                                <div style="display: flex; gap: 8px;">
+                                    <button class="btn-add-small" onclick="openCreateSubifModal()" title="Create Subinterface">
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                                            <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                                        </svg>
+                                        SubIF
+                                    </button>
+                                    <button class="btn-add-small" onclick="openCreateBondModal()" title="Create Bond">
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                                            <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                                        </svg>
+                                        Bond
+                                    </button>
+                                </div>
                             </div>
                             <div class="section-content-table">
                                 <table class="data-table">
@@ -1986,6 +2024,8 @@
                                         <th>VLAN</th>
                                         <th>VRF</th>
                                         <th>ESI</th>
+                                        <th>LACP Mode</th>
+                                        <th>LACP Bypass</th>
                                         <th>Description</th>
                                         <th style="width: 60px;">Actions</th>
                                     </tr>
@@ -2001,6 +2041,12 @@
                     const displayVrf = vrf || (vlan ? 'default' : null);
                     const members = cfg.bond_members?.join(', ') || '-';
                     const esi = cfg.evpn_mh_id ? `ES-${cfg.evpn_mh_id}` : '-';
+                    // bond_mode can be 'lacp', 'static', or 'active'/'passive' (which means lacp mode)
+                    // If bond_mode is 'active' or 'passive', it's actually the LACP mode
+                    const bondMode = cfg.bond_mode || '';
+                    const isActive = bondMode === 'active';
+                    const lacpMode = isActive ? 'ACTIVE' : 'PASSIVE';
+                    const lacpBypass = cfg.lacp_bypass ? true : false;
                     
                     // Escape quotes for onclick
                     const escapedBondName = bondName.replace(/'/g, "\\'");
@@ -2016,6 +2062,8 @@
                             <td>${vlan ? `<span class="badge badge-green">${vlan}</span>` : '-'}</td>
                             <td>${displayVrf ? `<span class="badge badge-blue">${displayVrf}</span>` : '-'}</td>
                             <td>${esi !== '-' ? `<span class="badge badge-orange">${esi}</span>` : '-'}</td>
+                            <td><span class="badge ${isActive ? 'badge-green' : 'badge-orange'}">${lacpMode}</span></td>
+                            <td>${lacpBypass ? '<span class="badge badge-green">Yes</span>' : '<span class="badge badge-red">No</span>'}</td>
                             <td>${cfg.description || '-'}</td>
                             <td>
                                 <button class="btn-icon btn-icon-edit" onclick="openBondEditModal('${escapedBondName}', '${escapedBondProfile}', '${escapedBondDesc}', '${bondCfgJson}')" title="Edit Bond">
@@ -2065,6 +2113,34 @@
             } else {
                 overlay.classList.remove('visible');
             }
+        }
+        
+        // Show alert (wrapper for showOutputModal with simple messages)
+        function showAlert(message, type = 'error') {
+            const title = type === 'error' ? 'Error' : (type === 'warning' ? 'Warning' : 'Info');
+            const color = type === 'error' ? '#ff6b6b' : (type === 'warning' ? '#ffc107' : '#76b900');
+            showOutputModal(title, `<div style="color: ${color};">${message}</div>`, type, true);
+        }
+        
+        // Custom confirm dialog
+        let confirmCallback = null;
+        function showConfirm(title, message, onConfirm) {
+            document.getElementById('confirm-modal-title').textContent = title;
+            document.getElementById('confirm-modal-message').innerHTML = message;
+            confirmCallback = onConfirm;
+            document.getElementById('confirm-modal').classList.add('visible');
+        }
+        
+        function closeConfirmModal() {
+            document.getElementById('confirm-modal').classList.remove('visible');
+            confirmCallback = null;
+        }
+        
+        function executeConfirm() {
+            if (confirmCallback) {
+                confirmCallback();
+            }
+            closeConfirmModal();
         }
         
         // Show output modal
@@ -2262,20 +2338,22 @@
         }
         
         // Run Deploy
-        async function runDeploy() {
+        function runDeploy() {
             const host = getTargetHost();
             if (!host) {
                 showOutputModal('Error', 'Please select a device first', 'error');
                 return;
             }
             
-            // Confirm deployment
-            const confirmMsg = `Are you sure you want to deploy configuration to ${host}?\n\nThis will apply changes to the live network device.`;
-            
-            if (!confirm(confirmMsg)) {
-                return;
-            }
-            
+            // Confirm deployment with custom modal
+            showConfirm(
+                'Confirm Deploy',
+                `Are you sure you want to deploy configuration to <strong>${host}</strong>?<br><br>This will apply changes to the live network device.`,
+                () => executeDeployment(host)
+            );
+        }
+        
+        async function executeDeployment(host) {
             showLoading(true, `Deploying to ${host}...`);
             setStatus('Deploying...');
             
@@ -2401,7 +2479,7 @@
         // Unassign VLAN from current device
         function confirmUnassignVlan(profileName) {
             if (!selectedDevice) {
-                alert('No device selected');
+                showAlert('No device selected');
                 return;
             }
             
@@ -2443,10 +2521,10 @@
                         'success', true);
                     selectDevice(selectedDevice);
                 } else {
-                    alert('Error: ' + result.error);
+                    showAlert('Error: ' + result.error);
                 }
             } catch (e) {
-                alert('Failed to unassign VLAN: ' + e.message);
+                showAlert('Failed to unassign VLAN: ' + e.message);
             }
         }
         
@@ -2510,7 +2588,7 @@
             
             const vp = vlanProfiles[profileName];
             if (!vp) {
-                alert('VLAN profile not found');
+                showAlert('VLAN profile not found');
                 return;
             }
             
@@ -2733,10 +2811,10 @@
                     showOutputModal('VLAN Updated', msg, 'success', true);
                     if (selectedDevice) selectDevice(selectedDevice);
                 } else {
-                    alert('Error: ' + result.error);
+                    showAlert('Error: ' + result.error);
                 }
             } catch (e) {
-                alert('Failed to update VLAN: ' + e.message);
+                showAlert('Failed to update VLAN: ' + e.message);
             } finally {
                 saveBtn.disabled = false;
                 saveBtn.textContent = 'Save Changes';
@@ -2783,7 +2861,7 @@
         
         function openAssignVlanModal() {
             if (!selectedDevice) {
-                alert('Please select a device first');
+                showAlert('Please select a device first');
                 return;
             }
             
@@ -2841,7 +2919,7 @@
             const vlansToAssign = Array.from(checkboxes).map(cb => cb.value);
             
             if (vlansToAssign.length === 0) {
-                alert('Please select at least one VLAN to assign');
+                showAlert('Please select at least one VLAN to assign');
                 return;
             }
             
@@ -2874,10 +2952,10 @@
                     // Refresh device view
                     selectDevice(selectedDevice);
                 } else {
-                    alert('Error: ' + result.error);
+                    showAlert('Error: ' + result.error);
                 }
             } catch (e) {
-                alert('Failed to assign VLANs: ' + e.message);
+                showAlert('Failed to assign VLANs: ' + e.message);
             } finally {
                 assignBtn.disabled = false;
                 assignBtn.textContent = 'Assign Selected';
@@ -2917,10 +2995,10 @@
                         selectDevice(selectedDevice);
                     }
                 } else {
-                    alert('Error: ' + result.error);
+                    showAlert('Error: ' + result.error);
                 }
             } catch (e) {
-                alert('Failed to delete VLAN: ' + e.message);
+                showAlert('Failed to delete VLAN: ' + e.message);
             } finally {
                 deleteBtn.disabled = false;
                 deleteBtn.textContent = 'Delete';
@@ -3013,7 +3091,7 @@
             
             const description = document.getElementById('vlan-description').value.trim();
             if (!description) {
-                alert('Description is required');
+                showAlert('Description is required');
                 return;
             }
             
@@ -3025,20 +3103,20 @@
                 const endId = parseInt(document.getElementById('vlan-end-id').value);
                 
                 if (!startId || !endId || startId < 1 || endId > 4094) {
-                    alert('VLAN IDs must be between 1 and 4094');
+                    showAlert('VLAN IDs must be between 1 and 4094');
                     createBtn.disabled = false;
                     return;
                 }
                 
                 if (startId > endId) {
-                    alert('Start VLAN ID must be less than or equal to End VLAN ID');
+                    showAlert('Start VLAN ID must be less than or equal to End VLAN ID');
                     createBtn.disabled = false;
                     return;
                 }
                 
                 const count = endId - startId + 1;
                 if (count > 500) {
-                    alert('Maximum 500 VLANs can be created at once');
+                    showAlert('Maximum 500 VLANs can be created at once');
                     createBtn.disabled = false;
                     return;
                 }
@@ -3115,7 +3193,7 @@
             // Single VLAN mode
             const vlanId = parseInt(document.getElementById('vlan-id').value);
             if (!vlanId || vlanId < 1 || vlanId > 4094) {
-                alert('VLAN ID must be between 1 and 4094');
+                showAlert('VLAN ID must be between 1 and 4094');
                 createBtn.disabled = false;
                 return;
             }
@@ -3329,22 +3407,22 @@
             const leakFromVrf = document.getElementById('vrf-leak-from').value;
             
             if (!selectedDevice) {
-                alert('Please select a device first');
+                showAlert('Please select a device first');
                 return;
             }
             
             if (!vrfName) {
-                alert('VRF name is required');
+                showAlert('VRF name is required');
                 return;
             }
             
             if (!l3vni) {
-                alert('L3VNI is required');
+                showAlert('L3VNI is required');
                 return;
             }
             
             if (leakingEnabled && !leakFromVrf) {
-                alert('Please select a VRF to leak from');
+                showAlert('Please select a VRF to leak from');
                 return;
             }
             
@@ -3391,10 +3469,10 @@
                     }
                     showOutputModal('VRF Created', message, 'success', true);
                 } else {
-                    alert('Error: ' + (result.error || 'Unknown error'));
+                    showAlert('Error: ' + (result.error || 'Unknown error'));
                 }
             } catch (e) {
-                alert('Error: ' + e.message);
+                showAlert('Error: ' + e.message);
             }
             
             createBtn.disabled = false;
@@ -3404,7 +3482,7 @@
         // Open Assign VRF Modal
         async function openAssignVrfModal() {
             if (!selectedDevice) {
-                alert('Please select a device first');
+                showAlert('Please select a device first');
                 return;
             }
             
@@ -3459,7 +3537,7 @@
         async function assignVrfs() {
             const checkboxes = document.querySelectorAll('#assign-vrf-list input[type="checkbox"]:checked');
             if (checkboxes.length === 0) {
-                alert('Please select at least one VRF');
+                showAlert('Please select at least one VRF');
                 return;
             }
             
@@ -3494,10 +3572,10 @@
                         `<div style="color: #888;">Run <strong>Deploy</strong> to apply changes.</div>`,
                         'success', true);
                 } else {
-                    alert('Error: ' + (result.error || 'Unknown error'));
+                    showAlert('Error: ' + (result.error || 'Unknown error'));
                 }
             } catch (e) {
-                alert('Error: ' + e.message);
+                showAlert('Error: ' + e.message);
             }
             
             assignBtn.disabled = false;
@@ -3509,7 +3587,7 @@
         
         function confirmUnassignVrf(vrfName) {
             if (!selectedDevice) {
-                alert('No device selected');
+                showAlert('No device selected');
                 return;
             }
             
@@ -3553,10 +3631,10 @@
                     
                     showOutputModal('VRF Removed', message, 'success', true);
                 } else {
-                    alert('Error: ' + result.error);
+                    showAlert('Error: ' + result.error);
                 }
             } catch (e) {
-                alert('Error: ' + e.message);
+                showAlert('Error: ' + e.message);
             }
         }
         
@@ -3698,6 +3776,78 @@
             }
         }
         
+        // ==================== CREATE BOND ====================
+        
+        function openCreateBondModal() {
+            const modal = document.getElementById('create-bond-modal');
+            
+            // Populate port profile dropdown
+            populateVlanProfilesDropdown('bond-profile', '');
+            
+            // Clear form
+            document.getElementById('bond-name').value = '';
+            document.getElementById('bond-mh-id').value = '';
+            document.getElementById('bond-mode').value = 'lacp';
+            document.getElementById('bond-lacp-bypass').checked = false;
+            document.getElementById('bond-description').value = '';
+            
+            modal.classList.add('visible');
+        }
+        
+        function closeCreateBondModal() {
+            document.getElementById('create-bond-modal').classList.remove('visible');
+        }
+        
+        async function saveCreateBond() {
+            const bondName = document.getElementById('bond-name').value.trim();
+            const profile = document.getElementById('bond-profile').value;
+            const mhId = document.getElementById('bond-mh-id').value;
+            const bondMode = document.getElementById('bond-mode').value;
+            const lacpBypass = document.getElementById('bond-lacp-bypass').checked;
+            const description = document.getElementById('bond-description').value.trim();
+            
+            if (!bondName) {
+                showAlert('Please enter a bond name');
+                return;
+            }
+            
+            const saveBtn = document.getElementById('btn-create-bond');
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Creating...';
+            
+            try {
+                const response = await fetch('/fabric-api.sh?action=create-bond', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        device: selectedDevice,
+                        bond_name: bondName,
+                        profile: profile,
+                        evpn_mh_id: mhId,
+                        bond_mode: bondMode,
+                        lacp_bypass: lacpBypass,
+                        description: description
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    closeCreateBondModal();
+                    await selectDevice(selectedDevice);
+                    showOutputModal('Bond Created', 
+                        `<div style="color: #76b900; margin-bottom: 15px;">✓ Bond ${bondName} created successfully</div>` +
+                        `<div style="color: #888;">Run <strong>Deploy</strong> to apply changes. Then assign interfaces as bond members.</div>`,
+                        'success', true);
+                } else {
+                    showAlert('Error: ' + (result.error || 'Failed to create bond'));
+                }
+            } finally {
+                saveBtn.disabled = false;
+                saveBtn.textContent = 'Create Bond';
+            }
+        }
+        
         // ==================== CREATE SUBINTERFACE ====================
         
         function openCreateSubifModal() {
@@ -3747,7 +3897,7 @@
             const description = document.getElementById('subif-description').value.trim();
             
             if (!parentIf || !subifId || !vlanId) {
-                alert('Please fill in Parent Interface, Subinterface ID, and VLAN ID');
+                showAlert('Please fill in Parent Interface, Subinterface ID, and VLAN ID');
                 return;
             }
             
@@ -3780,10 +3930,10 @@
                         `<div style="color: #888;">Run <strong>Deploy</strong> to apply changes.</div>`,
                         'success', true);
                 } else {
-                    alert('Error: ' + (result.error || 'Unknown error'));
+                    showAlert('Error: ' + (result.error || 'Unknown error'));
                 }
             } catch (e) {
-                alert('Error: ' + e.message);
+                showAlert('Error: ' + e.message);
             }
             
             saveBtn.disabled = false;
@@ -3907,6 +4057,9 @@
             
             document.getElementById('interface-edit-description').value = currentDesc || '';
             
+            // Show delete button only for subinterfaces
+            document.getElementById('btn-delete-interface').style.display = isExistingSubif ? 'block' : 'none';
+            
             modal.classList.add('visible');
         }
         
@@ -3943,6 +4096,9 @@
             document.getElementById('interface-edit-bond-mode').checked = config.bond_mode === 'active';
             document.getElementById('interface-edit-lacp-bypass').checked = config.lacp_bypass === true;
             document.getElementById('interface-edit-description').value = currentDesc || '';
+            
+            // Show delete button for bonds
+            document.getElementById('btn-delete-interface').style.display = 'block';
             
             modal.classList.add('visible');
         }
@@ -4001,6 +4157,51 @@
         
         function closeInterfaceEditModal() {
             document.getElementById('interface-edit-modal').classList.remove('visible');
+        }
+        
+        function confirmDeleteInterface() {
+            const ifName = document.getElementById('interface-edit-name').value;
+            const ifType = document.getElementById('interface-edit-type').value;
+            const typeLabel = ifType === 'bond' ? 'Bond' : 'Subinterface';
+            
+            // Close the edit modal first
+            closeInterfaceEditModal();
+            
+            showConfirm(
+                `Delete ${typeLabel}`,
+                `Are you sure you want to delete <strong>${ifName}</strong>?<br><br>This action cannot be undone.`,
+                () => executeDeleteInterface(ifName, ifType)
+            );
+        }
+        
+        async function executeDeleteInterface(ifName, ifType) {
+            try {
+                const action = ifType === 'bond' ? 'delete-bond' : 'delete-subinterface';
+                const response = await fetch(`/fabric-api.sh?action=${action}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        device: selectedDevice,
+                        name: ifName
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    closeInterfaceEditModal();
+                    await selectDevice(selectedDevice);
+                    const typeLabel = ifType === 'bond' ? 'Bond' : 'Subinterface';
+                    showOutputModal(`${typeLabel} Deleted`, 
+                        `<div style="color: #76b900; margin-bottom: 15px;">✓ ${ifName} deleted successfully</div>` +
+                        `<div style="color: #888;">Run <strong>Deploy</strong> to apply changes.</div>`,
+                        'success', true);
+                } else {
+                    showAlert('Error: ' + (result.error || 'Unknown error'));
+                }
+            } catch (e) {
+                showAlert('Error: ' + e.message);
+            }
         }
         
         async function saveInterfaceEdit() {
@@ -4062,10 +4263,10 @@
                         `<div style="color: #888;">Run <strong>Deploy</strong> to apply changes.</div>`,
                         'success', true);
                 } else {
-                    alert('Error: ' + (result.error || 'Unknown error'));
+                    showAlert('Error: ' + (result.error || 'Unknown error'));
                 }
             } catch (e) {
-                alert('Error: ' + e.message);
+                showAlert('Error: ' + e.message);
             }
             
             saveBtn.disabled = false;
@@ -4077,7 +4278,7 @@
         
         async function openDhcpRelayModal(editIdx = null) {
             if (!selectedDevice) {
-                alert('Please select a device first');
+                showAlert('Please select a device first');
                 return;
             }
             
@@ -4193,15 +4394,15 @@
             const upstream = document.getElementById('dhcp-relay-upstream').value.trim();
             
             if (!vrf) {
-                alert('Please select a VRF');
+                showAlert('Please select a VRF');
                 return;
             }
             if (!interfaceVal) {
-                alert('Please select an interface');
+                showAlert('Please select an interface');
                 return;
             }
             if (!serversStr) {
-                alert('Please enter at least one DHCP server');
+                showAlert('Please enter at least one DHCP server');
                 return;
             }
             
@@ -4236,10 +4437,10 @@
                         `<div style="color: #888;">Run <strong>Deploy</strong> to apply changes.</div>`,
                         'success', true);
                 } else {
-                    alert('Error: ' + (result.error || 'Unknown error'));
+                    showAlert('Error: ' + (result.error || 'Unknown error'));
                 }
             } catch (e) {
-                alert('Error: ' + e.message);
+                showAlert('Error: ' + e.message);
             }
             
             saveBtn.disabled = false;
@@ -4294,10 +4495,10 @@
                         `<div style="color: #888;">Run <strong>Deploy</strong> to apply changes.</div>`,
                         'success', true);
                 } else {
-                    alert('Error: ' + (result.error || 'Unknown error'));
+                    showAlert('Error: ' + (result.error || 'Unknown error'));
                 }
             } catch (e) {
-                alert('Error: ' + e.message);
+                showAlert('Error: ' + e.message);
             }
         }
         
@@ -4449,8 +4650,8 @@
                 </form>
             </div>
             <div class="vlan-modal-footer">
-                <button class="btn-cancel" onclick="closeVlanModal()">Cancel</button>
-                <button class="btn-create" id="btn-create-vlan" onclick="createVlan()">Create VLAN</button>
+                <button class="btn-secondary" onclick="closeVlanModal()">Cancel</button>
+                <button class="btn-primary" id="btn-create-vlan" onclick="createVlan()">Create VLAN</button>
             </div>
         </div>
     </div>
@@ -4472,8 +4673,8 @@
                 <p style="color: #666; font-size: 12px; margin-top: 15px;">This will only remove the VLAN from this device.<br>The VLAN profile will not be deleted globally.</p>
             </div>
             <div class="vlan-modal-footer" style="justify-content: center; gap: 15px;">
-                <button class="btn-cancel" onclick="closeUnassignModal()">Cancel</button>
-                <button class="btn-create" onclick="confirmUnassign()" style="background: #ff9800;">Remove</button>
+                <button class="btn-secondary" onclick="closeUnassignModal()">Cancel</button>
+                <button class="btn-danger" onclick="confirmUnassign()">Remove</button>
             </div>
         </div>
     </div>
@@ -4495,8 +4696,8 @@
                 <p style="color: #888; font-size: 12px;">This will also remove the associated port profile from sw_port_profiles.yaml</p>
             </div>
             <div class="vlan-modal-footer" style="justify-content: center; gap: 15px;">
-                <button class="btn-cancel" onclick="closeDeleteModal()">Cancel</button>
-                <button class="btn-create" id="btn-confirm-delete" onclick="deleteVlan()" style="background: #dc3545;">Delete</button>
+                <button class="btn-secondary" onclick="closeDeleteModal()">Cancel</button>
+                <button class="btn-danger" id="btn-confirm-delete" onclick="deleteVlan()">Delete</button>
             </div>
         </div>
     </div>
@@ -4512,8 +4713,8 @@
                 <div id="assign-vlan-list"></div>
             </div>
             <div class="vlan-modal-footer">
-                <button class="btn-cancel" onclick="closeAssignVlanModal()">Cancel</button>
-                <button class="btn-create" id="btn-assign-vlans" onclick="assignVlans()" style="background: #2196f3;">Assign Selected</button>
+                <button class="btn-secondary" onclick="closeAssignVlanModal()">Cancel</button>
+                <button class="btn-primary" id="btn-assign-vlans" onclick="assignVlans()">Assign Selected</button>
             </div>
         </div>
     </div>
@@ -4529,7 +4730,7 @@
                 <div id="edit-vlan-list"></div>
             </div>
             <div class="vlan-modal-footer">
-                <button class="btn-cancel" onclick="closeEditVlanModal()">Close</button>
+                <button class="btn-secondary" onclick="closeEditVlanModal()">Close</button>
             </div>
         </div>
     </div>
@@ -4632,8 +4833,8 @@
                 </form>
             </div>
             <div class="vlan-modal-footer">
-                <button class="btn-cancel" onclick="closeEditFormModal()">Cancel</button>
-                <button class="btn-create" id="btn-save-vlan-edit" onclick="saveVlanEdit()">Save Changes</button>
+                <button class="btn-secondary" onclick="closeEditFormModal()">Cancel</button>
+                <button class="btn-primary" id="btn-save-vlan-edit" onclick="saveVlanEdit()">Save Changes</button>
             </div>
         </div>
     </div>
@@ -4696,8 +4897,8 @@
                 </form>
             </div>
             <div class="vlan-modal-footer">
-                <button class="btn-cancel" onclick="closeVrfModal()">Cancel</button>
-                <button class="btn-create" id="btn-create-vrf" onclick="createVrf()">Create VRF</button>
+                <button class="btn-secondary" onclick="closeVrfModal()">Cancel</button>
+                <button class="btn-primary" id="btn-create-vrf" onclick="createVrf()">Create VRF</button>
             </div>
         </div>
     </div>
@@ -4713,8 +4914,8 @@
                 <div id="assign-vrf-list"></div>
             </div>
             <div class="vlan-modal-footer">
-                <button class="btn-cancel" onclick="closeAssignVrfModal()">Cancel</button>
-                <button class="btn-create" id="btn-assign-vrfs" onclick="assignVrfs()" style="background: #2196f3;">Assign Selected</button>
+                <button class="btn-secondary" onclick="closeAssignVrfModal()">Cancel</button>
+                <button class="btn-primary" id="btn-assign-vrfs" onclick="assignVrfs()">Assign Selected</button>
             </div>
         </div>
     </div>
@@ -4736,8 +4937,8 @@
                 <p style="color: #ff9800; font-size: 12px; margin-top: 15px;">Warning: This may affect routing for VLANs using this VRF</p>
             </div>
             <div class="vlan-modal-footer" style="justify-content: center; gap: 15px;">
-                <button class="btn-cancel" onclick="closeUnassignVrfModal()">Cancel</button>
-                <button class="btn-create" onclick="confirmUnassignVrfAction()" style="background: #ff9800;">Remove</button>
+                <button class="btn-secondary" onclick="closeUnassignVrfModal()">Cancel</button>
+                <button class="btn-danger" onclick="confirmUnassignVrfAction()">Remove</button>
             </div>
         </div>
     </div>
@@ -4759,8 +4960,8 @@
                 <p style="color: #f44336; font-size: 12px; margin-top: 15px;">⚠ This will remove the VRF from ALL listed devices</p>
             </div>
             <div class="vlan-modal-footer" style="justify-content: center; gap: 15px;">
-                <button class="btn-cancel" onclick="closeDeleteVrfModal()">Cancel</button>
-                <button class="btn-create" id="btn-confirm-delete-vrf" onclick="executeDeleteVrf()" style="background: #f44336;">Delete VRF</button>
+                <button class="btn-secondary" onclick="closeDeleteVrfModal()">Cancel</button>
+                <button class="btn-danger" id="btn-confirm-delete-vrf" onclick="executeDeleteVrf()">Delete VRF</button>
             </div>
         </div>
     </div>
@@ -4776,7 +4977,65 @@
                 <div id="edit-vrf-list"></div>
             </div>
             <div class="vlan-modal-footer">
-                <button class="btn-cancel" onclick="closeEditVrfModal()">Close</button>
+                <button class="btn-secondary" onclick="closeEditVrfModal()">Close</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Create Bond Modal -->
+    <div class="vlan-modal" id="create-bond-modal">
+        <div class="vlan-modal-content" style="max-width: 500px;">
+            <div class="vlan-modal-header">
+                <h3>Create Bond</h3>
+                <button class="vlan-modal-close" onclick="closeCreateBondModal()">×</button>
+            </div>
+            <div class="vlan-modal-body">
+                <form id="create-bond-form" onsubmit="event.preventDefault(); saveCreateBond();">
+                    <div class="form-group">
+                        <label>Bond Name *</label>
+                        <input type="text" id="bond-name" placeholder="e.g., bond_dgx01" style="width: 100%; padding: 10px 12px; background: #1e1e1e; border: 1px solid #404040; border-radius: 4px; color: #fff; font-size: 14px;">
+                        <div class="form-hint">Name for the bond interface</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Port Profile</label>
+                        <select id="bond-profile" style="width: 100%; padding: 10px 12px; background: #1e1e1e; border: 1px solid #404040; border-radius: 4px; color: #fff; font-size: 14px;">
+                            <option value="">None (L3)</option>
+                        </select>
+                        <div class="form-hint">VLAN profile for this bond</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>EVPN MH ID</label>
+                        <input type="number" id="bond-mh-id" min="1" placeholder="e.g., 1" style="width: 100%; padding: 10px 12px; background: #1e1e1e; border: 1px solid #404040; border-radius: 4px; color: #fff; font-size: 14px;">
+                        <div class="form-hint">EVPN Multihoming ID for ESI</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Bond Mode</label>
+                        <select id="bond-mode" style="width: 100%; padding: 10px 12px; background: #1e1e1e; border: 1px solid #404040; border-radius: 4px; color: #fff; font-size: 14px;">
+                            <option value="lacp">LACP (802.3ad)</option>
+                            <option value="static">Static</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label style="display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" id="bond-lacp-bypass" style="width: 18px; height: 18px;">
+                            LACP Bypass
+                        </label>
+                        <div class="form-hint">Allow traffic when LACP is not established</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Description</label>
+                        <input type="text" id="bond-description" placeholder="e.g., DGX Server Connection" style="width: 100%; padding: 10px 12px; background: #1e1e1e; border: 1px solid #404040; border-radius: 4px; color: #fff; font-size: 14px;">
+                    </div>
+                </form>
+            </div>
+            <div class="vlan-modal-footer">
+                <button type="button" class="btn-secondary" onclick="closeCreateBondModal()">Cancel</button>
+                <button type="submit" class="btn-primary" id="btn-create-bond" onclick="saveCreateBond()">Create Bond</button>
             </div>
         </div>
     </div>
@@ -4953,9 +5212,12 @@
                     </div>
                 </form>
             </div>
-            <div class="vlan-modal-footer">
-                <button type="button" class="btn-secondary" onclick="closeInterfaceEditModal()">Cancel</button>
-                <button type="submit" class="btn-primary" id="btn-save-interface-edit" onclick="saveInterfaceEdit()">Save Changes</button>
+            <div class="vlan-modal-footer" style="display: flex; justify-content: space-between;">
+                <button type="button" class="btn-danger" id="btn-delete-interface" onclick="confirmDeleteInterface()" style="display: none;">Delete</button>
+                <div style="display: flex; gap: 10px; margin-left: auto;">
+                    <button type="button" class="btn-secondary" onclick="closeInterfaceEditModal()">Cancel</button>
+                    <button type="submit" class="btn-primary" id="btn-save-interface-edit" onclick="saveInterfaceEdit()">Save Changes</button>
+                </div>
             </div>
         </div>
     </div>
@@ -4999,8 +5261,8 @@
                 </form>
             </div>
             <div class="vlan-modal-footer">
-                <button class="btn-cancel" onclick="closeDhcpRelayModal()">Cancel</button>
-                <button class="btn-create" id="btn-save-dhcp-relay" onclick="saveDhcpRelay()">Create</button>
+                <button class="btn-secondary" onclick="closeDhcpRelayModal()">Cancel</button>
+                <button class="btn-primary" id="btn-save-dhcp-relay" onclick="saveDhcpRelay()">Create</button>
             </div>
         </div>
     </div>
@@ -5021,8 +5283,8 @@
                 <p style="color: #888; font-size: 13px; margin-top: 5px;">Interface: <span id="delete-dhcp-relay-interface" style="color: #4fc3f7;"></span></p>
             </div>
             <div class="vlan-modal-footer" style="justify-content: center; gap: 15px;">
-                <button class="btn-cancel" onclick="closeDeleteDhcpRelayModal()">Cancel</button>
-                <button class="btn-create" onclick="executeDeleteDhcpRelay()" style="background: #f44336;">Delete</button>
+                <button class="btn-secondary" onclick="closeDeleteDhcpRelayModal()">Cancel</button>
+                <button class="btn-danger" onclick="executeDeleteDhcpRelay()">Delete</button>
             </div>
         </div>
     </div>

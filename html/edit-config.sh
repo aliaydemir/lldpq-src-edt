@@ -45,11 +45,6 @@ except:
 ' 2>/dev/null)
     
     if [ -n "$CONTENT" ]; then
-        # Backup existing file
-        if [ -f "$CONFIG_FILE" ]; then
-            cp "$CONFIG_FILE" "${CONFIG_FILE}.bak"
-        fi
-        
         # Write new content
         echo "$CONTENT" > "$CONFIG_FILE"
         

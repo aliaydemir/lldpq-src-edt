@@ -47,11 +47,6 @@ except:
 ' 2>/dev/null)
     
     if [ -n "$CONTENT" ]; then
-        # Backup existing file
-        if [ -f "$TOPOLOGY_FILE" ]; then
-            cp "$TOPOLOGY_FILE" "${TOPOLOGY_FILE}.bak"
-        fi
-        
         # Write new content
         echo "$CONTENT" > "$TOPOLOGY_FILE"
         

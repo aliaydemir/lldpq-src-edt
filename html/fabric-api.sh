@@ -2162,6 +2162,215 @@ except Exception as e:
     print(json.dumps({'success': False, 'error': str(e)}))
 PYTHON
         ;;
+    create-bond)
+        # Create a new bond interface
+        read -r POST_DATA
+        python3 << PYTHON
+import json
+import yaml
+import sys
+import os
+
+try:
+    data = json.loads('''$POST_DATA''')
+except:
+    try:
+        data = json.loads(sys.stdin.read())
+    except:
+        print(json.dumps({'success': False, 'error': 'Invalid JSON data'}))
+        sys.exit(0)
+
+device = data.get('device', '')
+bond_name = data.get('bond_name', '')
+profile = data.get('profile', '')
+mh_id = data.get('evpn_mh_id', '')
+bond_mode = data.get('bond_mode', 'lacp')
+lacp_bypass = data.get('lacp_bypass', False)
+description = data.get('description', '')
+
+if not device or not bond_name:
+    print(json.dumps({'success': False, 'error': 'Device and bond name are required'}))
+    sys.exit(0)
+
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+host_file = f"{ansible_dir}/inventory/host_vars/{device}.yaml"
+
+try:
+    # Load host file
+    with open(host_file, 'r') as f:
+        host_data = yaml.safe_load(f) or {}
+    
+    # Initialize bonds if not exists
+    if 'bonds' not in host_data:
+        host_data['bonds'] = {}
+    
+    # Check if bond already exists
+    if bond_name in host_data['bonds']:
+        print(json.dumps({'success': False, 'error': f'Bond {bond_name} already exists'}))
+        sys.exit(0)
+    
+    # Create bond entry
+    bond_entry = {}
+    
+    if profile:
+        bond_entry['sw_port_profile'] = profile
+    
+    if mh_id:
+        bond_entry['evpn_mh_id'] = int(mh_id)
+    
+    if bond_mode and bond_mode != 'lacp':
+        bond_entry['bond_mode'] = bond_mode
+    
+    if lacp_bypass:
+        bond_entry['lacp_bypass'] = True
+    
+    if description:
+        bond_entry['description'] = description
+    
+    # Empty bond_members - will be added later
+    bond_entry['bond_members'] = []
+    
+    host_data['bonds'][bond_name] = bond_entry
+    
+    # Write back
+    with open(host_file, 'w') as f:
+        yaml.dump(host_data, f, default_flow_style=False, sort_keys=False)
+    
+    print(json.dumps({'success': True, 'message': f'Bond {bond_name} created'}))
+except Exception as e:
+    print(json.dumps({'success': False, 'error': str(e)}))
+PYTHON
+        ;;
+    delete-bond)
+        # Delete a bond interface
+        read -r POST_DATA
+        python3 << PYTHON
+import json
+import yaml
+import sys
+import os
+
+try:
+    data = json.loads('''$POST_DATA''')
+except:
+    try:
+        data = json.loads(sys.stdin.read())
+    except:
+        print(json.dumps({'success': False, 'error': 'Invalid JSON data'}))
+        sys.exit(0)
+
+device = data.get('device', '')
+bond_name = data.get('name', '')
+
+if not device or not bond_name:
+    print(json.dumps({'success': False, 'error': 'Device and bond name are required'}))
+    sys.exit(0)
+
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+host_file = f"{ansible_dir}/inventory/host_vars/{device}.yaml"
+
+try:
+    with open(host_file, 'r') as f:
+        host_data = yaml.safe_load(f) or {}
+    
+    if 'bonds' not in host_data or bond_name not in host_data['bonds']:
+        print(json.dumps({'success': False, 'error': f'Bond {bond_name} not found'}))
+        sys.exit(0)
+    
+    # Get bond members to release them
+    bond_members = host_data['bonds'][bond_name].get('bond_members', [])
+    
+    # Remove bond
+    del host_data['bonds'][bond_name]
+    
+    # Clean up empty bonds dict
+    if not host_data['bonds']:
+        del host_data['bonds']
+    
+    with open(host_file, 'w') as f:
+        yaml.dump(host_data, f, default_flow_style=False, sort_keys=False)
+    
+    print(json.dumps({'success': True, 'message': f'Bond {bond_name} deleted'}))
+except Exception as e:
+    print(json.dumps({'success': False, 'error': str(e)}))
+PYTHON
+        ;;
+    delete-subinterface)
+        # Delete a subinterface
+        read -r POST_DATA
+        python3 << PYTHON
+import json
+import yaml
+import sys
+import os
+
+try:
+    data = json.loads('''$POST_DATA''')
+except:
+    try:
+        data = json.loads(sys.stdin.read())
+    except:
+        print(json.dumps({'success': False, 'error': 'Invalid JSON data'}))
+        sys.exit(0)
+
+device = data.get('device', '')
+subif_name = data.get('name', '')  # e.g., swp1.1001
+
+if not device or not subif_name:
+    print(json.dumps({'success': False, 'error': 'Device and subinterface name are required'}))
+    sys.exit(0)
+
+# Parse parent interface and subif ID
+if '.' not in subif_name:
+    print(json.dumps({'success': False, 'error': 'Invalid subinterface name format'}))
+    sys.exit(0)
+
+parts = subif_name.rsplit('.', 1)
+parent_if = parts[0]
+subif_id = parts[1]
+
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+host_file = f"{ansible_dir}/inventory/host_vars/{device}.yaml"
+
+try:
+    with open(host_file, 'r') as f:
+        host_data = yaml.safe_load(f) or {}
+    
+    deleted = False
+    
+    # Check in interfaces -> parent -> subinterfaces
+    if 'interfaces' in host_data and parent_if in host_data['interfaces']:
+        iface = host_data['interfaces'][parent_if]
+        if 'subinterfaces' in iface and subif_id in iface['subinterfaces']:
+            del iface['subinterfaces'][subif_id]
+            deleted = True
+            # Clean up empty subinterfaces dict
+            if not iface['subinterfaces']:
+                del iface['subinterfaces']
+        elif 'subinterfaces' in iface:
+            # Try numeric key
+            try:
+                subif_id_int = int(subif_id)
+                if subif_id_int in iface['subinterfaces']:
+                    del iface['subinterfaces'][subif_id_int]
+                    deleted = True
+                    if not iface['subinterfaces']:
+                        del iface['subinterfaces']
+            except:
+                pass
+    
+    if not deleted:
+        print(json.dumps({'success': False, 'error': f'Subinterface {subif_name} not found'}))
+        sys.exit(0)
+    
+    with open(host_file, 'w') as f:
+        yaml.dump(host_data, f, default_flow_style=False, sort_keys=False)
+    
+    print(json.dumps({'success': True, 'message': f'Subinterface {subif_name} deleted'}))
+except Exception as e:
+    print(json.dumps({'success': False, 'error': str(e)}))
+PYTHON
+        ;;
     update-interface)
         # Update interface or bond settings
         read -r POST_DATA

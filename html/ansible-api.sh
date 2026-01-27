@@ -180,11 +180,6 @@ except:
         return
     fi
     
-    # Backup existing file
-    if [ -f "$full_path" ]; then
-        cp "$full_path" "${full_path}.bak"
-    fi
-    
     # Write new content
     echo "$content" > "$full_path"
     
@@ -486,6 +481,19 @@ case "$ACTION" in
         ;;
     git-diff)
         git_diff
+        ;;
+    git-reset)
+        cd "$ANSIBLE_DIR" || { json_response '{"success": false, "error": "Cannot access ansible directory"}'; exit 0; }
+        git config --global --add safe.directory "$ANSIBLE_DIR" 2>/dev/null || true
+        
+        # Reset all changes (discard uncommitted changes)
+        output=$(git checkout . 2>&1)
+        
+        if [ $? -eq 0 ]; then
+            json_response '{"success": true, "output": "All uncommitted changes have been discarded."}'
+        else
+            json_response "{\"success\": false, \"error\": \"Failed to reset: $output\"}"
+        fi
         ;;
     get-modified-devices)
         # Get list of modified device hostnames from git diff

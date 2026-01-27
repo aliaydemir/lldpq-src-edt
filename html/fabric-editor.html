@@ -1239,12 +1239,13 @@
             </button>
             <div class="dropdown" style="display: inline-block;">
                 <button class="btn btn-secondary dropdown-toggle" onclick="toggleGitMenu()">
-                    Git ▼
+                    Git ▲
                 </button>
                 <div id="git-menu" class="dropdown-menu">
                     <a href="#" onclick="gitStatus(); return false;">View Changes</a>
                     <a href="#" onclick="gitLog(); return false;">History</a>
                     <a href="#" onclick="gitDiff(); return false;">Show Diff</a>
+                    <a href="#" onclick="gitReset(); return false;" style="color: #ff6b6b;">Reset All Changes</a>
                 </div>
             </div>
         </div>
@@ -2407,14 +2408,13 @@
         }
         
         // Close file
-        function closeFile(path, event) {
+        async function closeFile(path, event) {
             event.stopPropagation();
             
             const file = state.files[path];
             if (file.modified) {
-                if (!confirm(`${path.split('/').pop()} has unsaved changes. Close anyway?`)) {
-                    return;
-                }
+                const confirmed = await confirmAsync('Unsaved Changes', `<strong>${path.split('/').pop()}</strong> has unsaved changes.<br><br>Close anyway?`);
+                if (!confirmed) return;
             }
             
             delete state.files[path];
@@ -2438,13 +2438,12 @@
             updateUI();
         }
         
-        function closeAllTabs() {
+        async function closeAllTabs() {
             const modifiedFiles = Object.entries(state.files).filter(([_, f]) => f.modified);
             if (modifiedFiles.length > 0) {
                 const names = modifiedFiles.map(([p, _]) => p.split('/').pop()).join(', ');
-                if (!confirm(`${modifiedFiles.length} file(s) have unsaved changes: ${names}\n\nClose all anyway?`)) {
-                    return;
-                }
+                const confirmed = await confirmAsync('Unsaved Changes', `<strong>${modifiedFiles.length} file(s)</strong> have unsaved changes:<br><br>${names}<br><br>Close all anyway?`);
+                if (!confirmed) return;
             }
             
             state.files = {};
@@ -2775,9 +2774,8 @@
             
             // Validate before saving
             if (!validateCurrentFile()) {
-                if (!confirm('YAML has syntax errors. Save anyway?')) {
-                    return;
-                }
+                const confirmed = await confirmAsync('YAML Errors', 'This file has <strong>YAML syntax errors</strong>.<br><br>Save anyway?');
+                if (!confirmed) return;
             }
             
             showLoading(true, 'Saving...');
@@ -2817,9 +2815,8 @@
             // Check for validation errors
             const invalidFiles = modifiedFiles.filter(([_, f]) => !validateYaml(f.content).valid);
             if (invalidFiles.length > 0) {
-                if (!confirm(`${invalidFiles.length} file(s) have YAML errors. Save anyway?`)) {
-                    return;
-                }
+                const confirmed = await confirmAsync('YAML Errors', `<strong>${invalidFiles.length} file(s)</strong> have YAML syntax errors.<br><br>Save anyway?`);
+                if (!confirmed) return;
             }
             
             showLoading(true, 'Saving all files...');
@@ -3103,6 +3100,14 @@
             panel.classList.add('visible');
         }
         
+        function showOutputHtml(html) {
+            const panel = document.getElementById('output-panel');
+            const content = document.getElementById('output-content');
+            content.innerHTML = html;
+            content.className = 'output-content';
+            panel.classList.add('visible');
+        }
+        
         function hideOutput() {
             document.getElementById('output-panel').classList.remove('visible');
         }
@@ -3367,13 +3372,103 @@
             showLoading(true, 'Loading diff...');
             try {
                 const result = await apiCall('git-diff');
-                showOutput(result.output || result.error, result.success ? '' : 'error');
+                if (result.success) {
+                    const output = (result.output || '').trim();
+                    if (!output || output === '') {
+                        showOutputHtml('<div style="color: #76ff7a; font-weight: 600; font-size: 16px;">✓ No Changes</div><div style="margin-top: 10px; color: #888;">All files are in sync with the last commit.</div>');
+                    } else {
+                        showOutput(output, '');
+                    }
+                } else {
+                    showOutput(result.error || 'Unknown error', 'error');
+                }
             } catch (e) {
                 showOutput('Error: ' + e.message, 'error');
             }
             showLoading(false);
         }
+        
+        async function gitReset() {
+            showConfirmModal(
+                'Reset All Changes',
+                'Are you sure you want to discard <strong>ALL uncommitted changes</strong>?<br><br>This action cannot be undone!',
+                async () => {
+                    showLoading(true, 'Resetting changes...');
+                    try {
+                        const result = await apiCall('git-reset');
+                        showOutput(result.output || result.error, result.success ? '' : 'error');
+                        if (result.success && currentFile) {
+                            // Reload current file to show reverted content
+                            await loadFile(currentFile);
+                        }
+                    } catch (e) {
+                        showOutput('Error: ' + e.message, 'error');
+                    }
+                    showLoading(false);
+                }
+            );
+        }
+        
+        // Custom confirm modal (Promise-based for async/await support)
+        let confirmResolve = null;
+        let confirmCallback = null;
+        
+        function showConfirmModal(title, message, onConfirm = null) {
+            document.getElementById('confirm-modal-title').textContent = title;
+            document.getElementById('confirm-modal-message').innerHTML = message;
+            confirmCallback = onConfirm;
+            document.getElementById('confirm-modal').style.display = 'flex';
+            
+            // If no callback, return a Promise
+            if (!onConfirm) {
+                return new Promise(resolve => {
+                    confirmResolve = resolve;
+                });
+            }
+        }
+        
+        function closeConfirmModal(result = false) {
+            document.getElementById('confirm-modal').style.display = 'none';
+            if (confirmResolve) {
+                confirmResolve(result);
+                confirmResolve = null;
+            }
+            confirmCallback = null;
+        }
+        
+        function executeConfirmAction() {
+            if (confirmCallback) {
+                confirmCallback();
+                closeConfirmModal();
+            } else if (confirmResolve) {
+                confirmResolve(true);
+                confirmResolve = null;
+                document.getElementById('confirm-modal').style.display = 'none';
+            }
+        }
+        
+        // Async confirm helper
+        async function confirmAsync(title, message) {
+            return showConfirmModal(title, message);
+        }
     </script>
+    
+    <!-- Confirm Modal -->
+    <div id="confirm-modal" class="help-modal-overlay" style="display: none;" onclick="if(event.target === this) closeConfirmModal()">
+        <div class="help-modal" style="max-width: 450px;">
+            <div class="help-modal-header" style="background: linear-gradient(135deg, #f57c00 0%, #e65100 100%);">
+                <h2 id="confirm-modal-title">Confirm</h2>
+                <button class="help-modal-close" onclick="closeConfirmModal()">&times;</button>
+            </div>
+            <div style="padding: 20px;">
+                <p id="confirm-modal-message" style="color: #ccc; line-height: 1.6; margin: 0;"></p>
+            </div>
+            <div style="padding: 15px 20px; background: #252526; display: flex; justify-content: flex-end; gap: 10px; border-radius: 0 0 8px 8px;">
+                <button class="btn btn-secondary" onclick="closeConfirmModal()">Cancel</button>
+                <button class="btn btn-danger" id="confirm-modal-ok" onclick="executeConfirmAction()">Confirm</button>
+            </div>
+        </div>
+    </div>
     
     <!-- Help Modal -->
     <div id="help-modal" class="help-modal-overlay" onclick="if(event.target === this) hideHelpModal()">

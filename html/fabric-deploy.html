@@ -396,6 +396,11 @@
             to { transform: rotate(360deg); }
         }
         
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.15); box-shadow: 0 0 15px rgba(118, 185, 0, 0.6); }
+        }
+        
         .loading-text {
             margin-top: 15px;
             color: #888;
@@ -500,6 +505,9 @@
         <div class="device-panel">
             <div class="panel-header">
                 <span class="panel-title">Select Devices</span>
+                <span class="selected-count" style="margin-left: 15px; font-size: 13px;">
+                    <strong id="action-selected-count">0</strong> selected
+                </span>
                 <div class="select-actions">
                     <a onclick="selectAll(true)">All</a>
                     <a onclick="selectAll(false)">None</a>
@@ -537,9 +545,6 @@
                     </svg>
                     Deploy
                 </button>
-                <span class="selected-count">
-                    <strong id="action-selected-count">0</strong> devices selected
-                </span>
                 <button class="btn btn-secondary" onclick="clearOutput(); resetOutputPlaceholder()" style="margin-left: auto;">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                         <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
@@ -575,8 +580,99 @@
         const CACHE_KEY = 'fabricDeploy_scanCache';
         const CACHE_STALE_THRESHOLD = 60 * 60 * 1000; // 1 hour in ms
         
+        // Auto-scan configuration (git status check, not Fabric Scan)
+        const AUTO_SCAN_INTERVAL = 1 * 60 * 1000;  // 1 minute - check git status periodically
+        const AUTO_SCAN_MIN_AGE = 30 * 1000;       // 30 seconds - minimum time before auto-scan
+        let autoScanTimer = null;
+        let lastAutoScanTime = 0;
+        
         // Load devices on page load
-        document.addEventListener('DOMContentLoaded', loadDevices);
+        document.addEventListener('DOMContentLoaded', () => {
+            loadDevices();
+            initAutoScan();
+        });
+        
+        // Initialize auto-scan system
+        function initAutoScan() {
+            // Always run a quick git scan on page load
+            setTimeout(() => {
+                if (document.visibilityState === 'visible') {
+                    silentGitScan();
+                }
+            }, 500); // Quick delay for page to settle
+            
+            // Start periodic scan timer
+            startAutoScanTimer();
+            
+            // Handle tab visibility changes
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible') {
+                    // Tab became visible - check if scan is needed
+                    const timeSinceLastScan = Date.now() - lastAutoScanTime;
+                    if (timeSinceLastScan > AUTO_SCAN_MIN_AGE) {
+                        silentGitScan();
+                    }
+                }
+            });
+        }
+        
+        function startAutoScanTimer() {
+            if (autoScanTimer) clearInterval(autoScanTimer);
+            autoScanTimer = setInterval(() => {
+                // Only scan if tab is visible
+                if (document.visibilityState === 'visible') {
+                    silentGitScan();
+                }
+            }, AUTO_SCAN_INTERVAL);
+        }
+        
+        // Silent git scan (no loading indicator, just updates UI)
+        async function silentGitScan() {
+            lastAutoScanTime = Date.now();
+            try {
+                const response = await fetch('/ansible-api.sh?action=git-status');
+                const data = await response.json();
+                
+                if (data.success && data.output) {
+                    const output = data.output;
+                    const newPendingDevices = new Set();
+                    
+                    // Parse git status output
+                    for (const line of output.split('\n')) {
+                        const hostVarsMatch = line.match(/inventory\/host_vars\/([^\/]+)\.ya?ml/);
+                        if (hostVarsMatch) {
+                            newPendingDevices.add(hostVarsMatch[1]);
+                        }
+                    }
+                    
+                    // Check if there are new changes
+                    const previousCount = modifiedDevices.size;
+                    for (const device of newPendingDevices) {
+                        modifiedDevices.add(device);
+                    }
+                    
+                    // Update UI if changes detected
+                    if (modifiedDevices.size !== previousCount || newPendingDevices.size > 0) {
+                        updatePendingCount('Pending Changes', modifiedDevices.size, false);
+                        updateDeviceListUI();
+                        
+                        // Flash the pending count to draw attention
+                        const pendingEl = document.getElementById('pending-count');
+                        if (pendingEl && modifiedDevices.size > 0) {
+                            pendingEl.style.animation = 'none';
+                            pendingEl.offsetHeight; // Trigger reflow
+                            pendingEl.style.animation = 'pulse 0.5s ease-in-out 2';
+                        }
+                    }
+                    
+                    // Just update UI - don't update "Last scan" (that's for Fabric Scan only)
+                    renderDeviceList();
+                    updateSummaryCards();
+                }
+            } catch (e) {
+                console.error('[silentGitScan] Error:', e.message);
+            }
+        }
         
         async function loadDevices() {
             try {
