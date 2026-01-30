@@ -668,8 +668,8 @@
                     summaryData.noInfo = 0;
                     
                     lines.forEach(line => {
-                        // Look for port status lines (swp + Pass/Fail/No-Info pattern)
-                        if (line.includes('swp') && (line.includes('Pass') || line.includes('Fail') || line.includes('No-Info'))) {
+                        // Look for port status lines (swp + Pass/Fail/Warning/No-Info pattern)
+                        if (line.includes('swp') && (line.includes('Pass') || line.includes('Fail') || line.includes('Warning') || line.includes('No-Info'))) {
                             const parts = line.trim().split(/\s+/);
                             if (parts.length >= 2) {
                                 const status = parts[1]; // Status is second column
@@ -677,6 +677,7 @@
                                 
                                 if (status === 'Pass') summaryData.successful++;
                                 else if (status === 'Fail') summaryData.failed++;
+                                else if (status === 'Warning') summaryData.warning++;
                                 else if (status === 'No-Info') summaryData.noInfo++;
                             }
                         }
