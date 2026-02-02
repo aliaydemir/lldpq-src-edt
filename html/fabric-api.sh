@@ -116,7 +116,9 @@ get_device() {
     python3 << PYTHON
 import sys
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 
 ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
@@ -131,7 +133,7 @@ try:
     config = {}
     if os.path.exists(host_vars_file):
         with open(host_vars_file, 'r') as f:
-            config = yaml.safe_load(f) or {}
+            config = yaml.load(f) or {}
     
     # Find device info from hosts file
     device_info = {'hostname': hostname, 'group': None, 'ip': None}
@@ -164,7 +166,7 @@ try:
         group_vrfs_file = f"{ansible_dir}/inventory/group_vars/{device_info['group']}/vrfs.yaml"
         if os.path.exists(group_vrfs_file):
             with open(group_vrfs_file, 'r') as f:
-                group_config = yaml.safe_load(f) or {}
+                group_config = yaml.load(f) or {}
                 if 'vrfs' in group_config:
                     config['vrfs'] = group_config['vrfs']
     
@@ -172,7 +174,7 @@ try:
     port_profiles = {}
     if os.path.exists(port_profiles_file):
         with open(port_profiles_file, 'r') as f:
-            pp_config = yaml.safe_load(f) or {}
+            pp_config = yaml.load(f) or {}
             port_profiles = pp_config.get('sw_port_profiles', {})
     
     # Load VLAN profiles for VRF and IP resolution
@@ -182,7 +184,7 @@ try:
     
     if os.path.exists(vlan_profiles_file):
         with open(vlan_profiles_file, 'r') as f:
-            vp_config = yaml.safe_load(f) or {}
+            vp_config = yaml.load(f) or {}
             
             # Load vxlan_int mapping (nscale/kddi style: vxlan_int at top level)
             if 'vxlan_int' in vp_config and isinstance(vp_config['vxlan_int'], dict):
@@ -258,7 +260,9 @@ get_vlan_profiles() {
     
     python3 << PYTHON
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 
 ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
@@ -266,7 +270,7 @@ vlan_file = f"{ansible_dir}/inventory/group_vars/all/vlan_profiles.yaml"
 
 try:
     with open(vlan_file, 'r') as f:
-        config = yaml.safe_load(f) or {}
+        config = yaml.load(f) or {}
     
     print(json.dumps({
         'success': True,
@@ -287,7 +291,9 @@ bulk_create_vlans() {
     read -r POST_DATA
     python3 << PYTHON
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 import sys
 
@@ -319,7 +325,7 @@ if count > 500:
 vlan_profiles = {}
 if os.path.exists(vlan_file):
     with open(vlan_file, 'r') as f:
-        existing = yaml.safe_load(f) or {}
+        existing = yaml.load(f) or {}
         vlan_profiles = existing.get('vlan_profiles', {})
 
 # Check if profile name already exists
@@ -355,7 +361,9 @@ PYTHON
 get_leaking_vrfs() {
     python3 << PYTHON
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 import glob
 
@@ -369,7 +377,7 @@ try:
     # First, find BGP profiles that have route_import.from_vrf
     if os.path.exists(bgp_file):
         with open(bgp_file, 'r') as f:
-            data = yaml.safe_load(f) or {}
+            data = yaml.load(f) or {}
             bgp_profiles = data.get('bgp_profiles', {})
             
             # Find all VRFs mentioned in from_vrf across all profiles
@@ -395,7 +403,9 @@ PYTHON
 get_bgp_profiles() {
     python3 << PYTHON
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 
 ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
@@ -407,7 +417,7 @@ infra_vrfs = ['default']  # Default fallback
 try:
     if os.path.exists(bgp_file):
         with open(bgp_file, 'r') as f:
-            data = yaml.safe_load(f) or {}
+            data = yaml.load(f) or {}
             bgp_profiles = data.get('bgp_profiles', {})
             
             # Get infra_vrfs list from config
@@ -431,7 +441,9 @@ PYTHON
 get_available_vrfs() {
     python3 << PYTHON
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 import glob
 
@@ -446,7 +458,7 @@ for host_file in glob.glob(os.path.join(host_vars_dir, '*.yaml')) + glob.glob(os
     
     try:
         with open(host_file, 'r') as f:
-            host_data = yaml.safe_load(f) or {}
+            host_data = yaml.load(f) or {}
             device_vrfs = host_data.get('vrfs', {})
             
             for vrf_name, vrf_config in device_vrfs.items():
@@ -476,7 +488,9 @@ create_vrf() {
     read -r POST_DATA
     python3 << PYTHON
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 import sys
 
@@ -518,7 +532,7 @@ leaking_configured = False
 if leaking_enabled and leak_from_vrf:
     try:
         with open(bgp_profiles_file, 'r') as f:
-            bgp_data = yaml.safe_load(f) or {}
+            bgp_data = yaml.load(f) or {}
             bgp_profiles = bgp_data.get('bgp_profiles', {})
             
             # Find profile that imports FROM the leak_from_vrf (this is for new tenant)
@@ -564,7 +578,7 @@ if leaking_enabled and leak_from_vrf:
 host_data = {}
 if os.path.exists(host_file):
     with open(host_file, 'r') as f:
-        host_data = yaml.safe_load(f) or {}
+        host_data = yaml.load(f) or {}
 
 # Initialize vrfs if not exists
 if 'vrfs' not in host_data:
@@ -614,7 +628,9 @@ create_vrf_bulk() {
     read -r POST_DATA
     python3 << PYTHON
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 import sys
 import glob
@@ -653,7 +669,7 @@ shared_profile = None
 if leaking_enabled and leak_from_vrf:
     try:
         with open(bgp_profiles_file, 'r') as f:
-            bgp_data = yaml.safe_load(f) or {}
+            bgp_data = yaml.load(f) or {}
         
         bgp_profiles = bgp_data.get('bgp_profiles', {})
         
@@ -711,7 +727,7 @@ for device in devices:
         host_data = {}
         if os.path.exists(host_file):
             with open(host_file, 'r') as f:
-                host_data = yaml.safe_load(f) or {}
+                host_data = yaml.load(f) or {}
         
         # Get device's BGP ASN
         device_asn = None
@@ -762,7 +778,9 @@ assign_vrfs() {
     read -r POST_DATA
     python3 << PYTHON
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 import sys
 import glob
@@ -793,7 +811,7 @@ if not os.path.exists(host_file):
 host_data = {}
 if os.path.exists(host_file):
     with open(host_file, 'r') as f:
-        host_data = yaml.safe_load(f) or {}
+        host_data = yaml.load(f) or {}
 
 # Initialize vrfs if not exists
 if 'vrfs' not in host_data:
@@ -804,7 +822,7 @@ all_vrf_configs = {}
 for hf in glob.glob(os.path.join(host_vars_dir, '*.yaml')) + glob.glob(os.path.join(host_vars_dir, '*.yml')):
     try:
         with open(hf, 'r') as f:
-            hd = yaml.safe_load(f) or {}
+            hd = yaml.load(f) or {}
             for vrf_name, vrf_config in hd.get('vrfs', {}).items():
                 if vrf_name not in all_vrf_configs:
                     all_vrf_configs[vrf_name] = vrf_config
@@ -836,7 +854,9 @@ unassign_vrf() {
     read -r POST_DATA
     python3 << PYTHON
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 import sys
 
@@ -873,7 +893,7 @@ if not os.path.exists(host_file):
 
 # Load host_vars
 with open(host_file, 'r') as f:
-    host_data = yaml.safe_load(f) or {}
+    host_data = yaml.load(f) or {}
 
 if 'vrfs' not in host_data or vrf_name not in host_data['vrfs']:
     print(json.dumps({'success': False, 'error': f'VRF {vrf_name} not found in device config'}))
@@ -892,7 +912,7 @@ remaining_devices = 0
 for hf in glob.glob(os.path.join(host_vars_dir, '*.yaml')) + glob.glob(os.path.join(host_vars_dir, '*.yml')):
     try:
         with open(hf, 'r') as f:
-            hd = yaml.safe_load(f) or {}
+            hd = yaml.load(f) or {}
         if vrf_name in hd.get('vrfs', {}):
             remaining_devices += 1
     except:
@@ -904,7 +924,7 @@ if remaining_devices == 0:
     try:
         if os.path.exists(bgp_profiles_file):
             with open(bgp_profiles_file, 'r') as f:
-                bgp_data = yaml.safe_load(f) or {}
+                bgp_data = yaml.load(f) or {}
             
             bgp_profiles = bgp_data.get('bgp_profiles', {})
             modified = False
@@ -934,7 +954,9 @@ delete_vrf_global() {
     read -r POST_DATA
     python3 << PYTHON
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 import sys
 import glob
@@ -964,7 +986,7 @@ devices_updated = []
 for host_file in glob.glob(os.path.join(host_vars_dir, '*.yaml')) + glob.glob(os.path.join(host_vars_dir, '*.yml')):
     try:
         with open(host_file, 'r') as f:
-            host_data = yaml.safe_load(f) or {}
+            host_data = yaml.load(f) or {}
         
         if 'vrfs' in host_data and vrf_name in host_data['vrfs']:
             del host_data['vrfs'][vrf_name]
@@ -980,7 +1002,7 @@ leaking_removed = False
 try:
     if os.path.exists(bgp_profiles_file):
         with open(bgp_profiles_file, 'r') as f:
-            bgp_data = yaml.safe_load(f) or {}
+            bgp_data = yaml.load(f) or {}
         
         bgp_profiles = bgp_data.get('bgp_profiles', {})
         modified = False
@@ -1013,7 +1035,9 @@ PYTHON
 get_vrf_report() {
     python3 << PYTHON
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 import glob
 
@@ -1029,7 +1053,7 @@ for host_file in glob.glob(os.path.join(host_vars_dir, '*.yaml')) + glob.glob(os
     
     try:
         with open(host_file, 'r') as f:
-            host_data = yaml.safe_load(f) or {}
+            host_data = yaml.load(f) or {}
             device_vrfs = host_data.get('vrfs', {})
             
             if device_vrfs:
@@ -1060,7 +1084,9 @@ PYTHON
 get_vlan_report() {
     python3 << PYTHON
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 import glob
 
@@ -1075,7 +1101,7 @@ vrfs = set()
 
 if os.path.exists(vlan_file):
     with open(vlan_file, 'r') as f:
-        data = yaml.safe_load(f) or {}
+        data = yaml.load(f) or {}
         vlan_profiles = data.get('vlan_profiles', {})
 
 # Collect VRFs from VLAN profiles
@@ -1095,7 +1121,7 @@ for host_file in glob.glob(os.path.join(host_vars_dir, '*.yaml')) + glob.glob(os
     
     try:
         with open(host_file, 'r') as f:
-            host_data = yaml.safe_load(f) or {}
+            host_data = yaml.load(f) or {}
             vlan_templates = host_data.get('vlan_templates', [])
             
             if vlan_templates:
@@ -1130,7 +1156,9 @@ get_port_profiles() {
     
     python3 << PYTHON
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 
 ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
@@ -1138,11 +1166,256 @@ port_file = f"{ansible_dir}/inventory/group_vars/all/sw_port_profiles.yaml"
 
 try:
     with open(port_file, 'r') as f:
-        config = yaml.safe_load(f) or {}
+        config = yaml.load(f) or {}
     
     print(json.dumps({
         'success': True,
         'port_profiles': config.get('sw_port_profiles', {})
+    }))
+
+except Exception as e:
+    print(json.dumps({
+        'success': False,
+        'error': str(e)
+    }))
+PYTHON
+}
+
+# Get BGP Profiles
+get_bgp_profiles() {
+    local bgp_file="$ANSIBLE_DIR/inventory/group_vars/all/bgp_profiles.yaml"
+    
+    if [[ ! -f "$bgp_file" ]]; then
+        echo '{"success": false, "error": "BGP profiles file not found"}'
+        return
+    fi
+    
+    python3 << PYTHON
+import json
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
+import os
+
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+bgp_file = f"{ansible_dir}/inventory/group_vars/all/bgp_profiles.yaml"
+
+try:
+    with open(bgp_file, 'r') as f:
+        config = yaml.load(f) or {}
+    
+    print(json.dumps({
+        'success': True,
+        'bgp_profiles': config.get('bgp_profiles', {}),
+        'infra_vrfs': config.get('infra_vrfs', [])
+    }))
+
+except Exception as e:
+    print(json.dumps({
+        'success': False,
+        'error': str(e)
+    }))
+PYTHON
+}
+
+# Create BGP Profile (using ruamel.yaml to preserve comments)
+create_bgp_profile() {
+    read -r POST_DATA
+    python3 << PYTHON
+import json
+import os
+import sys
+from ruamel.yaml import YAML
+
+yaml = YAML()
+yaml.preserve_quotes = True
+
+try:
+    data = json.loads('''$POST_DATA''')
+except:
+    data = {}
+
+profile_name = data.get('profile_name', '').strip()
+redistribute_connected = data.get('redistribute_connected', True)
+redistribute_static = data.get('redistribute_static', False)
+export_to_evpn_type5 = data.get('export_to_evpn_type5', False)
+enable_evpn = data.get('enable_evpn', False)
+peer_groups = data.get('peer_groups', {})
+
+if not profile_name:
+    print(json.dumps({'success': False, 'error': 'Profile name is required'}))
+    sys.exit(0)
+
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+bgp_file = f"{ansible_dir}/inventory/group_vars/all/bgp_profiles.yaml"
+
+try:
+    with open(bgp_file, 'r') as f:
+        config = yaml.load(f) or {}
+    
+    if 'bgp_profiles' not in config:
+        config['bgp_profiles'] = {}
+    
+    if profile_name in config['bgp_profiles']:
+        print(json.dumps({'success': False, 'error': f'Profile {profile_name} already exists'}))
+        sys.exit(0)
+    
+    # Build profile entry
+    profile_entry = {
+        'ipv4_unicast_af': {
+            'redistribute_connected_routes': redistribute_connected,
+            'redistribute_static_routes': redistribute_static
+        }
+    }
+    
+    if export_to_evpn_type5:
+        profile_entry['ipv4_unicast_af']['export_to_evpn_type5'] = True
+    
+    if enable_evpn:
+        profile_entry['l2vpn_evpn_af'] = {'enable_evpn': True}
+    
+    if peer_groups:
+        profile_entry['peer_groups'] = peer_groups
+    
+    config['bgp_profiles'][profile_name] = profile_entry
+    
+    with open(bgp_file, 'w') as f:
+        yaml.dump(config, f)
+    
+    print(json.dumps({
+        'success': True,
+        'message': f'BGP profile {profile_name} created successfully'
+    }))
+
+except Exception as e:
+    print(json.dumps({
+        'success': False,
+        'error': str(e)
+    }))
+PYTHON
+}
+
+# Update BGP Profile (using ruamel.yaml to preserve comments)
+update_bgp_profile() {
+    read -r POST_DATA
+    python3 << PYTHON
+import json
+import os
+import sys
+from ruamel.yaml import YAML
+
+yaml = YAML()
+yaml.preserve_quotes = True
+
+try:
+    data = json.loads('''$POST_DATA''')
+except:
+    data = {}
+
+original_name = data.get('original_name', '').strip()
+profile_name = data.get('profile_name', '').strip()
+redistribute_connected = data.get('redistribute_connected', True)
+redistribute_static = data.get('redistribute_static', False)
+export_to_evpn_type5 = data.get('export_to_evpn_type5', False)
+enable_evpn = data.get('enable_evpn', False)
+peer_groups = data.get('peer_groups', {})
+
+if not original_name or not profile_name:
+    print(json.dumps({'success': False, 'error': 'Profile names are required'}))
+    sys.exit(0)
+
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+bgp_file = f"{ansible_dir}/inventory/group_vars/all/bgp_profiles.yaml"
+
+try:
+    with open(bgp_file, 'r') as f:
+        config = yaml.load(f) or {}
+    
+    if 'bgp_profiles' not in config or original_name not in config['bgp_profiles']:
+        print(json.dumps({'success': False, 'error': f'Profile {original_name} not found'}))
+        sys.exit(0)
+    
+    # Build updated profile entry
+    profile_entry = {
+        'ipv4_unicast_af': {
+            'redistribute_connected_routes': redistribute_connected,
+            'redistribute_static_routes': redistribute_static
+        }
+    }
+    
+    if export_to_evpn_type5:
+        profile_entry['ipv4_unicast_af']['export_to_evpn_type5'] = True
+    
+    if enable_evpn:
+        profile_entry['l2vpn_evpn_af'] = {'enable_evpn': True}
+    
+    if peer_groups:
+        profile_entry['peer_groups'] = peer_groups
+    
+    # Remove old profile if renaming
+    if original_name != profile_name:
+        del config['bgp_profiles'][original_name]
+    
+    config['bgp_profiles'][profile_name] = profile_entry
+    
+    with open(bgp_file, 'w') as f:
+        yaml.dump(config, f)
+    
+    print(json.dumps({
+        'success': True,
+        'message': f'BGP profile {profile_name} updated successfully'
+    }))
+
+except Exception as e:
+    print(json.dumps({
+        'success': False,
+        'error': str(e)
+    }))
+PYTHON
+}
+
+# Delete BGP Profile (using ruamel.yaml to preserve comments)
+delete_bgp_profile() {
+    read -r POST_DATA
+    python3 << PYTHON
+import json
+import os
+import sys
+from ruamel.yaml import YAML
+
+yaml = YAML()
+yaml.preserve_quotes = True
+
+try:
+    data = json.loads('''$POST_DATA''')
+except:
+    data = {}
+
+profile_name = data.get('profile_name', '').strip()
+
+if not profile_name:
+    print(json.dumps({'success': False, 'error': 'Profile name is required'}))
+    sys.exit(0)
+
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+bgp_file = f"{ansible_dir}/inventory/group_vars/all/bgp_profiles.yaml"
+
+try:
+    with open(bgp_file, 'r') as f:
+        config = yaml.load(f) or {}
+    
+    if 'bgp_profiles' not in config or profile_name not in config['bgp_profiles']:
+        print(json.dumps({'success': False, 'error': f'Profile {profile_name} not found'}))
+        sys.exit(0)
+    
+    del config['bgp_profiles'][profile_name]
+    
+    with open(bgp_file, 'w') as f:
+        yaml.dump(config, f)
+    
+    print(json.dumps({
+        'success': True,
+        'message': f'BGP profile {profile_name} deleted successfully'
     }))
 
 except Exception as e:
@@ -1158,7 +1431,9 @@ create_port_profile() {
     read -r POST_DATA
     python3 << PYTHON
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 import sys
 
@@ -1189,7 +1464,7 @@ port_file = f"{ansible_dir}/inventory/group_vars/all/sw_port_profiles.yaml"
 config = {}
 if os.path.exists(port_file):
     with open(port_file, 'r') as f:
-        config = yaml.safe_load(f) or {}
+        config = yaml.load(f) or {}
 
 if 'sw_port_profiles' not in config:
     config['sw_port_profiles'] = {}
@@ -1234,7 +1509,9 @@ update_port_profile() {
     read -r POST_DATA
     python3 << PYTHON
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 import sys
 
@@ -1265,7 +1542,7 @@ port_file = f"{ansible_dir}/inventory/group_vars/all/sw_port_profiles.yaml"
 config = {}
 if os.path.exists(port_file):
     with open(port_file, 'r') as f:
-        config = yaml.safe_load(f) or {}
+        config = yaml.load(f) or {}
 
 if 'sw_port_profiles' not in config or original_name not in config['sw_port_profiles']:
     print(json.dumps({'success': False, 'error': f'Profile {original_name} not found'}))
@@ -1311,7 +1588,9 @@ delete_port_profile() {
     read -r POST_DATA
     python3 << PYTHON
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 import sys
 
@@ -1332,7 +1611,7 @@ port_file = f"{ansible_dir}/inventory/group_vars/all/sw_port_profiles.yaml"
 config = {}
 if os.path.exists(port_file):
     with open(port_file, 'r') as f:
-        config = yaml.safe_load(f) or {}
+        config = yaml.load(f) or {}
 
 if 'sw_port_profiles' not in config or profile_name not in config['sw_port_profiles']:
     print(json.dumps({'success': False, 'error': f'Profile {profile_name} not found'}))
@@ -1355,7 +1634,9 @@ create_vlan() {
     
     python3 << PYTHON
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 import sys
 from datetime import datetime
@@ -1394,7 +1675,7 @@ try:
     vlan_config = {}
     if os.path.exists(vlan_profiles_file):
         with open(vlan_profiles_file, 'r') as f:
-            vlan_config = yaml.safe_load(f) or {}
+            vlan_config = yaml.load(f) or {}
     
     if 'vlan_profiles' not in vlan_config:
         vlan_config['vlan_profiles'] = {}
@@ -1448,13 +1729,13 @@ try:
     
     # Write vlan_profiles.yaml
     with open(vlan_profiles_file, 'w') as f:
-        yaml.dump(vlan_config, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+        yaml.dump(vlan_config, f)
     
     # Load existing port_profiles
     port_config = {}
     if os.path.exists(port_profiles_file):
         with open(port_profiles_file, 'r') as f:
-            port_config = yaml.safe_load(f) or {}
+            port_config = yaml.load(f) or {}
     
     if 'sw_port_profiles' not in port_config:
         port_config['sw_port_profiles'] = {}
@@ -1471,7 +1752,7 @@ try:
         
         # Write port_profiles.yaml
         with open(port_profiles_file, 'w') as f:
-            yaml.dump(port_config, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+            yaml.dump(port_config, f)
     
     print(json.dumps({
         'success': True,
@@ -1491,7 +1772,9 @@ PYTHON
 get_vrfs() {
     python3 << 'PYTHON'
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 
 ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
@@ -1503,7 +1786,7 @@ try:
     # Check vxlan_int mapping for VRF names
     if os.path.exists(vlan_profiles_file):
         with open(vlan_profiles_file, 'r') as f:
-            config = yaml.safe_load(f) or {}
+            config = yaml.load(f) or {}
         
         # Get VRFs from vxlan_int mapping
         if 'vxlan_int' in config:
@@ -1534,7 +1817,9 @@ delete_vlan() {
 
     python3 << PYTHON
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 import sys
 
@@ -1558,7 +1843,7 @@ port_profiles_file = os.path.join(inventory_base, 'group_vars', 'all', 'sw_port_
 vlan_config = {}
 if os.path.exists(vlan_profiles_file):
     with open(vlan_profiles_file, 'r') as f:
-        vlan_config = yaml.safe_load(f) or {}
+        vlan_config = yaml.load(f) or {}
 
 if 'vlan_profiles' not in vlan_config or profile_name not in vlan_config['vlan_profiles']:
     print(json.dumps({'success': False, 'error': f'VLAN profile {profile_name} not found'}))
@@ -1588,7 +1873,7 @@ if vlan_id:
     port_config = {}
     if os.path.exists(port_profiles_file):
         with open(port_profiles_file, 'r') as f:
-            port_config = yaml.safe_load(f) or {}
+            port_config = yaml.load(f) or {}
     
     if 'sw_port_profiles' in port_config and port_profile_name in port_config['sw_port_profiles']:
         del port_config['sw_port_profiles'][port_profile_name]
@@ -1614,7 +1899,9 @@ assign_vlans() {
 
     python3 << PYTHON
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 import sys
 
@@ -1646,7 +1933,7 @@ if not os.path.exists(host_vars_file):
 host_config = {}
 if os.path.exists(host_vars_file):
     with open(host_vars_file, 'r') as f:
-        host_config = yaml.safe_load(f) or {}
+        host_config = yaml.load(f) or {}
 else:
     # Create new file with .yaml extension
     host_vars_file = os.path.join(inventory_base, 'host_vars', device + '.yaml')
@@ -1682,7 +1969,9 @@ unassign_vlan() {
 
     python3 << PYTHON
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 import sys
 
@@ -1714,7 +2003,7 @@ if not os.path.exists(host_vars_file):
 host_config = {}
 if os.path.exists(host_vars_file):
     with open(host_vars_file, 'r') as f:
-        host_config = yaml.safe_load(f) or {}
+        host_config = yaml.load(f) or {}
 else:
     # File doesn't exist - check if we should create it
     # Use .yaml extension for new files
@@ -1748,7 +2037,9 @@ update_vlan() {
 
     python3 << PYTHON
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 import sys
 
@@ -1783,7 +2074,7 @@ vlan_profiles_file = os.path.join(inventory_base, 'group_vars', 'all', 'vlan_pro
 vlan_config = {}
 if os.path.exists(vlan_profiles_file):
     with open(vlan_profiles_file, 'r') as f:
-        vlan_config = yaml.safe_load(f) or {}
+        vlan_config = yaml.load(f) or {}
 
 if 'vlan_profiles' not in vlan_config or original_name not in vlan_config['vlan_profiles']:
     print(json.dumps({'success': False, 'error': f'VLAN profile {original_name} not found'}))
@@ -1867,6 +2158,18 @@ case "$ACTION" in
     "delete-port-profile")
         delete_port_profile
         ;;
+    "get-bgp-profiles")
+        get_bgp_profiles
+        ;;
+    "create-bgp-profile")
+        create_bgp_profile
+        ;;
+    "update-bgp-profile")
+        update_bgp_profile
+        ;;
+    "delete-bgp-profile")
+        delete_bgp_profile
+        ;;
     "get-vrfs")
         get_vrfs
         ;;
@@ -1919,7 +2222,9 @@ case "$ACTION" in
         # Get all leaked subnets with their target VRFs
         python3 << 'PYTHON'
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 import glob
 
@@ -1929,7 +2234,7 @@ bgp_file = f"{ansible_dir}/inventory/group_vars/all/bgp_profiles.yaml"
 
 try:
     with open(bgp_file, 'r') as f:
-        bgp_data = yaml.safe_load(f)
+        bgp_data = yaml.load(f)
     
     profiles = bgp_data.get('bgp_profiles', {})
     route_map_to_target = {}
@@ -1938,7 +2243,7 @@ try:
     for yaml_file in glob.glob(f"{host_vars_dir}/*.yaml"):
         try:
             with open(yaml_file, 'r') as f:
-                device_data = yaml.safe_load(f)
+                device_data = yaml.load(f)
             if not device_data:
                 continue
             vrfs = device_data.get('vrfs', {})
@@ -1962,7 +2267,7 @@ try:
     for yaml_file in glob.glob(f"{host_vars_dir}/*.yaml"):
         try:
             with open(yaml_file, 'r') as f:
-                device_data = yaml.safe_load(f)
+                device_data = yaml.load(f)
             if not device_data:
                 continue
             
@@ -1992,7 +2297,9 @@ PYTHON
         read -r POST_DATA
         python3 << PYTHON
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 import glob
 
@@ -2014,7 +2321,7 @@ bgp_file = f"{ansible_dir}/inventory/group_vars/all/bgp_profiles.yaml"
 # Build route_map -> target_vrf mapping from bgp_profiles
 try:
     with open(bgp_file, 'r') as f:
-        bgp_data = yaml.safe_load(f)
+        bgp_data = yaml.load(f)
     
     profiles = bgp_data.get('bgp_profiles', {})
     route_map_to_target = {}  # route_map -> source_vrf (the VRF that imports)
@@ -2033,7 +2340,7 @@ try:
     for yaml_file in glob.glob(f"{host_vars_dir}/*.yaml"):
         try:
             with open(yaml_file, 'r') as f:
-                device_data = yaml.safe_load(f)
+                device_data = yaml.load(f)
             if not device_data:
                 continue
             vrfs = device_data.get('vrfs', {})
@@ -2058,7 +2365,7 @@ try:
     for yaml_file in glob.glob(f"{host_vars_dir}/*.yaml"):
         try:
             with open(yaml_file, 'r') as f:
-                device_data = yaml.safe_load(f)
+                device_data = yaml.load(f)
             if not device_data:
                 continue
             
@@ -2093,7 +2400,9 @@ PYTHON
         # Get VRFs that can receive leaked routes (from a source VRF)
         python3 << 'PYTHON'
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 import glob
 
@@ -2103,7 +2412,7 @@ host_vars_dir = f"{ansible_dir}/inventory/host_vars"
 
 try:
     with open(bgp_file, 'r') as f:
-        data = yaml.safe_load(f)
+        data = yaml.load(f)
     
     profiles = data.get('bgp_profiles', {})
     
@@ -2125,7 +2434,7 @@ try:
     for yaml_file in glob.glob(f"{host_vars_dir}/*.yaml"):
         try:
             with open(yaml_file, 'r') as f:
-                device_data = yaml.safe_load(f)
+                device_data = yaml.load(f)
             if not device_data:
                 continue
             vrfs = device_data.get('vrfs', {})
@@ -2164,7 +2473,9 @@ PYTHON
         read -r POST_DATA
         python3 << PYTHON
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 import sys
 import glob
@@ -2195,7 +2506,7 @@ try:
         
         with open(yaml_file, 'r') as f:
             content = f.read()
-            device_data = yaml.safe_load(content)
+            device_data = yaml.load(content)
         
         if not device_data:
             continue
@@ -2230,7 +2541,7 @@ try:
         
         # Write back
         with open(yaml_file, 'w') as f:
-            yaml.dump(device_data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+            yaml.dump(device_data, f)
         
         devices_updated.append(hostname)
     
@@ -2249,7 +2560,9 @@ PYTHON
         read -r POST_DATA
         python3 << PYTHON
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 import sys
 
@@ -2285,7 +2598,7 @@ try:
     host_data = {}
     if os.path.exists(host_file):
         with open(host_file, 'r') as f:
-            host_data = yaml.safe_load(f) or {}
+            host_data = yaml.load(f) or {}
     
     # Initialize dhcp_relay if not exists
     if 'dhcp_relay' not in host_data:
@@ -2323,7 +2636,9 @@ PYTHON
         read -r POST_DATA
         python3 << PYTHON
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 import sys
 
@@ -2354,7 +2669,7 @@ try:
     host_data = {}
     if os.path.exists(host_file):
         with open(host_file, 'r') as f:
-            host_data = yaml.safe_load(f) or {}
+            host_data = yaml.load(f) or {}
     
     if 'dhcp_relay' not in host_data or not isinstance(index, int) or index < 0 or index >= len(host_data['dhcp_relay']):
         print(json.dumps({'success': False, 'error': 'DHCP relay entry not found'}))
@@ -2381,7 +2696,9 @@ PYTHON
         read -r POST_DATA
         python3 << PYTHON
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 import sys
 
@@ -2406,7 +2723,7 @@ try:
         sys.exit(0)
     
     with open(host_file, 'r') as f:
-        host_data = yaml.safe_load(f) or {}
+        host_data = yaml.load(f) or {}
     
     # Set evpn_mh
     host_data['evpn_mh'] = {
@@ -2428,7 +2745,9 @@ PYTHON
         read -r POST_DATA
         python3 << PYTHON
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 import sys
 
@@ -2448,7 +2767,7 @@ try:
         sys.exit(0)
     
     with open(host_file, 'r') as f:
-        host_data = yaml.safe_load(f) or {}
+        host_data = yaml.load(f) or {}
     
     if 'evpn_mh' not in host_data:
         print(json.dumps({'success': False, 'error': 'EVPN Multihoming not configured'}))
@@ -2471,7 +2790,9 @@ PYTHON
         read -r POST_DATA
         python3 << PYTHON
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import sys
 import os
 
@@ -2502,7 +2823,7 @@ host_file = f"{ansible_dir}/inventory/host_vars/{device}.yaml"
 try:
     # Load host file
     with open(host_file, 'r') as f:
-        host_data = yaml.safe_load(f) or {}
+        host_data = yaml.load(f) or {}
     
     # Initialize bonds if not exists
     if 'bonds' not in host_data:
@@ -2550,7 +2871,9 @@ PYTHON
         read -r POST_DATA
         python3 << PYTHON
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import sys
 import os
 
@@ -2575,7 +2898,7 @@ host_file = f"{ansible_dir}/inventory/host_vars/{device}.yaml"
 
 try:
     with open(host_file, 'r') as f:
-        host_data = yaml.safe_load(f) or {}
+        host_data = yaml.load(f) or {}
     
     if 'bonds' not in host_data or bond_name not in host_data['bonds']:
         print(json.dumps({'success': False, 'error': f'Bond {bond_name} not found'}))
@@ -2604,7 +2927,9 @@ PYTHON
         read -r POST_DATA
         python3 << PYTHON
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import sys
 import os
 
@@ -2638,7 +2963,7 @@ host_file = f"{ansible_dir}/inventory/host_vars/{device}.yaml"
 
 try:
     with open(host_file, 'r') as f:
-        host_data = yaml.safe_load(f) or {}
+        host_data = yaml.load(f) or {}
     
     deleted = False
     
@@ -2680,7 +3005,9 @@ PYTHON
         read -r POST_DATA
         python3 << PYTHON
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import sys
 import os
 
@@ -2709,7 +3036,7 @@ host_file = f"{ansible_dir}/inventory/host_vars/{device}.yaml"
 try:
     # Load host file
     with open(host_file, 'r') as f:
-        host_data = yaml.safe_load(f) or {}
+        host_data = yaml.load(f) or {}
     
     if interface_type == 'bond':
         # Update bond
@@ -2954,7 +3281,9 @@ PYTHON
         read -r POST_DATA
         python3 << PYTHON
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 
 try:
@@ -2994,7 +3323,7 @@ try:
         exit(0)
     
     with open(host_file, 'r') as f:
-        host_data = yaml.safe_load(f) or {}
+        host_data = yaml.load(f) or {}
     
     # Get VRF config
     vrfs = host_data.get('vrfs', {})
@@ -3009,7 +3338,7 @@ try:
     # Load BGP profiles
     bgp_profiles_file = os.path.join(ansible_dir, 'inventory', 'group_vars', 'all', 'bgp_profiles.yaml')
     with open(bgp_profiles_file, 'r') as f:
-        bgp_data = yaml.safe_load(f) or {}
+        bgp_data = yaml.load(f) or {}
     
     profiles = bgp_data.get('bgp_profiles', {})
     
@@ -3086,7 +3415,7 @@ try:
     if has_external and not profile_created:
         # Reload bgp_profiles (might have been saved)
         with open(bgp_profiles_file, 'r') as f:
-            bgp_data = yaml.safe_load(f) or {}
+            bgp_data = yaml.load(f) or {}
         
         profiles = bgp_data.get('bgp_profiles', {})
         profile = profiles[bgp_profile]
@@ -3124,7 +3453,9 @@ PYTHON
         read -r POST_DATA
         python3 << PYTHON
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 import sys
 
@@ -3153,7 +3484,7 @@ try:
         parent_if, sub_id = interface.split('.', 1)
         
         with open(host_file, 'r') as f:
-            host_data = yaml.safe_load(f) or {}
+            host_data = yaml.load(f) or {}
         
         # Remove subinterface
         if 'interfaces' in host_data and parent_if in host_data['interfaces']:
@@ -3183,7 +3514,7 @@ try:
     bgp_profile = ''
     if os.path.exists(host_file):
         with open(host_file, 'r') as f:
-            host_data = yaml.safe_load(f) or {}
+            host_data = yaml.load(f) or {}
         vrfs = host_data.get('vrfs', {})
         if vrf in vrfs:
             bgp_profile = vrfs[vrf].get('bgp', {}).get('bgp_profile', '')
@@ -3196,7 +3527,7 @@ try:
         bgp_profiles_file = os.path.join(ansible_dir, 'inventory', 'group_vars', 'all', 'bgp_profiles.yaml')
         
         with open(bgp_profiles_file, 'r') as f:
-            bgp_data = yaml.safe_load(f) or {}
+            bgp_data = yaml.load(f) or {}
         
         profiles = bgp_data.get('bgp_profiles', {})
         
@@ -3228,7 +3559,7 @@ try:
                     
                     # Update VRF to use OVERLAY_LEAF instead
                     with open(host_file, 'r') as f:
-                        host_data = yaml.safe_load(f) or {}
+                        host_data = yaml.load(f) or {}
                     
                     if vrf in host_data.get('vrfs', {}):
                         vrf_config = host_data['vrfs'][vrf]
@@ -3260,7 +3591,9 @@ PYTHON
         read -r POST_DATA
         python3 << PYTHON
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 import sys
 
@@ -3299,7 +3632,7 @@ try:
         sys.exit(0)
     
     with open(host_file, 'r') as f:
-        host_data = yaml.safe_load(f) or {}
+        host_data = yaml.load(f) or {}
     
     # Get VRF's BGP profile
     vrfs = host_data.get('vrfs', {})
@@ -3337,7 +3670,7 @@ try:
     bgp_profiles_file = os.path.join(ansible_dir, 'inventory', 'group_vars', 'all', 'bgp_profiles.yaml')
     
     with open(bgp_profiles_file, 'r') as f:
-        bgp_data = yaml.safe_load(f) or {}
+        bgp_data = yaml.load(f) or {}
     
     profiles = bgp_data.get('bgp_profiles', {})
     
@@ -3393,7 +3726,9 @@ PYTHON
         # List all VTEP devices (devices with vtep.state: true)
         python3 << 'PYTHON'
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 import glob
 
@@ -3425,7 +3760,7 @@ try:
         
         try:
             with open(host_file, 'r') as f:
-                host_data = yaml.safe_load(f) or {}
+                host_data = yaml.load(f) or {}
             
             # Check if vtep.state is true
             vtep_config = host_data.get('vtep', {})
@@ -3455,7 +3790,9 @@ PYTHON
         # List all external BGP peers across all devices
         python3 << 'PYTHON'
 import json
-import yaml
+from ruamel.yaml import YAML
+yaml = YAML()
+yaml.preserve_quotes = True
 import os
 import glob
 
@@ -3469,7 +3806,7 @@ try:
     
     if os.path.exists(bgp_profiles_file):
         with open(bgp_profiles_file, 'r') as f:
-            bgp_data = yaml.safe_load(f) or {}
+            bgp_data = yaml.load(f) or {}
             bgp_profiles = bgp_data.get('bgp_profiles', {})
     
     # Find profiles that have "External" peer group
@@ -3493,7 +3830,7 @@ try:
         hostname = os.path.basename(host_file).replace('.yaml', '')
         
         with open(host_file, 'r') as f:
-            host_data = yaml.safe_load(f) or {}
+            host_data = yaml.load(f) or {}
         
         # Check VRFs for external BGP profiles
         vrfs = host_data.get('vrfs', {})
