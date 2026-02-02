@@ -119,8 +119,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 
 ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
@@ -265,8 +263,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 
 ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
@@ -298,8 +294,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 import sys
 
@@ -354,14 +348,8 @@ new_profile = {
 vlan_profiles[profile_name] = new_profile
 
 # Write back
-_tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(vlan_file), suffix='.tmp')
-try:
-    with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-        yaml.dump({'vlan_profiles': vlan_profiles}, _tmp_f)
-    shutil.move(_tmp_path, vlan_file)
-except:
-    if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-    raise
+with open(vlan_file, 'w') as f:
+    yaml.dump({'vlan_profiles': vlan_profiles}, f)
 
 print(json.dumps({'success': True, 'message': f'Created {count} VLANs in profile {profile_name}'}))
 PYTHON
@@ -376,8 +364,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 import glob
 
@@ -420,8 +406,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 
 ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
@@ -460,8 +444,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 import glob
 
@@ -509,8 +491,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 import sys
 
@@ -582,14 +562,8 @@ if leaking_enabled and leak_from_vrf:
                     from_vrf_list.append(vrf_name)
                     
                     # Write updated bgp_profiles.yaml
-                    _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(bgp_profiles_file), suffix='.tmp')
-                    try:
-                        with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-                            yaml.dump(bgp_data, _tmp_f)
-                        shutil.move(_tmp_path, bgp_profiles_file)
-                    except:
-                        if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-                        raise
+                    with open(bgp_profiles_file, 'w') as f:
+                        yaml.dump(bgp_data, f)
                     leaking_configured = True
             
             # Use tenant_profile if found
@@ -634,15 +608,8 @@ if bgp_asn or bgp_profile:
 host_data['vrfs'][vrf_name] = vrf_entry
 
 # Write back
-_target_file = host_file if os.path.exists(host_file) else os.path.join(ansible_dir, 'inventory', 'host_vars', f'{device}.yaml')
-_tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(_target_file), suffix='.tmp')
-try:
-    with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-        yaml.dump(host_data, _tmp_f)
-    shutil.move(_tmp_path, _target_file)
-except:
-    if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-    raise
+with open(host_file if os.path.exists(host_file) else os.path.join(ansible_dir, 'inventory', 'host_vars', f'{device}.yaml'), 'w') as f:
+    yaml.dump(host_data, f)
 
 result = {'success': True, 'vrf_name': vrf_name}
 if leaking_enabled:
@@ -664,8 +631,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 import sys
 import glob
@@ -730,14 +695,8 @@ if leaking_enabled and leak_from_vrf:
                 break
         
         if leaking_configured:
-            _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(bgp_profiles_file), suffix='.tmp')
-            try:
-                with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-                    yaml.dump(bgp_data, _tmp_f)
-                shutil.move(_tmp_path, bgp_profiles_file)
-            except:
-                if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-                raise
+            with open(bgp_profiles_file, 'w') as f:
+                yaml.dump(bgp_data, f)
         
         if tenant_profile:
             bgp_profile = tenant_profile
@@ -789,14 +748,8 @@ for device in devices:
         
         # Write back
         target_file = host_file if os.path.exists(host_file) else os.path.join(host_vars_dir, f'{device}.yaml')
-        _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(target_file), suffix='.tmp')
-        try:
-            with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-                yaml.dump(host_data, _tmp_f)
-            shutil.move(_tmp_path, target_file)
-        except:
-            if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-            raise
+        with open(target_file, 'w') as f:
+            yaml.dump(host_data, f)
         
         devices_created.append(device)
     except Exception as e:
@@ -828,8 +781,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 import sys
 import glob
@@ -891,14 +842,8 @@ for vrf_name in vrf_names:
             added.append(vrf_name)
 
 # Write back
-_tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(host_file), suffix='.tmp')
-try:
-    with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-        yaml.dump(host_data, _tmp_f)
-    shutil.move(_tmp_path, host_file)
-except:
-    if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-    raise
+with open(host_file, 'w') as f:
+    yaml.dump(host_data, f)
 
 print(json.dumps({'success': True, 'added': added}))
 PYTHON
@@ -912,8 +857,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 import sys
 
@@ -960,14 +903,8 @@ if 'vrfs' not in host_data or vrf_name not in host_data['vrfs']:
 del host_data['vrfs'][vrf_name]
 
 # Write back host_vars
-_tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(host_file), suffix='.tmp')
-try:
-    with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-        yaml.dump(host_data, _tmp_f)
-    shutil.move(_tmp_path, host_file)
-except:
-    if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-    raise
+with open(host_file, 'w') as f:
+    yaml.dump(host_data, f)
 
 # Check if any other devices still have this VRF
 import glob
@@ -1003,14 +940,8 @@ if remaining_devices == 0:
                     leaking_removed = True
             
             if modified:
-                _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(bgp_profiles_file), suffix='.tmp')
-                try:
-                    with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-                        yaml.dump(bgp_data, _tmp_f)
-                    shutil.move(_tmp_path, bgp_profiles_file)
-                except:
-                    if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-                    raise
+                with open(bgp_profiles_file, 'w') as f:
+                    yaml.dump(bgp_data, f)
     except:
         pass  # Don't fail if bgp_profiles update fails
 
@@ -1026,8 +957,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 import sys
 import glob
@@ -1061,14 +990,8 @@ for host_file in glob.glob(os.path.join(host_vars_dir, '*.yaml')) + glob.glob(os
         
         if 'vrfs' in host_data and vrf_name in host_data['vrfs']:
             del host_data['vrfs'][vrf_name]
-            _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(host_file), suffix='.tmp')
-            try:
-                with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-                    yaml.dump(host_data, _tmp_f)
-                shutil.move(_tmp_path, host_file)
-            except:
-                if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-                raise
+            with open(host_file, 'w') as f:
+                yaml.dump(host_data, f)
             hostname = os.path.basename(host_file).replace('.yaml', '').replace('.yml', '')
             devices_updated.append(hostname)
     except:
@@ -1095,14 +1018,8 @@ try:
                 leaking_removed = True
         
         if modified:
-            _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(bgp_profiles_file), suffix='.tmp')
-            try:
-                with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-                    yaml.dump(bgp_data, _tmp_f)
-                shutil.move(_tmp_path, bgp_profiles_file)
-            except:
-                if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-                raise
+            with open(bgp_profiles_file, 'w') as f:
+                yaml.dump(bgp_data, f)
 except:
     pass
 
@@ -1121,8 +1038,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 import glob
 
@@ -1172,8 +1087,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 import glob
 
@@ -1246,8 +1159,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 
 ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
@@ -1284,8 +1195,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 
 ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
@@ -1370,14 +1279,8 @@ try:
     
     config['bgp_profiles'][profile_name] = profile_entry
     
-    _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(bgp_file), suffix='.tmp')
-    try:
-        with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-            yaml.dump(config, _tmp_f)
-        shutil.move(_tmp_path, bgp_file)
-    except:
-        if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-        raise
+    with open(bgp_file, 'w') as f:
+        yaml.dump(config, f)
     
     print(json.dumps({
         'success': True,
@@ -1455,14 +1358,8 @@ try:
     
     config['bgp_profiles'][profile_name] = profile_entry
     
-    _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(bgp_file), suffix='.tmp')
-    try:
-        with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-            yaml.dump(config, _tmp_f)
-        shutil.move(_tmp_path, bgp_file)
-    except:
-        if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-        raise
+    with open(bgp_file, 'w') as f:
+        yaml.dump(config, f)
     
     print(json.dumps({
         'success': True,
@@ -1513,14 +1410,8 @@ try:
     
     del config['bgp_profiles'][profile_name]
     
-    _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(bgp_file), suffix='.tmp')
-    try:
-        with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-            yaml.dump(config, _tmp_f)
-        shutil.move(_tmp_path, bgp_file)
-    except:
-        if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-        raise
+    with open(bgp_file, 'w') as f:
+        yaml.dump(config, f)
     
     print(json.dumps({
         'success': True,
@@ -1543,8 +1434,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 import sys
 
@@ -1608,14 +1497,8 @@ elif sw_port_mode == 'trunk':
 
 config['sw_port_profiles'][profile_name] = profile_entry
 
-_tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(port_file), suffix='.tmp')
-try:
-    with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-        yaml.dump(config, _tmp_f)
-    shutil.move(_tmp_path, port_file)
-except:
-    if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-    raise
+with open(port_file, 'w') as f:
+    yaml.dump(config, f)
 
 print(json.dumps({'success': True, 'profile_name': profile_name}))
 PYTHON
@@ -1629,8 +1512,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 import sys
 
@@ -1695,14 +1576,8 @@ if original_name != profile_name:
 
 config['sw_port_profiles'][profile_name] = profile_entry
 
-_tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(port_file), suffix='.tmp')
-try:
-    with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-        yaml.dump(config, _tmp_f)
-    shutil.move(_tmp_path, port_file)
-except:
-    if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-    raise
+with open(port_file, 'w') as f:
+    yaml.dump(config, f)
 
 print(json.dumps({'success': True, 'profile_name': profile_name}))
 PYTHON
@@ -1716,8 +1591,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 import sys
 
@@ -1746,14 +1619,8 @@ if 'sw_port_profiles' not in config or profile_name not in config['sw_port_profi
 
 del config['sw_port_profiles'][profile_name]
 
-_tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(port_file), suffix='.tmp')
-try:
-    with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-        yaml.dump(config, _tmp_f)
-    shutil.move(_tmp_path, port_file)
-except:
-    if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-    raise
+with open(port_file, 'w') as f:
+    yaml.dump(config, f)
 
 print(json.dumps({'success': True, 'deleted': profile_name}))
 PYTHON
@@ -1770,8 +1637,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 import sys
 from datetime import datetime
@@ -1863,14 +1728,8 @@ try:
     vlan_config['vlan_profiles'][profile_name] = profile_entry
     
     # Write vlan_profiles.yaml
-    _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(vlan_profiles_file), suffix='.tmp')
-    try:
-        with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-            yaml.dump(vlan_config, _tmp_f)
-        shutil.move(_tmp_path, vlan_profiles_file)
-    except:
-        if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-        raise
+    with open(vlan_profiles_file, 'w') as f:
+        yaml.dump(vlan_config, f)
     
     # Load existing port_profiles
     port_config = {}
@@ -1892,14 +1751,8 @@ try:
         }
         
         # Write port_profiles.yaml
-        _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(port_profiles_file), suffix='.tmp')
-        try:
-            with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-                yaml.dump(port_config, _tmp_f)
-            shutil.move(_tmp_path, port_profiles_file)
-        except:
-            if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-            raise
+        with open(port_profiles_file, 'w') as f:
+            yaml.dump(port_config, f)
     
     print(json.dumps({
         'success': True,
@@ -1922,8 +1775,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 
 ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
@@ -1969,8 +1820,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 import sys
 
@@ -2012,14 +1861,8 @@ if profile_data and 'vlans' in profile_data:
 del vlan_config['vlan_profiles'][profile_name]
 
 # Save vlan_profiles
-_tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(vlan_profiles_file), suffix='.tmp')
-try:
-    with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-        yaml.dump(vlan_config, _tmp_f)
-    shutil.move(_tmp_path, vlan_profiles_file)
-except:
-    if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-    raise
+with open(vlan_profiles_file, 'w') as f:
+    yaml.dump(vlan_config, f)
 
 # Try to delete corresponding port profile
 port_profile_deleted = False
@@ -2035,14 +1878,8 @@ if vlan_id:
     if 'sw_port_profiles' in port_config and port_profile_name in port_config['sw_port_profiles']:
         del port_config['sw_port_profiles'][port_profile_name]
         
-        _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(port_profiles_file), suffix='.tmp')
-        try:
-            with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-                yaml.dump(port_config, _tmp_f)
-            shutil.move(_tmp_path, port_profiles_file)
-        except:
-            if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-            raise
+        with open(port_profiles_file, 'w') as f:
+            yaml.dump(port_config, f)
         
         port_profile_deleted = True
 
@@ -2065,8 +1902,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 import sys
 
@@ -2115,14 +1950,8 @@ for vlan in vlans:
         added.append(vlan)
 
 # Save host_vars
-_tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(host_vars_file), suffix='.tmp')
-try:
-    with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-        yaml.dump(host_config, _tmp_f)
-    shutil.move(_tmp_path, host_vars_file)
-except:
-    if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-    raise
+with open(host_vars_file, 'w') as f:
+    yaml.dump(host_config, f)
 
 print(json.dumps({
     'success': True,
@@ -2143,8 +1972,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 import sys
 
@@ -2192,14 +2019,8 @@ if 'vlan_templates' not in host_config or vlan not in host_config.get('vlan_temp
 host_config['vlan_templates'].remove(vlan)
 
 # Save host_vars
-_tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(host_vars_file), suffix='.tmp')
-try:
-    with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-        yaml.dump(host_config, _tmp_f)
-    shutil.move(_tmp_path, host_vars_file)
-except:
-    if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-    raise
+with open(host_vars_file, 'w') as f:
+    yaml.dump(host_config, f)
 
 print(json.dumps({
     'success': True,
@@ -2219,8 +2040,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 import sys
 
@@ -2300,14 +2119,8 @@ if profile_name != original_name:
 vlan_config['vlan_profiles'][profile_name] = profile_entry
 
 # Save
-_tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(vlan_profiles_file), suffix='.tmp')
-try:
-    with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-        yaml.dump(vlan_config, _tmp_f)
-    shutil.move(_tmp_path, vlan_profiles_file)
-except:
-    if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-    raise
+with open(vlan_profiles_file, 'w') as f:
+    yaml.dump(vlan_config, f)
 
 print(json.dumps({
     'success': True,
@@ -2412,8 +2225,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 import glob
 
@@ -2489,8 +2300,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 import glob
 
@@ -2594,8 +2403,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 import glob
 
@@ -2669,8 +2476,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 import sys
 import glob
@@ -2735,14 +2540,8 @@ try:
         }
         
         # Write back
-        _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(yaml_file), suffix='.tmp')
-        try:
-            with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-                yaml.dump(device_data, _tmp_f)
-            shutil.move(_tmp_path, yaml_file)
-        except:
-            if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-            raise
+        with open(yaml_file, 'w') as f:
+            yaml.dump(device_data, f)
         
         devices_updated.append(hostname)
     
@@ -2764,8 +2563,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 import sys
 
@@ -2826,14 +2623,8 @@ try:
         host_data['dhcp_relay'].append(relay_entry)
     
     # Write back
-    _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(host_file), suffix='.tmp')
-    try:
-        with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-            yaml.dump(host_data, _tmp_f)
-        shutil.move(_tmp_path, host_file)
-    except:
-        if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-        raise
+    with open(host_file, 'w') as f:
+        yaml.dump(host_data, f)
     
     print(json.dumps({'success': True, 'message': 'DHCP relay saved'}))
 except Exception as e:
@@ -2848,8 +2639,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 import sys
 
@@ -2894,14 +2683,8 @@ try:
         del host_data['dhcp_relay']
     
     # Write back
-    _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(host_file), suffix='.tmp')
-    try:
-        with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-            yaml.dump(host_data, _tmp_f)
-        shutil.move(_tmp_path, host_file)
-    except:
-        if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-        raise
+    with open(host_file, 'w') as f:
+        yaml.dump(host_data, f)
     
     print(json.dumps({'success': True, 'message': 'DHCP relay deleted'}))
 except Exception as e:
@@ -2916,8 +2699,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 import sys
 
@@ -2951,14 +2732,8 @@ try:
     }
     
     # Write back
-    _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(host_file), suffix='.tmp')
-    try:
-        with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-            yaml.dump(host_data, _tmp_f)
-        shutil.move(_tmp_path, host_file)
-    except:
-        if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-        raise
+    with open(host_file, 'w') as f:
+        yaml.dump(host_data, f)
     
     print(json.dumps({'success': True, 'message': 'EVPN Multihoming saved'}))
 except Exception as e:
@@ -2973,8 +2748,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 import sys
 
@@ -3004,14 +2777,8 @@ try:
     del host_data['evpn_mh']
     
     # Write back
-    _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(host_file), suffix='.tmp')
-    try:
-        with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-            yaml.dump(host_data, _tmp_f)
-        shutil.move(_tmp_path, host_file)
-    except:
-        if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-        raise
+    with open(host_file, 'w') as f:
+        yaml.dump(host_data, f)
     
     print(json.dumps({'success': True, 'message': 'EVPN Multihoming deleted'}))
 except Exception as e:
@@ -3026,8 +2793,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import sys
 import os
 
@@ -3093,14 +2858,8 @@ try:
     host_data['bonds'][bond_name] = bond_entry
     
     # Write back
-    _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(host_file), suffix='.tmp')
-    try:
-        with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-            yaml.dump(host_data, _tmp_f)
-        shutil.move(_tmp_path, host_file)
-    except:
-        if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-        raise
+    with open(host_file, 'w') as f:
+        yaml.dump(host_data, f)
     
     print(json.dumps({'success': True, 'message': f'Bond {bond_name} created'}))
 except Exception as e:
@@ -3115,8 +2874,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import sys
 import os
 
@@ -3157,14 +2914,8 @@ try:
     if not host_data['bonds']:
         del host_data['bonds']
     
-    _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(host_file), suffix='.tmp')
-    try:
-        with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-            yaml.dump(host_data, _tmp_f)
-        shutil.move(_tmp_path, host_file)
-    except:
-        if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-        raise
+    with open(host_file, 'w') as f:
+        yaml.dump(host_data, f)
     
     print(json.dumps({'success': True, 'message': f'Bond {bond_name} deleted'}))
 except Exception as e:
@@ -3179,8 +2930,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import sys
 import os
 
@@ -3243,14 +2992,8 @@ try:
         print(json.dumps({'success': False, 'error': f'Subinterface {subif_name} not found'}))
         sys.exit(0)
     
-    _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(host_file), suffix='.tmp')
-    try:
-        with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-            yaml.dump(host_data, _tmp_f)
-        shutil.move(_tmp_path, host_file)
-    except:
-        if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-        raise
+    with open(host_file, 'w') as f:
+        yaml.dump(host_data, f)
     
     print(json.dumps({'success': True, 'message': f'Subinterface {subif_name} deleted'}))
 except Exception as e:
@@ -3265,8 +3008,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import sys
 import os
 
@@ -3525,14 +3266,8 @@ try:
             del iface['description']
     
     # Write back
-    _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(host_file), suffix='.tmp')
-    try:
-        with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-            yaml.dump(host_data, _tmp_f)
-        shutil.move(_tmp_path, host_file)
-    except:
-        if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-        raise
+    with open(host_file, 'w') as f:
+        yaml.dump(host_data, f)
     
     print(json.dumps({'success': True, 'message': f'{interface_type} {interface_name} updated'}))
 except Exception as e:
@@ -3549,8 +3284,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 
 try:
@@ -3646,24 +3379,12 @@ try:
         profile_created = True
         
         # Save updated host_vars with new bgp_profile
-        _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(host_file), suffix='.tmp')
-        try:
-            with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-                yaml.dump(host_data, _tmp_f)
-            shutil.move(_tmp_path, host_file)
-        except:
-            if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-            raise
+        with open(host_file, 'w') as f:
+            yaml.dump(host_data, f)
         
         # Save bgp_profiles with new profile
-        _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(bgp_profiles_file), suffix='.tmp')
-        try:
-            with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-                yaml.dump(bgp_data, _tmp_f)
-            shutil.move(_tmp_path, bgp_profiles_file)
-        except:
-            if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-            raise
+        with open(bgp_profiles_file, 'w') as f:
+            yaml.dump(bgp_data, f)
     
     elif not has_external:
         print(json.dumps({'success': False, 'error': f'External peer group not found in profile {bgp_profile}. Enable "Create Border Profile" option.'}))
@@ -3687,14 +3408,8 @@ try:
     }
     
     # Save host_vars
-    _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(host_file), suffix='.tmp')
-    try:
-        with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-            yaml.dump(host_data, _tmp_f)
-        shutil.move(_tmp_path, host_file)
-    except:
-        if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-        raise
+    with open(host_file, 'w') as f:
+        yaml.dump(host_data, f)
     
     # If profile already had External, add peer to it
     if has_external and not profile_created:
@@ -3718,14 +3433,8 @@ try:
             external_pg['peers'][remote_peer] = None
         
         # Save bgp_profiles
-        _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(bgp_profiles_file), suffix='.tmp')
-        try:
-            with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-                yaml.dump(bgp_data, _tmp_f)
-            shutil.move(_tmp_path, bgp_profiles_file)
-        except:
-            if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-            raise
+        with open(bgp_profiles_file, 'w') as f:
+            yaml.dump(bgp_data, f)
     
     print(json.dumps({
         'success': True, 
@@ -3747,8 +3456,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 import sys
 
@@ -3800,14 +3507,8 @@ try:
                 del host_data['interfaces'][parent_if]
         
         if subif_removed:
-            _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(host_file), suffix='.tmp')
-            try:
-                with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-                    yaml.dump(host_data, _tmp_f)
-                shutil.move(_tmp_path, host_file)
-            except:
-                if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-                raise
+            with open(host_file, 'w') as f:
+                yaml.dump(host_data, f)
     
     # 2. Get BGP profile from VRF config
     bgp_profile = ''
@@ -3865,24 +3566,12 @@ try:
                         if 'bgp' in vrf_config:
                             vrf_config['bgp']['bgp_profile'] = 'OVERLAY_LEAF'
                         
-                        _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(host_file), suffix='.tmp')
-                        try:
-                            with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-                                yaml.dump(host_data, _tmp_f)
-                            shutil.move(_tmp_path, host_file)
-                        except:
-                            if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-                            raise
+                        with open(host_file, 'w') as f:
+                            yaml.dump(host_data, f)
                 
                 # Save bgp_profiles (with or without deleted profile)
-                _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(bgp_profiles_file), suffix='.tmp')
-                try:
-                    with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-                        yaml.dump(bgp_data, _tmp_f)
-                    shutil.move(_tmp_path, bgp_profiles_file)
-                except:
-                    if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-                    raise
+                with open(bgp_profiles_file, 'w') as f:
+                    yaml.dump(bgp_data, f)
     
     print(json.dumps({
         'success': True, 
@@ -3905,8 +3594,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 import sys
 
@@ -3976,14 +3663,8 @@ try:
     }
     
     # Save host_vars
-    _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(host_file), suffix='.tmp')
-    try:
-        with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-            yaml.dump(host_data, _tmp_f)
-        shutil.move(_tmp_path, host_file)
-    except:
-        if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-        raise
+    with open(host_file, 'w') as f:
+        yaml.dump(host_data, f)
     
     # 2. Update BGP profile - update peer in External group
     bgp_profiles_file = os.path.join(ansible_dir, 'inventory', 'group_vars', 'all', 'bgp_profiles.yaml')
@@ -4026,14 +3707,8 @@ try:
             peers[remote_peer] = None
     
     # Save bgp_profiles
-    _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(bgp_profiles_file), suffix='.tmp')
-    try:
-        with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-            yaml.dump(bgp_data, _tmp_f)
-        shutil.move(_tmp_path, bgp_profiles_file)
-    except:
-        if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-        raise
+    with open(bgp_profiles_file, 'w') as f:
+        yaml.dump(bgp_data, f)
     
     print(json.dumps({
         'success': True, 
@@ -4054,8 +3729,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 import glob
 
@@ -4120,8 +3793,6 @@ import json
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
-import tempfile
-import shutil
 import os
 import glob
 
