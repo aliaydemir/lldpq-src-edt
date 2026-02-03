@@ -897,6 +897,126 @@ run_fabric_scan() {
     echo '{"success": true, "message": "Fabric scan started"}'
 }
 
+# Search cached routes (VRF-grouped structure)
+search_cached_routes() {
+    local search_ip="$1"
+    
+    python3 << PYTHON
+import json
+import os
+import struct
+import socket
+
+lldpq_dir = os.environ.get('LLDPQ_DIR', '/home/nvidia/lldpq')
+tables_dir = f"{lldpq_dir}/monitor-results/fabric-tables"
+search_ip = "$search_ip"
+
+def ip_to_int(ip):
+    try:
+        return struct.unpack("!I", socket.inet_aton(ip))[0]
+    except:
+        return 0
+
+def is_ip_in_prefix(ip, prefix):
+    try:
+        if '/' not in prefix:
+            return ip == prefix
+        network, mask = prefix.split('/')
+        mask = int(mask)
+        ip_int = ip_to_int(ip)
+        net_int = ip_to_int(network)
+        mask_bits = (0xFFFFFFFF << (32 - mask)) & 0xFFFFFFFF if mask > 0 else 0
+        return (ip_int & mask_bits) == (net_int & mask_bits)
+    except:
+        return False
+
+def get_prefix_len(prefix):
+    try:
+        if '/' in prefix:
+            return int(prefix.split('/')[1])
+        return 32
+    except:
+        return 0
+
+results = {}  # vrf -> [routes with best match]
+all_vrfs = set()  # Collect all unique VRFs
+device_vrfs = {}  # Track which VRFs each device has
+
+try:
+    if not os.path.exists(tables_dir):
+        print(json.dumps({"success": False, "error": "No cached data. Run Fabric Scan first."}))
+        exit()
+    
+    # First pass: collect all VRFs and find best matches
+    for filename in os.listdir(tables_dir):
+        if not filename.endswith('.json') or filename == 'summary.json':
+            continue
+        
+        hostname = filename.replace('.json', '')
+        filepath = os.path.join(tables_dir, filename)
+        
+        try:
+            with open(filepath) as f:
+                data = json.load(f)
+            
+            routes = data.get('routes', {})
+            device_vrfs[hostname] = set()
+            
+            for vrf, vrf_routes in routes.items():
+                # Skip invalid VRF names
+                if vrf.startswith('-') or not vrf.strip():
+                    continue
+                    
+                all_vrfs.add(vrf)
+                device_vrfs[hostname].add(vrf)
+                
+                best_match = None
+                best_prefix_len = -1
+                
+                for route in vrf_routes:
+                    prefix = route.get('prefix', '')
+                    if is_ip_in_prefix(search_ip, prefix):
+                        prefix_len = get_prefix_len(prefix)
+                        if prefix_len > best_prefix_len:
+                            best_prefix_len = prefix_len
+                            best_match = route.copy()
+                            best_match['device'] = hostname
+                            best_match['vrf'] = vrf
+                
+                if best_match:
+                    if vrf not in results:
+                        results[vrf] = []
+                    results[vrf].append(best_match)
+        except Exception as e:
+            continue
+    
+    # Second pass: add "No Route" for VRFs without any match
+    for vrf in all_vrfs:
+        if vrf not in results:
+            # Count devices that have this VRF
+            devices_with_vrf = [d for d, vrfs in device_vrfs.items() if vrf in vrfs]
+            results[vrf] = [{
+                'device': 'all',
+                'vrf': vrf,
+                'prefix': 'No Route',
+                'nexthop': '-',
+                'interface': '-',
+                'protocol': '-',
+                'no_route': True,
+                'device_count': len(devices_with_vrf)
+            }]
+    
+    print(json.dumps({
+        "success": True,
+        "vrf_routes": results,
+        "cached": True
+    }))
+
+except Exception as e:
+    print(json.dumps({"success": False, "error": str(e)}))
+PYTHON
+}
+
 # Search cached fabric tables (fast)
 search_cached_tables() {
     local table_type="$1"
@@ -1016,6 +1136,9 @@ case "$ACTION" in
         ;;
     "search-cached-lldp")
         search_cached_tables "lldp" "$SEARCH"
+        ;;
+    "search-cached-routes")
+        search_cached_routes "$SEARCH"
         ;;
     *)
         echo '{"success": false, "error": "Invalid action"}'

@@ -82,6 +82,13 @@ collect_device_data() {
         for b in /sys/class/net/*/bonding/slaves; do
             [ -f "$b" ] && echo "$(basename $(dirname $(dirname $b))):$(cat $b)"
         done 2>/dev/null
+        echo "===ROUTES==="
+        echo "VRF:default"
+        /usr/sbin/ip route show 2>/dev/null | head -300
+        for vrf in $(/usr/sbin/ip vrf list 2>/dev/null | awk "NR>1 {print \$1}"); do
+            echo "VRF:$vrf"
+            /usr/sbin/ip route show vrf "$vrf" 2>/dev/null | head -300
+        done
         echo "===END==="
     ' 2>/dev/null)
     
@@ -197,11 +204,68 @@ for entry in mac_entries:
     if iface in bond_members:
         entry['bond_ports'] = bond_members[iface]
 
+# Parse ROUTES (per VRF)
+route_entries = {}  # vrf -> list of routes
+current_vrf = 'default'
+for line in sections.get('ROUTES', []):
+    line = line.strip()
+    if not line:
+        continue
+    if line.startswith('VRF:'):
+        current_vrf = line[4:]
+        if current_vrf not in route_entries:
+            route_entries[current_vrf] = []
+        continue
+    
+    # Parse route line: prefix [via nexthop] [nhid X] [dev interface] [proto protocol] [metric X]
+    parts = line.split()
+    if not parts:
+        continue
+    
+    prefix = parts[0]
+    
+    # Convert 'default' to '0.0.0.0/0'
+    if prefix == 'default':
+        prefix = '0.0.0.0/0'
+    
+    nexthop = ''
+    nhid = ''
+    interface = ''
+    protocol = ''
+    metric = ''
+    
+    for i, p in enumerate(parts):
+        if p == 'via' and i+1 < len(parts): nexthop = parts[i+1]
+        if p == 'nhid' and i+1 < len(parts): nhid = parts[i+1]
+        if p == 'dev' and i+1 < len(parts): interface = parts[i+1]
+        if p == 'proto' and i+1 < len(parts): protocol = parts[i+1]
+        if p == 'metric' and i+1 < len(parts): metric = parts[i+1]
+    
+    # If no via but has nhid, it's ECMP (mark as such)
+    if not nexthop and nhid:
+        nexthop = 'ECMP'
+    
+    # Skip local routes, linkdown, unreachable
+    if protocol in ['kernel', 'redirect'] or 'linkdown' in line or 'unreachable' in line:
+        continue
+    
+    if current_vrf not in route_entries:
+        route_entries[current_vrf] = []
+    
+    route_entries[current_vrf].append({
+        'prefix': prefix,
+        'nexthop': nexthop,
+        'interface': interface,
+        'protocol': protocol,
+        'metric': metric
+    })
+
 result = {
     'arp': arp_entries,
     'mac': mac_entries,
     'vtep': vtep_entries,
     'bonds': bond_members,
+    'routes': route_entries,
     'lldp': []  # Skip LLDP for now to keep it simple
 }
 

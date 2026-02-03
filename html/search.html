@@ -510,10 +510,13 @@
             font-weight: 500;
         }
         
-        .badge-cyan {
-            background: rgba(0, 188, 212, 0.2);
-            color: #4dd0e1;
-        }
+        .badge-cyan { background: rgba(0, 188, 212, 0.2); color: #4dd0e1; }
+        .badge-green { background: rgba(118, 185, 0, 0.2); color: #76b900; }
+        .badge-blue { background: rgba(33, 150, 243, 0.2); color: #64b5f6; }
+        .badge-purple { background: rgba(156, 39, 176, 0.2); color: #ce93d8; }
+        .badge-orange { background: rgba(255, 152, 0, 0.2); color: #ffb74d; }
+        .badge-gray { background: rgba(158, 158, 158, 0.2); color: #9e9e9e; }
+        .badge-pink { background: rgba(233, 30, 99, 0.2); color: #f48fb1; }
         
         .badge-green {
             background: rgba(118, 185, 0, 0.2);
@@ -1390,10 +1393,74 @@
                     html += '</tbody></table></div>';
                 }
                 
-                if (totalResults === 0 && crossRefInfo.length === 0) {
+                // Route Best Match (for all IP searches - VRF grouped with consistency check)
+                // Uses cached routes for speed
+                let hasRouteBestMatch = false;
+                if (isIpSearch) {
+                    try {
+                        const routeResp = await fetch('search-api.sh?action=search-cached-routes&search=' + encodeURIComponent(searchTerm));
+                        const routeData = await routeResp.json();
+                        
+                        if (routeData.success && routeData.vrf_routes && Object.keys(routeData.vrf_routes).length > 0) {
+                            hasRouteBestMatch = true;
+                            const vrfGroups = routeData.vrf_routes;
+                            const sortedVrfs = sortVrfs(Object.keys(vrfGroups));
+                            
+                            // Build table format - same as device-specific search
+                            html += '<div class="best-match-container" style="margin-bottom: 15px; padding: 12px 16px; background: linear-gradient(90deg, #3d3a1c, #1e1e1e); border-left: 3px solid #f0ad4e; border-radius: 4px;">';
+                            html += '<div style="color: #f0ad4e; font-weight: 600; margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">';
+                            html += '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>';
+                            html += 'No exact match for <span class="ip">' + searchTerm + '</span>. Showing best matching route(s):';
+                            html += '</div>';
+                            
+                            html += '<table class="data-table" style="margin: 0;"><thead><tr>';
+                            html += '<th>VRF</th><th>Best Match</th><th>Next Hop</th><th>Interface</th><th>Protocol</th><th style="text-align: right;">Devices</th></tr></thead><tbody>';
+                            
+                            sortedVrfs.forEach(vrf => {
+                                const routes = vrfGroups[vrf];
+                                const isNoRoute = routes.length === 1 && routes[0].no_route;
+                                
+                                if (isNoRoute) {
+                                    html += '<tr style="opacity: 0.6;">';
+                                    html += '<td><span class="badge ' + getVrfBadgeClass(vrf) + '">' + vrf + '</span></td>';
+                                    html += '<td style="color: #888;">No Route</td>';
+                                    html += '<td>-</td><td>-</td><td>-</td>';
+                                    html += '<td style="text-align: right; color: #888;">-</td>';
+                                    html += '</tr>';
+                                } else {
+                                    // Get first route info and count devices
+                                    const r = routes[0];
+                                    const deviceCount = routes.length;
+                                    
+                                    // Check for multiple nexthops
+                                    const nexthops = new Set(routes.map(rt => rt.nexthop).filter(n => n));
+                                    const nexthopDisplay = nexthops.size > 1 ? nexthops.size + ' next-hop' : (r.nexthop || '-');
+                                    
+                                    html += '<tr>';
+                                    html += '<td><span class="badge ' + getVrfBadgeClass(vrf) + '">' + vrf + '</span></td>';
+                                    html += '<td style="color: #f0ad4e;">' + r.prefix + '</td>';
+                                    html += '<td class="ip">' + nexthopDisplay + '</td>';
+                                    html += '<td>' + (r.interface || '-') + '</td>';
+                                    html += '<td>' + (r.protocol || '-') + '</td>';
+                                    html += '<td style="text-align: right; color: #76b900;">✓ ' + deviceCount + ' device</td>';
+                                    html += '</tr>';
+                                }
+                            });
+                            
+                            html += '</tbody></table></div>';
+                        }
+                    } catch (e) {
+                        console.error('Route search failed:', e);
+                    }
+                }
+                
+                if (totalResults === 0 && crossRefInfo.length === 0 && !hasRouteBestMatch) {
                     html = '<div class="status-message">No results found for "' + searchTerm + '"</div>';
                 } else if (totalResults > 0) {
                     html = '<div style="margin-bottom: 10px; color: #76b900; font-weight: 600;">' + totalResults + ' total matches found</div>' + html;
+                } else if (hasRouteBestMatch && totalResults === 0) {
+                    // Only route best match found
+                    html = '<div style="margin-bottom: 10px; padding: 10px 15px; background: linear-gradient(90deg, #3d3a1c, #1e1e1e); border-left: 3px solid #f0ad4e; border-radius: 4px;"><span style="color: #f0ad4e;">No exact match for <span class="ip">' + searchTerm + '</span> in MAC/ARP tables. Showing best matching routes:</span></div>' + html;
                 }
                 
                 resultsDiv.innerHTML = html;
@@ -1407,6 +1474,128 @@
         // Store route data for VRF filtering
         let currentRouteData = null;
         let currentRouteVrf = 'all';
+        let fullRouteData = null; // Store full route table for best match search
+        
+        // VRF sorting function - default first, then alphabetical
+        function sortVrfs(vrfNames) {
+            return vrfNames.sort((a, b) => {
+                if (a === 'default') return -1;
+                if (b === 'default') return 1;
+                return a.localeCompare(b);
+            });
+        }
+        
+        // VRF badge color function (consistent with vrf-report.html)
+        function getVrfBadgeClass(vrfName) {
+            if (!vrfName || vrfName === 'default') return 'badge-gray';
+            
+            // Infra VRFs get blue
+            if (vrfName === 'oob' || vrfName === 'mgmt' || vrfName.toLowerCase().includes('mgmt') || vrfName.toLowerCase().includes('management')) {
+                return 'badge-blue';
+            }
+            
+            // Hash the VRF name to get consistent color
+            const colors = ['badge-green', 'badge-purple', 'badge-orange', 'badge-cyan', 'badge-pink'];
+            let hash = 0;
+            for (let i = 0; i < vrfName.length; i++) {
+                hash = ((hash << 5) - hash) + vrfName.charCodeAt(i);
+                hash = hash & hash;
+            }
+            return colors[Math.abs(hash) % colors.length];
+        }
+        
+        // IP prefix matching helper functions
+        function ipToLong(ip) {
+            const parts = ip.split('.').map(Number);
+            return ((parts[0] << 24) + (parts[1] << 16) + (parts[2] << 8) + parts[3]) >>> 0;
+        }
+        
+        function isIpInPrefix(ip, prefix) {
+            // Parse prefix like "192.168.1.0/24"
+            const [network, maskStr] = prefix.split('/');
+            if (!maskStr) return false;
+            
+            const mask = parseInt(maskStr);
+            if (mask < 0 || mask > 32) return false;
+            
+            const ipLong = ipToLong(ip);
+            const networkLong = ipToLong(network);
+            const maskBits = mask === 0 ? 0 : (0xFFFFFFFF << (32 - mask)) >>> 0;
+            
+            return (ipLong & maskBits) === (networkLong & maskBits);
+        }
+        
+        function findBestMatchRoutes(searchIp, routeData) {
+            // Find the best matching route (longest prefix match) per VRF
+            // Show all VRFs, with "No Route" for those without a match
+            const bestMatches = {};
+            
+            if (!routeData || !routeData.vrf_tables) return bestMatches;
+            
+            // Check if searchIp is a valid IP (not a prefix search)
+            const ipMatch = searchIp.match(/^(\d+\.\d+\.\d+\.\d+)/);
+            if (!ipMatch) return bestMatches;
+            
+            const ip = ipMatch[1];
+            
+            for (const vrf of (routeData.vrf_order || [])) {
+                const routes = routeData.vrf_tables[vrf] || [];
+                let bestMatch = null;
+                let longestPrefix = -1;
+                
+                for (const route of routes) {
+                    if (!route.prefix) continue;
+                    
+                    const [, maskStr] = route.prefix.split('/');
+                    const mask = parseInt(maskStr || '32');
+                    
+                    if (isIpInPrefix(ip, route.prefix) && mask > longestPrefix) {
+                        longestPrefix = mask;
+                        bestMatch = { ...route, vrf };
+                    }
+                }
+                
+                if (bestMatch) {
+                    bestMatches[vrf] = bestMatch;
+                } else {
+                    // No matching route for this VRF - mark as "No Route"
+                    bestMatches[vrf] = { prefix: 'No Route', nexthop: '-', interface: '-', protocol: '-', vrf, no_route: true };
+                }
+            }
+            
+            return bestMatches;
+        }
+        
+        function renderBestMatchResults(searchIp, bestMatches, container) {
+            const vrfs = sortVrfs(Object.keys(bestMatches));
+            if (vrfs.length === 0) {
+                return '<div class="status-message">No routes found for ' + searchIp + '</div>';
+            }
+            
+            let html = '<div class="best-match-container" style="margin-bottom: 15px; padding: 12px 16px; background: linear-gradient(90deg, #3d3a1c, #1e1e1e); border-left: 3px solid #f0ad4e; border-radius: 4px;">';
+            html += '<div style="color: #f0ad4e; font-weight: 600; margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">';
+            html += '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>';
+            html += 'No exact match for <span class="ip">' + searchIp + '</span>. Showing best matching route(s):';
+            html += '</div>';
+            
+            html += '<table class="data-table" style="margin: 0;"><thead><tr>';
+            html += '<th>VRF</th><th>Best Match</th><th>Next Hop</th><th>Interface</th><th>Protocol</th></tr></thead><tbody>';
+            
+            vrfs.forEach(vrf => {
+                const route = bestMatches[vrf];
+                const isNoRoute = route.no_route;
+                html += '<tr' + (isNoRoute ? ' style="opacity: 0.6;"' : '') + '>';
+                html += '<td><span class="badge ' + getVrfBadgeClass(vrf) + '">' + vrf + '</span></td>';
+                html += '<td style="color: ' + (isNoRoute ? '#888' : '#f0ad4e') + ';">' + route.prefix + '</td>';
+                html += '<td class="ip">' + (route.nexthop || '-') + '</td>';
+                html += '<td>' + (route.interface || '-') + '</td>';
+                html += '<td>' + (route.protocol || '-') + '</td>';
+                html += '</tr>';
+            });
+            
+            html += '</tbody></table></div>';
+            return html;
+        }
         
         async function loadRouteTable() {
             const device = document.getElementById('routeDeviceSelect').value;
@@ -1439,6 +1628,30 @@
                     resultCount.textContent = data.total + ' routes';
                     
                     if (data.total === 0 || !data.vrf_order || data.vrf_order.length === 0) {
+                        // No exact match - try to find best match
+                        if (search && /^\d+\.\d+\.\d+\.\d+/.test(search)) {
+                            // Load full routing table for best match search
+                            results.innerHTML = '<div class="loading-message">Searching for best matching route...</div>';
+                            try {
+                                const fullUrl = 'search-api.sh?action=get-route&device=' + encodeURIComponent(device);
+                                const fullResp = await fetch(fullUrl);
+                                const fullData = await fullResp.json();
+                                
+                                if (fullData.success && fullData.total > 0) {
+                                    fullRouteData = fullData;
+                                    const bestMatches = findBestMatchRoutes(search, fullData);
+                                    
+                                    if (Object.keys(bestMatches).length > 0) {
+                                        results.innerHTML = renderBestMatchResults(search, bestMatches);
+                                        resultCount.textContent = 'Best match';
+                                        vrfTabsContainer.style.display = 'none';
+                                        return;
+                                    }
+                                }
+                            } catch (e) {
+                                console.error('Best match search failed:', e);
+                            }
+                        }
                         results.innerHTML = '<div class="status-message">No routes found</div>';
                         vrfTabsContainer.style.display = 'none';
                         return;
