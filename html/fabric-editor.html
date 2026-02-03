@@ -2363,8 +2363,9 @@
                 });
             });
             
-            // Folders to hide from the tree (at root level)
+            // Folders and files to hide from the tree (at root level)
             const hiddenFolders = ['assets', 'configs', 'files', 'scripts', 'srv-configs', 'topology'];
+            const hiddenFiles = ['.gitignore', 'ansible.cfg'];
             
             // Render tree recursively
             function renderNode(node, parentEl, depth = 0, currentPath = '') {
@@ -2400,7 +2401,12 @@
                 
                 // Render files
                 if (node._files) {
-                    node._files.sort((a, b) => a.name.localeCompare(b.name)).forEach(file => {
+                    let filesToRender = node._files.sort((a, b) => a.name.localeCompare(b.name));
+                    // Hide certain files at root level
+                    if (depth === 0) {
+                        filesToRender = filesToRender.filter(f => !hiddenFiles.includes(f.name));
+                    }
+                    filesToRender.forEach(file => {
                         const fileEl = document.createElement('div');
                         fileEl.className = 'file-item';
                         fileEl.style.paddingLeft = (depth * 0 + 25) + 'px';

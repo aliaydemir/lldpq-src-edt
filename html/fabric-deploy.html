@@ -207,6 +207,52 @@
             text-decoration: underline;
         }
         
+        .device-search-container {
+            padding: 8px 10px;
+            background: #252526;
+            border-bottom: 1px solid #3c3c3c;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .device-search-input {
+            flex: 1;
+            padding: 6px 10px;
+            background: #1e1e1e;
+            border: 1px solid #3c3c3c;
+            border-radius: 4px;
+            color: #ccc;
+            font-size: 12px;
+            outline: none;
+        }
+        
+        .device-search-input:focus {
+            border-color: #76b900;
+        }
+        
+        .device-search-input::placeholder {
+            color: #666;
+        }
+        
+        .device-search-count {
+            font-size: 11px;
+            color: #888;
+            white-space: nowrap;
+        }
+        
+        .device-item.search-hidden {
+            display: none !important;
+        }
+        
+        .device-group.search-hidden {
+            display: none !important;
+        }
+        
+        .device-item.search-match {
+            background: rgba(118, 185, 0, 0.15);
+        }
+        
         .device-list {
             flex: 1;
             overflow-y: auto;
@@ -684,6 +730,10 @@
                     <a onclick="selectModified()" style="color: #ffb74d;">Modified</a>
                 </div>
             </div>
+            <div class="device-search-container">
+                <input type="text" id="device-search" class="device-search-input" placeholder="Search devices..." oninput="filterDevices(this.value)">
+                <span id="device-search-count" class="device-search-count"></span>
+            </div>
             <div class="device-list" id="device-list">
                 <div class="output-placeholder">
                     <svg viewBox="0 0 24 24">
@@ -1077,6 +1127,52 @@
             } catch (e) {
                 console.error('[quickGitScan] FAILED:', e.message, e);
             }
+        }
+        
+        // Device search/filter functionality
+        function filterDevices(query) {
+            const deviceItems = document.querySelectorAll('.device-item');
+            const groupHeaders = document.querySelectorAll('.device-group');
+            const countEl = document.getElementById('device-search-count');
+            
+            // Clear previous highlights
+            deviceItems.forEach(item => {
+                item.classList.remove('search-match', 'search-hidden');
+            });
+            groupHeaders.forEach(group => {
+                group.classList.remove('search-hidden');
+            });
+            
+            if (!query.trim()) {
+                countEl.textContent = '';
+                return;
+            }
+            
+            const lowerQuery = query.toLowerCase();
+            let matchCount = 0;
+            
+            // Filter devices
+            deviceItems.forEach(item => {
+                const hostname = item.querySelector('.device-name')?.textContent || '';
+                const ip = item.querySelector('.device-ip')?.textContent || '';
+                
+                if (hostname.toLowerCase().includes(lowerQuery) || ip.includes(lowerQuery)) {
+                    item.classList.add('search-match');
+                    matchCount++;
+                } else {
+                    item.classList.add('search-hidden');
+                }
+            });
+            
+            // Hide groups with no visible devices
+            groupHeaders.forEach(group => {
+                const visibleDevices = group.querySelectorAll('.device-item:not(.search-hidden)');
+                if (visibleDevices.length === 0) {
+                    group.classList.add('search-hidden');
+                }
+            });
+            
+            countEl.textContent = matchCount > 0 ? `${matchCount} found` : 'No matches';
         }
         
         function renderDeviceList() {

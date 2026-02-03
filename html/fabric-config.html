@@ -1498,11 +1498,11 @@
                         <table class="data-table" style="table-layout: fixed;">
                             <thead>
                                 <tr>
-                                    <th style="width: 15%;">VRF Name</th>
-                                    <th style="width: 18%;">VXLAN Interface</th>
-                                    <th style="width: 12%;">L3VNI</th>
-                                    <th style="width: 35%;">BGP Profile</th>
-                                    <th style="width: 20%; text-align: right;">ASN</th>
+                                    <th style="width: 20%;">VRF Name</th>
+                                    <th style="width: 22%;">VXLAN Interface</th>
+                                    <th style="width: 18%;">L3VNI</th>
+                                    <th style="width: 30%;">BGP Profile</th>
+                                    <th style="width: 10%; text-align: right;">ASN</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -1637,12 +1637,12 @@
                                         <tr>
                                             <th style="width: 12%;">VLAN Profile</th>
                                             <th style="width: 6%;">ID</th>
-                                            <th style="width: 12%;">VRR VIP</th>
+                                            <th style="width: 14%;">VRR VIP</th>
                                             <th style="width: 14%;">IP</th>
-                                            <th style="width: 8%;">VRF</th>
+                                            <th style="width: 10%;">VRF</th>
+                                            <th style="width: 24%;">Description</th>
                                             <th style="width: 10%;">L2VNI</th>
-                                            <th style="width: 10%;">Leak To</th>
-                                            <th style="width: 28%; text-align: right;">Description</th>
+                                            <th style="width: 10%; text-align: right;">Leak To</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -1693,9 +1693,9 @@
                                 <td>${vrrVip ? `<span class="badge badge-orange">${vrrVip}</span>` : '-'}</td>
                                 <td>${switchIp ? `<span class="badge badge-blue">${switchIp}</span>` : '-'}</td>
                                 <td><span class="badge ${vrfBadgeClass}">${vrfDisplay}</span></td>
+                                <td>${descDisplay}</td>
                                 <td>${l2vniDisplay}</td>
-                                <td>${leakToDisplay}</td>
-                                <td style="text-align: right;">${descDisplay}</td>
+                                <td style="text-align: right;">${leakToDisplay}</td>
                             </tr>
                         `;
                     }
