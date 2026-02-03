@@ -24,6 +24,61 @@ fi
 echo "Content-Type: application/json"
 echo ""
 
+# Handle get-inventory action - return device groups from Ansible inventory
+if [ "$ACTION" = "get-inventory" ]; then
+    INVENTORY_FILE="$ANSIBLE_DIR/inventory/hosts"
+    
+    if [ ! -f "$INVENTORY_FILE" ]; then
+        echo '{"success": false, "error": "Inventory file not found"}'
+        exit 0
+    fi
+    
+    # Parse inventory file and output as JSON
+    python3 << 'PYEOF'
+import json
+import re
+import os
+
+inventory_file = os.environ.get('ANSIBLE_DIR', '/home/nvidia/dt-mvp') + '/inventory/hosts'
+
+groups = {}
+current_group = None
+
+try:
+    with open(inventory_file, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            
+            # Check for group header
+            group_match = re.match(r'^\[([^\]:]+)\]', line)
+            if group_match:
+                group_name = group_match.group(1)
+                # Skip :children and :vars groups
+                if ':' not in group_name:
+                    current_group = group_name
+                    if current_group not in groups:
+                        groups[current_group] = []
+                else:
+                    current_group = None
+                continue
+            
+            # Parse host entry
+            if current_group:
+                host_match = re.match(r'^(\S+)', line)
+                if host_match:
+                    hostname = host_match.group(1)
+                    if hostname not in groups[current_group]:
+                        groups[current_group].append(hostname)
+    
+    print(json.dumps({'success': True, 'groups': groups}))
+except Exception as e:
+    print(json.dumps({'success': False, 'error': str(e)}))
+PYEOF
+    exit 0
+fi
+
 # Handle validate action
 if [ "$ACTION" = "validate" ]; then
     VALIDATE_SCRIPT="$LLDPQ_DIR/nv-validate.py"
