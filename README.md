@@ -58,6 +58,11 @@ access via web UI: `http://<server>/search.html`
 - **cross-reference**: IP → finds associated MAC, MAC → finds associated IP
 - **bond expansion**: shows physical ports for bond interfaces
 - **vxlan filtering**: excludes vxlan interfaces for real physical data
+- **route best match**: shows how each VRF would route an IP (longest prefix match)
+  - VRF-based grouping with colored badges
+  - "No Route" indicator for VRFs without matching routes
+  - Device consistency check (shows if all devices use same route)
+  - Uses cached data for fast queries
 
 ### per-device tables
 
@@ -72,6 +77,7 @@ access via web UI: `http://<server>/search.html`
 ### features
 - real-time SSH queries to devices
 - **VRF tabs** for route filtering (click to filter by VRF)
+- **route best match**: when IP not found, shows best matching route per VRF
 - sortable table columns (click headers)
 - search/filter support
 - CSV export for MAC/ARP tables
