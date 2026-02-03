@@ -3373,12 +3373,17 @@ Topology analysis checks for IP conflicts, MAC conflicts, VLAN-VNI consistency, 
         input_dir = Path(args.input_dir) if args.input_dir else DEFAULT_INPUT_DIR
         
         if not input_dir.exists():
-            print(f"✗ Directory not found: {input_dir}", file=sys.stderr)
+            if args.json:
+                import json
+                print(json.dumps({'valid': False, 'error': f'Directory not found: {input_dir}'}))
+            else:
+                print(f"✗ Directory not found: {input_dir}", file=sys.stderr)
             sys.exit(1)
         
-        print(f"NVUE YAML Validator")
-        print(f"Directory: {input_dir.resolve()}")
-        print("=" * 60)
+        if not args.json:
+            print(f"NVUE YAML Validator")
+            print(f"Directory: {input_dir.resolve()}")
+            print("=" * 60)
         
         # Validate individual files
         results = validate_directory(input_dir)
@@ -3408,6 +3413,59 @@ Topology analysis checks for IP conflicts, MAC conflicts, VLAN-VNI consistency, 
         total_errors = sum(r.error_count for r in results)
         total_warnings = sum(r.warning_count for r in results)
         valid_count = sum(1 for r in results if r.is_valid)
+        
+        all_errors = total_errors + topology_errors
+        
+        # JSON output mode for directory
+        if args.json:
+            import json
+            output = {
+                'valid': all_errors == 0,
+                'summary': {
+                    'total_files': len(results),
+                    'valid_files': valid_count,
+                    'invalid_files': len(results) - valid_count,
+                    'total_errors': total_errors,
+                    'total_warnings': total_warnings,
+                    'topology_errors': topology_report.error_count if not args.no_topology else 0,
+                    'topology_warnings': topology_report.warning_count if not args.no_topology else 0
+                },
+                'files': [
+                    {
+                        'filename': r.filename,
+                        'valid': r.is_valid,
+                        'errors': r.error_count,
+                        'warnings': r.warning_count,
+                        'issues': [
+                            {
+                                'severity': i.severity.value,
+                                'path': i.path,
+                                'message': i.message,
+                                'suggestion': i.suggestion
+                            }
+                            for i in r.issues
+                        ]
+                    }
+                    for r in results
+                ],
+                'topology': {
+                    'errors': topology_report.error_count,
+                    'warnings': topology_report.warning_count,
+                    'issues': [
+                        {
+                            'severity': i.severity.value,
+                            'category': i.category,
+                            'message': i.message,
+                            'devices': i.devices,
+                            'suggestion': i.suggestion,
+                            'details': i.details
+                        }
+                        for i in topology_report.issues
+                    ]
+                } if not args.no_topology else None
+            }
+            print(json.dumps(output, indent=2, ensure_ascii=False))
+            sys.exit(0 if all_errors == 0 else 1)
         
         # Print results based on mode
         if args.report:
@@ -3441,7 +3499,6 @@ Topology analysis checks for IP conflicts, MAC conflicts, VLAN-VNI consistency, 
             )
             print(f"\nReport saved to: {output_path.resolve()}")
         
-        all_errors = total_errors + topology_errors
         sys.exit(0 if all_errors == 0 else 1)
 
 
