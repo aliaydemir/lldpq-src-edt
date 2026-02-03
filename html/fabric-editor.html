@@ -2435,9 +2435,9 @@
                         
                         fileEl.innerHTML = `<span class="codicon ${iconClass} file-icon"></span>${file.name}`;
                         fileEl.onclick = () => {
-                            // If file is already open, reload it; otherwise open it
+                            // If file is already open, switch to it; otherwise open it
                             if (state.files[file.path]) {
-                                reloadFile(file.path);
+                                switchToFile(file.path);
                             } else {
                                 openFile(file.path);
                             }
