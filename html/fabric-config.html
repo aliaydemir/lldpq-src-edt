@@ -1045,6 +1045,12 @@
                         </svg>
                         Diff
                     </button>
+                    <button class="btn" onclick="confirmGitReset()" style="background: #ff9800; border-color: #ff9800; color: #000;">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12.5 8c-2.65 0-5.05.99-6.9 2.6L2 7v9h9l-3.62-3.62c1.39-1.16 3.16-1.88 5.12-1.88 3.54 0 6.55 2.31 7.6 5.5l2.37-.78C21.08 11.03 17.15 8 12.5 8z"/>
+                        </svg>
+                        Git Reset
+                    </button>
                     <button class="btn btn-warning" onclick="runDeploy()" id="btn-deploy">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                             <path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/>
@@ -2532,6 +2538,46 @@
             
             showLoading(false);
             setStatus('Ready');
+        }
+        
+        // Git Reset for selected device
+        async function confirmGitReset() {
+            const host = getTargetHost();
+            if (!host) {
+                showOutputModal('Error', 'Please select a device first', 'error');
+                return;
+            }
+            
+            // Show confirmation modal
+            showConfirm(
+                'Git Reset',
+                `Are you sure you want to reset <strong>${host}.yaml</strong> to the last commit?<br><br>All uncommitted changes will be lost!`,
+                async () => {
+                    showLoading(true, `Resetting ${host}.yaml...`);
+                    setStatus('Resetting...');
+                    
+                    try {
+                        const file = `inventory/host_vars/${host}.yaml`;
+                        const result = await fetch(`/ansible-api.sh?action=git-reset-file&file=${encodeURIComponent(file)}`);
+                        const data = await result.json();
+                        
+                        if (data.success) {
+                            showOutputModal('Success', `<div style="color: #76b900; font-size: 16px;">✓ ${host}.yaml has been reset to last commit</div>`, 'success', true);
+                            // Reload device config to reflect changes
+                            if (selectedDevice === host) {
+                                selectDevice(host);
+                            }
+                        } else {
+                            showOutputModal('Error', data.error || 'Failed to reset file', 'error');
+                        }
+                    } catch (err) {
+                        showOutputModal('Error', 'Failed to reset: ' + err.message, 'error');
+                    }
+                    
+                    showLoading(false);
+                    setStatus('Ready');
+                }
+            );
         }
         
         // Show Diff Summary Modal (special formatting)
