@@ -522,8 +522,8 @@ if ! git config --global user.email >/dev/null 2>&1; then
     git config --global user.email "$(whoami)@$(hostname)"
 fi
 
-# Initialize git repo
-git init -q
+# Initialize git repo with main branch (modern Git convention)
+git init -q -b main
 git add -A
 git commit -q -m "Initial LLDPq configuration"
 
