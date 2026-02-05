@@ -1179,6 +1179,28 @@
             
             // Load devices
             await loadDevices();
+            
+            // Check URL for device parameter (e.g., ?device=lsw-3na-01-28)
+            const urlParams = new URLSearchParams(window.location.search);
+            const deviceParam = urlParams.get('device');
+            if (deviceParam) {
+                // Wait a bit for device list to render, then select the device
+                setTimeout(() => {
+                    const deviceItem = document.querySelector(`.device-item[data-hostname="${deviceParam}"]`);
+                    if (deviceItem) {
+                        // Expand the parent group first
+                        const group = deviceItem.closest('.device-group');
+                        if (group) {
+                            const header = group.querySelector('.group-header');
+                            if (header && header.classList.contains('collapsed')) {
+                                header.classList.remove('collapsed');
+                            }
+                        }
+                        // Select the device
+                        selectDevice(deviceParam);
+                    }
+                }, 100);
+            }
         }
         
         // Load devices from API
