@@ -1096,17 +1096,18 @@ function runLLDPCheck() {
     });
 }
 
+// CodeMirror editor instances
+let topologyEditorCM = null;
+let configEditorCM = null;
+
 /**
  * Open topology editor modal
  */
 function openTopologyEditor() {
     const modal = document.getElementById('topologyEditorModal');
-    const editor = document.getElementById('topologyEditor');
     const status = document.getElementById('topologyEditorStatus');
     
     modal.classList.add('show');
-    editor.value = 'Loading...';
-    editor.disabled = true;
     status.textContent = 'Loading topology.dot...';
     
     fetch('/edit-topology', {
@@ -1115,16 +1116,27 @@ function openTopologyEditor() {
     .then(response => response.json())
     .then(data => {
         if (data.success) {
-            editor.value = data.content;
-            editor.disabled = false;
+            // Initialize CodeMirror if not already done
+            if (!topologyEditorCM) {
+                topologyEditorCM = CodeMirror(document.getElementById('topologyEditorContainer'), {
+                    value: data.content,
+                    mode: 'dot',
+                    theme: 'material-darker',
+                    lineNumbers: true,
+                    lineWrapping: true,
+                    tabSize: 2,
+                    autofocus: true
+                });
+                topologyEditorCM.setSize('100%', '100%');
+            } else {
+                topologyEditorCM.setValue(data.content);
+            }
             status.textContent = 'Loaded successfully. Edit and save.';
         } else {
-            editor.value = '# Error loading file: ' + (data.error || 'Unknown error');
             status.textContent = 'Error: ' + (data.error || 'Unknown');
         }
     })
     .catch(error => {
-        editor.value = '# Network error loading topology.dot';
         status.textContent = 'Network error';
     });
 }
@@ -1145,9 +1157,8 @@ function closeTopologyEditorModal() {
  * Save topology only (no LLDPq run)
  */
 function saveTopologyOnly() {
-    const editor = document.getElementById('topologyEditor');
     const status = document.getElementById('topologyEditorStatus');
-    const content = editor.value;
+    const content = topologyEditorCM ? topologyEditorCM.getValue() : '';
     
     status.textContent = 'Saving...';
     
@@ -1173,9 +1184,8 @@ function saveTopologyOnly() {
  * Save topology and run LLDPq
  */
 function saveTopology() {
-    const editor = document.getElementById('topologyEditor');
     const status = document.getElementById('topologyEditorStatus');
-    const content = editor.value;
+    const content = topologyEditorCM ? topologyEditorCM.getValue() : '';
     
     status.textContent = 'Saving...';
     
@@ -1204,12 +1214,9 @@ function saveTopology() {
  */
 function openConfigEditor() {
     const modal = document.getElementById('configEditorModal');
-    const editor = document.getElementById('configEditor');
     const status = document.getElementById('configEditorStatus');
     
     modal.classList.add('show');
-    editor.value = 'Loading...';
-    editor.disabled = true;
     status.textContent = 'Loading topology_config.yaml...';
     
     fetch('/edit-config', {
@@ -1218,16 +1225,27 @@ function openConfigEditor() {
     .then(response => response.json())
     .then(data => {
         if (data.success) {
-            editor.value = data.content;
-            editor.disabled = false;
+            // Initialize CodeMirror if not already done
+            if (!configEditorCM) {
+                configEditorCM = CodeMirror(document.getElementById('configEditorContainer'), {
+                    value: data.content,
+                    mode: 'yaml',
+                    theme: 'material-darker',
+                    lineNumbers: true,
+                    lineWrapping: true,
+                    tabSize: 2,
+                    autofocus: true
+                });
+                configEditorCM.setSize('100%', '100%');
+            } else {
+                configEditorCM.setValue(data.content);
+            }
             status.textContent = 'Loaded successfully. Edit and save.';
         } else {
-            editor.value = '# Error loading file: ' + (data.error || 'Unknown error');
             status.textContent = 'Error: ' + (data.error || 'Unknown');
         }
     })
     .catch(error => {
-        editor.value = '# Network error loading topology_config.yaml';
         status.textContent = 'Network error';
     });
 }
@@ -1248,9 +1266,8 @@ function closeConfigEditorModal() {
  * Save config only (no LLDPq run)
  */
 function saveConfigOnly() {
-    const editor = document.getElementById('configEditor');
     const status = document.getElementById('configEditorStatus');
-    const content = editor.value;
+    const content = configEditorCM ? configEditorCM.getValue() : '';
     
     status.textContent = 'Saving...';
     
@@ -1276,9 +1293,8 @@ function saveConfigOnly() {
  * Save config and run LLDPq
  */
 function saveConfig() {
-    const editor = document.getElementById('configEditor');
+    const content = configEditorCM ? configEditorCM.getValue() : '';
     const status = document.getElementById('configEditorStatus');
-    const content = editor.value;
     
     status.textContent = 'Saving...';
     

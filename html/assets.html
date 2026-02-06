@@ -5,6 +5,8 @@
     <title>..::LLDPQ::..</title>
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
     <link rel="stylesheet" type="text/css" href="/css/select2.min.css">
+    <link rel="stylesheet" type="text/css" href="/css/codemirror.min.css">
+    <link rel="stylesheet" type="text/css" href="/css/codemirror-theme.min.css">
     <style>
         * {
             margin: 0;
@@ -1276,6 +1278,8 @@
     };
 
     // ===== Devices Editor Functions =====
+    let devicesEditor = null;
+    
     function openDevicesEditor() {
         document.getElementById('devicesEditorModal').style.display = 'flex';
         document.getElementById('devicesEditorStatus').textContent = 'Loading...';
@@ -1284,8 +1288,23 @@
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    document.getElementById('devicesEditor').value = data.content;
-                    document.getElementById('devicesEditorStatus').textContent = 'Ready';
+                    // Initialize CodeMirror if not already done
+                    if (!devicesEditor) {
+                        devicesEditor = CodeMirror(document.getElementById('devicesEditorContainer'), {
+                            value: data.content,
+                            mode: 'yaml',
+                            theme: 'material-darker',
+                            lineNumbers: true,
+                            lineWrapping: true,
+                            tabSize: 2,
+                            indentWithTabs: false,
+                            autofocus: true
+                        });
+                        devicesEditor.setSize('100%', '100%');
+                    } else {
+                        devicesEditor.setValue(data.content);
+                    }
+                    document.getElementById('devicesEditorStatus').textContent = 'Loaded successfully. Edit and save.';
                 } else {
                     document.getElementById('devicesEditorStatus').textContent = 'Error: ' + data.error;
                 }
@@ -1306,7 +1325,7 @@
     }
 
     function saveDevices() {
-        const content = document.getElementById('devicesEditor').value;
+        const content = devicesEditor ? devicesEditor.getValue() : '';
         document.getElementById('devicesEditorStatus').textContent = 'Saving...';
         
         fetch('/edit-devices', {
@@ -1334,7 +1353,7 @@
     }
 
     function saveDevicesAndRun() {
-        const content = document.getElementById('devicesEditor').value;
+        const content = devicesEditor ? devicesEditor.getValue() : '';
         document.getElementById('devicesEditorStatus').textContent = 'Saving...';
         
         fetch('/edit-devices', {
@@ -1359,6 +1378,10 @@
     }
 </script>
 
+<!-- CodeMirror for syntax highlighting -->
+<script src="/css/codemirror.min.js"></script>
+<script src="/css/codemirror-yaml.min.js"></script>
+
 <!-- Auth check for admin-only buttons -->
 <script src="/css/auth.js"></script>
 <script>
@@ -1382,7 +1405,7 @@
                 Format: <code style="color: #76b900;">IP: Hostname @role</code> &nbsp;|&nbsp; 
                 Example: <code style="color: #4fc3f7;">10.10.100.10: Spine1 @spine</code>
             </div>
-            <textarea id="devicesEditor" style="width: 100%; height: 55vh; padding: 15px; border: none; background: #1e1e1e; color: #d4d4d4; font-family: 'Consolas', 'Monaco', monospace; font-size: 13px; resize: vertical; box-sizing: border-box;" placeholder="Loading..."></textarea>
+            <div id="devicesEditorContainer" style="height: 55vh; border: none;"></div>
             <div style="padding: 15px; background: #333; border-top: 1px solid #4a4a4a; text-align: right; display: flex; justify-content: space-between; align-items: center;">
                 <span id="devicesEditorStatus" style="color: #888; font-size: 12px;"></span>
                 <div>
