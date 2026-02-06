@@ -98,10 +98,23 @@ def main():
     
     bgp_path = sys.argv[1]
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    topo_path = os.path.join(script_dir, '..', 'srv-configs', 'topology.dot')
     
-    if not os.path.exists(topo_path):
-        print(f"Error: topology.dot not found at {topo_path}")
+    # Look for topology.dot in order of priority
+    topo_paths = [
+        os.path.join(script_dir, 'topology.dot'),  # Same directory as script
+        '/var/www/html/topology.dot',               # Web root
+    ]
+    
+    topo_path = None
+    for path in topo_paths:
+        if os.path.exists(path):
+            topo_path = path
+            break
+    
+    if not topo_path:
+        print("Error: topology.dot not found in:")
+        for path in topo_paths:
+            print(f"  - {path}")
         sys.exit(1)
     
     # Parse files
