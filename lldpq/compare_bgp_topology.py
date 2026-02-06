@@ -65,9 +65,10 @@ def parse_bgp_report(csv_path):
     return devices, established_links, down_idle, down_active, device_neighbors
 
 def parse_topology_dot(dot_path):
-    """Parse topology.dot and return devices and links."""
+    """Parse topology.dot and return devices, links, and device:port pairs."""
     devices = set()
     links = set()
+    device_ports = set()  # Set of "device:port" strings
     
     with open(dot_path, 'r') as f:
         for line in f:
@@ -77,7 +78,7 @@ def parse_topology_dot(dot_path):
             
             match = re.findall(r'"([^"]+)"', line)
             if len(match) >= 4:
-                d1, d2 = match[0], match[2]
+                d1, p1, d2, p2 = match[0], match[1], match[2], match[3]
                 # Skip non-switch links (DGX, servers, etc.)
                 if any(x in d1.lower() or x in d2.lower() for x in ['dgx-', 'enp', 'prod-']):
                     continue
@@ -85,8 +86,11 @@ def parse_topology_dot(dot_path):
                 devices.add(d2)
                 link = tuple(sorted([d1, d2]))
                 links.add(link)
+                # Add device:port pairs
+                device_ports.add(f"{d1}:{p1}")
+                device_ports.add(f"{d2}:{p2}")
     
-    return devices, links
+    return devices, links, device_ports
 
 def categorize_device(name):
     """Categorize device by prefix."""
@@ -127,7 +131,7 @@ def main():
     
     # Parse files
     bgp_devices, bgp_links, bgp_idle, bgp_active, device_neighbors = parse_bgp_report(bgp_path)
-    topo_devices, topo_links = parse_topology_dot(topo_path)
+    topo_devices, topo_links, topo_device_ports = parse_topology_dot(topo_path)
     
     # Calculate differences
     missing_devices = bgp_devices - topo_devices
@@ -158,11 +162,17 @@ def main():
     print("  " + "-" * 66)
     status_dev = "ACTION REQUIRED" if missing_devices else "OK"
     status_link = "ACTION REQUIRED" if missing_links else "OK"
-    status_idle = "CABLE/SFP ISSUE" if bgp_idle else "OK"
+    # Pre-calculate IDLE in/not in topology
+    idle_in_topo_count = sum(1 for d, p in bgp_idle if f"{d}:{p}" in topo_device_ports)
+    idle_not_in_topo_count = len(bgp_idle) - idle_in_topo_count
+    
+    status_idle_topo = "ACTION REQUIRED" if idle_in_topo_count else "OK"
+    status_idle_other = "INFO" if idle_not_in_topo_count else "OK"
     status_active = "FIREWALL/L3" if bgp_active else "OK"
     print(f"  Missing Devices:      {len(missing_devices):>5}  [{status_dev}]")
     print(f"  Missing Links:        {len(missing_links):>5}  [{status_link}]")
-    print(f"  BGP Down (IDLE):      {len(bgp_idle):>5}  [{status_idle}]")
+    print(f"  IDLE (in topology):   {idle_in_topo_count:>5}  [{status_idle_topo}]")
+    print(f"  IDLE (not in topo):   {idle_not_in_topo_count:>5}  [{status_idle_other}]")
     print(f"  BGP Down (ACTIVE):    {len(bgp_active):>5}  [{status_active}]")
     
     # Missing Devices
@@ -205,15 +215,29 @@ def main():
         for dev in sorted(extra_switches):
             print(f"    - {dev}")
     
-    # BGP Down Links
+    # BGP Down Links - separate by topology.dot presence
+    idle_in_topo = []
+    idle_not_in_topo = []
+    for device, port in bgp_idle:
+        device_port = f"{device}:{port}"
+        if device_port in topo_device_ports:
+            idle_in_topo.append((device, port))
+        else:
+            idle_not_in_topo.append((device, port))
+    
     print("\n" + "=" * 70)
     print("  BGP DOWN LINKS")
     print("=" * 70)
     
-    if bgp_idle:
-        print("\n  IDLE (Cable/SFP Issues):")
-        for device, port in bgp_idle:
+    if idle_in_topo:
+        print(f"\n  IDLE - IN TOPOLOGY.DOT ({len(idle_in_topo)} ports) [ACTION REQUIRED]:")
+        for device, port in idle_in_topo:
             print(f"    [!] {device}:{port}")
+    
+    if idle_not_in_topo:
+        print(f"\n  IDLE - NOT IN TOPOLOGY.DOT ({len(idle_not_in_topo)} ports) [INFO]:")
+        for device, port in idle_not_in_topo:
+            print(f"    [ ] {device}:{port}")
     
     if bgp_active:
         print("\n  ACTIVE (Waiting for Peer - Firewall/L3):")
@@ -225,7 +249,7 @@ def main():
     
     # Final Status
     print("\n" + "=" * 70)
-    issues = len(missing_devices) + len(missing_links) + len(bgp_idle)
+    issues = len(missing_devices) + len(missing_links) + len(idle_in_topo)
     if issues == 0:
         print("  STATUS: [OK] ALL GOOD - No action required")
     else:
