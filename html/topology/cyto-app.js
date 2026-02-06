@@ -452,9 +452,15 @@ document.addEventListener('click', function(e) {
     if (searchBox && !searchBox.contains(e.target)) {
         document.getElementById('searchResults').classList.remove('show');
     }
-    // Also hide context menus
-    hideContextMenu();
-    hideLinkContextMenu();
+    // Hide context menus only if click is outside them
+    const contextMenu = document.getElementById('contextMenu');
+    const linkContextMenu = document.getElementById('linkContextMenu');
+    if (contextMenu && !contextMenu.contains(e.target)) {
+        hideContextMenu();
+    }
+    if (linkContextMenu && !linkContextMenu.contains(e.target)) {
+        hideLinkContextMenu();
+    }
 });
 
 // Context menu state
@@ -468,6 +474,12 @@ let isIsolated = false; // Track if isolation is active
 function showContextMenu(event, node) {
     const menu = document.getElementById('contextMenu');
     contextMenuTarget = node;
+    
+    // Set current layer and icon values in dropdowns
+    const currentLayer = String(node.data('level') || 5);
+    const currentIcon = node.data('icon') || 'switch';
+    document.getElementById('node-layer-select').value = currentLayer;
+    document.getElementById('node-icon-select').value = currentIcon;
     
     // Get mouse position
     const e = event.originalEvent;
@@ -483,6 +495,98 @@ function showContextMenu(event, node) {
     if (rect.bottom > window.innerHeight) {
         menu.style.top = (e.clientY - rect.height) + 'px';
     }
+}
+
+/**
+ * Change node layer
+ */
+function changeNodeLayer(newLayer) {
+    if (!contextMenuTarget || !cy) return;
+    
+    contextMenuTarget.data('level', parseInt(newLayer));
+    hideContextMenu();
+    
+    // Re-apply layout
+    setLayout(currentLayout);
+    createIconOverlays();
+}
+
+/**
+ * Change node icon
+ */
+function changeNodeIcon(newIcon) {
+    if (!contextMenuTarget || !cy) return;
+    
+    const newColor = NODE_COLORS[newIcon] || NODE_COLORS.switch;
+    const newIconChar = ICON_CHARS[newIcon] || ICON_CHARS.switch;
+    
+    contextMenuTarget.data('icon', newIcon);
+    contextMenuTarget.data('color', newColor);
+    contextMenuTarget.data('iconChar', newIconChar);
+    
+    hideContextMenu();
+    
+    // Update overlays
+    createIconOverlays();
+}
+
+/**
+ * Toggle node label visibility
+ */
+function toggleNodeLabel() {
+    if (!contextMenuTarget || !cy) return;
+    
+    const isHidden = contextMenuTarget.data('_labelHidden') === true;
+    
+    if (!isHidden) {
+        // Hide the label
+        contextMenuTarget.style('text-opacity', 0);
+        contextMenuTarget.data('_labelHidden', true);
+    } else {
+        // Show the label
+        contextMenuTarget.style('text-opacity', 1);
+        contextMenuTarget.data('_labelHidden', false);
+    }
+    hideContextMenu();
+}
+
+/**
+ * Hide node and its connected edges
+ */
+function hideNode() {
+    if (!contextMenuTarget || !cy) return;
+    
+    contextMenuTarget.style('display', 'none');
+    contextMenuTarget.connectedEdges().style('display', 'none');
+    hideContextMenu();
+    updateIconOverlays();
+}
+
+/**
+ * Apply layout with current node
+ */
+function applyLayoutWithNode() {
+    hideContextMenu();
+    setLayout(currentLayout);
+}
+
+/**
+ * Show all hidden nodes
+ */
+function showAllHidden() {
+    if (!cy) return;
+    
+    cy.batch(function() {
+        cy.nodes().style('display', 'element');
+        cy.edges().style('display', 'element');
+    });
+    
+    // Re-apply endpoint filter if endpoints are hidden
+    if (!showEndpoints) {
+        toggleEndpoints(false);
+    }
+    
+    updateIconOverlays();
 }
 
 /**

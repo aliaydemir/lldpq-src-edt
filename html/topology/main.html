@@ -196,7 +196,7 @@
             font-family: 'next-font';
             font-size: 24px;
             transform: translate(-50%, -50%);
-            z-index: 9999;
+            z-index: 10;
         }
 
         .node-icon-overlay .icon-bg {
@@ -277,7 +277,8 @@
             padding: 6px 0;
             min-width: 160px;
             box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-            z-index: 99999;
+            z-index: 999999;
+            pointer-events: auto;
         }
         
         .context-menu-item {
@@ -297,6 +298,32 @@
             height: 1px;
             background: #4a4a4a;
             margin: 6px 0;
+        }
+        
+        .context-menu-layer {
+            padding: 8px 12px;
+        }
+        
+        .context-menu-layer label {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 12px;
+            color: #888;
+        }
+        
+        .context-menu-layer select {
+            width: 100%;
+            padding: 4px 8px;
+            background: #3a3a3a;
+            border: 1px solid #555;
+            color: #ccc;
+            border-radius: 3px;
+            pointer-events: auto;
+            cursor: pointer;
+        }
+        
+        .context-menu * {
+            pointer-events: auto;
         }
 
         /* Details Modal */
@@ -470,6 +497,41 @@
     
     <!-- Context Menu (Node) -->
     <div class="context-menu" id="contextMenu" style="display:none;">
+        <div class="context-menu-layer">
+            <label>Layer</label>
+            <select id="node-layer-select" onchange="changeNodeLayer(this.value)">
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+                <option value="5">5</option>
+                <option value="6">6</option>
+                <option value="7">7</option>
+                <option value="8">8</option>
+                <option value="9">9</option>
+                <option value="10">10</option>
+                <option value="11">11</option>
+            </select>
+        </div>
+        <div class="context-menu-layer">
+            <label>Icon</label>
+            <select id="node-icon-select" onchange="changeNodeIcon(this.value)">
+                <option value="switch">Switch</option>
+                <option value="router">Router</option>
+                <option value="firewall">Firewall</option>
+                <option value="server">Server</option>
+                <option value="host">Host</option>
+            </select>
+        </div>
+        <div class="context-menu-separator"></div>
+        <div class="context-menu-item" onclick="hideNode()">
+            Hide Device
+        </div>
+        <div class="context-menu-separator"></div>
+        <div class="context-menu-item" onclick="applyLayoutWithNode()">
+            Apply Layout
+        </div>
+        <div class="context-menu-separator"></div>
         <div class="context-menu-item" onclick="contextCopyHostname()"> Copy Hostname</div>
         <div class="context-menu-item" onclick="contextCopyIP()"> Copy IP</div>
         <div class="context-menu-separator"></div>
