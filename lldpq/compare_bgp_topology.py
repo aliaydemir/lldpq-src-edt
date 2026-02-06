@@ -29,9 +29,17 @@ def parse_bgp_report(csv_path):
     
     with open(csv_path, 'r') as f:
         reader = csv.reader(f)
+        header_skipped = False
         for row in reader:
             if len(row) < 4 or row[0].startswith('#'):
                 continue
+            
+            # Skip header row
+            if not header_skipped:
+                if row[0].lower() == 'device' or row[0].lower() == 'hostname':
+                    header_skipped = True
+                    continue
+                header_skipped = True
             
             device, neighbor_raw, interface, state = row[0], row[1], row[2], row[3]
             devices.add(device)
