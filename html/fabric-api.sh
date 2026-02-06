@@ -1139,11 +1139,7 @@ PYTHON
 get_vrf_report() {
     python3 << PYTHON
 import json
-from ruamel.yaml import YAML
-yaml = YAML()
-yaml.preserve_quotes = True
-import tempfile
-import shutil
+import yaml  # PyYAML - faster for read-only operations
 import os
 import glob
 
@@ -1159,7 +1155,7 @@ for host_file in glob.glob(os.path.join(host_vars_dir, '*.yaml')) + glob.glob(os
     
     try:
         with open(host_file, 'r') as f:
-            host_data = yaml.load(f) or {}
+            host_data = yaml.safe_load(f) or {}
             device_vrfs = host_data.get('vrfs', {})
             
             if device_vrfs:
@@ -1190,11 +1186,7 @@ PYTHON
 get_vlan_report() {
     python3 << PYTHON
 import json
-from ruamel.yaml import YAML
-yaml = YAML()
-yaml.preserve_quotes = True
-import tempfile
-import shutil
+import yaml  # PyYAML - faster for read-only operations
 import os
 import glob
 
@@ -1209,7 +1201,7 @@ vrfs = set()
 
 if os.path.exists(vlan_file):
     with open(vlan_file, 'r') as f:
-        data = yaml.load(f) or {}
+        data = yaml.safe_load(f) or {}
         vlan_profiles = data.get('vlan_profiles', {})
 
 # Collect VRFs from VLAN profiles
@@ -1229,7 +1221,7 @@ for host_file in glob.glob(os.path.join(host_vars_dir, '*.yaml')) + glob.glob(os
     
     try:
         with open(host_file, 'r') as f:
-            host_data = yaml.load(f) or {}
+            host_data = yaml.safe_load(f) or {}
             vlan_templates = host_data.get('vlan_templates', [])
             
             if vlan_templates:
@@ -2430,11 +2422,7 @@ case "$ACTION" in
         # Get all leaked subnets with their target VRFs
         python3 << 'PYTHON'
 import json
-from ruamel.yaml import YAML
-yaml = YAML()
-yaml.preserve_quotes = True
-import tempfile
-import shutil
+import yaml  # PyYAML - faster for read-only operations
 import os
 import glob
 
@@ -2444,7 +2432,7 @@ bgp_file = f"{ansible_dir}/inventory/group_vars/all/bgp_profiles.yaml"
 
 try:
     with open(bgp_file, 'r') as f:
-        bgp_data = yaml.load(f)
+        bgp_data = yaml.safe_load(f)
     
     profiles = bgp_data.get('bgp_profiles', {})
     route_map_to_target = {}
@@ -2453,7 +2441,7 @@ try:
     for yaml_file in glob.glob(f"{host_vars_dir}/*.yaml"):
         try:
             with open(yaml_file, 'r') as f:
-                device_data = yaml.load(f)
+                device_data = yaml.safe_load(f)
             if not device_data:
                 continue
             vrfs = device_data.get('vrfs', {})
@@ -2477,7 +2465,7 @@ try:
     for yaml_file in glob.glob(f"{host_vars_dir}/*.yaml"):
         try:
             with open(yaml_file, 'r') as f:
-                device_data = yaml.load(f)
+                device_data = yaml.safe_load(f)
             if not device_data:
                 continue
             
@@ -4152,11 +4140,7 @@ PYTHON
         # List all external BGP peers across all devices
         python3 << 'PYTHON'
 import json
-from ruamel.yaml import YAML
-yaml = YAML()
-yaml.preserve_quotes = True
-import tempfile
-import shutil
+import yaml  # PyYAML - faster for read-only operations
 import os
 import glob
 
@@ -4170,7 +4154,7 @@ try:
     
     if os.path.exists(bgp_profiles_file):
         with open(bgp_profiles_file, 'r') as f:
-            bgp_data = yaml.load(f) or {}
+            bgp_data = yaml.safe_load(f) or {}
             bgp_profiles = bgp_data.get('bgp_profiles', {})
     
     # Find profiles that have "External" peer group
@@ -4221,7 +4205,7 @@ try:
         hostname = os.path.basename(host_file).replace('.yaml', '')
         
         with open(host_file, 'r') as f:
-            host_data = yaml.load(f) or {}
+            host_data = yaml.safe_load(f) or {}
         
         # Check VRFs for external BGP profiles
         vrfs = host_data.get('vrfs', {})
