@@ -152,7 +152,7 @@ try:
     config = {}
     if os.path.exists(host_vars_file):
         with open(host_vars_file, 'r') as f:
-            config = yaml.safe_load(f) or {}
+            config = yaml.load(f, Loader=yaml.CSafeLoader) or {}
     
     # Find device info from hosts file
     device_info = {'hostname': hostname, 'group': None, 'ip': None}
@@ -185,7 +185,7 @@ try:
         group_vrfs_file = f"{ansible_dir}/inventory/group_vars/{device_info['group']}/vrfs.yaml"
         if os.path.exists(group_vrfs_file):
             with open(group_vrfs_file, 'r') as f:
-                group_config = yaml.safe_load(f) or {}
+                group_config = yaml.load(f, Loader=yaml.CSafeLoader) or {}
                 if 'vrfs' in group_config:
                     config['vrfs'] = group_config['vrfs']
     
@@ -193,7 +193,7 @@ try:
     port_profiles = {}
     if os.path.exists(port_profiles_file):
         with open(port_profiles_file, 'r') as f:
-            pp_config = yaml.safe_load(f) or {}
+            pp_config = yaml.load(f, Loader=yaml.CSafeLoader) or {}
             port_profiles = pp_config.get('sw_port_profiles', {})
     
     # Load VLAN profiles for VRF and IP resolution
@@ -203,7 +203,7 @@ try:
     
     if os.path.exists(vlan_profiles_file):
         with open(vlan_profiles_file, 'r') as f:
-            vp_config = yaml.safe_load(f) or {}
+            vp_config = yaml.load(f, Loader=yaml.CSafeLoader) or {}
             
             # Load vxlan_int mapping (nscale/kddi style: vxlan_int at top level)
             if 'vxlan_int' in vp_config and isinstance(vp_config['vxlan_int'], dict):
@@ -287,7 +287,7 @@ vlan_file = f"{ansible_dir}/inventory/group_vars/all/vlan_profiles.yaml"
 
 try:
     with open(vlan_file, 'r') as f:
-        config = yaml.safe_load(f) or {}
+        config = yaml.load(f, Loader=yaml.CSafeLoader) or {}
     
     print(json.dumps({
         'success': True,
@@ -1147,7 +1147,7 @@ for host_file in glob.glob(os.path.join(host_vars_dir, '*.yaml')) + glob.glob(os
     
     try:
         with open(host_file, 'r') as f:
-            host_data = yaml.safe_load(f) or {}
+            host_data = yaml.load(f, Loader=yaml.CSafeLoader) or {}
             device_vrfs = host_data.get('vrfs', {})
             
             if device_vrfs:
@@ -1193,7 +1193,7 @@ vrfs = set()
 
 if os.path.exists(vlan_file):
     with open(vlan_file, 'r') as f:
-        data = yaml.safe_load(f) or {}
+        data = yaml.load(f, Loader=yaml.CSafeLoader) or {}
         vlan_profiles = data.get('vlan_profiles', {})
 
 # Collect VRFs from VLAN profiles
@@ -1213,7 +1213,7 @@ for host_file in glob.glob(os.path.join(host_vars_dir, '*.yaml')) + glob.glob(os
     
     try:
         with open(host_file, 'r') as f:
-            host_data = yaml.safe_load(f) or {}
+            host_data = yaml.load(f, Loader=yaml.CSafeLoader) or {}
             vlan_templates = host_data.get('vlan_templates', [])
             
             if vlan_templates:
@@ -2424,7 +2424,7 @@ bgp_file = f"{ansible_dir}/inventory/group_vars/all/bgp_profiles.yaml"
 
 try:
     with open(bgp_file, 'r') as f:
-        bgp_data = yaml.safe_load(f)
+        bgp_data = yaml.load(f, Loader=yaml.CSafeLoader)
     
     profiles = bgp_data.get('bgp_profiles', {})
     route_map_to_target = {}
@@ -2435,7 +2435,7 @@ try:
     for yaml_file in glob.glob(f"{host_vars_dir}/*.yaml"):
         try:
             with open(yaml_file, 'r') as f:
-                device_data = yaml.safe_load(f)
+                device_data = yaml.load(f, Loader=yaml.CSafeLoader)
             if not device_data:
                 continue
             
@@ -2506,7 +2506,7 @@ bgp_file = f"{ansible_dir}/inventory/group_vars/all/bgp_profiles.yaml"
 # Build route_map -> target_vrf mapping from bgp_profiles
 try:
     with open(bgp_file, 'r') as f:
-        bgp_data = yaml.safe_load(f)
+        bgp_data = yaml.load(f, Loader=yaml.CSafeLoader)
     
     profiles = bgp_data.get('bgp_profiles', {})
     
@@ -2519,7 +2519,7 @@ try:
     for yaml_file in glob.glob(f"{host_vars_dir}/*.yaml"):
         try:
             with open(yaml_file, 'r') as f:
-                device_data = yaml.safe_load(f)
+                device_data = yaml.load(f, Loader=yaml.CSafeLoader)
             if not device_data:
                 continue
             
@@ -2580,7 +2580,7 @@ host_vars_dir = f"{ansible_dir}/inventory/host_vars"
 
 try:
     with open(bgp_file, 'r') as f:
-        data = yaml.safe_load(f)
+        data = yaml.load(f, Loader=yaml.CSafeLoader)
     
     profiles = data.get('bgp_profiles', {})
     
@@ -2602,7 +2602,7 @@ try:
     for yaml_file in glob.glob(f"{host_vars_dir}/*.yaml"):
         try:
             with open(yaml_file, 'r') as f:
-                device_data = yaml.safe_load(f)
+                device_data = yaml.load(f, Loader=yaml.CSafeLoader)
             if not device_data:
                 continue
             vrfs = device_data.get('vrfs', {})
@@ -4072,7 +4072,7 @@ try:
         
         try:
             with open(host_file, 'r') as f:
-                host_data = yaml.safe_load(f) or {}
+                host_data = yaml.load(f, Loader=yaml.CSafeLoader) or {}
             
             # Check if vtep.state is true
             vtep_config = host_data.get('vtep', {})
@@ -4116,7 +4116,7 @@ try:
     
     if os.path.exists(bgp_profiles_file):
         with open(bgp_profiles_file, 'r') as f:
-            bgp_data = yaml.safe_load(f) or {}
+            bgp_data = yaml.load(f, Loader=yaml.CSafeLoader) or {}
             bgp_profiles = bgp_data.get('bgp_profiles', {})
     
     # Find profiles that have "External" peer group
@@ -4167,7 +4167,7 @@ try:
         hostname = os.path.basename(host_file).replace('.yaml', '')
         
         with open(host_file, 'r') as f:
-            host_data = yaml.safe_load(f) or {}
+            host_data = yaml.load(f, Loader=yaml.CSafeLoader) or {}
         
         # Check VRFs for external BGP profiles
         vrfs = host_data.get('vrfs', {})
