@@ -347,7 +347,7 @@
         
         .command-groups-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
             gap: 8px;
             margin-bottom: 15px;
         }
@@ -392,7 +392,7 @@
             left: 0;
             min-width: 100%;
             width: max-content;
-            max-width: 500px;
+            max-width: 700px;
             padding: 10px 15px;
             background: #252526;
             border: 1px solid #3c3c3c;
@@ -401,11 +401,7 @@
             box-shadow: 0 4px 12px rgba(0,0,0,0.5);
         }
         
-        /* Last items in grid - align dropdown to right edge */
-        .command-group:nth-last-child(-n+2) .command-group-content {
-            left: auto;
-            right: 0;
-        }
+        /* Dropdown position is dynamically set by JavaScript */
         
         .command-group.collapsed .command-group-content {
             display: none;
@@ -433,6 +429,8 @@
             cursor: pointer;
             font-size: 12px;
             font-family: 'Fira Code', monospace;
+            white-space: nowrap;
+            flex-shrink: 0;
         }
         
         .cmd-btn:hover {
@@ -667,6 +665,7 @@
         <button class="tab-btn" data-tab="bgp">BGP</button>
         <button class="tab-btn" data-tab="logs">Logs</button>
         <button class="tab-btn" data-tab="commands">Command Runner</button>
+        <button class="tab-btn" data-tab="capture">Capture</button>
     </div>
     
     <!-- Overview Tab -->
@@ -809,7 +808,7 @@
             
             <!-- EVPN Multi-Homing / Bonds -->
             <div class="command-group collapsed">
-                <div class="command-group-title" onclick="toggleGroup(this.parentElement)">EVPN Multi-Homing / Bonds</div>
+                <div class="command-group-title" onclick="toggleGroup(this.parentElement)">EVPN MH / Bonds</div>
                 <div class="command-group-content">
                     <div class="command-buttons">
                         <button class="cmd-btn" onclick="runCommand('nv show interface bonds')">nv show bonds</button>
@@ -866,6 +865,19 @@
         <div class="command-output" id="commandOutput" style="display: none;">
             <div class="cmd-header" id="cmdHeader"></div>
             <div id="cmdResult"></div>
+        </div>
+    </div>
+    
+    <!-- Capture Tab -->
+    <div class="tab-content" id="tab-capture">
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 300px; color: #888;">
+            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#76b900" stroke-width="1.5">
+                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                <circle cx="12" cy="13" r="4"/>
+            </svg>
+            <h2 style="color: #76b900; margin: 20px 0 10px 0; font-weight: 500;">Capture</h2>
+            <p style="font-size: 14px; color: #666;">Coming Soon</p>
+            <p style="font-size: 12px; color: #555; margin-top: 10px;">Packet capture and analysis for network troubleshooting</p>
         </div>
     </div>
     
@@ -1013,10 +1025,33 @@
             // Close all other groups first
             document.querySelectorAll('.command-group').forEach(g => {
                 g.classList.add('collapsed');
+                const content = g.querySelector('.command-group-content');
+                if (content) {
+                    content.style.left = '';
+                    content.style.right = '';
+                }
             });
             // Toggle the clicked one
             if (wasCollapsed) {
                 element.classList.remove('collapsed');
+                
+                // Check if dropdown overflows viewport and adjust position
+                requestAnimationFrame(() => {
+                    const content = element.querySelector('.command-group-content');
+                    if (content) {
+                        const rect = content.getBoundingClientRect();
+                        const viewportWidth = window.innerWidth;
+                        
+                        // If overflowing right edge, align to right
+                        if (rect.right > viewportWidth - 20) {
+                            content.style.left = 'auto';
+                            content.style.right = '0';
+                        } else {
+                            content.style.left = '0';
+                            content.style.right = 'auto';
+                        }
+                    }
+                });
             }
         }
         
