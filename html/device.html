@@ -1,0 +1,1609 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Device Details</title>
+    <link rel="stylesheet" type="text/css" href="/css/styles2.css">
+    <link rel="icon" type="image/x-icon" href="/png/favicon.ico">
+    <script src="/css/auth.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        /* Layout */
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+        
+        /* Left Panel - Device List (matching dev-conf.html) */
+        .device-panel {
+            width: 280px;
+            background: #252526;
+            border-right: 1px solid #404040;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        
+        .panel-header {
+            padding: 15px;
+            background: linear-gradient(0deg, #76b900 0%, #5a8c00 100%);
+            color: white;
+            font-weight: bold;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .panel-header svg { width: 20px; height: 20px; fill: white; }
+        
+        .search-box {
+            padding: 10px;
+            border-bottom: 1px solid #404040;
+        }
+        
+        .search-box input {
+            width: 100%;
+            padding: 8px 12px;
+            background: #3c3c3c;
+            border: 1px solid #555;
+            border-radius: 4px;
+            color: #d4d4d4;
+            font-size: 13px;
+        }
+        
+        .search-box input:focus {
+            outline: none;
+            border-color: #76b900;
+        }
+        
+        .device-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px 0;
+        }
+        
+        .device-group { margin-bottom: 5px; }
+        
+        .group-header {
+            padding: 8px 15px;
+            background: #2d2d2d;
+            color: #999;
+            font-size: 11px;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            user-select: none;
+        }
+        
+        .group-header:hover { background: #333; }
+        .group-header .arrow { transition: transform 0.2s; }
+        .group-header.collapsed .arrow { transform: rotate(-90deg); }
+        .group-devices { display: block; }
+        .group-devices.collapsed { display: none; }
+        
+        .device-item {
+            padding: 10px 15px 10px 30px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border-left: 3px solid transparent;
+            transition: all 0.2s;
+        }
+        
+        .device-item:hover { background: #2a2d2e; }
+        
+        .device-item.selected {
+            background: #37373d;
+            border-left-color: #76b900;
+        }
+        
+        .device-icon {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #76b900;
+        }
+        
+        .device-name-text {
+            font-size: 13px;
+            color: #d4d4d4;
+        }
+        
+        .device-count {
+            padding: 10px 15px;
+            font-size: 12px;
+            color: #888;
+            border-top: 1px solid #404040;
+            background: #2d2d2d;
+        }
+        
+        /* Right Panel - Content */
+        .content-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        
+        .content-header {
+            padding: 15px 20px;
+            background: #2d2d2d;
+            border-bottom: 1px solid #404040;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .content-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #76b900;
+        }
+        
+        .content-subtitle {
+            font-size: 12px;
+            color: #888;
+            margin-top: 4px;
+        }
+        
+        /* Content Area */
+        .content-area {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+        
+        .welcome-screen {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #666;
+        }
+        
+        .welcome-screen svg {
+            width: 80px;
+            height: 80px;
+            margin-bottom: 20px;
+            opacity: 0.3;
+            fill: #666;
+        }
+        
+        .welcome-screen h2 {
+            font-size: 20px;
+            margin-bottom: 10px;
+            color: #888;
+        }
+        
+        .welcome-screen p {
+            font-size: 14px;
+        }
+        
+        .device-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding: 15px 20px;
+            background: #252526;
+            border-radius: 8px;
+            border: 1px solid #3c3c3c;
+            border-left: 4px solid #76b900;
+        }
+        
+        .device-name {
+            font-size: 24px;
+            font-weight: bold;
+            color: #76b900;
+        }
+        
+        .device-actions {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .device-actions button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        
+        .btn-refresh {
+            background: #76b900;
+            color: white;
+        }
+        
+        .btn-refresh:hover {
+            background: #5a8f00;
+        }
+        
+        /* Tab Navigation */
+        .tab-nav {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #3c3c3c;
+            padding-bottom: 0;
+        }
+        
+        .tab-btn {
+            padding: 12px 24px;
+            background: transparent;
+            border: none;
+            color: #808080;
+            cursor: pointer;
+            font-size: 14px;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+            transition: all 0.2s;
+        }
+        
+        .tab-btn:hover {
+            color: #d4d4d4;
+            background: #2d2d2d;
+        }
+        
+        .tab-btn.active {
+            color: #76b900;
+            border-bottom-color: #76b900;
+        }
+        
+        /* Tab Content */
+        .tab-content {
+            display: none;
+            background: #252526;
+            border: 1px solid #3c3c3c;
+            border-radius: 8px;
+            padding: 20px;
+            min-height: 400px;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        /* Tables */
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        
+        .data-table th {
+            background: #1e1e1e;
+            padding: 10px;
+            text-align: left;
+            border-bottom: 1px solid #3c3c3c;
+            color: #808080;
+        }
+        
+        .data-table td {
+            padding: 10px;
+            border-bottom: 1px solid #2d2d2d;
+        }
+        
+        .data-table tr:hover {
+            background: #2d2d2d;
+        }
+        
+        /* Status badges */
+        .status-excellent, .status-up, .status-established {
+            color: #4caf50;
+        }
+        
+        .status-good {
+            color: #8bc34a;
+        }
+        
+        .status-warning {
+            color: #ff9800;
+        }
+        
+        .status-critical, .status-idle {
+            color: #f44336;
+        }
+        
+        .status-down {
+            color: #f44336;
+            font-weight: bold;
+        }
+        
+        .status-unplugged {
+            color: #9e9e9e;
+            font-style: italic;
+        }
+        
+        .down-row {
+            background-color: rgba(244, 67, 54, 0.15);
+        }
+        
+        .down-row:hover {
+            background-color: rgba(244, 67, 54, 0.25);
+        }
+        
+        /* Command Runner */
+        .command-section {
+            margin-bottom: 20px;
+        }
+        
+        .command-groups-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+            gap: 8px;
+            margin-bottom: 15px;
+        }
+        
+        .command-group {
+            border: 1px solid #3c3c3c;
+            border-radius: 6px;
+            overflow: visible;
+            position: relative;
+        }
+        
+        .command-group-title {
+            cursor: pointer;
+            padding: 10px 15px;
+            background: #2a2a2a;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            user-select: none;
+            font-size: 13px;
+            white-space: nowrap;
+        }
+        
+        .command-group-title:hover {
+            background: #333;
+        }
+        
+        .command-group-title::after {
+            content: '▼';
+            font-size: 10px;
+            margin-left: 8px;
+            transition: transform 0.2s;
+        }
+        
+        .command-group.collapsed .command-group-title::after {
+            transform: rotate(-90deg);
+        }
+        
+        .command-group-content {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            min-width: 100%;
+            width: max-content;
+            max-width: 500px;
+            padding: 10px 15px;
+            background: #252526;
+            border: 1px solid #3c3c3c;
+            border-radius: 0 0 6px 6px;
+            z-index: 100;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+        }
+        
+        /* Last items in grid - align dropdown to right edge */
+        .command-group:nth-last-child(-n+2) .command-group-content {
+            left: auto;
+            right: 0;
+        }
+        
+        .command-group.collapsed .command-group-content {
+            display: none;
+        }
+        
+        .command-group-label {
+            font-size: 14px;
+            color: #76b900;
+            margin-bottom: 8px;
+            font-weight: bold;
+        }
+        
+        .command-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        
+        .cmd-btn {
+            padding: 6px 12px;
+            background: #333;
+            border: 1px solid #555;
+            color: #d4d4d4;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            font-family: 'Fira Code', monospace;
+        }
+        
+        .cmd-btn:hover {
+            background: #444;
+            border-color: #76b900;
+        }
+        
+        .custom-command {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        
+        .custom-command input {
+            flex: 1;
+            padding: 10px;
+            background: #1e1e1e;
+            border: 1px solid #3c3c3c;
+            color: #d4d4d4;
+            border-radius: 4px;
+            font-family: 'Fira Code', monospace;
+        }
+        
+        .custom-command button {
+            padding: 10px 20px;
+            background: #76b900;
+            border: none;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        
+        .command-output {
+            margin-top: 20px;
+            background: #1a1a1a;
+            border: 1px solid #3c3c3c;
+            border-radius: 8px;
+            padding: 15px;
+            font-family: 'Fira Code', 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        
+        .command-output .cmd-header {
+            color: #76b900;
+            margin-bottom: 10px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #333;
+        }
+        
+        /* Summary cards */
+        .summary-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .summary-card {
+            background: #1e1e1e;
+            border: 1px solid #3c3c3c;
+            border-radius: 8px;
+            padding: 15px;
+            text-align: center;
+        }
+        
+        .summary-card .value {
+            font-size: 32px;
+            font-weight: bold;
+        }
+        
+        .summary-card .label {
+            color: #808080;
+            font-size: 12px;
+            margin-top: 5px;
+        }
+        
+        /* Clickable log cards */
+        .log-card {
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .log-card:hover {
+            border-color: #76b900;
+            transform: translateY(-2px);
+        }
+        
+        .log-card.selected {
+            border-color: #76b900;
+            box-shadow: 0 0 10px rgba(118, 185, 0, 0.3);
+        }
+        
+        .log-output {
+            margin-top: 20px;
+            background: #1a1a1a;
+            border: 1px solid #3c3c3c;
+            border-radius: 8px;
+            padding: 15px;
+            font-family: 'Fira Code', monospace;
+            font-size: 12px;
+            max-height: 400px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #808080;
+        }
+        
+        .error-message {
+            color: #f44336;
+            padding: 20px;
+            background: #2d1515;
+            border-radius: 8px;
+        }
+        
+        /* VRF selector */
+        .vrf-selector {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        
+        .vrf-selector select {
+            padding: 8px 12px;
+            background: #1e1e1e;
+            border: 1px solid #3c3c3c;
+            color: #d4d4d4;
+            border-radius: 4px;
+            min-width: 150px;
+        }
+        
+        .port-input-row {
+            margin-top: 10px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+        }
+        
+        .port-input-row input {
+            width: 100px;
+        }
+        
+        /* Clickable table rows */
+        .data-table tr.clickable {
+            cursor: pointer;
+        }
+        
+        .data-table tr.clickable:hover {
+            background: #333;
+        }
+        
+        .data-table tr.selected {
+            background: #2a3a1a;
+            border-left: 3px solid #76b900;
+        }
+        
+        .optical-detail {
+            margin-top: 20px;
+            background: #1a1a1a;
+            border: 1px solid #3c3c3c;
+            border-radius: 8px;
+            padding: 15px;
+            font-family: 'Fira Code', monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+            max-height: 400px;
+            overflow-y: auto;
+            padding: 6px;
+            background: #1e1e1e;
+            border: 1px solid #3c3c3c;
+            color: #d4d4d4;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Left Panel - Device List -->
+        <div class="device-panel">
+            <div class="panel-header">
+                <svg viewBox="0 0 24 24"><path d="M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4M12,6A6,6 0 0,1 18,12A6,6 0 0,1 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6M12,8A4,4 0 0,0 8,12A4,4 0 0,0 12,16A4,4 0 0,0 16,12A4,4 0 0,0 12,8Z"/></svg>
+                Device Details
+            </div>
+            <div class="search-box">
+                <input type="text" id="deviceSearch" placeholder="Search devices..." oninput="filterDevices()">
+            </div>
+            <div class="device-list" id="deviceList">
+                <div style="padding: 15px; color: #888;">Loading devices...</div>
+            </div>
+            <div class="device-count" id="deviceCount">Loading...</div>
+        </div>
+        
+        <!-- Right Panel - Content -->
+        <div class="content-panel">
+            <div class="content-header">
+                <div>
+                    <div class="content-title">Device Details</div>
+                    <div class="content-subtitle">Select a device to view configuration</div>
+                </div>
+            </div>
+            
+            <div class="content-area">
+                <!-- Welcome screen when no device selected -->
+                <div class="welcome-screen" id="welcomeScreen">
+                    <svg viewBox="0 0 24 24"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/></svg>
+                    <h2>Device Details Viewer</h2>
+                    <p>Select a device from the left panel to view its details</p>
+                </div>
+                
+                <!-- Device Content (hidden until device selected) -->
+                <div id="deviceContent" style="display: none;">
+                    <div class="device-header">
+                        <div class="device-name" id="deviceName">Loading...</div>
+                        <div class="device-actions">
+                            <button class="btn-refresh" onclick="refreshAllData()">Refresh</button>
+                        </div>
+                    </div>
+    
+    <div class="tab-nav">
+        <button class="tab-btn active" data-tab="overview">Overview</button>
+        <button class="tab-btn" data-tab="ports">Ports</button>
+        <button class="tab-btn" data-tab="optical">Optical</button>
+        <button class="tab-btn" data-tab="bgp">BGP</button>
+        <button class="tab-btn" data-tab="logs">Logs</button>
+        <button class="tab-btn" data-tab="commands">Command Runner</button>
+    </div>
+    
+    <!-- Overview Tab -->
+    <div class="tab-content active" id="tab-overview">
+        <div class="summary-cards" id="overviewCards">
+            <div class="loading">Loading device data...</div>
+        </div>
+    </div>
+    
+    <!-- Ports Tab -->
+    <div class="tab-content" id="tab-ports">
+        <div id="portsContent">
+            <div class="loading">Loading port status...</div>
+        </div>
+    </div>
+    
+    <!-- Optical Tab -->
+    <div class="tab-content" id="tab-optical">
+        <p style="color: #808080; margin-bottom: 15px;">Click on a port to see detailed L1 diagnostics</p>
+        <div id="opticalContent">
+            <div class="loading">Loading optical data...</div>
+        </div>
+        <div class="optical-detail" id="opticalDetail" style="display: none;"></div>
+    </div>
+    
+    <!-- BGP Tab -->
+    <div class="tab-content" id="tab-bgp">
+        <div class="vrf-selector">
+            <label>VRF:</label>
+            <select id="vrfSelect" onchange="loadBGPForVRF()">
+                <option value="default">default</option>
+            </select>
+            <button class="cmd-btn" onclick="loadVRFList()">Refresh VRFs</button>
+        </div>
+        <div id="bgpContent">
+            <div class="loading">Loading BGP data...</div>
+        </div>
+    </div>
+    
+    <!-- Logs Tab -->
+    <div class="tab-content" id="tab-logs">
+        <div class="summary-cards" id="logCards">
+            <div class="loading">Loading logs...</div>
+        </div>
+        <div class="log-output" id="logOutput" style="display: none;"></div>
+    </div>
+    
+    <!-- Command Runner Tab -->
+    <div class="tab-content" id="tab-commands">
+        <div class="command-section">
+            <div class="command-groups-grid">
+            <!-- System & Hardware -->
+            <div class="command-group collapsed">
+                <div class="command-group-title" onclick="toggleGroup(this.parentElement)">System & Hardware</div>
+                <div class="command-group-content">
+                    <div class="command-buttons">
+                        <button class="cmd-btn" onclick="runCommand('nv show system')">nv show system</button>
+                        <button class="cmd-btn" onclick="runCommand('nv show platform')">nv show platform</button>
+                        <button class="cmd-btn" onclick="runCommand('nv show system memory')">nv show system memory</button>
+                        <button class="cmd-btn" onclick="runCommand('uptime')">uptime</button>
+                        <button class="cmd-btn" onclick="runCommand('free -h')">free -h</button>
+                        <button class="cmd-btn" onclick="runCommand('df -h')">df -h</button>
+                        <button class="cmd-btn" onclick="runCommand('sudo sensors')">sensors</button>
+                        <button class="cmd-btn" onclick="runCommand('sudo smonctl')">smonctl</button>
+                        <button class="cmd-btn" onclick="runCommand('sudo decode-syseeprom')">decode-syseeprom</button>
+                        <button class="cmd-btn" onclick="runCommand('sudo cl-resource-query')">cl-resource-query</button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Interfaces & Ports -->
+            <div class="command-group collapsed">
+                <div class="command-group-title" onclick="toggleGroup(this.parentElement)">Interfaces & Ports</div>
+                <div class="command-group-content">
+                    <div class="command-buttons">
+                        <button class="cmd-btn" onclick="runCommand('nv show interface')">nv show interface</button>
+                        <button class="cmd-btn" onclick="runCommand('ip link show')">ip link show</button>
+                        <button class="cmd-btn" onclick="runCommand('ip addr show')">ip addr show</button>
+                    </div>
+                    <div class="port-input-row">
+                        <input type="text" id="portInput" list="portList" placeholder="swp1s0" style="width: 120px; background: #1e1e1e; color: #d4d4d4; border: 1px solid #3c3c3c; padding: 6px; border-radius: 4px;">
+                        <datalist id="portList"></datalist>
+                        <button class="cmd-btn" onclick="runCommand('sudo l1-show ' + document.getElementById('portInput').value)">l1-show</button>
+                        <button class="cmd-btn" onclick="runCommand('/sbin/ethtool ' + document.getElementById('portInput').value)">ethtool</button>
+                        <button class="cmd-btn" onclick="runCommand('sudo /sbin/ethtool -m ' + document.getElementById('portInput').value)">ethtool -m</button>
+                        <button class="cmd-btn" onclick="runCommand('/sbin/ethtool -S ' + document.getElementById('portInput').value)">ethtool -S</button>
+                        <button class="cmd-btn" onclick="runCommand('/sbin/ethtool -i ' + document.getElementById('portInput').value)">ethtool -i</button>
+                        <button class="cmd-btn" onclick="runCommand('nv show interface ' + document.getElementById('portInput').value + ' counters')">counters</button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Layer 2 -->
+            <div class="command-group collapsed">
+                <div class="command-group-title" onclick="toggleGroup(this.parentElement)">Layer 2 / Bridge</div>
+                <div class="command-group-content">
+                    <div class="command-buttons">
+                        <button class="cmd-btn" onclick="runCommand('nv show bridge domain br_default')">nv show bridge</button>
+                        <button class="cmd-btn" onclick="runCommand('nv show bridge domain br_default mac-table')">nv show mac-table</button>
+                        <button class="cmd-btn" onclick="runCommand('/sbin/bridge fdb show')">bridge fdb show</button>
+                        <button class="cmd-btn" onclick="runCommand('/sbin/bridge vlan show')">bridge vlan show</button>
+                        <button class="cmd-btn" onclick="runCommand('sudo lldpctl')">lldpctl</button>
+                        <button class="cmd-btn" onclick="runCommand('ip neigh show')">ip neigh show</button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- BGP & Routing with VRF -->
+            <div class="command-group collapsed">
+                <div class="command-group-title" onclick="toggleGroup(this.parentElement)">BGP & Routing</div>
+                <div class="command-group-content">
+                    <div class="vrf-selector">
+                        <label>VRF:</label>
+                        <select id="cmdVrfSelect">
+                            <option value="">default</option>
+                        </select>
+                    </div>
+                    <div class="command-buttons">
+                        <button class="cmd-btn" onclick="runVrfCommand('nv show vrf', 'router bgp neighbor')">nv show bgp neighbor</button>
+                        <button class="cmd-btn" onclick="runCommand('nv show router bgp')">nv show router bgp</button>
+                        <button class="cmd-btn" onclick="runVtyshVrf('show bgp summary')">vtysh: bgp summary</button>
+                        <button class="cmd-btn" onclick="runVtyshVrf('show ip route')">vtysh: ip route</button>
+                        <button class="cmd-btn" onclick="runVtyshVrf('show bgp l2vpn evpn summary')">vtysh: evpn summary</button>
+                        <button class="cmd-btn" onclick="runIpRouteVrf()">ip route show</button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- EVPN & VXLAN -->
+            <div class="command-group collapsed">
+                <div class="command-group-title" onclick="toggleGroup(this.parentElement)">EVPN & VXLAN</div>
+                <div class="command-group-content">
+                    <div class="command-buttons">
+                        <button class="cmd-btn" onclick="runCommand('nv show evpn vni')">nv show evpn vni</button>
+                        <button class="cmd-btn" onclick="runCommand(&quot;sudo vtysh -c 'show evpn vni'&quot;)">vtysh: evpn vni</button>
+                        <button class="cmd-btn" onclick="runCommand(&quot;sudo vtysh -c 'show evpn mac vni all'&quot;)">vtysh: evpn mac</button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- EVPN Multi-Homing / Bonds -->
+            <div class="command-group collapsed">
+                <div class="command-group-title" onclick="toggleGroup(this.parentElement)">EVPN Multi-Homing / Bonds</div>
+                <div class="command-group-content">
+                    <div class="command-buttons">
+                        <button class="cmd-btn" onclick="runCommand('nv show interface bonds')">nv show bonds</button>
+                        <button class="cmd-btn" onclick="runCommand('nv show evpn multihoming')">nv show evpn multihoming</button>
+                        <button class="cmd-btn" onclick="runCommand('nv show evpn multihoming esi')">nv show evpn mh esi</button>
+                        <button class="cmd-btn" onclick="runCommand(&quot;sudo vtysh -c 'show evpn es'&quot;)">vtysh: evpn es</button>
+                        <button class="cmd-btn" onclick="runCommand(&quot;sudo vtysh -c 'show evpn es-evi'&quot;)">vtysh: evpn es-evi</button>
+                        <button class="cmd-btn" onclick="runCommand(&quot;sudo vtysh -c 'show evpn es detail'&quot;)">vtysh: evpn es detail</button>
+                    </div>
+                    <div class="port-input-row" style="margin-top: 10px;">
+                        <input type="text" id="bondInput" list="bondList" placeholder="bond0" style="width: 120px; background: #1e1e1e; color: #d4d4d4; border: 1px solid #3c3c3c; padding: 6px; border-radius: 4px;">
+                        <datalist id="bondList"></datalist>
+                        <button class="cmd-btn" onclick="runBondCommand('details')">bond details</button>
+                        <button class="cmd-btn" onclick="runBondCommand('members')">bond members</button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- MLAG -->
+            <div class="command-group collapsed">
+                <div class="command-group-title" onclick="toggleGroup(this.parentElement)">MLAG / CLAG</div>
+                <div class="command-group-content">
+                    <div class="command-buttons">
+                        <button class="cmd-btn" onclick="runCommand('nv show mlag')">nv show mlag</button>
+                        <button class="cmd-btn" onclick="runCommand('nv show mlag consistency-checker')">nv show mlag consistency</button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Logs -->
+            <div class="command-group collapsed">
+                <div class="command-group-title" onclick="toggleGroup(this.parentElement)">Logs & Debug</div>
+                <div class="command-group-content">
+                    <div class="command-buttons">
+                        <button class="cmd-btn" onclick="runCommand('sudo journalctl -n 50')">journalctl -n 50</button>
+                        <button class="cmd-btn" onclick="runCommand('sudo dmesg -T')">dmesg</button>
+                        <button class="cmd-btn" onclick="runCommand('sudo tail -n 50 /var/log/frr/frr.log')">FRR log</button>
+                        <button class="cmd-btn" onclick="runCommand('sudo tail -n 50 /var/log/syslog')">syslog</button>
+                        <button class="cmd-btn" onclick="runCommand('sudo tail -n 50 /var/log/switchd.log')">switchd.log</button>
+                        <button class="cmd-btn" onclick="runCommand('sudo tail -n 50 /var/log/nvued.log')">nvued.log</button>
+                        <button class="cmd-btn" onclick="runCommand('sudo tail -n 50 /var/log/linkstate')">linkstate</button>
+                    </div>
+                </div>
+            </div>
+            </div><!-- end command-groups-grid -->
+            
+            <!-- Custom Command -->
+            <div class="custom-command">
+                <input type="text" id="customCmd" placeholder="Enter custom command (nv show, sudo vtysh -c 'show...')">
+                <button onclick="runCustomCommand()">Run</button>
+            </div>
+        </div>
+        
+        <div class="command-output" id="commandOutput" style="display: none;">
+            <div class="cmd-header" id="cmdHeader"></div>
+            <div id="cmdResult"></div>
+        </div>
+    </div>
+    
+                </div><!-- Close deviceContent -->
+            </div><!-- Close content-area -->
+        </div><!-- Close content-panel -->
+    </div><!-- Close container -->
+    
+    <script>
+        // ===== Device List Management =====
+        let allDevices = [];
+        let devicesByGroup = {};
+        let groupOrder = [];
+        
+        async function loadDeviceList() {
+            try {
+                // Use fabric-api.sh to get devices from inventory (path from lldpq.conf)
+                const response = await fetch('/fabric-api.sh?action=list-devices');
+                const data = await response.json();
+                
+                if (!data.success || !data.devices) {
+                    throw new Error(data.error || 'Failed to load devices');
+                }
+                
+                allDevices = [];
+                devicesByGroup = {};
+                groupOrder = Object.keys(data.devices); // Preserve order from API
+                
+                // Use Set to track unique devices
+                const uniqueDevices = new Set();
+                
+                for (const [group, groupDevices] of Object.entries(data.devices)) {
+                    const hostnames = groupDevices.map(d => d.hostname);
+                    // Sort devices naturally within each group
+                    hostnames.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+                    devicesByGroup[group] = hostnames;
+                    hostnames.forEach(name => {
+                        allDevices.push({ name, group });
+                        uniqueDevices.add(name);
+                    });
+                }
+                
+                renderDeviceList();
+                document.getElementById('deviceCount').textContent = `${uniqueDevices.size} devices`;
+                
+            } catch (e) {
+                console.error('Failed to load device list:', e);
+                document.getElementById('deviceList').innerHTML = '<div style="padding: 15px; color: #888;">Failed to load devices</div>';
+            }
+        }
+        
+        function renderDeviceList(filter = '') {
+            const container = document.getElementById('deviceList');
+            const filterLower = filter.toLowerCase();
+            
+            let html = '';
+            
+            groupOrder.forEach(group => {
+                const devices = devicesByGroup[group] || [];
+                const filtered = devices.filter(d => d.toLowerCase().includes(filterLower));
+                
+                if (filtered.length === 0) return;
+                
+                // Start collapsed by default (like dev-conf.html)
+                html += `
+                    <div class="device-group">
+                        <div class="group-header collapsed" onclick="toggleDeviceGroup(this)">
+                            <span class="arrow">▶</span>
+                            ${group} (${filtered.length})
+                        </div>
+                        <div class="group-devices collapsed">
+                            ${filtered.map(name => `
+                                <div class="device-item ${name === deviceName ? 'selected' : ''}" 
+                                     onclick="selectDevice('${name}')">
+                                    <span class="device-icon"></span>
+                                    <span class="device-name-text">${name}</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            });
+            
+            container.innerHTML = html || '<div style="padding: 15px; color: #888;">No devices found</div>';
+            
+            // If a device is selected, expand its group
+            if (deviceName) {
+                const selectedItem = document.querySelector('.device-item.selected');
+                if (selectedItem) {
+                    const groupDevices = selectedItem.closest('.group-devices');
+                    const groupHeader = groupDevices?.previousElementSibling;
+                    if (groupHeader && groupDevices) {
+                        groupHeader.classList.remove('collapsed');
+                        groupDevices.classList.remove('collapsed');
+                    }
+                }
+            }
+        }
+        
+        function filterDevices() {
+            const filter = document.getElementById('deviceSearch').value;
+            renderDeviceList(filter);
+        }
+        
+        function toggleDeviceGroup(header) {
+            header.classList.toggle('collapsed');
+            const groupDevices = header.nextElementSibling;
+            if (groupDevices) {
+                groupDevices.classList.toggle('collapsed');
+            }
+        }
+        
+        function selectDevice(name) {
+            // Update URL without reloading
+            const newUrl = `${window.location.pathname}?device=${encodeURIComponent(name)}`;
+            window.history.pushState({device: name}, '', newUrl);
+            
+            deviceName = name;
+            
+            // Show device content, hide placeholder
+            document.getElementById('welcomeScreen').style.display = 'none';
+            document.getElementById('deviceContent').style.display = 'block';
+            
+            // Update device name in header
+            document.getElementById('deviceName').textContent = name;
+            document.title = `Device: ${name}`;
+            
+            // Update selected state in list
+            document.querySelectorAll('.device-item').forEach(item => {
+                item.classList.toggle('selected', item.textContent === name);
+            });
+            
+            // Load device data
+            loadDeviceData();
+            loadPortStatus();
+            loadVRFList();
+            loadBondList();
+        }
+        
+        // ===== End Device List Management =====
+        
+        // Toggle collapsible command groups (accordion - close others when one opens)
+        function toggleGroup(element) {
+            const wasCollapsed = element.classList.contains('collapsed');
+            // Close all other groups first
+            document.querySelectorAll('.command-group').forEach(g => {
+                g.classList.add('collapsed');
+            });
+            // Toggle the clicked one
+            if (wasCollapsed) {
+                element.classList.remove('collapsed');
+            }
+        }
+        
+        // Natural sort for interface names (swp1s0, swp2s0, swp10s0, etc.)
+        function naturalSort(a, b) {
+            return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+        }
+        
+        // Initialize auth
+        async function initPage() {
+            await LLDPqAuth.checkAuth();
+        }
+        initPage();
+        
+        // Load device list first
+        loadDeviceList();
+        
+        // Get device name from URL
+        const urlParams = new URLSearchParams(window.location.search);
+        let deviceName = urlParams.get('device');
+        
+        // Also check if we're at monitor-results/xxx.html format
+        if (!deviceName) {
+            const path = window.location.pathname;
+            const match = path.match(/monitor-results\/(.+)\.html/);
+            if (match) {
+                deviceName = match[1];
+            }
+        }
+        
+        if (!deviceName) {
+            // No device selected - show welcome screen
+            document.getElementById('welcomeScreen').style.display = 'flex';
+            document.getElementById('deviceContent').style.display = 'none';
+        } else {
+            // Device specified - show content
+            document.getElementById('welcomeScreen').style.display = 'none';
+            document.getElementById('deviceContent').style.display = 'block';
+            document.getElementById('deviceName').textContent = deviceName;
+            document.title = `Device: ${deviceName}`;
+            loadDeviceData();
+            loadPortStatus();
+            loadVRFList();
+            loadBondList();
+        }
+        
+        // Handle browser back/forward
+        window.addEventListener('popstate', (event) => {
+            if (event.state && event.state.device) {
+                selectDevice(event.state.device);
+            }
+        });
+        
+        // Tab switching
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                btn.classList.add('active');
+                document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+            });
+        });
+        
+        async function loadDeviceData() {
+            try {
+                const response = await fetch(`/fabric-api.sh?action=get-device-data&device=${encodeURIComponent(deviceName)}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    renderOverview(data);
+                    renderOptical(data.optical || []);
+                    renderLogs(data.logs || {});
+                } else {
+                    showError(data.error);
+                }
+            } catch (e) {
+                showError('Failed to load device data: ' + e.message);
+            }
+        }
+        
+        async function loadPortStatus() {
+            document.getElementById('portsContent').innerHTML = '<div class="loading">Loading interfaces...</div>';
+            try {
+                const response = await fetch('/fabric-api.sh?action=run-device-command', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({device: deviceName, command: 'nv show interface --view=brief'})
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    document.getElementById('portsContent').innerHTML = `<pre style="font-size: 12px; overflow-x: auto;">${data.output}</pre>`;
+                    // Also populate port datalist from interface list
+                    populatePortList(data.output);
+                } else {
+                    document.getElementById('portsContent').innerHTML = `<div class="error-message">${data.error}</div>`;
+                }
+                document.getElementById('portsContent').scrollIntoView({ behavior: 'smooth', block: 'start' });
+            } catch (e) {
+                document.getElementById('portsContent').innerHTML = `<div class="error-message">${e.message}</div>`;
+            }
+        }
+        
+        function populatePortList(output) {
+            const ports = [];
+            const lines = output.split('\n');
+            lines.forEach(line => {
+                // Match swp interfaces (swp1s0, swp10, etc.)
+                const match = line.match(/^(swp\S+)\s+/);
+                if (match) {
+                    ports.push(match[1]);
+                }
+            });
+            
+            // Sort naturally
+            ports.sort(naturalSort);
+            
+            // Populate datalist
+            const portList = document.getElementById('portList');
+            if (portList) {
+                portList.innerHTML = ports.map(p => `<option value="${p}">`).join('');
+            }
+        }
+        
+        async function loadVRFList() {
+            try {
+                const response = await fetch('/fabric-api.sh?action=run-device-command', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({device: deviceName, command: 'nv show vrf'})
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    const vrfs = [];
+                    const lines = data.output.split('\n');
+                    lines.forEach(line => {
+                        const match = line.match(/^(\S+)\s+/);
+                        if (match && !match[1].startsWith('-') && match[1] !== 'vrf' && match[1] !== 'Name' && match[1] !== '==') {
+                            vrfs.push(match[1]);
+                        }
+                    });
+                    
+                    // Update both VRF selects (add 'all' option)
+                    ['vrfSelect', 'cmdVrfSelect'].forEach(id => {
+                        const select = document.getElementById(id);
+                        if (select) {
+                            select.innerHTML = '<option value="all">all</option>' + vrfs.map(v => `<option value="${v}">${v}</option>`).join('');
+                        }
+                    });
+                    
+                    // Load BGP for first VRF
+                    if (vrfs.length > 0) {
+                        loadBGPForVRF();
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to load VRF list:', e);
+            }
+            
+            // Also load bond list
+            loadBondList();
+        }
+        
+        async function loadBondList() {
+            try {
+                const response = await fetch('/fabric-api.sh?action=run-device-command', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({device: deviceName, command: 'nv show interface bonds'})
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    const bonds = [];
+                    const lines = data.output.split('\n');
+                    lines.forEach(line => {
+                        // Match bond interfaces (type column shows 'bond')
+                        const match = line.match(/^(bond\S+)\s+/);
+                        if (match) {
+                            bonds.push(match[1]);
+                        }
+                    });
+                    
+                    // Sort bonds naturally
+                    bonds.sort(naturalSort);
+                    
+                    const datalist = document.getElementById('bondList');
+                    if (datalist) {
+                        datalist.innerHTML = bonds.map(b => `<option value="${b}">`).join('');
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to load bond list:', e);
+            }
+        }
+        
+        function runBondCommand(type) {
+            const bond = document.getElementById('bondInput').value;
+            if (!bond) {
+                showNotification('Please select or enter a bond name', 'warning');
+                return;
+            }
+            if (type === 'details') {
+                runCommand('nv show interface ' + bond);
+            } else if (type === 'members') {
+                runCommand('cat /proc/net/bonding/' + bond);
+            }
+        }
+        
+        function showNotification(message, type = 'info') {
+            // Remove existing notification
+            const existing = document.querySelector('.notification');
+            if (existing) existing.remove();
+            
+            const notification = document.createElement('div');
+            notification.className = 'notification notification-' + type;
+            notification.textContent = message;
+            notification.style.cssText = 'position: fixed; top: 20px; right: 20px; padding: 12px 20px; border-radius: 6px; z-index: 1000; font-size: 14px; animation: fadeIn 0.3s;';
+            
+            if (type === 'warning') {
+                notification.style.background = '#ff9800';
+                notification.style.color = '#000';
+            } else if (type === 'error') {
+                notification.style.background = '#f44336';
+                notification.style.color = '#fff';
+            } else {
+                notification.style.background = '#76b900';
+                notification.style.color = '#000';
+            }
+            
+            document.body.appendChild(notification);
+            setTimeout(() => notification.remove(), 3000);
+        }
+        
+        async function loadBGPForVRF() {
+            const vrf = document.getElementById('vrfSelect').value || 'default';
+            document.getElementById('bgpContent').innerHTML = '<div class="loading">Loading BGP neighbors...</div>';
+            
+            try {
+                let cmd;
+                if (vrf === 'all') {
+                    cmd = 'sudo vtysh -c "show bgp vrf all summary"';
+                } else if (vrf === 'default') {
+                    cmd = 'sudo vtysh -c "show bgp summary"';
+                } else {
+                    cmd = `sudo vtysh -c "show bgp vrf ${vrf} summary"`;
+                }
+                    
+                const response = await fetch('/fabric-api.sh?action=run-device-command', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({device: deviceName, command: cmd})
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    document.getElementById('bgpContent').innerHTML = `<pre style="font-size: 12px; overflow-x: auto;">${data.output}</pre>`;
+                } else {
+                    document.getElementById('bgpContent').innerHTML = `<div class="error-message">${data.error}</div>`;
+                }
+                document.getElementById('bgpContent').scrollIntoView({ behavior: 'smooth', block: 'start' });
+            } catch (e) {
+                document.getElementById('bgpContent').innerHTML = `<div class="error-message">${e.message}</div>`;
+            }
+        }
+        
+        function renderOverview(data) {
+            const optical = data.optical || [];
+            const logs = data.logs || {};
+            
+            // Count optical health
+            const opticalHealth = {excellent: 0, good: 0, warning: 0, critical: 0};
+            optical.forEach(o => {
+                if (opticalHealth[o.health] !== undefined) opticalHealth[o.health]++;
+            });
+            
+            document.getElementById('overviewCards').innerHTML = `
+                <div class="summary-card">
+                    <div class="value" style="color: #76b900">${optical.length}</div>
+                    <div class="label">Optical Ports</div>
+                </div>
+                <div class="summary-card">
+                    <div class="value" style="color: ${opticalHealth.warning + opticalHealth.critical > 0 ? '#ff9800' : '#4caf50'}">${opticalHealth.excellent + opticalHealth.good}</div>
+                    <div class="label">Optical OK</div>
+                </div>
+                <div class="summary-card">
+                    <div class="value" style="color: ${opticalHealth.warning > 0 ? '#ff9800' : '#808080'}">${opticalHealth.warning}</div>
+                    <div class="label">Optical Warning</div>
+                </div>
+                <div class="summary-card">
+                    <div class="value" style="color: ${logs.error > 0 ? '#f44336' : '#4caf50'}">${logs.error || 0}</div>
+                    <div class="label">Log Errors</div>
+                </div>
+                <div class="summary-card">
+                    <div class="value" style="color: #808080">${logs.info || 0}</div>
+                    <div class="label">Log Info</div>
+                </div>
+            `;
+        }
+        
+        async function renderOptical(optical) {
+            // First, get interface status to find down ports
+            let downPorts = [];
+            try {
+                const response = await fetch('/fabric-api.sh?action=run-device-command', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({device: deviceName, command: 'nv show interface --view=brief'})
+                });
+                const data = await response.json();
+                if (data.success) {
+                    const lines = data.output.split('\n');
+                    lines.forEach(line => {
+                        // Match swp interfaces that are down
+                        const match = line.match(/^(swp\S+)\s+\S+\s+down/i);
+                        if (match) {
+                            downPorts.push(match[1]);
+                        }
+                    });
+                }
+            } catch (e) {
+                console.error('Failed to get interface status:', e);
+            }
+            
+            // Create combined list - existing optical + down ports
+            const opticalPorts = new Set(optical.map(o => o.port));
+            downPorts.forEach(port => {
+                if (!opticalPorts.has(port)) {
+                    optical.push({
+                        port: port,
+                        health: 'down',
+                        rx_power_dbm: null,
+                        tx_power_dbm: null,
+                        temperature_c: null,
+                        link_margin_db: null
+                    });
+                }
+            });
+            
+            if (optical.length === 0) {
+                document.getElementById('opticalContent').innerHTML = '<p>No optical data available</p>';
+                return;
+            }
+            
+            let html = `<table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Port</th>
+                        <th>Health</th>
+                        <th>RX Power (dBm)</th>
+                        <th>TX Power (dBm)</th>
+                        <th>Temperature (C)</th>
+                        <th>Link Margin (dB)</th>
+                    </tr>
+                </thead>
+                <tbody>`;
+            
+            // Sort by port name (natural sort)
+            optical.sort((a, b) => naturalSort(a.port, b.port));
+            
+            optical.forEach(o => {
+                const rowClass = o.health === 'down' ? 'clickable down-row' : 'clickable';
+                html += `<tr class="${rowClass}" onclick="showOpticalDetail('${o.port}')" id="optical-row-${o.port.replace(/[^a-zA-Z0-9]/g, '-')}">
+                    <td><strong>${o.port}</strong></td>
+                    <td class="status-${o.health}">${o.health}</td>
+                    <td>${o.rx_power_dbm?.toFixed(2) || 'N/A'}</td>
+                    <td>${o.tx_power_dbm?.toFixed(2) || 'N/A'}</td>
+                    <td>${o.temperature_c?.toFixed(1) || 'N/A'}</td>
+                    <td>${o.link_margin_db?.toFixed(2) || 'N/A'}</td>
+                </tr>`;
+            });
+            
+            html += '</tbody></table>';
+            document.getElementById('opticalContent').innerHTML = html;
+            
+            // Port datalist is populated separately by loadPortList()
+        }
+        
+        async function showOpticalDetail(port) {
+            // Highlight selected row
+            document.querySelectorAll('#opticalContent tr').forEach(r => r.classList.remove('selected'));
+            const rowId = 'optical-row-' + port.replace(/[^a-zA-Z0-9]/g, '-');
+            document.getElementById(rowId)?.classList.add('selected');
+            
+            const detailDiv = document.getElementById('opticalDetail');
+            detailDiv.style.display = 'block';
+            detailDiv.innerHTML = `<div style="color: #76b900; margin-bottom: 10px;">Loading L1 diagnostics for ${port}...</div>`;
+            
+            try {
+                // Run l1-show for detailed info
+                const response = await fetch('/fabric-api.sh?action=run-device-command', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({device: deviceName, command: `sudo l1-show ${port}`})
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    detailDiv.innerHTML = `<div style="color: #76b900; margin-bottom: 10px; font-weight: bold;">L1 Diagnostics: ${port}</div>${data.output}`;
+                } else {
+                    detailDiv.innerHTML = `<div style="color: #f44336;">Error: ${data.error}</div>`;
+                }
+                detailDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            } catch (e) {
+                detailDiv.innerHTML = `<div style="color: #f44336;">Failed: ${e.message}</div>`;
+                detailDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }
+        
+        function renderLogs(logs) {
+            document.getElementById('logCards').innerHTML = `
+                <div class="summary-card log-card" onclick="showLogs('critical')" id="logCardCritical">
+                    <div class="value" style="color: #f44336">${logs.critical || 0}</div>
+                    <div class="label">Critical</div>
+                </div>
+                <div class="summary-card log-card" onclick="showLogs('error')" id="logCardError">
+                    <div class="value" style="color: #ff5722">${logs.error || 0}</div>
+                    <div class="label">Error</div>
+                </div>
+                <div class="summary-card log-card" onclick="showLogs('warning')" id="logCardWarning">
+                    <div class="value" style="color: #ff9800">${logs.warning || 0}</div>
+                    <div class="label">Warning</div>
+                </div>
+                <div class="summary-card log-card" onclick="showLogs('info')" id="logCardInfo">
+                    <div class="value" style="color: #4caf50">${logs.info || 0}</div>
+                    <div class="label">Info</div>
+                </div>
+            `;
+        }
+        
+        async function showLogs(severity) {
+            // Highlight selected card
+            document.querySelectorAll('.log-card').forEach(c => c.classList.remove('selected'));
+            document.getElementById('logCard' + severity.charAt(0).toUpperCase() + severity.slice(1)).classList.add('selected');
+            
+            const logOutput = document.getElementById('logOutput');
+            logOutput.style.display = 'block';
+            logOutput.textContent = 'Loading logs...';
+            
+            // Map severity to journalctl priority
+            const priorityMap = {
+                'critical': '0..2',
+                'error': '3',
+                'warning': '4',
+                'info': '5..6'
+            };
+            
+            try {
+                const cmd = `sudo journalctl -p ${priorityMap[severity]} -n 100 --no-pager`;
+                const response = await fetch('/fabric-api.sh?action=run-device-command', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({device: deviceName, command: cmd})
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    logOutput.textContent = data.output || 'No logs found';
+                } else {
+                    logOutput.textContent = 'Error: ' + data.error;
+                }
+                logOutput.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            } catch (e) {
+                logOutput.textContent = 'Failed to load logs: ' + e.message;
+                logOutput.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }
+        
+        function showError(message) {
+            document.getElementById('overviewCards').innerHTML = `<div class="error-message">${message}</div>`;
+        }
+        
+        async function runCommand(cmd) {
+            const outputDiv = document.getElementById('commandOutput');
+            const cmdHeader = document.getElementById('cmdHeader');
+            const cmdResult = document.getElementById('cmdResult');
+            
+            outputDiv.style.display = 'block';
+            cmdHeader.textContent = `$ ${cmd}`;
+            cmdResult.textContent = 'Running...';
+            
+            try {
+                const response = await fetch('/fabric-api.sh?action=run-device-command', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({device: deviceName, command: cmd})
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    cmdResult.textContent = data.output || '(no output)';
+                } else {
+                    cmdResult.innerHTML = `<span style="color: #f44336">Error: ${data.error}</span>`;
+                }
+                // Scroll to output
+                outputDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            } catch (e) {
+                cmdResult.innerHTML = `<span style="color: #f44336">Request failed: ${e.message}</span>`;
+                outputDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }
+        
+        function runVrfCommand(prefix, suffix) {
+            const vrf = document.getElementById('cmdVrfSelect').value;
+            let cmd;
+            if (vrf === 'all') {
+                // "all" not supported by nv show vrf - use nv show router bgp instead
+                if (suffix.includes('bgp neighbor')) {
+                    cmd = 'nv show router bgp neighbor';
+                } else {
+                    cmd = `${prefix} default ${suffix}`;
+                }
+            } else if (vrf) {
+                cmd = `${prefix} ${vrf} ${suffix}`;
+            } else {
+                cmd = `${prefix} default ${suffix}`;
+            }
+            runCommand(cmd);
+        }
+        
+        function runVtyshVrf(showCmd) {
+            const vrf = document.getElementById('cmdVrfSelect').value;
+            let cmd;
+            if (vrf === 'all') {
+                // Handle "all" VRF - different syntax for different commands
+                if (showCmd.includes('bgp summary')) {
+                    cmd = `sudo vtysh -c "show bgp vrf all summary"`;
+                } else if (showCmd.includes('ip route')) {
+                    cmd = `sudo vtysh -c "show ip route vrf all"`;
+                } else if (showCmd.includes('evpn')) {
+                    cmd = `sudo vtysh -c "${showCmd}"`;
+                } else {
+                    cmd = `sudo vtysh -c "${showCmd}"`;
+                }
+            } else if (vrf && vrf !== 'default') {
+                if (showCmd.includes('bgp summary')) {
+                    cmd = `sudo vtysh -c "show bgp vrf ${vrf} summary"`;
+                } else if (showCmd.includes('ip route')) {
+                    cmd = `sudo vtysh -c "show ip route vrf ${vrf}"`;
+                } else {
+                    cmd = `sudo vtysh -c "${showCmd}"`;
+                }
+            } else {
+                cmd = `sudo vtysh -c "${showCmd}"`;
+            }
+            runCommand(cmd);
+        }
+        
+        function runIpRouteVrf() {
+            const vrf = document.getElementById('cmdVrfSelect').value;
+            let cmd;
+            if (vrf === 'all') {
+                cmd = 'ip route show table all';
+            } else if (vrf && vrf !== 'default') {
+                cmd = `ip route show vrf ${vrf}`;
+            } else {
+                cmd = 'ip route show';
+            }
+            runCommand(cmd);
+        }
+        
+        function runCustomCommand() {
+            const cmd = document.getElementById('customCmd').value.trim();
+            if (cmd) {
+                runCommand(cmd);
+            }
+        }
+        
+        // Enter key for custom command
+        document.getElementById('customCmd').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') runCustomCommand();
+        });
+        
+        function refreshAllData() {
+            // Show loading state
+            document.getElementById('overviewCards').innerHTML = '<div class="loading">Refreshing...</div>';
+            document.getElementById('portsContent').innerHTML = '<div class="loading">Refreshing...</div>';
+            document.getElementById('opticalContent').innerHTML = '<div class="loading">Refreshing...</div>';
+            document.getElementById('bgpContent').innerHTML = '<div class="loading">Refreshing...</div>';
+            
+            // Reload all data
+            loadDeviceData();
+            loadPortStatus();
+            loadVRFList();
+        }
+    </script>
+</body>
+</html>
