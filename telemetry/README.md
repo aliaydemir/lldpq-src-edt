@@ -66,9 +66,8 @@ nv set system telemetry export otlp state enabled
 nv set system telemetry export vrf mgmt
 nv set system telemetry interface-stats export state enabled
 nv set system telemetry interface-stats sample-interval 30
-nv set system telemetry lldp export state enabled
-nv set system telemetry lldp sample-interval 10
-nv set system telemetry platform-stats export state enabled
+nv set system telemetry ai-ethernet-stats export state enabled
+nv set system telemetry ai-ethernet-stats sample-interval 30
 nv config apply -y
 ```
 

@@ -4543,9 +4543,38 @@ def read_lldpq_conf():
             break
     return conf
 
-def get_device_ip(device, ansible_dir):
-    """Get device IP from inventory"""
+def get_device_info(device, ansible_dir, lldpq_conf):
+    """Get device IP and SSH username from devices.yaml"""
+    import yaml
     import re
+    
+    default_username = 'cumulus'
+    lldpq_dir = lldpq_conf.get('LLDPQ_DIR', '')
+    
+    if lldpq_dir:
+        devices_path = f"{lldpq_dir}/devices.yaml"
+        if os.path.exists(devices_path):
+            try:
+                with open(devices_path, 'r') as f:
+                    data = yaml.safe_load(f) or {}
+                    defaults = data.get('defaults', {})
+                    default_username = defaults.get('username', 'cumulus')
+                    
+                    devices_dict = data.get('devices', {})
+                    for ip, device_info in devices_dict.items():
+                        if isinstance(device_info, dict):
+                            hostname = device_info.get('hostname', '')
+                            username = device_info.get('username', default_username)
+                        else:
+                            hostname = device_info.split()[0] if isinstance(device_info, str) else str(device_info)
+                            username = default_username
+                        
+                        if hostname == device:
+                            return {'ip': str(ip), 'username': username}
+            except:
+                pass
+    
+    # Fallback to inventory.ini
     for inv_file in [f"{ansible_dir}/inventory/inventory.ini", f"{ansible_dir}/inventory/hosts"]:
         if os.path.exists(inv_file):
             with open(inv_file, 'r') as f:
@@ -4553,12 +4582,16 @@ def get_device_ip(device, ansible_dir):
                     if line.strip().startswith(device + ' ') or line.strip().startswith(device + '\t'):
                         match = re.search(r'ansible_host=(\S+)', line)
                         if match:
-                            return match.group(1)
-    return device
+                            return {'ip': match.group(1), 'username': default_username}
+    
+    return {'ip': device, 'username': default_username}
 
-def check_device(device, device_ip, lldpq_user):
+def check_device(device, device_info, lldpq_user):
     """Check if device supports telemetry export"""
     try:
+        device_ip = device_info['ip']
+        ssh_user = device_info['username']
+        ssh_target = f"{ssh_user}@{device_ip}"
         ssh_cmd = [
             'sudo', '-u', lldpq_user,
             'ssh',
@@ -4566,7 +4599,7 @@ def check_device(device, device_ip, lldpq_user):
             '-o', 'StrictHostKeyChecking=no',
             '-o', 'ConnectTimeout=10',
             '-o', 'LogLevel=ERROR',
-            device_ip,
+            ssh_target,
             'nv show system telemetry export 2>&1 | head -5'
         ]
         
@@ -4606,8 +4639,8 @@ unsupported = []
 with ThreadPoolExecutor(max_workers=300) as executor:
     futures = {}
     for device in devices:
-        device_ip = get_device_ip(device, ansible_dir)
-        future = executor.submit(check_device, device, device_ip, lldpq_user)
+        device_info = get_device_info(device, ansible_dir, lldpq_conf)
+        future = executor.submit(check_device, device, device_info, lldpq_user)
         futures[future] = device
     
     for future in as_completed(futures):
@@ -4655,31 +4688,41 @@ def read_lldpq_conf():
             break
     return conf
 
-def get_device_ip(device, ansible_dir, lldpq_conf):
-    """Get device IP from devices.yaml or inventory.ini"""
+def get_device_info(device, ansible_dir, lldpq_conf):
+    """Get device IP and SSH username from devices.yaml or inventory.ini"""
     import yaml
+    
+    default_username = 'cumulus'
     
     # First try devices.yaml (preferred source)
     lldpq_dir = lldpq_conf.get('LLDPQ_DIR', '')
-    lldpq_user = lldpq_conf.get('LLDPQ_USER', '')
     
     devices_paths = []
     if lldpq_dir:
         devices_paths.append(f"{lldpq_dir}/devices.yaml")
-    if lldpq_user:
-        devices_paths.append(f"/home/{lldpq_user}/lldpq/devices.yaml")
     
     for path in devices_paths:
         if os.path.exists(path):
             try:
                 with open(path, 'r') as f:
                     data = yaml.safe_load(f) or {}
+                    # Get default username
+                    defaults = data.get('defaults', {})
+                    default_username = defaults.get('username', 'cumulus')
+                    
                     devices_dict = data.get('devices', {})
-                    # Format: { "192.168.58.11": "hostname @role" }
-                    for ip, hostname_info in devices_dict.items():
-                        hostname = hostname_info.split()[0] if isinstance(hostname_info, str) else str(hostname_info)
+                    for ip, device_info in devices_dict.items():
+                        if isinstance(device_info, dict):
+                            # Extended format: { hostname: ..., username: ..., role: ... }
+                            hostname = device_info.get('hostname', '')
+                            username = device_info.get('username', default_username)
+                        else:
+                            # Simple format: "hostname @role"
+                            hostname = device_info.split()[0] if isinstance(device_info, str) else str(device_info)
+                            username = default_username
+                        
                         if hostname == device:
-                            return str(ip)
+                            return {'ip': str(ip), 'username': username}
             except:
                 pass
             break
@@ -4692,12 +4735,16 @@ def get_device_ip(device, ansible_dir, lldpq_conf):
                     if line.strip().startswith(device + ' ') or line.strip().startswith(device + '\t'):
                         match = re.search(r'ansible_host=(\S+)', line)
                         if match:
-                            return match.group(1)
-    return device
+                            return {'ip': match.group(1), 'username': default_username}
+    
+    return {'ip': device, 'username': default_username}
 
-def run_on_device(device, device_ip, combined_cmd, lldpq_user):
+def run_on_device(device, device_info, combined_cmd, lldpq_user):
     """Run commands on a single device"""
     try:
+        device_ip = device_info['ip']
+        ssh_user = device_info['username']
+        ssh_target = f"{ssh_user}@{device_ip}"
         ssh_cmd = [
             'sudo', '-u', lldpq_user, 
             'ssh',
@@ -4705,7 +4752,7 @@ def run_on_device(device, device_ip, combined_cmd, lldpq_user):
             '-o', 'StrictHostKeyChecking=no', 
             '-o', 'ConnectTimeout=30',
             '-o', 'LogLevel=ERROR',
-            device_ip, 
+            ssh_target, 
             combined_cmd
         ]
         
@@ -4764,8 +4811,8 @@ results = []
 with ThreadPoolExecutor(max_workers=300) as executor:
     futures = {}
     for device in devices:
-        device_ip = get_device_ip(device, ansible_dir, lldpq_conf)
-        future = executor.submit(run_on_device, device, device_ip, combined_cmd, lldpq_user)
+        device_info = get_device_info(device, ansible_dir, lldpq_conf)
+        future = executor.submit(run_on_device, device, device_info, combined_cmd, lldpq_user)
         futures[future] = device
     
     for future in as_completed(futures):
@@ -4987,14 +5034,11 @@ def get_device_mgmt_ips(conf):
     
     # Get LLDPQ_DIR from config
     lldpq_dir = conf.get('LLDPQ_DIR', '')
-    lldpq_user = conf.get('LLDPQ_USER', '')
     
     devices_paths = []
     if lldpq_dir:
         devices_paths.append(f"{lldpq_dir}/devices.yaml")
-    if lldpq_user:
-        devices_paths.append(f"/home/{lldpq_user}/lldpq/devices.yaml")
-    devices_paths.append('/var/www/html/lldpq/devices.yaml')
+    
     for path in devices_paths:
         if os.path.exists(path):
             try:
@@ -5107,6 +5151,81 @@ except Exception as e:
 PYTHON_SAVE_TELEM
         exit 0
         ;;
+    start-telemetry-stack)
+        # Start Docker telemetry stack (docker-compose up -d)
+        python3 << 'PYTHON_START_STACK'
+import json
+import os
+import subprocess
+
+# Read LLDPQ_DIR from config
+lldpq_dir = None
+try:
+    with open('/etc/lldpq.conf', 'r') as f:
+        for line in f:
+            if line.startswith('LLDPQ_DIR='):
+                lldpq_dir = line.strip().split('=', 1)[1].strip('"\'')
+                break
+except:
+    pass
+
+if not lldpq_dir:
+    print(json.dumps({'success': False, 'error': 'LLDPQ_DIR not configured in /etc/lldpq.conf', 'installed': False}))
+    exit()
+
+telemetry_dir = f"{lldpq_dir}/telemetry"
+
+if not os.path.exists(f"{telemetry_dir}/docker-compose.yaml"):
+    print(json.dumps({'success': False, 'error': 'Telemetry stack not installed', 'installed': False}))
+    exit()
+
+# Check if already running - try docker compose first, then docker-compose
+for cmd in [['docker', 'compose', 'ps', '-q'], ['docker-compose', 'ps', '-q']]:
+    try:
+        check = subprocess.run(cmd, cwd=telemetry_dir, capture_output=True, text=True, timeout=30)
+        if check.returncode == 0 and check.stdout.strip():
+            print(json.dumps({'success': True, 'message': 'Stack already running', 'already_running': True}))
+            exit()
+        if check.returncode == 0:
+            break  # Command worked, no containers running
+    except FileNotFoundError:
+        continue
+    except:
+        pass
+
+# Start the stack - try docker compose first, then docker-compose
+success = False
+last_error = ''
+
+for cmd in [['docker', 'compose', 'up', '-d'], ['docker-compose', 'up', '-d']]:
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=telemetry_dir,
+            capture_output=True,
+            text=True,
+            timeout=120
+        )
+        if result.returncode == 0:
+            print(json.dumps({'success': True, 'message': 'Stack started'}))
+            success = True
+            break
+        else:
+            last_error = result.stderr
+    except FileNotFoundError:
+        continue
+    except subprocess.TimeoutExpired:
+        print(json.dumps({'success': False, 'error': 'Timeout starting stack'}))
+        exit()
+    except Exception as e:
+        last_error = str(e)
+
+if not success:
+    print(json.dumps({'success': False, 'error': last_error or 'Could not start stack'}))
+
+PYTHON_START_STACK
+        exit 0
+        ;;
     stop-telemetry-stack)
         # Stop Docker telemetry stack (docker-compose stop)
         python3 << 'PYTHON_STOP_STACK'
@@ -5114,41 +5233,56 @@ import json
 import os
 import subprocess
 
-telemetry_dir = os.path.expanduser('~/lldpq/telemetry')
+# Read LLDPQ_DIR from config
+lldpq_dir = None
+try:
+    with open('/etc/lldpq.conf', 'r') as f:
+        for line in f:
+            if line.startswith('LLDPQ_DIR='):
+                lldpq_dir = line.strip().split('=', 1)[1].strip('"\'')
+                break
+except:
+    pass
+
+if not lldpq_dir:
+    print(json.dumps({'success': False, 'error': 'LLDPQ_DIR not configured'}))
+    exit()
+
+telemetry_dir = f"{lldpq_dir}/telemetry"
 
 if not os.path.exists(f"{telemetry_dir}/docker-compose.yaml"):
     print(json.dumps({'success': False, 'error': 'Telemetry stack not found'}))
     exit()
 
-try:
-    result = subprocess.run(
-        ['docker-compose', 'stop'],
-        cwd=telemetry_dir,
-        capture_output=True,
-        text=True,
-        timeout=60
-    )
-    
-    if result.returncode == 0:
-        print(json.dumps({'success': True, 'message': 'Stack stopped'}))
-    else:
-        # Try docker compose (newer syntax)
-        result2 = subprocess.run(
-            ['docker', 'compose', 'stop'],
+# Try docker compose (newer syntax) first, then docker-compose
+success = False
+last_error = ''
+
+for cmd in [['docker', 'compose', 'stop'], ['docker-compose', 'stop']]:
+    try:
+        result = subprocess.run(
+            cmd,
             cwd=telemetry_dir,
             capture_output=True,
             text=True,
             timeout=60
         )
-        if result2.returncode == 0:
+        if result.returncode == 0:
             print(json.dumps({'success': True, 'message': 'Stack stopped'}))
+            success = True
+            break
         else:
-            print(json.dumps({'success': False, 'error': result.stderr or result2.stderr}))
+            last_error = result.stderr
+    except FileNotFoundError:
+        continue
+    except subprocess.TimeoutExpired:
+        print(json.dumps({'success': False, 'error': 'Timeout stopping stack'}))
+        exit()
+    except Exception as e:
+        last_error = str(e)
 
-except subprocess.TimeoutExpired:
-    print(json.dumps({'success': False, 'error': 'Timeout stopping stack'}))
-except Exception as e:
-    print(json.dumps({'success': False, 'error': str(e)}))
+if not success:
+    print(json.dumps({'success': False, 'error': last_error or 'Could not stop stack'}))
 
 PYTHON_STOP_STACK
         exit 0
@@ -5193,8 +5327,6 @@ if not collector_ip:
 commands = [
     'nv unset system telemetry ai-ethernet-stats',
     'nv unset system telemetry interface-stats', 
-    'nv unset system telemetry lldp',
-    'nv unset system telemetry platform-stats',
     f'nv unset system telemetry export otlp grpc destination {collector_ip}',
     'nv unset system telemetry export otlp grpc insecure',
     'nv unset system telemetry export otlp state',

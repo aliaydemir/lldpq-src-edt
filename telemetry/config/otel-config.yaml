@@ -16,8 +16,8 @@ processors:
   
   memory_limiter:
     check_interval: 1s
-    limit_mib: 512
-    spike_limit_mib: 128
+    limit_mib: 2048
+    spike_limit_mib: 512
 
   # Add resource attributes for better identification
   resource:

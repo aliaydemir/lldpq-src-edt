@@ -32,8 +32,18 @@ if [[ $EUID -eq 0 ]] && [[ -n "$SUDO_USER" ]] && [[ "$SUDO_USER" != "root" ]]; t
 fi
 
 # Running as root is OK (for dedicated servers)
+# Use /opt/lldpq for root to allow www-data access
 if [[ $EUID -eq 0 ]]; then
-    echo "Running as root - files will be installed in /root/lldpq"
+    LLDPQ_INSTALL_DIR="/opt/lldpq"
+    echo ""
+    echo "[!] Running as root"
+    echo "    Files will be installed in $LLDPQ_INSTALL_DIR"
+    echo "    Recommended: Install as a regular user (e.g., 'nvidia' or 'cumulus')"
+    echo "    This allows better SSH key management and security."
+    echo ""
+    sleep 2
+else
+    LLDPQ_INSTALL_DIR="$HOME/lldpq"
 fi
 
 # Check if we're in the lldpq-src directory
@@ -57,7 +67,7 @@ if [[ -f /etc/lldpq.conf ]] || [[ -f /etc/lldpq-users.conf ]] || [[ -d /var/lib/
     [[ -f /etc/lldpq.conf ]] && echo "     • /etc/lldpq.conf"
     [[ -f /etc/lldpq-users.conf ]] && echo "     • /etc/lldpq-users.conf (user credentials)"
     [[ -d /var/lib/lldpq ]] && echo "     • /var/lib/lldpq/ (sessions)"
-    [[ -d "$HOME/lldpq" ]] && echo "     • ~/lldpq/ (scripts and configs)"
+    [[ -d "$LLDPQ_INSTALL_DIR" ]] && echo "     • $LLDPQ_INSTALL_DIR/ (scripts and configs)"
     echo ""
     echo "   Options:"
     echo "   1. Clean install - remove old files and start fresh (recommended if broken)"
@@ -190,43 +200,44 @@ echo "   - Copying bin/* to /usr/local/bin/"
 sudo cp bin/* /usr/local/bin/
 sudo chmod +x /usr/local/bin/*
 
-echo "   - Copying lldpq to ~/lldpq"
-cp -r lldpq ~/lldpq
+echo "   - Copying lldpq to $LLDPQ_INSTALL_DIR"
+mkdir -p "$LLDPQ_INSTALL_DIR"
+cp -r lldpq/* "$LLDPQ_INSTALL_DIR/"
 
-echo "   - Copying telemetry stack to ~/lldpq/telemetry"
-cp -r telemetry ~/lldpq/telemetry
-chmod +x ~/lldpq/telemetry/start.sh
+echo "   - Copying telemetry stack to $LLDPQ_INSTALL_DIR/telemetry"
+cp -r telemetry "$LLDPQ_INSTALL_DIR/telemetry"
+chmod +x "$LLDPQ_INSTALL_DIR/telemetry/start.sh"
 
-echo "   - Setting permissions on ~/lldpq for web access (search-api.sh)"
+echo "   - Setting permissions on $LLDPQ_INSTALL_DIR for web access (search-api.sh)"
 # www-data needs read access to devices.yaml and monitor-results for search functionality
-chmod 750 ~/lldpq  # user=rwx, group=rx, other=none
-chmod 640 ~/lldpq/devices.yaml  # user=rw, group=r, other=none
-mkdir -p ~/lldpq/monitor-results/fabric-tables
-chmod 750 ~/lldpq/monitor-results
-chmod 750 ~/lldpq/monitor-results/fabric-tables
+chmod 750 "$LLDPQ_INSTALL_DIR"  # user=rwx, group=rx, other=none
+chmod 640 "$LLDPQ_INSTALL_DIR/devices.yaml"  # user=rw, group=r, other=none
+mkdir -p "$LLDPQ_INSTALL_DIR/monitor-results/fabric-tables"
+chmod 750 "$LLDPQ_INSTALL_DIR/monitor-results"
+chmod 750 "$LLDPQ_INSTALL_DIR/monitor-results/fabric-tables"
 
 # Set default ACL so new files/directories also get group read permission (survives git operations)
 if command -v setfacl &> /dev/null; then
-    setfacl -R -d -m g::rX ~/lldpq 2>/dev/null || true
+    setfacl -R -d -m g::rX "$LLDPQ_INSTALL_DIR" 2>/dev/null || true
     echo "   Default ACL set (new files will inherit group read permission)"
 fi
 echo "   Group read permissions set (www-data can access via group)"
 
 echo "   - Setting up topology.dot for web editing"
 # Handle topology.dot - may be symlink from previous install, regular file, or not exist
-if [[ -L ~/lldpq/topology.dot ]]; then
+if [[ -L "$LLDPQ_INSTALL_DIR/topology.dot" ]]; then
     # Already a symlink - just ensure web root file has correct permissions
     echo "     topology.dot symlink already exists"
     if [[ -f "$WEB_ROOT/topology.dot" ]]; then
         sudo chown "www-data:$USER" "$WEB_ROOT/topology.dot"
         sudo chmod 664 "$WEB_ROOT/topology.dot"
     fi
-elif [[ -f ~/lldpq/topology.dot ]]; then
+elif [[ -f "$LLDPQ_INSTALL_DIR/topology.dot" ]]; then
     # Regular file - move to web root and create symlink
-    sudo mv ~/lldpq/topology.dot "$WEB_ROOT/topology.dot"
+    sudo mv "$LLDPQ_INSTALL_DIR/topology.dot" "$WEB_ROOT/topology.dot"
     sudo chown "www-data:$USER" "$WEB_ROOT/topology.dot"
     sudo chmod 664 "$WEB_ROOT/topology.dot"
-    ln -sf "$WEB_ROOT/topology.dot" ~/lldpq/topology.dot
+    ln -sf "$WEB_ROOT/topology.dot" "$LLDPQ_INSTALL_DIR/topology.dot"
 else
     # No file exists - create empty one in web root
     echo "     topology.dot not found, creating empty file"
@@ -235,24 +246,24 @@ else
     fi
     sudo chown "www-data:$USER" "$WEB_ROOT/topology.dot"
     sudo chmod 664 "$WEB_ROOT/topology.dot"
-    ln -sf "$WEB_ROOT/topology.dot" ~/lldpq/topology.dot
+    ln -sf "$WEB_ROOT/topology.dot" "$LLDPQ_INSTALL_DIR/topology.dot"
 fi
 
 echo "   - Setting up topology_config.yaml for web editing"
 # Handle topology_config.yaml - may be symlink from previous install, regular file, or not exist
-if [[ -L ~/lldpq/topology_config.yaml ]]; then
+if [[ -L "$LLDPQ_INSTALL_DIR/topology_config.yaml" ]]; then
     # Already a symlink - just ensure web root file has correct permissions
     echo "     topology_config.yaml symlink already exists"
     if [[ -f "$WEB_ROOT/topology_config.yaml" ]]; then
         sudo chown "www-data:$USER" "$WEB_ROOT/topology_config.yaml"
         sudo chmod 664 "$WEB_ROOT/topology_config.yaml"
     fi
-elif [[ -f ~/lldpq/topology_config.yaml ]]; then
+elif [[ -f "$LLDPQ_INSTALL_DIR/topology_config.yaml" ]]; then
     # Regular file - move to web root and create symlink
-    sudo mv ~/lldpq/topology_config.yaml "$WEB_ROOT/topology_config.yaml"
+    sudo mv "$LLDPQ_INSTALL_DIR/topology_config.yaml" "$WEB_ROOT/topology_config.yaml"
     sudo chown "www-data:$USER" "$WEB_ROOT/topology_config.yaml"
     sudo chmod 664 "$WEB_ROOT/topology_config.yaml"
-    ln -sf "$WEB_ROOT/topology_config.yaml" ~/lldpq/topology_config.yaml
+    ln -sf "$WEB_ROOT/topology_config.yaml" "$LLDPQ_INSTALL_DIR/topology_config.yaml"
 fi
 
 echo "   - Detecting Ansible directory..."
@@ -394,7 +405,7 @@ fi
 echo ""
 echo "   - Creating /etc/lldpq.conf"
 echo "# LLDPq Configuration" | sudo tee /etc/lldpq.conf > /dev/null
-echo "LLDPQ_DIR=$HOME/lldpq" | sudo tee -a /etc/lldpq.conf > /dev/null
+echo "LLDPQ_DIR=$LLDPQ_INSTALL_DIR" | sudo tee -a /etc/lldpq.conf > /dev/null
 echo "LLDPQ_USER=$(whoami)" | sudo tee -a /etc/lldpq.conf > /dev/null
 echo "WEB_ROOT=$WEB_ROOT" | sudo tee -a /etc/lldpq.conf > /dev/null
 echo "ANSIBLE_DIR=$ANSIBLE_DIR" | sudo tee -a /etc/lldpq.conf > /dev/null
@@ -411,8 +422,8 @@ echo ""
 echo "[04] Configuration files to edit:"
 echo "   You need to manually edit these files with your network details:"
 echo ""
-echo "   1. nano ~/lldpq/devices.yaml           # Define your network devices (required)"
-echo "   2. nano ~/lldpq/topology.dot           # Define your network topology"
+echo "   1. nano $LLDPQ_INSTALL_DIR/devices.yaml           # Define your network devices (required)"
+echo "   2. nano $LLDPQ_INSTALL_DIR/topology.dot           # Define your network topology"
 echo "   Note: zzh (SSH manager) automatically loads devices from devices.yaml"
 echo ""
 echo "   See README.md for examples of each file format"
@@ -472,13 +483,13 @@ sudo sed -i '/lldpq\|monitor\|get-conf\|fabric-scan/d' /etc/crontab
 echo "*/5 * * * * $(whoami) /usr/local/bin/lldpq" | sudo tee -a /etc/crontab > /dev/null
 echo "0 */12 * * * $(whoami) /usr/local/bin/get-conf" | sudo tee -a /etc/crontab > /dev/null
 echo "* * * * * $(whoami) /usr/local/bin/lldpq-trigger" | sudo tee -a /etc/crontab > /dev/null
-echo "* * * * * $(whoami) cd $HOME/lldpq && ./fabric-scan.sh >/dev/null 2>&1" | sudo tee -a /etc/crontab > /dev/null
-echo "0 0 * * * $(whoami) cd $HOME/lldpq && cp /var/www/html/topology.dot topology.dot.bkp 2>/dev/null; cp /var/www/html/topology_config.yaml topology_config.yaml.bkp 2>/dev/null; git add -A; git diff --cached --quiet || git commit -m 'auto: \$(date +\\%Y-\\%m-\\%d)'" | sudo tee -a /etc/crontab > /dev/null
+echo "* * * * * $(whoami) cd $LLDPQ_INSTALL_DIR && ./fabric-scan.sh >/dev/null 2>&1" | sudo tee -a /etc/crontab > /dev/null
+echo "0 0 * * * $(whoami) cd $LLDPQ_INSTALL_DIR && cp /var/www/html/topology.dot topology.dot.bkp 2>/dev/null; cp /var/www/html/topology_config.yaml topology_config.yaml.bkp 2>/dev/null; git add -A; git diff --cached --quiet || git commit -m 'auto: \$(date +\\%Y-\\%m-\\%d)'" | sudo tee -a /etc/crontab > /dev/null
 
 # Add Fabric Scan cron job if Ansible directory exists
 if [[ -d "$ANSIBLE_DIR" ]] && [[ -d "$ANSIBLE_DIR/playbooks" ]]; then
-    echo "33 3 * * * $(whoami) $HOME/lldpq/fabric-scan-cron.sh" | sudo tee -a /etc/crontab > /dev/null
-    chmod +x ~/lldpq/fabric-scan-cron.sh
+    echo "33 3 * * * $(whoami) $LLDPQ_INSTALL_DIR/fabric-scan-cron.sh" | sudo tee -a /etc/crontab > /dev/null
+    chmod +x "$LLDPQ_INSTALL_DIR/fabric-scan-cron.sh"
     # Create cache file with user write permission
     sudo touch "$WEB_ROOT/fabric-scan-cache.json"
     sudo chown "$(whoami):www-data" "$WEB_ROOT/fabric-scan-cache.json"
@@ -559,10 +570,10 @@ if [[ "$TELEMETRY_ENABLED" == "true" ]]; then
     fi
     
     # Start the telemetry stack automatically
-    if [[ -f "$HOME/lldpq/telemetry/docker-compose.yaml" ]]; then
+    if [[ -f "$LLDPQ_INSTALL_DIR/telemetry/docker-compose.yaml" ]]; then
         echo ""
         echo "   Starting telemetry stack..."
-        cd "$HOME/lldpq/telemetry"
+        cd "$LLDPQ_INSTALL_DIR/telemetry"
         # Use sudo for docker if user not yet in docker group (fresh install)
         if docker compose up -d 2>&1; then
             : # success without sudo
@@ -574,7 +585,7 @@ if [[ "$TELEMETRY_ENABLED" == "true" ]]; then
             : # success with sudo + old docker-compose
         else
             echo "   [!] Could not start stack. Try manually:"
-            echo "       cd ~/lldpq/telemetry && sudo docker compose up -d"
+            echo "       cd $LLDPQ_INSTALL_DIR/telemetry && sudo docker compose up -d"
         fi
         cd - > /dev/null
         
@@ -614,8 +625,8 @@ echo "   And ensure sudo works without password on each device:"
 echo "   sudo visudo  # Add: username ALL=(ALL) NOPASSWD:ALL"
 
 echo ""
-echo "[09] Initializing local git repository in ~/lldpq..."
-cd ~/lldpq
+echo "[09] Initializing local git repository in $LLDPQ_INSTALL_DIR..."
+cd "$LLDPQ_INSTALL_DIR"
 
 # Create .gitignore
 cat > .gitignore << 'EOF'
@@ -668,8 +679,8 @@ cp .git/hooks/post-merge .git/hooks/post-checkout
 
 echo "Git repository initialized with initial commit"
 echo "   - Git hooks created (permissions preserved after git operations)"
-echo "   - Use 'cd ~/lldpq && git diff' to see changes"
-echo "   - Use 'cd ~/lldpq && git log' to see history"
+echo "   - Use 'cd $LLDPQ_INSTALL_DIR && git diff' to see changes"
+echo "   - Use 'cd $LLDPQ_INSTALL_DIR && git log' to see history"
 
 echo ""
 echo "[10] Installation Complete!"

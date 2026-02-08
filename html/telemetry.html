@@ -902,9 +902,6 @@
             <div class="cmd">nv set system telemetry export vrf <span style="color:#ff9800">&lt;VRF&gt;</span></div>
             <div class="cmd">nv set system telemetry interface-stats export state enabled</div>
             <div class="cmd">nv set system telemetry interface-stats sample-interval 30</div>
-            <div class="cmd">nv set system telemetry lldp export state enabled</div>
-            <div class="cmd">nv set system telemetry lldp sample-interval 10</div>
-            <div class="cmd">nv set system telemetry platform-stats export state enabled</div>
             <div class="cmd">nv config apply -y</div>
         </div>
     </div>
@@ -963,7 +960,9 @@
                 This will disable streaming telemetry on <strong style="color: #ffb74d;">supported devices</strong> and remove all telemetry configuration.
             </p>
             <div class="command-preview" style="margin-bottom: 20px;">
-                <div class="cmd">nv unset system telemetry</div>
+                <div class="cmd">nv unset system telemetry ai-ethernet-stats</div>
+                <div class="cmd">nv unset system telemetry export</div>
+                <div class="cmd">nv unset system telemetry interface-stats</div>
                 <div class="cmd">nv config apply -y</div>
             </div>
             <div class="modal-actions">
@@ -1604,6 +1603,31 @@
                 addLogEntry('Warning: Could not save collector config', 'error');
             }
             
+            // Ensure telemetry stack is running
+            addLogEntry('Checking telemetry stack...', 'info');
+            try {
+                const stackResponse = await fetch('/fabric-api.sh?action=start-telemetry-stack');
+                const stackResult = await stackResponse.json();
+                
+                if (stackResult.success) {
+                    if (stackResult.already_running) {
+                        addLogEntry('Telemetry stack is running', 'success');
+                    } else {
+                        addLogEntry('Telemetry stack started', 'success');
+                    }
+                } else if (stackResult.installed === false) {
+                    addLogEntry('Telemetry stack not installed. Run: ./update.sh --enable-telemetry', 'error');
+                    document.getElementById('progressTitle').textContent = 'Stack Not Installed';
+                    document.getElementById('progressSpinner').style.display = 'none';
+                    showNotification('Telemetry stack not installed', 'error');
+                    return;
+                } else {
+                    addLogEntry(`Warning: Could not start stack: ${stackResult.error}`, 'error');
+                }
+            } catch (error) {
+                addLogEntry('Warning: Could not check stack status', 'error');
+            }
+            
             // Step 1: Check device capability
             addLogEntry(`Checking telemetry support on ${allDevices.length} devices...`, 'info');
             
@@ -1661,9 +1685,6 @@
                 `nv set system telemetry export vrf ${vrf}`,
                 'nv set system telemetry interface-stats export state enabled',
                 'nv set system telemetry interface-stats sample-interval 30',
-                'nv set system telemetry lldp export state enabled',
-                'nv set system telemetry lldp sample-interval 10',
-                'nv set system telemetry platform-stats export state enabled',
                 'nv config apply -y'
             ];
             
@@ -1774,6 +1795,10 @@
                 supportedDevices = allDevices;
             }
             
+            let successCount = 0;
+            let errorCount = 0;
+            const skippedCount = unsupportedDevices.length;
+            
             if (supportedDevices.length === 0) {
                 addLogEntry('No devices have telemetry export configured', 'info');
                 // Still stop the stack
@@ -1787,13 +1812,8 @@
                     'nv unset system telemetry ai-ethernet-stats',
                     'nv unset system telemetry export',
                     'nv unset system telemetry interface-stats',
-                    'nv unset system telemetry lldp',
-                    'nv unset system telemetry platform-stats',
                     'nv config apply -y'
                 ];
-                
-                let successCount = 0;
-                let errorCount = 0;
                 
                 try {
                     const response = await fetch('/fabric-api.sh?action=run-telemetry-commands', {
@@ -1828,13 +1848,6 @@
                         }
                     }
                     
-                    addLogEntry('', 'info');
-                    const skippedCount = unsupportedDevices.length;
-                    let summaryMsg = `Completed: ${successCount} disabled, ${errorCount} failed`;
-                    if (skippedCount > 0) {
-                        summaryMsg += `, ${skippedCount} skipped (unsupported)`;
-                    }
-                    addLogEntry(summaryMsg, errorCount === 0 ? 'success' : 'info');
                 } catch (error) {
                     addLogEntry(`Error: ${error.message}`, 'error');
                 }
@@ -1857,14 +1870,18 @@
             }
             
             addLogEntry('', 'info');
-            addLogEntry(`Completed: ${successCount} success, ${errorCount} failed`, successCount === allDevices.length ? 'success' : 'info');
+            let summaryMsg = `Completed: ${successCount} disabled, ${errorCount} failed`;
+            if (skippedCount > 0) {
+                summaryMsg += `, ${skippedCount} skipped (unsupported)`;
+            }
+            addLogEntry(summaryMsg, errorCount === 0 ? 'success' : 'info');
             document.getElementById('progressTitle').textContent = 'Telemetry Disabled';
             document.getElementById('progressSpinner').style.display = 'none';
             
-            if (errorCount === 0) {
-                showNotification(`Telemetry disabled on all ${successCount} devices`, 'success');
-            } else {
-                showNotification(`Telemetry disabled on ${successCount}/${allDevices.length} devices`, 'error');
+            if (errorCount === 0 && successCount > 0) {
+                showNotification(`Telemetry disabled on ${successCount} devices`, 'success');
+            } else if (successCount > 0) {
+                showNotification(`Telemetry disabled on ${successCount} devices (${errorCount} failed)`, 'error');
             }
         }
     </script>
