@@ -791,11 +791,11 @@
             </div>
             <div class="chart-card">
                 <h4>
-                    <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
-                    Interface Errors (per second)
+                    <svg viewBox="0 0 24 24"><path d="M4 9h4v11H4zm6-5h4v16h-4zm6 8h4v8h-4z"/></svg>
+                    Top Talkers (Mbps)
                 </h4>
                 <div class="chart-container">
-                    <canvas id="errorsChart"></canvas>
+                    <canvas id="topTalkersChart"></canvas>
                 </div>
             </div>
             <div class="chart-card">
@@ -805,6 +805,15 @@
                 </h4>
                 <div class="chart-container">
                     <canvas id="dropsChart"></canvas>
+                </div>
+            </div>
+            <div class="chart-card">
+                <h4>
+                    <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+                    Interface Errors (per second)
+                </h4>
+                <div class="chart-container">
+                    <canvas id="errorsChart"></canvas>
                 </div>
             </div>
         </div>
@@ -975,6 +984,7 @@
         let prometheusUrl = '';
         let refreshInterval = null;
         let throughputChart = null;
+        let topTalkersChart = null;
         let errorsChart = null;
         let dropsChart = null;
         let telemetryEnabled = false;
@@ -1115,6 +1125,31 @@
                 options: { ...commonOptions }
             });
             
+            // Top Talkers Chart (horizontal bar)
+            topTalkersChart = new Chart(document.getElementById('topTalkersChart'), {
+                type: 'bar',
+                data: { labels: [], datasets: [] },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        x: {
+                            grid: { color: '#3c3c3c' },
+                            ticks: { color: '#888', font: { size: 10 } },
+                            beginAtZero: true
+                        },
+                        y: {
+                            grid: { display: false },
+                            ticks: { color: '#888', font: { size: 10 } }
+                        }
+                    }
+                }
+            });
+            
             // Errors Chart
             errorsChart = new Chart(document.getElementById('errorsChart'), {
                 type: 'line',
@@ -1164,7 +1199,7 @@
                 updateDashboard().then(() => {
                     setTimeout(() => refreshEl.classList.remove('active'), 1000);
                 });
-            }, 30000);
+            }, 5000);  // 5 second refresh
         }
         
         async function updateDashboard() {
@@ -1176,6 +1211,7 @@
                 await Promise.all([
                     updateStats(device, timeRange),
                     updateThroughputChart(device, timeRange),
+                    updateTopTalkersChart(device),
                     updateErrorsChart(device, timeRange),
                     updateDropsChart(device, timeRange),
                     updateAlerts(),
@@ -1271,6 +1307,47 @@
             const result = await queryPrometheusRange(query, timeRange, '30s');
             if (result.success && result.data?.result) {
                 updateChart(dropsChart, result.data.result, 'drops/s');
+            }
+        }
+        
+        async function updateTopTalkersChart(device) {
+            // Query for top 10 interfaces by throughput
+            const deviceFilter = device !== 'all' ? `{net_host_name="${device}"}` : '';
+            const query = `topk(10, sum by (interface, net_host_name) (rate(cumulus_interface_statistics_rx_bytes${deviceFilter}[5m]) + rate(cumulus_interface_statistics_tx_bytes${deviceFilter}[5m])) * 8 / 1000000)`;
+            
+            try {
+                const response = await fetch('/fabric-api.sh?action=prometheus-query', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success && result.data?.result && result.data.result.length > 0) {
+                    // Sort by value descending
+                    const sorted = result.data.result
+                        .map(r => ({
+                            label: `${r.metric.net_host_name || 'unknown'}:${r.metric.interface || 'unknown'}`,
+                            value: parseFloat(r.value[1]) || 0
+                        }))
+                        .sort((a, b) => b.value - a.value)
+                        .slice(0, 10);
+                    
+                    topTalkersChart.data.labels = sorted.map(s => s.label);
+                    topTalkersChart.data.datasets = [{
+                        data: sorted.map(s => s.value.toFixed(2)),
+                        backgroundColor: chartColors.slice(0, sorted.length),
+                        borderWidth: 0
+                    }];
+                    topTalkersChart.update();
+                } else {
+                    topTalkersChart.data.labels = [];
+                    topTalkersChart.data.datasets = [];
+                    topTalkersChart.update();
+                }
+            } catch (error) {
+                console.error('Top talkers error:', error);
             }
         }
         
