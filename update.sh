@@ -5,19 +5,134 @@
 # Copyright (c) 2024 LLDPq Project
 # Licensed under MIT License - see LICENSE file for details
 #
-# Usage: ./update.sh [-y]
-#   -y  Auto-yes to all prompts (non-interactive mode)
+# Usage: ./update.sh [-y] [--enable-telemetry] [--disable-telemetry]
+#   -y                  Auto-yes to all prompts (non-interactive mode)
+#   --enable-telemetry  Enable streaming telemetry support (installs Docker)
+#   --disable-telemetry Disable streaming telemetry support
 
 set -e
 
 # Parse arguments
 AUTO_YES=false
-while getopts "y" opt; do
-    case $opt in
-        y) AUTO_YES=true ;;
-        *) ;;
+ENABLE_TELEMETRY=false
+DISABLE_TELEMETRY=false
+
+for arg in "$@"; do
+    case $arg in
+        -y) AUTO_YES=true ;;
+        --enable-telemetry) ENABLE_TELEMETRY=true ;;
+        --disable-telemetry) DISABLE_TELEMETRY=true ;;
+        -h|--help)
+            echo "Usage: ./update.sh [-y] [--enable-telemetry] [--disable-telemetry]"
+            echo ""
+            echo "Options:"
+            echo "  -y                  Auto-yes to all prompts"
+            echo "  --enable-telemetry  Enable streaming telemetry (requires Docker)"
+            echo "  --disable-telemetry Disable streaming telemetry"
+            exit 0
+            ;;
     esac
 done
+
+# Handle telemetry-only mode
+if [[ "$ENABLE_TELEMETRY" == "true" ]] || [[ "$DISABLE_TELEMETRY" == "true" ]]; then
+    if [[ "$ENABLE_TELEMETRY" == "true" ]]; then
+        echo "Enabling Streaming Telemetry..."
+        echo ""
+        
+        # Check/install Docker
+        if ! command -v docker &> /dev/null; then
+            echo "Docker not found. Installing Docker..."
+            curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
+            sudo sh /tmp/get-docker.sh
+            sudo usermod -aG docker "$(whoami)"
+            rm /tmp/get-docker.sh
+            echo "Docker installed successfully"
+            echo "[!] NOTE: You may need to logout/login for Docker group to take effect"
+        else
+            echo "Docker found: $(docker --version)"
+        fi
+        
+        if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
+            echo "Installing docker-compose..."
+            sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+            sudo chmod +x /usr/local/bin/docker-compose
+            echo "docker-compose installed"
+        fi
+        
+        # Update config
+        if grep -q "^TELEMETRY_ENABLED=" /etc/lldpq.conf 2>/dev/null; then
+            sudo sed -i 's/^TELEMETRY_ENABLED=.*/TELEMETRY_ENABLED=true/' /etc/lldpq.conf
+        else
+            echo "TELEMETRY_ENABLED=true" | sudo tee -a /etc/lldpq.conf > /dev/null
+        fi
+        
+        if ! grep -q "^PROMETHEUS_URL=" /etc/lldpq.conf 2>/dev/null; then
+            echo "PROMETHEUS_URL=http://localhost:9090" | sudo tee -a /etc/lldpq.conf > /dev/null
+        fi
+        
+        echo ""
+        echo "Telemetry support enabled!"
+        echo ""
+        
+        # Start the telemetry stack automatically
+        if [[ -f "$HOME/lldpq/telemetry/docker-compose.yaml" ]]; then
+            echo "Starting telemetry stack..."
+            cd "$HOME/lldpq/telemetry"
+            docker-compose up -d 2>/dev/null || docker compose up -d 2>/dev/null || {
+                echo "[!] Could not start stack. You may need to logout/login for Docker group."
+                echo "    Then run: cd ~/lldpq/telemetry && ./start.sh"
+            }
+            cd - > /dev/null
+            
+            # Wait a moment and check status
+            sleep 3
+            if docker ps --filter "name=lldpq-prometheus" --format "{{.Status}}" 2>/dev/null | grep -q "Up"; then
+                echo ""
+                echo "Telemetry stack is running:"
+                echo "  - OTEL Collector: http://localhost:4317"
+                echo "  - Prometheus:     http://localhost:9090"
+                echo "  - Alertmanager:   http://localhost:9093"
+            fi
+        else
+            echo "[!] Telemetry files not found. Run ./install.sh or ./update.sh first."
+        fi
+        
+        echo ""
+        echo "Next step: Enable telemetry on switches from web UI:"
+        echo "  Telemetry → Configuration → Enable Telemetry"
+        
+    elif [[ "$DISABLE_TELEMETRY" == "true" ]]; then
+        echo "Disabling Streaming Telemetry..."
+        echo ""
+        echo "This will completely remove the telemetry stack and all stored metrics."
+        
+        # Stop and remove telemetry stack with volumes
+        if [[ -f "$HOME/lldpq/telemetry/docker-compose.yaml" ]]; then
+            cd "$HOME/lldpq/telemetry"
+            echo "Stopping and removing containers..."
+            docker-compose down -v 2>/dev/null || docker compose down -v 2>/dev/null || true
+            cd - > /dev/null
+            echo "Telemetry stack removed (containers + volumes)"
+        fi
+        
+        # Remove saved collector config
+        sudo sed -i '/^TELEMETRY_COLLECTOR_IP=/d' /etc/lldpq.conf 2>/dev/null || true
+        sudo sed -i '/^TELEMETRY_COLLECTOR_PORT=/d' /etc/lldpq.conf 2>/dev/null || true
+        sudo sed -i '/^TELEMETRY_COLLECTOR_VRF=/d' /etc/lldpq.conf 2>/dev/null || true
+        
+        # Update config
+        if grep -q "^TELEMETRY_ENABLED=" /etc/lldpq.conf 2>/dev/null; then
+            sudo sed -i 's/^TELEMETRY_ENABLED=.*/TELEMETRY_ENABLED=false/' /etc/lldpq.conf
+        else
+            echo "TELEMETRY_ENABLED=false" | sudo tee -a /etc/lldpq.conf > /dev/null
+        fi
+        
+        echo "Telemetry support disabled"
+    fi
+    
+    exit 0
+fi
 
 echo "LLDPq Update Script"
 echo "======================"
@@ -430,6 +545,25 @@ fi
 
 # Copy updated files with preserved configs
 mv "$temp_dir" "$HOME/lldpq"
+
+# Update telemetry stack (preserve user config files)
+echo "   - Updating telemetry stack..."
+if [[ -d "telemetry" ]]; then
+    # Preserve user-modified config files
+    if [[ -d "$HOME/lldpq/telemetry/config" ]]; then
+        cp -r "$HOME/lldpq/telemetry/config" /tmp/lldpq-telemetry-config-backup 2>/dev/null || true
+    fi
+    
+    cp -r telemetry "$HOME/lldpq/telemetry"
+    chmod +x "$HOME/lldpq/telemetry/start.sh"
+    
+    # Restore user config files
+    if [[ -d /tmp/lldpq-telemetry-config-backup ]]; then
+        cp -r /tmp/lldpq-telemetry-config-backup/* "$HOME/lldpq/telemetry/config/" 2>/dev/null || true
+        rm -rf /tmp/lldpq-telemetry-config-backup
+        echo "     • telemetry config preserved"
+    fi
+fi
 
 echo "   - Setting permissions on ~/lldpq for web access (search-api.sh)"
 # www-data needs read access to devices.yaml and monitor-results for search functionality

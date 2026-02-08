@@ -4517,6 +4517,445 @@ except Exception as e:
 PYTHON_CLSUPPORT
         exit 0
         ;;
+    run-telemetry-commands)
+        # Run multiple telemetry commands on a device
+        read -r POST_DATA
+        export POST_DATA
+        
+        python3 << 'PYTHON_TELEMETRY'
+import json
+import subprocess
+import re
+import os
+
+def read_lldpq_conf():
+    conf = {}
+    conf_paths = ['/etc/lldpq.conf', os.path.expanduser('~/lldpq.conf')]
+    for conf_path in conf_paths:
+        if os.path.exists(conf_path):
+            with open(conf_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#') and '=' in line:
+                        key, val = line.split('=', 1)
+                        conf[key.strip()] = val.strip()
+            break
+    return conf
+
+try:
+    data = json.loads(os.environ.get('POST_DATA', '{}'))
+except:
+    data = {}
+
+device = data.get('device', '')
+commands = data.get('commands', [])
+
+if not device:
+    print(json.dumps({'success': False, 'error': 'Device required'}))
+    exit()
+
+if not commands:
+    print(json.dumps({'success': False, 'error': 'Commands required'}))
+    exit()
+
+lldpq_conf = read_lldpq_conf()
+ansible_dir = lldpq_conf.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+lldpq_user = lldpq_conf.get('LLDPQ_USER', os.environ.get('USER', 'root'))
+
+# Get device IP from inventory
+device_ip = None
+for inv_file in [f"{ansible_dir}/inventory/inventory.ini", f"{ansible_dir}/inventory/hosts"]:
+    if os.path.exists(inv_file):
+        with open(inv_file, 'r') as f:
+            for line in f:
+                if line.strip().startswith(device + ' ') or line.strip().startswith(device + '\t'):
+                    match = re.search(r'ansible_host=(\S+)', line)
+                    if match:
+                        device_ip = match.group(1)
+                        break
+        if device_ip:
+            break
+
+if not device_ip:
+    device_ip = device
+
+try:
+    # Validate commands - only allow telemetry-related nv commands
+    allowed_prefixes = [
+        'nv set system telemetry',
+        'nv unset system telemetry',
+        'nv config apply'
+    ]
+    for cmd in commands:
+        if not any(cmd.startswith(prefix) for prefix in allowed_prefixes):
+            print(json.dumps({'success': False, 'error': f'Only telemetry commands allowed: {cmd}'}))
+            exit()
+    
+    # Join commands with && to run sequentially
+    combined_cmd = ' && '.join(commands)
+    
+    # Run via SSH
+    ssh_cmd = ['sudo', '-u', lldpq_user, 'ssh', '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=30', device_ip, combined_cmd]
+    
+    result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=120)
+    
+    if result.returncode == 0:
+        print(json.dumps({'success': True, 'output': result.stdout}))
+    else:
+        print(json.dumps({'success': False, 'error': result.stderr or 'Command failed', 'output': result.stdout}))
+
+except subprocess.TimeoutExpired:
+    print(json.dumps({'success': False, 'error': 'Command timed out (120s)'}))
+except Exception as e:
+    print(json.dumps({'success': False, 'error': str(e)}))
+
+PYTHON_TELEMETRY
+        exit 0
+        ;;
+    prometheus-query)
+        # Query Prometheus instant query
+        read -r POST_DATA
+        export POST_DATA
+        
+        python3 << 'PYTHON_PROM'
+import json
+import urllib.request
+import urllib.parse
+import os
+
+def read_lldpq_conf():
+    conf = {}
+    conf_paths = ['/etc/lldpq.conf', os.path.expanduser('~/lldpq.conf')]
+    for conf_path in conf_paths:
+        if os.path.exists(conf_path):
+            with open(conf_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#') and '=' in line:
+                        key, val = line.split('=', 1)
+                        conf[key.strip()] = val.strip()
+            break
+    return conf
+
+try:
+    data = json.loads(os.environ.get('POST_DATA', '{}'))
+except:
+    data = {}
+
+query = data.get('query', '')
+if not query:
+    print(json.dumps({'success': False, 'error': 'Query required'}))
+    exit()
+
+lldpq_conf = read_lldpq_conf()
+prometheus_url = lldpq_conf.get('PROMETHEUS_URL', 'http://localhost:9090')
+
+try:
+    url = f"{prometheus_url}/api/v1/query?query={urllib.parse.quote(query)}"
+    req = urllib.request.Request(url, headers={'Accept': 'application/json'})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        result = json.loads(resp.read().decode())
+        if result.get('status') == 'success':
+            print(json.dumps({'success': True, 'data': result.get('data', {})}))
+        else:
+            print(json.dumps({'success': False, 'error': result.get('error', 'Query failed')}))
+except urllib.error.URLError as e:
+    print(json.dumps({'success': False, 'error': f'Connection error: {str(e)}'}))
+except Exception as e:
+    print(json.dumps({'success': False, 'error': str(e)}))
+
+PYTHON_PROM
+        exit 0
+        ;;
+    prometheus-query-range)
+        # Query Prometheus range query for time series
+        read -r POST_DATA
+        export POST_DATA
+        
+        python3 << 'PYTHON_PROM_RANGE'
+import json
+import urllib.request
+import urllib.parse
+import os
+import time
+
+def read_lldpq_conf():
+    conf = {}
+    conf_paths = ['/etc/lldpq.conf', os.path.expanduser('~/lldpq.conf')]
+    for conf_path in conf_paths:
+        if os.path.exists(conf_path):
+            with open(conf_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#') and '=' in line:
+                        key, val = line.split('=', 1)
+                        conf[key.strip()] = val.strip()
+            break
+    return conf
+
+def parse_duration(duration_str):
+    """Convert duration string like '15m', '1h', '24h' to seconds"""
+    units = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400}
+    if not duration_str:
+        return 900  # Default 15 minutes
+    unit = duration_str[-1]
+    if unit in units:
+        try:
+            return int(duration_str[:-1]) * units[unit]
+        except:
+            return 900
+    return 900
+
+try:
+    data = json.loads(os.environ.get('POST_DATA', '{}'))
+except:
+    data = {}
+
+query = data.get('query', '')
+time_range = data.get('range', '15m')
+step = data.get('step', '30s')
+
+if not query:
+    print(json.dumps({'success': False, 'error': 'Query required'}))
+    exit()
+
+lldpq_conf = read_lldpq_conf()
+prometheus_url = lldpq_conf.get('PROMETHEUS_URL', 'http://localhost:9090')
+
+try:
+    duration_seconds = parse_duration(time_range)
+    end_time = time.time()
+    start_time = end_time - duration_seconds
+    
+    params = {
+        'query': query,
+        'start': str(start_time),
+        'end': str(end_time),
+        'step': step
+    }
+    
+    url = f"{prometheus_url}/api/v1/query_range?{urllib.parse.urlencode(params)}"
+    req = urllib.request.Request(url, headers={'Accept': 'application/json'})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        result = json.loads(resp.read().decode())
+        if result.get('status') == 'success':
+            print(json.dumps({'success': True, 'data': result.get('data', {})}))
+        else:
+            print(json.dumps({'success': False, 'error': result.get('error', 'Query failed')}))
+except urllib.error.URLError as e:
+    print(json.dumps({'success': False, 'error': f'Connection error: {str(e)}'}))
+except Exception as e:
+    print(json.dumps({'success': False, 'error': str(e)}))
+
+PYTHON_PROM_RANGE
+        exit 0
+        ;;
+    get-telemetry-config)
+        # Return telemetry configuration and enabled status
+        python3 << 'PYTHON_TELEM_CONFIG'
+import json
+import os
+import subprocess
+
+def read_lldpq_conf():
+    conf = {}
+    conf_paths = ['/etc/lldpq.conf', os.path.expanduser('~/lldpq.conf')]
+    for conf_path in conf_paths:
+        if os.path.exists(conf_path):
+            with open(conf_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#') and '=' in line:
+                        key, val = line.split('=', 1)
+                        conf[key.strip()] = val.strip()
+            break
+    return conf
+
+def check_stack_running():
+    """Check if telemetry Docker stack is running"""
+    try:
+        telemetry_dir = os.path.expanduser('~/lldpq/telemetry')
+        if not os.path.exists(f"{telemetry_dir}/docker-compose.yaml"):
+            return False
+        
+        result = subprocess.run(
+            ['docker', 'ps', '--filter', 'name=lldpq-prometheus', '--format', '{{.Status}}'],
+            capture_output=True, text=True, timeout=10
+        )
+        return 'Up' in result.stdout
+    except:
+        return False
+
+lldpq_conf = read_lldpq_conf()
+prometheus_url = lldpq_conf.get('PROMETHEUS_URL', 'http://localhost:9090')
+telemetry_enabled = lldpq_conf.get('TELEMETRY_ENABLED', 'false').lower() == 'true'
+collector_ip = lldpq_conf.get('TELEMETRY_COLLECTOR_IP', '')
+collector_port = lldpq_conf.get('TELEMETRY_COLLECTOR_PORT', '4317')
+collector_vrf = lldpq_conf.get('TELEMETRY_COLLECTOR_VRF', 'mgmt')
+stack_running = check_stack_running()
+
+print(json.dumps({
+    'success': True,
+    'prometheus_url': prometheus_url,
+    'telemetry_enabled': telemetry_enabled,
+    'collector_ip': collector_ip,
+    'collector_port': collector_port,
+    'collector_vrf': collector_vrf,
+    'stack_running': stack_running
+}))
+
+PYTHON_TELEM_CONFIG
+        exit 0
+        ;;
+    save-telemetry-config)
+        # Save telemetry collector config (called when enabling telemetry)
+        read -r POST_DATA
+        export POST_DATA
+        
+        python3 << 'PYTHON_SAVE_TELEM'
+import json
+import os
+import subprocess
+
+try:
+    data = json.loads(os.environ.get('POST_DATA', '{}'))
+except:
+    data = {}
+
+collector_ip = data.get('collector_ip', '')
+collector_port = data.get('collector_port', '4317')
+collector_vrf = data.get('collector_vrf', 'mgmt')
+
+if not collector_ip:
+    print(json.dumps({'success': False, 'error': 'Collector IP required'}))
+    exit()
+
+# Update /etc/lldpq.conf with sudo
+config_updates = [
+    f"TELEMETRY_COLLECTOR_IP={collector_ip}",
+    f"TELEMETRY_COLLECTOR_PORT={collector_port}",
+    f"TELEMETRY_COLLECTOR_VRF={collector_vrf}"
+]
+
+try:
+    for update in config_updates:
+        key = update.split('=')[0]
+        # Remove existing key if present
+        subprocess.run(['sudo', 'sed', '-i', f'/^{key}=/d', '/etc/lldpq.conf'], capture_output=True)
+        # Add new value
+        subprocess.run(f"echo '{update}' | sudo tee -a /etc/lldpq.conf > /dev/null", shell=True, capture_output=True)
+    
+    print(json.dumps({'success': True}))
+except Exception as e:
+    print(json.dumps({'success': False, 'error': str(e)}))
+
+PYTHON_SAVE_TELEM
+        exit 0
+        ;;
+    stop-telemetry-stack)
+        # Stop Docker telemetry stack (docker-compose stop)
+        python3 << 'PYTHON_STOP_STACK'
+import json
+import os
+import subprocess
+
+telemetry_dir = os.path.expanduser('~/lldpq/telemetry')
+
+if not os.path.exists(f"{telemetry_dir}/docker-compose.yaml"):
+    print(json.dumps({'success': False, 'error': 'Telemetry stack not found'}))
+    exit()
+
+try:
+    result = subprocess.run(
+        ['docker-compose', 'stop'],
+        cwd=telemetry_dir,
+        capture_output=True,
+        text=True,
+        timeout=60
+    )
+    
+    if result.returncode == 0:
+        print(json.dumps({'success': True, 'message': 'Stack stopped'}))
+    else:
+        # Try docker compose (newer syntax)
+        result2 = subprocess.run(
+            ['docker', 'compose', 'stop'],
+            cwd=telemetry_dir,
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+        if result2.returncode == 0:
+            print(json.dumps({'success': True, 'message': 'Stack stopped'}))
+        else:
+            print(json.dumps({'success': False, 'error': result.stderr or result2.stderr}))
+
+except subprocess.TimeoutExpired:
+    print(json.dumps({'success': False, 'error': 'Timeout stopping stack'}))
+except Exception as e:
+    print(json.dumps({'success': False, 'error': str(e)}))
+
+PYTHON_STOP_STACK
+        exit 0
+        ;;
+    get-telemetry-disable-commands)
+        # Generate specific unset commands based on saved config
+        python3 << 'PYTHON_DISABLE_CMDS'
+import json
+import os
+
+def read_lldpq_conf():
+    conf = {}
+    conf_paths = ['/etc/lldpq.conf', os.path.expanduser('~/lldpq.conf')]
+    for conf_path in conf_paths:
+        if os.path.exists(conf_path):
+            with open(conf_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#') and '=' in line:
+                        key, val = line.split('=', 1)
+                        conf[key.strip()] = val.strip()
+            break
+    return conf
+
+lldpq_conf = read_lldpq_conf()
+collector_ip = lldpq_conf.get('TELEMETRY_COLLECTOR_IP', '')
+collector_port = lldpq_conf.get('TELEMETRY_COLLECTOR_PORT', '4317')
+
+if not collector_ip:
+    # No saved config, use generic unset (with warning)
+    print(json.dumps({
+        'success': True,
+        'warning': 'No saved collector IP. This will remove ALL telemetry config.',
+        'commands': [
+            'nv unset system telemetry',
+            'nv config apply -y'
+        ]
+    }))
+    exit()
+
+# Specific unset commands - only remove what we configured
+commands = [
+    'nv unset system telemetry ai-ethernet-stats',
+    'nv unset system telemetry interface-stats', 
+    'nv unset system telemetry lldp',
+    'nv unset system telemetry platform-stats',
+    f'nv unset system telemetry export otlp grpc destination {collector_ip}',
+    'nv unset system telemetry export otlp grpc insecure',
+    'nv unset system telemetry export otlp state',
+    'nv unset system telemetry export vrf',
+    'nv config apply -y'
+]
+
+print(json.dumps({
+    'success': True,
+    'collector_ip': collector_ip,
+    'commands': commands
+}))
+
+PYTHON_DISABLE_CMDS
+        exit 0
+        ;;
     start-live-capture)
         # Start live tcpdump capture in background, return output file path
         read -r POST_DATA

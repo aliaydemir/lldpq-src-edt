@@ -360,9 +360,119 @@ python3 test_alerts.py                               # test configuration
 
 alerts automatically start working once webhooks are configured. check `~/lldpq/alert-states/` for alert history.
 
-## [13] troubleshooting
+## [13] streaming telemetry
+
+real-time telemetry dashboard with OTEL Collector + Prometheus (optional feature):
+
+### installation options
+
+**option 1: during install**
+```bash
+./install.sh
+# Answer "y" to "Enable streaming telemetry support?"
+```
+
+**option 2: enable later**
+```bash
+./update.sh --enable-telemetry    # installs Docker, starts stack automatically
+```
+
+**disable completely**
+```bash
+./update.sh --disable-telemetry   # removes containers + volumes
+```
+
+### workflow
+
+| Action | Tool | What Happens |
+|--------|------|--------------|
+| Install stack | CLI: `./update.sh --enable-telemetry` | Docker installed, stack started |
+| Enable on switches | Web UI: Enable Telemetry | Switches configured, metrics flow |
+| Disable on switches | Web UI: Disable Telemetry | Switches unconfigured, stack stops |
+| Remove everything | CLI: `./update.sh --disable-telemetry` | Containers + data deleted |
+
+### enable on switches
+
+from the web UI (admin only):
+1. go to **Telemetry** page (`http://<server>/telemetry.html`)
+2. click **Configuration** tab → **Enable Telemetry**
+3. enter your Collector IP (the server running OTEL)
+4. telemetry is configured on all switches automatically
+
+**note**: operators can view the dashboard but cannot enable/disable telemetry.
+
+### dashboard features
+- **real-time metrics**: interface throughput, errors, drops, temperature
+- **chart visualization**: time-series graphs with device filtering
+- **active alerts**: live alert display from Prometheus
+- **top interfaces**: utilization ranking across fabric
+- **auto-refresh**: updates every 30 seconds
+
+### available metrics
+| Metric | Description |
+|--------|-------------|
+| Interface Stats | TX/RX bytes, packets, errors, drops |
+| AI Ethernet Stats | RoCE, ECN, PFC counters for AI/ML workloads |
+| LLDP Telemetry | Neighbor discovery data |
+| Platform Stats | CPU temp, fan speed, memory, PSU |
+
+### configuration files
 
 ```
+~/lldpq/telemetry/
+├── docker-compose.yaml           # container orchestration
+├── config/
+│   ├── otel-config.yaml          # OTEL Collector config
+│   ├── prometheus.yaml           # Prometheus scrape config
+│   ├── alertmanager.yaml         # notification config (edit for Slack/email)
+│   └── alert_rules.yaml          # alert definitions
+├── start.sh                      # management script
+└── README.md                     # detailed setup guide
+```
+
+### lldpq.conf options
+
+```bash
+TELEMETRY_ENABLED=true              # feature enabled
+PROMETHEUS_URL=http://localhost:9090 # Prometheus API endpoint
+TELEMETRY_COLLECTOR_IP=192.168.1.100 # saved collector IP (auto-set)
+TELEMETRY_COLLECTOR_PORT=4317        # saved collector port
+TELEMETRY_COLLECTOR_VRF=mgmt         # saved VRF
+```
+
+### ports reference
+| Service | Port | Description |
+|---------|------|-------------|
+| OTEL Collector | 4317 | OTLP gRPC (switches connect here) |
+| OTEL Collector | 4318 | OTLP HTTP |
+| Prometheus | 9090 | Web UI & API |
+| Alertmanager | 9093 | Alert notifications |
+
+### pre-configured alerts
+- **InterfaceDown**: interface operationally down
+- **HighInterfaceUtilization**: >80% for 5 minutes
+- **HighInterfaceErrors**: >10 errors/sec for 5 minutes
+- **HighPacketDrops**: >100 drops/sec for 5 minutes
+- **BGPSessionDown**: BGP not in established state
+- **HighCPUTemperature**: >85°C for 5 minutes
+- **FanFailure**: fan status failure
+
+### safe disable behavior
+
+when disabling via web UI:
+- only LLDPq telemetry config is removed from switches
+- other telemetry configurations (if any) are preserved
+- docker containers are stopped (not removed)
+- metrics history is preserved
+
+when disabling via CLI (`--disable-telemetry`):
+- containers and volumes are completely removed
+- all metrics history is deleted
+- feature is marked as disabled
+
+## [14] troubleshooting
+
+```bash
 # check if cron is running
 grep lldpq /etc/crontab
 
@@ -377,9 +487,15 @@ ls -la /var/www/html/monitor-results/
 
 # check trigger logs
 cat /tmp/lldpq-trigger.log
+
+# check telemetry stack
+cd telemetry && ./start.sh status
+
+# test prometheus connection
+curl 'http://localhost:9090/api/v1/query?query=up'
 ```
 
-## [14] license
+## [15] license
 
 This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
 

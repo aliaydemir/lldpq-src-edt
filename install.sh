@@ -193,6 +193,10 @@ sudo chmod +x /usr/local/bin/*
 echo "   - Copying lldpq to ~/lldpq"
 cp -r lldpq ~/lldpq
 
+echo "   - Copying telemetry stack to ~/lldpq/telemetry"
+cp -r telemetry ~/lldpq/telemetry
+chmod +x ~/lldpq/telemetry/start.sh
+
 echo "   - Setting permissions on ~/lldpq for web access (search-api.sh)"
 # www-data needs read access to devices.yaml and monitor-results for search functionality
 chmod 750 ~/lldpq  # user=rwx, group=rx, other=none
@@ -484,7 +488,100 @@ echo "   - web triggers:    daemon (checks every 5 seconds, enables Run LLDP Che
 echo "   - git auto-commit: daily at midnight (tracks config changes)"
 
 echo ""
-echo "[07] SSH Key Setup Required"
+echo "[07] Streaming Telemetry (Optional)"
+echo "   Telemetry provides real-time metrics dashboard with:"
+echo "   - Interface throughput, errors, drops charts"
+echo "   - Platform temperature monitoring"
+echo "   - Active alerts from Prometheus"
+echo "   - Requires Docker to run OTEL Collector + Prometheus"
+echo ""
+
+TELEMETRY_ENABLED=false
+if [[ "$AUTO_YES" == "true" ]]; then
+    echo "   Skipping telemetry (auto-yes mode, run './update.sh --enable-telemetry' later)"
+else
+    read -p "   Enable streaming telemetry support? [y/N]: " telemetry_response
+    if [[ "$telemetry_response" =~ ^[Yy]$ ]]; then
+        TELEMETRY_ENABLED=true
+    fi
+fi
+
+if [[ "$TELEMETRY_ENABLED" == "true" ]]; then
+    echo ""
+    echo "   Checking Docker installation..."
+    
+    if ! command -v docker &> /dev/null; then
+        echo "   Docker not found. Installing Docker..."
+        curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
+        sudo sh /tmp/get-docker.sh
+        sudo usermod -aG docker "$(whoami)"
+        rm /tmp/get-docker.sh
+        echo "   Docker installed successfully"
+        echo "   [!] NOTE: You may need to logout/login for Docker group to take effect"
+    else
+        echo "   Docker found: $(docker --version)"
+    fi
+    
+    if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
+        echo "   Installing docker-compose..."
+        sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+        sudo chmod +x /usr/local/bin/docker-compose
+        echo "   docker-compose installed"
+    fi
+    
+    # Mark telemetry as enabled in config
+    if grep -q "^TELEMETRY_ENABLED=" /etc/lldpq.conf 2>/dev/null; then
+        sudo sed -i 's/^TELEMETRY_ENABLED=.*/TELEMETRY_ENABLED=true/' /etc/lldpq.conf
+    else
+        echo "TELEMETRY_ENABLED=true" | sudo tee -a /etc/lldpq.conf > /dev/null
+    fi
+    
+    # Add default Prometheus URL if not present
+    if ! grep -q "^PROMETHEUS_URL=" /etc/lldpq.conf 2>/dev/null; then
+        echo "PROMETHEUS_URL=http://localhost:9090" | sudo tee -a /etc/lldpq.conf > /dev/null
+    fi
+    
+    echo ""
+    echo "   Telemetry support enabled!"
+    echo ""
+    
+    # Start the telemetry stack automatically
+    if [[ -f "$HOME/lldpq/telemetry/docker-compose.yaml" ]]; then
+        echo "   Starting telemetry stack..."
+        cd "$HOME/lldpq/telemetry"
+        docker-compose up -d 2>/dev/null || docker compose up -d 2>/dev/null || {
+            echo "   [!] Could not start stack. You may need to logout/login for Docker group."
+            echo "       Then run: cd ~/lldpq/telemetry && ./start.sh"
+        }
+        cd - > /dev/null
+        
+        # Wait a moment and check status
+        sleep 3
+        if docker ps --filter "name=lldpq-prometheus" --format "{{.Status}}" 2>/dev/null | grep -q "Up"; then
+            echo ""
+            echo "   Telemetry stack is running:"
+            echo "     - OTEL Collector: http://localhost:4317"
+            echo "     - Prometheus:     http://localhost:9090"
+            echo "     - Alertmanager:   http://localhost:9093"
+        fi
+    fi
+    
+    echo ""
+    echo "   Next step: Enable telemetry on switches from web UI:"
+    echo "     Telemetry → Configuration → Enable Telemetry"
+else
+    echo "   Telemetry skipped. Enable later with: ./update.sh --enable-telemetry"
+    
+    # Mark telemetry as disabled in config
+    if grep -q "^TELEMETRY_ENABLED=" /etc/lldpq.conf 2>/dev/null; then
+        sudo sed -i 's/^TELEMETRY_ENABLED=.*/TELEMETRY_ENABLED=false/' /etc/lldpq.conf
+    else
+        echo "TELEMETRY_ENABLED=false" | sudo tee -a /etc/lldpq.conf > /dev/null
+    fi
+fi
+
+echo ""
+echo "[08] SSH Key Setup Required"
 echo "   Before using LLDPq, you must setup SSH key authentication:"
 echo ""
 echo "   For each device in your network:"
@@ -494,7 +591,7 @@ echo "   And ensure sudo works without password on each device:"
 echo "   sudo visudo  # Add: username ALL=(ALL) NOPASSWD:ALL"
 
 echo ""
-echo "[08] Initializing local git repository in ~/lldpq..."
+echo "[09] Initializing local git repository in ~/lldpq..."
 cd ~/lldpq
 
 # Create .gitignore
@@ -552,7 +649,7 @@ echo "   - Use 'cd ~/lldpq && git diff' to see changes"
 echo "   - Use 'cd ~/lldpq && git log' to see history"
 
 echo ""
-echo "[09] Installation Complete!"
+echo "[10] Installation Complete!"
 echo "   Next steps:"
 echo "   1. Edit the 4 configuration files mentioned above"
 echo "   2. Setup SSH keys for all devices"
