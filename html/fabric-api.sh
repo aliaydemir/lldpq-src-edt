@@ -4374,7 +4374,7 @@ def read_lldpq_conf():
 
 lldpq_conf = read_lldpq_conf()
 ansible_dir = lldpq_conf.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
-lldpq_user = lldpq_conf.get('LLDPQ_USER', 'nvidia')
+lldpq_user = lldpq_conf.get('LLDPQ_USER', os.environ.get('USER', 'root'))
 web_root = '/var/www/html'
 
 # Get device IP from inventory (same path as run-device-command)
@@ -4478,7 +4478,7 @@ if not device:
 
 lldpq_conf = read_lldpq_conf()
 ansible_dir = lldpq_conf.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
-lldpq_user = lldpq_conf.get('LLDPQ_USER', 'nvidia')
+lldpq_user = lldpq_conf.get('LLDPQ_USER', os.environ.get('USER', 'root'))
 
 # Get device IP from inventory
 device_ip = None
@@ -4570,7 +4570,7 @@ if filter_expr and not re.match(r'^[a-zA-Z0-9\s\.\:\-\(\)]+$', filter_expr):
 
 lldpq_conf = read_lldpq_conf()
 ansible_dir = lldpq_conf.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
-lldpq_user = lldpq_conf.get('LLDPQ_USER', 'nvidia')
+lldpq_user = lldpq_conf.get('LLDPQ_USER', os.environ.get('USER', 'root'))
 
 # Get device IP from inventory
 device_ip = None
@@ -4789,7 +4789,7 @@ def read_lldpq_conf():
 
 lldpq_conf = read_lldpq_conf()
 ansible_dir = lldpq_conf.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
-lldpq_user = lldpq_conf.get('LLDPQ_USER', 'nvidia')
+lldpq_user = lldpq_conf.get('LLDPQ_USER', os.environ.get('USER', 'root'))
 
 # Get device management IP from ansible inventory
 inventory_paths = [

@@ -4,8 +4,8 @@
 
 # Load config with fallback
 source /etc/lldpq.conf 2>/dev/null || true
-LLDPQ_USER="${LLDPQ_USER:-nvidia}"
-LLDPQ_HOME="${LLDPQ_HOME:-/home/$LLDPQ_USER/lldpq}"
+LLDPQ_USER="${LLDPQ_USER:-$(whoami)}"
+LLDPQ_HOME="${LLDPQ_DIR:-$HOME/lldpq}"
 
 # devices.yaml location
 DEVICES_FILE="$LLDPQ_HOME/devices.yaml"
