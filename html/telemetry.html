@@ -928,6 +928,14 @@
                 <div class="label">Total Throughput</div>
                 <div class="value">-<span class="unit">Gbps</span></div>
             </div>
+            <div class="stat-card" id="statErrors">
+                <div class="label">Total Errors</div>
+                <div class="value">-<span class="unit">/s</span></div>
+            </div>
+            <div class="stat-card" id="statDrops">
+                <div class="label">Total Drops</div>
+                <div class="value">-<span class="unit">/s</span></div>
+            </div>
         </div>
         
         <!-- Charts -->
@@ -1775,6 +1783,24 @@
             if (tpResult.success && tpResult.data?.result?.[0]) {
                 const value = parseFloat(tpResult.data.result[0].value?.[1] || 0).toFixed(2);
                 document.querySelector('#statThroughput .value').innerHTML = `${value}<span class="unit">Gbps</span>`;
+            }
+            
+            // Total errors/s
+            const errResult = await queryPrometheus('sum(rate(cumulus_nvswitch_interface_if_in_errors[5m]) + rate(cumulus_nvswitch_interface_if_out_errors[5m]))');
+            if (errResult.success && errResult.data?.result?.[0]) {
+                const value = parseFloat(errResult.data.result[0].value?.[1] || 0).toFixed(1);
+                document.querySelector('#statErrors .value').innerHTML = `${value}<span class="unit">/s</span>`;
+            } else {
+                document.querySelector('#statErrors .value').innerHTML = `0<span class="unit">/s</span>`;
+            }
+            
+            // Total drops/s
+            const dropResult = await queryPrometheus('sum(rate(cumulus_nvswitch_interface_if_in_discards[5m]) + rate(cumulus_nvswitch_interface_if_out_discards[5m]))');
+            if (dropResult.success && dropResult.data?.result?.[0]) {
+                const value = parseFloat(dropResult.data.result[0].value?.[1] || 0).toFixed(1);
+                document.querySelector('#statDrops .value').innerHTML = `${value}<span class="unit">/s</span>`;
+            } else {
+                document.querySelector('#statDrops .value').innerHTML = `0<span class="unit">/s</span>`;
             }
             
         }
