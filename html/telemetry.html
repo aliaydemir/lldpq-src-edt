@@ -24,17 +24,9 @@
             border-bottom: 1px solid #3c3c3c;
         }
         .page-title {
-            font-size: 22px;
-            font-weight: 500;
+            font-size: 24px;
+            font-weight: 600;
             color: #76b900;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        .page-title svg {
-            width: 24px;
-            height: 24px;
-            fill: #76b900;
         }
         .action-buttons {
             display: flex;
@@ -775,10 +767,7 @@
     <!-- Main Content (hidden if not configured) -->
     <div class="main-content" id="mainContent">
         <div class="page-header">
-            <div class="page-title">
-                <svg viewBox="0 0 24 24"><path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/></svg>
-                Streaming Telemetry
-            </div>
+            <div class="page-title">Streaming Telemetry</div>
             <div class="action-buttons" id="configButtons" style="display: none;">
                 <button class="btn btn-primary" onclick="showEnableModal()">
                     <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>
@@ -1679,15 +1668,31 @@
         
         // Store devices with telemetry status
         async function showEnableModal() {
-            // Check if stack is running first and get server IPs
+            // Show modal immediately with loading state
+            document.getElementById('enableModal').classList.add('active');
+            document.getElementById('enableDeviceItems').innerHTML = '<div style="padding: 20px; text-align: center; color: #888;">Loading devices...</div>';
+            document.getElementById('collectorIP').innerHTML = '<option value="">Loading...</option>';
+            
+            // Load config and devices in parallel
+            const [configLoaded, devicesLoaded] = await Promise.all([
+                loadEnableConfig(),
+                loadDevicesWithStatus('enable')
+            ]);
+            
+            if (!configLoaded) {
+                // Stack not running - close modal and show warning
+                document.getElementById('enableModal').classList.remove('active');
+                showStackWarningModal();
+            }
+        }
+        
+        async function loadEnableConfig() {
             try {
                 const response = await fetch('/fabric-api.sh?action=get-telemetry-config');
                 const data = await response.json();
                 
                 if (!data.stack_running) {
-                    // Show warning modal instead
-                    showStackWarningModal();
-                    return;
+                    return false;
                 }
                 
                 // Populate IP dropdown
@@ -1709,7 +1714,6 @@
                         ipSelect.appendChild(option);
                     });
                 } else {
-                    // No IPs found, allow manual entry
                     const option = document.createElement('option');
                     option.value = '';
                     option.textContent = 'Enter IP manually below';
@@ -1721,14 +1725,11 @@
                     document.getElementById('telemetryVRF').value = data.collector_vrf;
                 }
                 
+                return true;
             } catch (error) {
                 console.error('Failed to check stack status:', error);
+                return true; // Continue anyway
             }
-            
-            // Load devices with telemetry status
-            await loadDevicesWithStatus('enable');
-            
-            document.getElementById('enableModal').classList.add('active');
         }
         
         // Store devices grouped
@@ -1945,9 +1946,12 @@
         }
         
         async function confirmDisable() {
+            // Show modal immediately with loading state
+            document.getElementById('disableModal').classList.add('active');
+            document.getElementById('disableDeviceItems').innerHTML = '<div style="padding: 20px; text-align: center; color: #888;">Loading devices...</div>';
+            
             // Load devices with telemetry status
             await loadDevicesWithStatus('disable');
-            document.getElementById('disableModal').classList.add('active');
         }
         
         function closeDisableModal() {
@@ -2284,22 +2288,6 @@
                 } catch (error) {
                     addLogEntry(`Error: ${error.message}`, 'error');
                 }
-            }
-            
-            // Stop Docker stack
-            addLogEntry('', 'info');
-            addLogEntry('Stopping telemetry stack...', 'info');
-            try {
-                const stopResponse = await fetch('/fabric-api.sh?action=stop-telemetry-stack');
-                const stopResult = await stopResponse.json();
-                
-                if (stopResult.success) {
-                    addLogEntry('Telemetry stack stopped', 'success');
-                } else {
-                    addLogEntry(`Could not stop stack: ${stopResult.error || 'Unknown error'}`, 'error');
-                }
-            } catch (error) {
-                addLogEntry(`Stack stop error: ${error.message}`, 'error');
             }
             
             addLogEntry('', 'info');

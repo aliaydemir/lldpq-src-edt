@@ -47,13 +47,28 @@ This directory contains the Docker Compose configuration for running the LLDPq t
   - High CPU temperature
   - Fan failure
 
+## Stack Management
+
+The telemetry stack (Docker containers) is managed separately from device configuration:
+
+```bash
+# Start stack
+./update.sh --enable-telemetry
+
+# Stop stack
+./update.sh --disable-telemetry
+```
+
+The stack runs continuously once started. Enabling/disabling telemetry on devices does NOT stop the stack.
+
 ## Enabling Telemetry on Switches
 
 From the LLDPq web interface:
 1. Navigate to **Telemetry** page
 2. Click **Enable Telemetry**
 3. Enter the OTEL Collector IP (this server's IP)
-4. Click **Enable on All Devices**
+4. Select devices (grouped by inventory)
+5. Click **Enable on Selected Devices**
 
 Or manually on each switch:
 
@@ -66,8 +81,6 @@ nv set system telemetry export otlp state enabled
 nv set system telemetry export vrf mgmt
 nv set system telemetry interface-stats export state enabled
 nv set system telemetry interface-stats sample-interval 30
-nv set system telemetry ai-ethernet-stats export state enabled
-nv set system telemetry ai-ethernet-stats sample-interval 30
 nv config apply -y
 ```
 
@@ -99,7 +112,7 @@ docker logs lldpq-otel-collector
 
 # Query Prometheus for metrics
 curl 'http://localhost:9090/api/v1/query?query=up'
-curl 'http://localhost:9090/api/v1/query?query=cumulus_interface_tx_bytes'
+curl 'http://localhost:9090/api/v1/query?query=cumulus_nvswitch_interface_if_out_octets'
 ```
 
 ### Verify switch telemetry config:
