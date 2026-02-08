@@ -79,10 +79,19 @@ if [[ "$ENABLE_TELEMETRY" == "true" ]] || [[ "$DISABLE_TELEMETRY" == "true" ]]; 
         if [[ -f "$HOME/lldpq/telemetry/docker-compose.yaml" ]]; then
             echo "Starting telemetry stack..."
             cd "$HOME/lldpq/telemetry"
-            docker-compose up -d 2>/dev/null || docker compose up -d 2>/dev/null || {
-                echo "[!] Could not start stack. You may need to logout/login for Docker group."
-                echo "    Then run: cd ~/lldpq/telemetry && ./start.sh"
-            }
+            # Use sudo for docker if user not yet in docker group (fresh install)
+            if docker compose up -d 2>/dev/null; then
+                : # success without sudo
+            elif docker-compose up -d 2>/dev/null; then
+                : # success with old docker-compose
+            elif sudo docker compose -f "$HOME/lldpq/telemetry/docker-compose.yaml" up -d 2>/dev/null; then
+                : # success with sudo
+            elif sudo docker-compose -f "$HOME/lldpq/telemetry/docker-compose.yaml" up -d 2>/dev/null; then
+                : # success with sudo + old docker-compose
+            else
+                echo "[!] Could not start stack. Try manually:"
+                echo "    cd ~/lldpq/telemetry && sudo docker compose up -d"
+            fi
             cd - > /dev/null
             
             # Wait a moment and check status
