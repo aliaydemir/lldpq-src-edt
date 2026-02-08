@@ -1015,6 +1015,44 @@
                     <canvas id="dropsChart"></canvas>
                 </div>
             </div>
+            <!-- Hidden by default - Advanced metrics (appear here when enabled) -->
+            <div class="chart-card hidden" id="card-fecErrors">
+                <h4>
+                    <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+                    FEC Corrected Errors
+                </h4>
+                <div class="chart-container">
+                    <canvas id="fecErrorsChart"></canvas>
+                </div>
+            </div>
+            <div class="chart-card hidden" id="card-crcErrors">
+                <h4>
+                    <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+                    CRC / FCS Errors
+                </h4>
+                <div class="chart-container">
+                    <canvas id="crcErrorsChart"></canvas>
+                </div>
+            </div>
+            <div class="chart-card hidden" id="card-hoqDiscards">
+                <h4>
+                    <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.42 0-8-3.58-8-8 0-1.85.63-3.55 1.69-4.9L16.9 18.31C15.55 19.37 13.85 20 12 20zm6.31-3.1L7.1 5.69C8.45 4.63 10.15 4 12 4c4.42 0 8 3.58 8 8 0 1.85-.63 3.55-1.69 4.9z"/></svg>
+                    HOQ Discards
+                </h4>
+                <div class="chart-container">
+                    <canvas id="hoqDiscardsChart"></canvas>
+                </div>
+            </div>
+            <div class="chart-card hidden" id="card-symbolErrors">
+                <h4>
+                    <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+                    Symbol Errors
+                </h4>
+                <div class="chart-container">
+                    <canvas id="symbolErrorsChart"></canvas>
+                </div>
+            </div>
+            <!-- Top Talkers (always last before table) -->
             <div class="chart-card" id="card-topTalkers" style="grid-column: span 2;">
                 <h4>
                     <svg viewBox="0 0 24 24"><path d="M4 9h4v11H4zm6-5h4v16h-4zm6 8h4v8h-4z"/></svg>
@@ -1139,6 +1177,38 @@
                     <div>
                         <label for="toggle-interfaceTable">Interface Table</label>
                         <div class="chart-desc">Top interfaces by utilization (table view)</div>
+                    </div>
+                </div>
+                <!-- Advanced metrics (hidden by default) -->
+                <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #3c3c3c;">
+                    <div style="color: #888; font-size: 12px; margin-bottom: 10px;">Advanced Metrics (disabled by default)</div>
+                </div>
+                <div class="chart-toggle-item" onclick="toggleChartCheckbox('fecErrors')">
+                    <input type="checkbox" id="toggle-fecErrors" onchange="saveChartPreferences()">
+                    <div>
+                        <label for="toggle-fecErrors">FEC Corrected Errors</label>
+                        <div class="chart-desc">Forward Error Correction - optical/PHY layer corrections</div>
+                    </div>
+                </div>
+                <div class="chart-toggle-item" onclick="toggleChartCheckbox('crcErrors')">
+                    <input type="checkbox" id="toggle-crcErrors" onchange="saveChartPreferences()">
+                    <div>
+                        <label for="toggle-crcErrors">CRC / FCS Errors</label>
+                        <div class="chart-desc">Cyclic Redundancy Check errors - cable/signal issues</div>
+                    </div>
+                </div>
+                <div class="chart-toggle-item" onclick="toggleChartCheckbox('hoqDiscards')">
+                    <input type="checkbox" id="toggle-hoqDiscards" onchange="saveChartPreferences()">
+                    <div>
+                        <label for="toggle-hoqDiscards">HOQ Discards</label>
+                        <div class="chart-desc">Head of Queue blocking discards - congestion indicator</div>
+                    </div>
+                </div>
+                <div class="chart-toggle-item" onclick="toggleChartCheckbox('symbolErrors')">
+                    <input type="checkbox" id="toggle-symbolErrors" onchange="saveChartPreferences()">
+                    <div>
+                        <label for="toggle-symbolErrors">Symbol Errors</label>
+                        <div class="chart-desc">PHY layer symbol errors - signal quality indicator</div>
                     </div>
                 </div>
             </div>
@@ -1293,6 +1363,11 @@
         let pauseChart = null;
         let arCongestionChart = null;
         let markedPacketsChart = null;
+        // Advanced charts (hidden by default)
+        let fecErrorsChart = null;
+        let crcErrorsChart = null;
+        let hoqDiscardsChart = null;
+        let symbolErrorsChart = null;
         let telemetryEnabled = false;
         
         // Chart.js default colors
@@ -1538,6 +1613,55 @@
                 data: { labels: [], datasets: [] },
                 options: { ...commonOptions }
             });
+            
+            // Advanced Charts (hidden by default)
+            fecErrorsChart = new Chart(document.getElementById('fecErrorsChart'), {
+                type: 'line',
+                data: { labels: [], datasets: [] },
+                options: { 
+                    ...commonOptions,
+                    scales: {
+                        ...commonOptions.scales,
+                        y: { ...commonOptions.scales.y, title: { display: true, text: 'Corrections/s', color: '#888' } }
+                    }
+                }
+            });
+            
+            crcErrorsChart = new Chart(document.getElementById('crcErrorsChart'), {
+                type: 'line',
+                data: { labels: [], datasets: [] },
+                options: { 
+                    ...commonOptions,
+                    scales: {
+                        ...commonOptions.scales,
+                        y: { ...commonOptions.scales.y, title: { display: true, text: 'Errors/s', color: '#888' } }
+                    }
+                }
+            });
+            
+            hoqDiscardsChart = new Chart(document.getElementById('hoqDiscardsChart'), {
+                type: 'line',
+                data: { labels: [], datasets: [] },
+                options: { 
+                    ...commonOptions,
+                    scales: {
+                        ...commonOptions.scales,
+                        y: { ...commonOptions.scales.y, title: { display: true, text: 'Discards/s', color: '#888' } }
+                    }
+                }
+            });
+            
+            symbolErrorsChart = new Chart(document.getElementById('symbolErrorsChart'), {
+                type: 'line',
+                data: { labels: [], datasets: [] },
+                options: { 
+                    ...commonOptions,
+                    scales: {
+                        ...commonOptions.scales,
+                        y: { ...commonOptions.scales.y, title: { display: true, text: 'Errors/s', color: '#888' } }
+                    }
+                }
+            });
         }
         
         async function checkPrometheusConnection() {
@@ -1596,7 +1720,9 @@
                     updatePauseChart(device, timeRange),
                     updateArCongestionChart(device, timeRange),
                     updateMarkedPacketsChart(device, timeRange),
-                    updateInterfaceTable(device)
+                    updateInterfaceTable(device),
+                    // Advanced charts (only update if visible)
+                    updateAdvancedCharts(device, timeRange)
                 ]);
             } catch (error) {
                 console.error('Dashboard update error:', error);
@@ -1760,6 +1886,47 @@
             const result = await queryPrometheusRange(query, timeRange, '30s');
             if (result.success && result.data?.result) {
                 updateChart(markedPacketsChart, result.data.result, 'pkts/s');
+            }
+        }
+        
+        // Advanced charts update function (only updates visible charts)
+        async function updateAdvancedCharts(device, timeRange) {
+            const deviceFilter = device !== 'all' ? `{net_host_name="${device}"}` : '';
+            
+            // FEC Errors (only if visible)
+            if (!document.getElementById('card-fecErrors')?.classList.contains('hidden')) {
+                const fecQuery = `sum by (net_host_name) (rate(cumulus_nvswitch_interface_phy_layer_fec_per_lane_corrections${deviceFilter}[2m]))`;
+                const fecResult = await queryPrometheusRange(fecQuery, timeRange, '30s');
+                if (fecResult.success && fecResult.data?.result) {
+                    updateChart(fecErrorsChart, fecResult.data.result, 'corrections/s');
+                }
+            }
+            
+            // CRC Errors (only if visible)
+            if (!document.getElementById('card-crcErrors')?.classList.contains('hidden')) {
+                const crcQuery = `sum by (net_host_name) (rate(cumulus_nvswitch_interface_ether_stats_crc_align_errors${deviceFilter}[2m]) + rate(cumulus_nvswitch_interface_dot3_stats_fcs_errors${deviceFilter}[2m]))`;
+                const crcResult = await queryPrometheusRange(crcQuery, timeRange, '30s');
+                if (crcResult.success && crcResult.data?.result) {
+                    updateChart(crcErrorsChart, crcResult.data.result, 'errors/s');
+                }
+            }
+            
+            // HOQ Discards (only if visible)
+            if (!document.getElementById('card-hoqDiscards')?.classList.contains('hidden')) {
+                const hoqQuery = `sum by (net_host_name) (rate(cumulus_nvswitch_interface_discards_egress_hoq${deviceFilter}[2m]) + rate(cumulus_nvswitch_interface_discards_egress_hoq_stall${deviceFilter}[2m]))`;
+                const hoqResult = await queryPrometheusRange(hoqQuery, timeRange, '30s');
+                if (hoqResult.success && hoqResult.data?.result) {
+                    updateChart(hoqDiscardsChart, hoqResult.data.result, 'discards/s');
+                }
+            }
+            
+            // Symbol Errors (only if visible)
+            if (!document.getElementById('card-symbolErrors')?.classList.contains('hidden')) {
+                const symQuery = `sum by (net_host_name) (rate(cumulus_nvswitch_interface_dot3_stats_symbol_errors${deviceFilter}[2m]))`;
+                const symResult = await queryPrometheusRange(symQuery, timeRange, '30s');
+                if (symResult.success && symResult.data?.result) {
+                    updateChart(symbolErrorsChart, symResult.data.result, 'errors/s');
+                }
             }
         }
         
@@ -1934,7 +2101,7 @@
         }
         
         // ===== Dashboard Customization =====
-        const chartIds = ['totalThroughput', 'topTalkers', 'txWait', 'linkFlaps', 'buffer', 'pause', 'arCongestion', 'ecn', 'errors', 'drops', 'interfaceTable'];
+        const chartIds = ['totalThroughput', 'topTalkers', 'txWait', 'linkFlaps', 'buffer', 'pause', 'arCongestion', 'ecn', 'errors', 'drops', 'interfaceTable', 'fecErrors', 'crcErrors', 'hoqDiscards', 'symbolErrors'];
         
         function openCustomizeModal() {
             document.getElementById('customizeModal').classList.add('visible');
