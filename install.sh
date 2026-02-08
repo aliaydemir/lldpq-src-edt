@@ -545,18 +545,27 @@ if [[ "$TELEMETRY_ENABLED" == "true" ]]; then
     echo "   Telemetry support enabled!"
     echo ""
     
+    # Configure Docker storage driver if needed (for VMs without overlay support)
+    if [[ ! -f /etc/docker/daemon.json ]]; then
+        echo "   Configuring Docker storage driver..."
+        sudo mkdir -p /etc/docker
+        echo '{"storage-driver": "vfs"}' | sudo tee /etc/docker/daemon.json > /dev/null
+        sudo systemctl restart docker
+    fi
+    
     # Start the telemetry stack automatically
     if [[ -f "$HOME/lldpq/telemetry/docker-compose.yaml" ]]; then
+        echo ""
         echo "   Starting telemetry stack..."
         cd "$HOME/lldpq/telemetry"
         # Use sudo for docker if user not yet in docker group (fresh install)
-        if docker compose up -d 2>/dev/null; then
+        if docker compose up -d 2>&1; then
             : # success without sudo
-        elif docker-compose up -d 2>/dev/null; then
+        elif docker-compose up -d 2>&1; then
             : # success with old docker-compose
-        elif sudo docker compose -f "$HOME/lldpq/telemetry/docker-compose.yaml" up -d 2>/dev/null; then
+        elif sudo docker compose up -d 2>&1; then
             : # success with sudo
-        elif sudo docker-compose -f "$HOME/lldpq/telemetry/docker-compose.yaml" up -d 2>/dev/null; then
+        elif sudo docker-compose up -d 2>&1; then
             : # success with sudo + old docker-compose
         else
             echo "   [!] Could not start stack. Try manually:"
