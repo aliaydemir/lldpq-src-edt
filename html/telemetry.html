@@ -482,6 +482,147 @@
             height: 250px;
         }
         
+        /* Telemetry Device List */
+        .telemetry-device-list {
+            max-height: 350px;
+            overflow-y: auto;
+            border: 1px solid #3c3c3c;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            background: #1e1e1e;
+        }
+        .telemetry-device-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 15px;
+            background: #252526;
+            border-bottom: 1px solid #3c3c3c;
+            position: sticky;
+            top: 0;
+            z-index: 1;
+        }
+        .telemetry-device-header label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            font-size: 13px;
+            color: #d4d4d4;
+        }
+        .telemetry-device-header input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            accent-color: #76b900;
+        }
+        .selected-count {
+            font-size: 12px;
+            color: #888;
+        }
+        .telemetry-group {
+            border-bottom: 1px solid #3c3c3c;
+        }
+        .telemetry-group:last-child {
+            border-bottom: none;
+        }
+        .telemetry-group-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 15px;
+            background: #252526;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .telemetry-group-header:hover {
+            background: #2d2d2d;
+        }
+        .telemetry-group-header input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            accent-color: #76b900;
+        }
+        .telemetry-group-name {
+            color: #76b900;
+            font-size: 13px;
+            font-weight: 600;
+            flex: 1;
+        }
+        .telemetry-group-count {
+            font-size: 11px;
+            color: #888;
+            margin-right: 8px;
+        }
+        .telemetry-group-status {
+            font-size: 10px;
+            color: #4fc3f7;
+        }
+        .telemetry-group-arrow {
+            width: 16px;
+            height: 16px;
+            fill: #888;
+            transition: transform 0.2s;
+        }
+        .telemetry-group.expanded .telemetry-group-arrow {
+            transform: rotate(90deg);
+        }
+        .telemetry-group-devices {
+            display: none;
+        }
+        .telemetry-group.expanded .telemetry-group-devices {
+            display: block;
+        }
+        .telemetry-device-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 15px 8px 35px;
+            border-bottom: 1px solid #2a2a2a;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .telemetry-device-item:hover {
+            background: #2a2a2a;
+        }
+        .telemetry-device-item:last-child {
+            border-bottom: none;
+        }
+        .telemetry-device-item input[type="checkbox"] {
+            width: 14px;
+            height: 14px;
+            accent-color: #76b900;
+        }
+        .telemetry-device-name {
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 13px;
+            color: #d4d4d4;
+            flex: 1;
+        }
+        .telemetry-device-ip {
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 11px;
+            color: #888;
+        }
+        .telemetry-status {
+            padding: 3px 8px;
+            border-radius: 10px;
+            font-size: 10px;
+            font-weight: 500;
+            text-transform: uppercase;
+        }
+        .telemetry-status.enabled {
+            background: rgba(118, 185, 0, 0.2);
+            color: #76b900;
+        }
+        .telemetry-status.disabled {
+            background: rgba(136, 136, 136, 0.2);
+            color: #888;
+        }
+        .telemetry-status.unknown {
+            background: rgba(255, 152, 0, 0.2);
+            color: #ff9800;
+        }
+        
         /* Connection Status */
         .connection-status {
             display: flex;
@@ -714,6 +855,53 @@
                     <canvas id="totalThroughputChart"></canvas>
                 </div>
             </div>
+            <!-- AI Ethernet Stats -->
+            <div class="chart-card" style="grid-column: span 2;">
+                <h4>
+                    <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
+                    TX Wait / Congestion
+                </h4>
+                <div class="chart-container" style="height: 180px;">
+                    <canvas id="txWaitChart"></canvas>
+                </div>
+            </div>
+            <div class="chart-card">
+                <h4>
+                    <svg viewBox="0 0 24 24"><path d="M2 20h20v-4H2v4zm2-3h2v2H4v-2zM2 4v4h20V4H2zm4 3H4V5h2v2zm-4 7h20v-4H2v4zm2-3h2v2H4v-2z"/></svg>
+                    Buffer Utilization
+                </h4>
+                <div class="chart-container">
+                    <canvas id="bufferChart"></canvas>
+                </div>
+            </div>
+            <div class="chart-card">
+                <h4>
+                    <svg viewBox="0 0 24 24"><path d="M9 11H7v2h2v-2zm4 0h-2v2h2v-2zm4 0h-2v2h2v-2zm2-7h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V9h14v11z"/></svg>
+                    Pause Frames (per second)
+                </h4>
+                <div class="chart-container">
+                    <canvas id="pauseChart"></canvas>
+                </div>
+            </div>
+            <div class="chart-card">
+                <h4>
+                    <svg viewBox="0 0 24 24"><path d="M13 3v2h-2V3h2zm0 16v2h-2v-2h2zm8-8v2h-2v-2h2zM5 11v2H3v-2h2zm13.66-6.34l1.41 1.41-1.41 1.42-1.42-1.42 1.42-1.41zM5.93 17.66l1.41 1.41-1.41 1.42-1.42-1.42 1.42-1.41zm11.31 1.41l1.42-1.41 1.41 1.41-1.41 1.42-1.42-1.42zM4.52 6.07l1.42-1.41 1.41 1.41-1.41 1.42-1.42-1.42z"/></svg>
+                    AR Congestion Changes
+                </h4>
+                <div class="chart-container">
+                    <canvas id="arCongestionChart"></canvas>
+                </div>
+            </div>
+            <div class="chart-card">
+                <h4>
+                    <svg viewBox="0 0 24 24"><path d="M11 15h2v2h-2zm0-8h2v6h-2zm.99-5C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8z"/></svg>
+                    ECN Marked Packets
+                </h4>
+                <div class="chart-container">
+                    <canvas id="markedPacketsChart"></canvas>
+                </div>
+            </div>
+            <!-- Standard Stats -->
             <div class="chart-card">
                 <h4>
                     <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
@@ -843,11 +1031,23 @@
                 <input type="text" id="telemetryVRF" value="mgmt" placeholder="mgmt">
                 <div class="hint">VRF to use for telemetry export (default: mgmt, or enter custom)</div>
             </div>
+            <div class="form-group">
+                <label>Select Devices</label>
+                <div class="telemetry-device-list" id="enableDeviceList">
+                    <div class="telemetry-device-header">
+                        <label><input type="checkbox" id="enableSelectAll" onchange="toggleAllEnableDevices(this.checked)"> Select All</label>
+                        <span class="selected-count" id="enableSelectedCount">0 / 0 selected</span>
+                    </div>
+                    <div id="enableDeviceItems">
+                        <div style="padding: 20px; text-align: center; color: #888;">Loading devices...</div>
+                    </div>
+                </div>
+            </div>
             <div class="modal-actions">
                 <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-                <button class="btn btn-primary" onclick="enableTelemetry()">
+                <button class="btn btn-primary" onclick="enableTelemetry()" id="enableBtn">
                     <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>
-                    Enable on All Devices
+                    Enable on Selected Devices
                 </button>
             </div>
         </div>
@@ -860,9 +1060,20 @@
                 <svg viewBox="0 0 24 24" style="fill: #f44336;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
                 Disable Telemetry
             </h2>
-            <p style="color: #888; margin-bottom: 20px; line-height: 1.6;">
-                This will disable streaming telemetry on <strong style="color: #ffb74d;">supported devices</strong> and remove all telemetry configuration.
+            <p style="color: #888; margin-bottom: 15px; line-height: 1.6;">
+                Select devices to disable streaming telemetry:
             </p>
+            <div class="form-group">
+                <div class="telemetry-device-list" id="disableDeviceList">
+                    <div class="telemetry-device-header">
+                        <label><input type="checkbox" id="disableSelectAll" onchange="toggleAllDisableDevices(this.checked)"> Select All Enabled</label>
+                        <span class="selected-count" id="disableSelectedCount">0 / 0 selected</span>
+                    </div>
+                    <div id="disableDeviceItems">
+                        <div style="padding: 20px; text-align: center; color: #888;">Loading devices...</div>
+                    </div>
+                </div>
+            </div>
             <div class="command-preview" style="margin-bottom: 20px;">
                 <div class="cmd">nv unset system telemetry ai-ethernet-stats</div>
                 <div class="cmd">nv unset system telemetry export</div>
@@ -871,9 +1082,9 @@
             </div>
             <div class="modal-actions">
                 <button class="btn btn-secondary" onclick="closeDisableModal()">Cancel</button>
-                <button class="btn btn-danger" onclick="disableTelemetry()">
+                <button class="btn btn-danger" onclick="disableTelemetry()" id="disableBtn">
                     <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>
-                    Disable Telemetry
+                    Disable on Selected Devices
                 </button>
             </div>
         </div>
@@ -891,6 +1102,12 @@
         let topTalkersChart = null;
         let errorsChart = null;
         let dropsChart = null;
+        // AI Ethernet Stats charts
+        let txWaitChart = null;
+        let bufferChart = null;
+        let pauseChart = null;
+        let arCongestionChart = null;
+        let markedPacketsChart = null;
         let telemetryEnabled = false;
         
         // Chart.js default colors
@@ -1072,6 +1289,48 @@
                 data: { labels: [], datasets: [] },
                 options: { ...commonOptions }
             });
+            
+            // AI Ethernet Stats Charts
+            // TX Wait Chart (most important - congestion indicator)
+            txWaitChart = new Chart(document.getElementById('txWaitChart'), {
+                type: 'line',
+                data: { labels: [], datasets: [] },
+                options: { 
+                    ...commonOptions,
+                    scales: {
+                        ...commonOptions.scales,
+                        y: { ...commonOptions.scales.y, title: { display: true, text: 'TX Wait Count', color: '#888' } }
+                    }
+                }
+            });
+            
+            // Buffer Chart
+            bufferChart = new Chart(document.getElementById('bufferChart'), {
+                type: 'line',
+                data: { labels: [], datasets: [] },
+                options: { ...commonOptions }
+            });
+            
+            // Pause Frames Chart
+            pauseChart = new Chart(document.getElementById('pauseChart'), {
+                type: 'line',
+                data: { labels: [], datasets: [] },
+                options: { ...commonOptions }
+            });
+            
+            // AR Congestion Chart
+            arCongestionChart = new Chart(document.getElementById('arCongestionChart'), {
+                type: 'line',
+                data: { labels: [], datasets: [] },
+                options: { ...commonOptions }
+            });
+            
+            // Marked Packets Chart
+            markedPacketsChart = new Chart(document.getElementById('markedPacketsChart'), {
+                type: 'line',
+                data: { labels: [], datasets: [] },
+                options: { ...commonOptions }
+            });
         }
         
         async function checkPrometheusConnection() {
@@ -1123,6 +1382,12 @@
                     updateTopTalkersChart(device),
                     updateErrorsChart(device, timeRange),
                     updateDropsChart(device, timeRange),
+                    // AI Ethernet Stats
+                    updateTxWaitChart(device, timeRange),
+                    updateBufferChart(device, timeRange),
+                    updatePauseChart(device, timeRange),
+                    updateArCongestionChart(device, timeRange),
+                    updateMarkedPacketsChart(device, timeRange),
                     updateInterfaceTable(device)
                 ]);
             } catch (error) {
@@ -1223,6 +1488,59 @@
             const result = await queryPrometheusRange(query, timeRange, '30s');
             if (result.success && result.data?.result) {
                 updateChart(dropsChart, result.data.result, 'drops/s');
+            }
+        }
+        
+        // AI Ethernet Stats Update Functions
+        async function updateTxWaitChart(device, timeRange) {
+            const deviceFilter = device !== 'all' ? `{net_host_name="${device}"}` : '';
+            const query = `sum by (net_host_name) (rate(cumulus_nvswitch_interface_tx_wait${deviceFilter}[2m]))`;
+            
+            const result = await queryPrometheusRange(query, timeRange, '30s');
+            if (result.success && result.data?.result) {
+                updateChart(txWaitChart, result.data.result, 'tx_wait/s');
+            }
+        }
+        
+        async function updateBufferChart(device, timeRange) {
+            const deviceFilter = device !== 'all' ? `{net_host_name="${device}"}` : '';
+            // Buffer almost full + buffer full
+            const query = `sum by (net_host_name) (rate(cumulus_nvswitch_interface_rx_buffer_almost_full${deviceFilter}[2m]) + rate(cumulus_nvswitch_interface_rx_buffer_full${deviceFilter}[2m]))`;
+            
+            const result = await queryPrometheusRange(query, timeRange, '30s');
+            if (result.success && result.data?.result) {
+                updateChart(bufferChart, result.data.result, 'events/s');
+            }
+        }
+        
+        async function updatePauseChart(device, timeRange) {
+            const deviceFilter = device !== 'all' ? `{net_host_name="${device}"}` : '';
+            // In + Out pause frames
+            const query = `sum by (net_host_name) (rate(cumulus_nvswitch_interface_dot3_in_pause_frames${deviceFilter}[2m]) + rate(cumulus_nvswitch_interface_dot3_out_pause_frames${deviceFilter}[2m]))`;
+            
+            const result = await queryPrometheusRange(query, timeRange, '30s');
+            if (result.success && result.data?.result) {
+                updateChart(pauseChart, result.data.result, 'frames/s');
+            }
+        }
+        
+        async function updateArCongestionChart(device, timeRange) {
+            const deviceFilter = device !== 'all' ? `{net_host_name="${device}"}` : '';
+            const query = `sum by (net_host_name) (rate(cumulus_nvswitch_ar_congestion_changes_total${deviceFilter}[2m]))`;
+            
+            const result = await queryPrometheusRange(query, timeRange, '30s');
+            if (result.success && result.data?.result) {
+                updateChart(arCongestionChart, result.data.result, 'changes/s');
+            }
+        }
+        
+        async function updateMarkedPacketsChart(device, timeRange) {
+            const deviceFilter = device !== 'all' ? `{net_host_name="${device}"}` : '';
+            const query = `sum by (net_host_name) (rate(cumulus_nvswitch_interface_performance_marked_packets${deviceFilter}[2m]))`;
+            
+            const result = await queryPrometheusRange(query, timeRange, '30s');
+            if (result.success && result.data?.result) {
+                updateChart(markedPacketsChart, result.data.result, 'pkts/s');
             }
         }
         
@@ -1359,6 +1677,7 @@
             document.getElementById('configButtons').style.display = tabName === 'config' ? 'flex' : 'none';
         }
         
+        // Store devices with telemetry status
         async function showEnableModal() {
             // Check if stack is running first and get server IPs
             try {
@@ -1406,7 +1725,182 @@
                 console.error('Failed to check stack status:', error);
             }
             
+            // Load devices with telemetry status
+            await loadDevicesWithStatus('enable');
+            
             document.getElementById('enableModal').classList.add('active');
+        }
+        
+        // Store devices grouped
+        let devicesByGroup = {};
+        let enabledDevicesSet = new Set();
+        
+        async function loadDevicesWithStatus(mode) {
+            const container = document.getElementById(mode + 'DeviceItems');
+            container.innerHTML = '<div style="padding: 20px; text-align: center; color: #888;">Loading devices...</div>';
+            
+            try {
+                // Fetch devices
+                const devicesResp = await fetch('/fabric-api.sh?action=list-devices');
+                const devicesData = await devicesResp.json();
+                
+                // Store devices by group
+                devicesByGroup = {};
+                if (devicesData.success && devicesData.devices) {
+                    for (const [group, groupDevices] of Object.entries(devicesData.devices)) {
+                        devicesByGroup[group] = groupDevices.map(device => ({
+                            hostname: device.hostname || device,
+                            ip: device.ansible_host || device.ip || '',
+                            status: 'unknown'
+                        }));
+                    }
+                }
+                
+                // Fetch telemetry status from Prometheus
+                const statusResp = await fetch('/fabric-api.sh?action=prometheus-query', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query: 'count by (net_host_name) (cumulus_nvswitch_interface_if_out_octets)' })
+                });
+                const statusData = await statusResp.json();
+                
+                enabledDevicesSet = new Set();
+                if (statusData.success && statusData.data?.result) {
+                    for (const result of statusData.data.result) {
+                        if (result.metric?.net_host_name) {
+                            enabledDevicesSet.add(result.metric.net_host_name);
+                        }
+                    }
+                }
+                
+                // Update status for all devices
+                for (const [group, devices] of Object.entries(devicesByGroup)) {
+                    for (const device of devices) {
+                        device.status = enabledDevicesSet.has(device.hostname) ? 'enabled' : 'disabled';
+                    }
+                }
+                
+                // Render device list
+                renderDeviceList(mode);
+                
+            } catch (error) {
+                console.error('Failed to load devices:', error);
+                container.innerHTML = '<div style="padding: 20px; text-align: center; color: #f44336;">Failed to load devices</div>';
+            }
+        }
+        
+        function renderDeviceList(mode) {
+            const container = document.getElementById(mode + 'DeviceItems');
+            let html = '';
+            
+            for (const [group, devices] of Object.entries(devicesByGroup)) {
+                const groupId = group.replace(/[^a-zA-Z0-9]/g, '_');
+                const enabledCount = devices.filter(d => d.status === 'enabled').length;
+                const statusText = `${enabledCount}/${devices.length} enabled`;
+                
+                html += `
+                    <div class="telemetry-group" id="${mode}Group_${groupId}">
+                        <div class="telemetry-group-header" onclick="toggleTelemetryGroup('${mode}', '${groupId}')">
+                            <input type="checkbox" id="${mode}GroupCb_${groupId}" onclick="event.stopPropagation(); toggleGroupDevices('${mode}', '${groupId}')" onchange="updateSelectedCount('${mode}')">
+                            <svg class="telemetry-group-arrow" viewBox="0 0 24 24"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+                            <span class="telemetry-group-name">${group}</span>
+                            <span class="telemetry-group-count">${devices.length} devices</span>
+                            <span class="telemetry-group-status">${statusText}</span>
+                        </div>
+                        <div class="telemetry-group-devices">
+                `;
+                
+                for (const device of devices) {
+                    const statusClass = device.status;
+                    const statusText = device.status === 'enabled' ? 'Enabled' : 'Disabled';
+                    
+                    // For enable mode: pre-select disabled devices
+                    // For disable mode: pre-select enabled devices
+                    const preSelect = mode === 'enable' ? device.status !== 'enabled' : device.status === 'enabled';
+                    
+                    html += `
+                        <label class="telemetry-device-item">
+                            <input type="checkbox" name="${mode}Device" value="${device.hostname}" data-group="${groupId}" ${preSelect ? 'checked' : ''} onchange="updateGroupCheckbox('${mode}', '${groupId}'); updateSelectedCount('${mode}')">
+                            <span class="telemetry-device-name">${device.hostname}</span>
+                            <span class="telemetry-device-ip">${device.ip}</span>
+                            <span class="telemetry-status ${statusClass}">${statusText}</span>
+                        </label>
+                    `;
+                }
+                
+                html += '</div></div>';
+            }
+            
+            container.innerHTML = html || '<div style="padding: 20px; text-align: center; color: #888;">No devices found</div>';
+            
+            // Update group checkboxes based on pre-selected devices
+            for (const group of Object.keys(devicesByGroup)) {
+                const groupId = group.replace(/[^a-zA-Z0-9]/g, '_');
+                updateGroupCheckbox(mode, groupId);
+            }
+            
+            updateSelectedCount(mode);
+        }
+        
+        function toggleTelemetryGroup(mode, groupId) {
+            const group = document.getElementById(`${mode}Group_${groupId}`);
+            group.classList.toggle('expanded');
+        }
+        
+        function toggleGroupDevices(mode, groupId) {
+            const groupCb = document.getElementById(`${mode}GroupCb_${groupId}`);
+            const deviceCbs = document.querySelectorAll(`input[name="${mode}Device"][data-group="${groupId}"]`);
+            deviceCbs.forEach(cb => cb.checked = groupCb.checked);
+            updateSelectedCount(mode);
+        }
+        
+        function updateGroupCheckbox(mode, groupId) {
+            const deviceCbs = document.querySelectorAll(`input[name="${mode}Device"][data-group="${groupId}"]`);
+            const checkedCount = Array.from(deviceCbs).filter(cb => cb.checked).length;
+            const groupCb = document.getElementById(`${mode}GroupCb_${groupId}`);
+            if (groupCb) {
+                groupCb.checked = checkedCount === deviceCbs.length && deviceCbs.length > 0;
+                groupCb.indeterminate = checkedCount > 0 && checkedCount < deviceCbs.length;
+            }
+        }
+        
+        function updateSelectedCount(mode) {
+            const checkboxes = document.querySelectorAll(`input[name="${mode}Device"]`);
+            const checked = document.querySelectorAll(`input[name="${mode}Device"]:checked`);
+            const countEl = document.getElementById(mode + 'SelectedCount');
+            countEl.textContent = `${checked.length} / ${checkboxes.length} selected`;
+            
+            // Update select all checkbox
+            const selectAllCb = document.getElementById(mode + 'SelectAll');
+            selectAllCb.checked = checked.length === checkboxes.length && checkboxes.length > 0;
+            selectAllCb.indeterminate = checked.length > 0 && checked.length < checkboxes.length;
+            
+            // Update button text
+            const btn = document.getElementById(mode + 'Btn');
+            if (btn) {
+                const action = mode === 'enable' ? 'Enable' : 'Disable';
+                btn.innerHTML = `<svg viewBox="0 0 24 24"><path d="${mode === 'enable' ? 'M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z' : 'M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z'}"/></svg> ${action} on ${checked.length} Device${checked.length !== 1 ? 's' : ''}`;
+            }
+        }
+        
+        function toggleAllEnableDevices(checked) {
+            document.querySelectorAll('input[name="enableDevice"]').forEach(cb => cb.checked = checked);
+            // Update all group checkboxes
+            for (const group of Object.keys(devicesByGroup)) {
+                const groupId = group.replace(/[^a-zA-Z0-9]/g, '_');
+                updateGroupCheckbox('enable', groupId);
+            }
+            updateSelectedCount('enable');
+        }
+        
+        function toggleAllDisableDevices(checked) {
+            document.querySelectorAll('input[name="disableDevice"]').forEach(cb => cb.checked = checked);
+            // Update all group checkboxes
+            for (const group of Object.keys(devicesByGroup)) {
+                const groupId = group.replace(/[^a-zA-Z0-9]/g, '_');
+                updateGroupCheckbox('disable', groupId);
+            }
+            updateSelectedCount('disable');
         }
         
         function showStackWarningModal() {
@@ -1450,7 +1944,9 @@
             document.getElementById('enableModal').classList.remove('active');
         }
         
-        function confirmDisable() {
+        async function confirmDisable() {
+            // Load devices with telemetry status
+            await loadDevicesWithStatus('disable');
             document.getElementById('disableModal').classList.add('active');
         }
         
@@ -1482,6 +1978,15 @@
             const collectorIP = document.getElementById('collectorIP').value.trim();
             const collectorPort = document.getElementById('collectorPort').value.trim() || '4317';
             const vrf = document.getElementById('telemetryVRF').value.trim() || 'mgmt';
+            
+            // Get selected devices
+            const selectedDevices = Array.from(document.querySelectorAll('input[name="enableDevice"]:checked'))
+                .map(cb => cb.value);
+            
+            if (selectedDevices.length === 0) {
+                showNotification('Please select at least one device', 'error');
+                return;
+            }
             
             if (!collectorIP) {
                 showNotification('Please enter the collector IP address', 'error');
@@ -1548,7 +2053,7 @@
             }
             
             // Step 1: Check device capability
-            addLogEntry(`Checking telemetry support on ${allDevices.length} devices...`, 'info');
+            addLogEntry(`Checking telemetry support on ${selectedDevices.length} devices...`, 'info');
             
             let supportedDevices = [];
             let unsupportedDevices = [];
@@ -1557,7 +2062,7 @@
                 const capResponse = await fetch('/fabric-api.sh?action=check-telemetry-capability', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ devices: allDevices })
+                    body: JSON.stringify({ devices: selectedDevices })
                 });
                 
                 const capData = await capResponse.json();
@@ -1572,13 +2077,13 @@
                         addLogEntry('Skipped: OTLP export not supported', 'info', d);
                     });
                 } else {
-                    // Fallback to all devices if check fails
-                    addLogEntry('Capability check failed, trying all devices...', 'error');
-                    supportedDevices = allDevices;
+                    // Fallback to selected devices if check fails
+                    addLogEntry('Capability check failed, trying selected devices...', 'error');
+                    supportedDevices = selectedDevices;
                 }
             } catch (error) {
-                addLogEntry('Capability check failed, trying all devices...', 'error');
-                supportedDevices = allDevices;
+                addLogEntry('Capability check failed, trying selected devices...', 'error');
+                supportedDevices = selectedDevices;
             }
             
             if (supportedDevices.length === 0) {
@@ -1671,6 +2176,15 @@
         }
         
         async function disableTelemetry() {
+            // Get selected devices
+            const selectedDevices = Array.from(document.querySelectorAll('input[name="disableDevice"]:checked'))
+                .map(cb => cb.value);
+            
+            if (selectedDevices.length === 0) {
+                showNotification('Please select at least one device', 'error');
+                return;
+            }
+            
             closeDisableModal();
             
             // Show progress
@@ -1682,7 +2196,7 @@
             document.getElementById('progressSpinner').style.display = '';
             
             // Step 1: Check device capability
-            addLogEntry(`Checking telemetry support on ${allDevices.length} devices...`, 'info');
+            addLogEntry(`Checking telemetry support on ${selectedDevices.length} devices...`, 'info');
             
             let supportedDevices = [];
             let unsupportedDevices = [];
@@ -1691,7 +2205,7 @@
                 const capResponse = await fetch('/fabric-api.sh?action=check-telemetry-capability', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ devices: allDevices })
+                    body: JSON.stringify({ devices: selectedDevices })
                 });
                 
                 const capData = await capResponse.json();
@@ -1706,12 +2220,12 @@
                         addLogEntry('Skipped: OTLP export not supported', 'info', d);
                     });
                 } else {
-                    addLogEntry('Capability check failed, trying all devices...', 'error');
-                    supportedDevices = allDevices;
+                    addLogEntry('Capability check failed, trying selected devices...', 'error');
+                    supportedDevices = selectedDevices;
                 }
             } catch (error) {
-                addLogEntry('Capability check failed, trying all devices...', 'error');
-                supportedDevices = allDevices;
+                addLogEntry('Capability check failed, trying selected devices...', 'error');
+                supportedDevices = selectedDevices;
             }
             
             let successCount = 0;
