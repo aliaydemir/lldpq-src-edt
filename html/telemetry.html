@@ -482,77 +482,6 @@
             height: 250px;
         }
         
-        /* Alerts Table */
-        .alerts-section {
-            background: #252526;
-            border: 1px solid #3c3c3c;
-            border-radius: 8px;
-            padding: 20px;
-            margin-bottom: 20px;
-        }
-        .alerts-section h3 {
-            color: #ff9800;
-            font-size: 16px;
-            margin-bottom: 15px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        .alerts-section h3 svg {
-            width: 18px;
-            height: 18px;
-            fill: #ff9800;
-        }
-        .alerts-table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-        .alerts-table th, .alerts-table td {
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid #3c3c3c;
-        }
-        .alerts-table th {
-            color: #888;
-            font-size: 12px;
-            font-weight: 500;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        .alerts-table td {
-            font-size: 13px;
-        }
-        .alert-badge {
-            padding: 4px 10px;
-            border-radius: 12px;
-            font-size: 11px;
-            font-weight: 500;
-            text-transform: uppercase;
-        }
-        .alert-badge.critical {
-            background: rgba(244, 67, 54, 0.2);
-            color: #f44336;
-        }
-        .alert-badge.warning {
-            background: rgba(255, 152, 0, 0.2);
-            color: #ff9800;
-        }
-        .alert-badge.info {
-            background: rgba(79, 195, 247, 0.2);
-            color: #4fc3f7;
-        }
-        .no-alerts {
-            text-align: center;
-            color: #888;
-            padding: 40px;
-        }
-        .no-alerts svg {
-            width: 48px;
-            height: 48px;
-            fill: #3c3c3c;
-            margin-bottom: 10px;
-        }
-        
         /* Connection Status */
         .connection-status {
             display: flex;
@@ -754,7 +683,7 @@
             </div>
             <div class="refresh-indicator" id="refreshIndicator">
                 <svg viewBox="0 0 24 24"><path d="M12 4V2A10 10 0 0 0 2 12h2a8 8 0 0 1 8-8z"/></svg>
-                <span>Auto-refresh: 30s</span>
+                <span>Auto-refresh: 5s</span>
             </div>
         </div>
         
@@ -772,39 +701,17 @@
                 <div class="label">Total Throughput</div>
                 <div class="value">-<span class="unit">Gbps</span></div>
             </div>
-            <div class="stat-card" id="statAlerts">
-                <div class="label">Active Alerts</div>
-                <div class="value">0</div>
-            </div>
         </div>
         
         <!-- Charts -->
         <div class="charts-grid">
-            <div class="chart-card">
+            <div class="chart-card" style="grid-column: span 2;">
                 <h4>
                     <svg viewBox="0 0 24 24"><path d="M3.5 18.49l6-6.01 4 4L22 6.92l-1.41-1.41-7.09 7.97-4-4L2 16.99z"/></svg>
-                    Interface Throughput (Mbps)
+                    Total Throughput (Gbps)
                 </h4>
-                <div class="chart-container">
-                    <canvas id="throughputChart"></canvas>
-                </div>
-            </div>
-            <div class="chart-card">
-                <h4>
-                    <svg viewBox="0 0 24 24"><path d="M4 9h4v11H4zm6-5h4v16h-4zm6 8h4v8h-4z"/></svg>
-                    Top Talkers (Mbps)
-                </h4>
-                <div class="chart-container">
-                    <canvas id="topTalkersChart"></canvas>
-                </div>
-            </div>
-            <div class="chart-card">
-                <h4>
-                    <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
-                    Packet Drops (per second)
-                </h4>
-                <div class="chart-container">
-                    <canvas id="dropsChart"></canvas>
+                <div class="chart-container" style="height: 200px;">
+                    <canvas id="totalThroughputChart"></canvas>
                 </div>
             </div>
             <div class="chart-card">
@@ -816,21 +723,26 @@
                     <canvas id="errorsChart"></canvas>
                 </div>
             </div>
-        </div>
-        
-        <!-- Active Alerts -->
-        <div class="alerts-section">
-            <h3>
-                <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
-                Active Alerts
-            </h3>
-            <div id="alertsContainer">
-                <div class="no-alerts">
-                    <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
-                    <div>No active alerts</div>
+            <div class="chart-card">
+                <h4>
+                    <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+                    Packet Drops (per second)
+                </h4>
+                <div class="chart-container">
+                    <canvas id="dropsChart"></canvas>
+                </div>
+            </div>
+            <div class="chart-card" style="grid-column: span 2;">
+                <h4>
+                    <svg viewBox="0 0 24 24"><path d="M4 9h4v11H4zm6-5h4v16h-4zm6 8h4v8h-4z"/></svg>
+                    Top Talkers (Mbps)
+                </h4>
+                <div class="chart-container" style="height: 300px;">
+                    <canvas id="topTalkersChart"></canvas>
                 </div>
             </div>
         </div>
+        
         
         <!-- Interface Stats Table -->
         <div class="info-section">
@@ -975,7 +887,7 @@
         let allDevices = [];
         let prometheusUrl = '';
         let refreshInterval = null;
-        let throughputChart = null;
+        let totalThroughputChart = null;
         let topTalkersChart = null;
         let errorsChart = null;
         let dropsChart = null;
@@ -1110,11 +1022,16 @@
                 }
             };
             
-            // Throughput Chart
-            throughputChart = new Chart(document.getElementById('throughputChart'), {
+            // Total Throughput Chart (wide, single line)
+            totalThroughputChart = new Chart(document.getElementById('totalThroughputChart'), {
                 type: 'line',
                 data: { labels: [], datasets: [] },
-                options: { ...commonOptions }
+                options: {
+                    ...commonOptions,
+                    plugins: {
+                        legend: { display: false }
+                    }
+                }
             });
             
             // Top Talkers Chart (horizontal bar)
@@ -1202,11 +1119,10 @@
                 // Fetch stats
                 await Promise.all([
                     updateStats(device, timeRange),
-                    updateThroughputChart(device, timeRange),
+                    updateTotalThroughputChart(device, timeRange),
                     updateTopTalkersChart(device),
                     updateErrorsChart(device, timeRange),
                     updateDropsChart(device, timeRange),
-                    updateAlerts(),
                     updateInterfaceTable(device)
                 ]);
             } catch (error) {
@@ -1262,29 +1178,37 @@
                 document.querySelector('#statThroughput .value').innerHTML = `${value}<span class="unit">Gbps</span>`;
             }
             
-            // Alerts count
-            const alertResult = await queryPrometheus('count(ALERTS{alertstate="firing"}) or vector(0)');
-            if (alertResult.success && alertResult.data?.result?.[0]) {
-                const alertCount = parseInt(alertResult.data.result[0].value?.[1] || 0);
-                const alertCard = document.getElementById('statAlerts');
-                alertCard.querySelector('.value').textContent = alertCount;
-                alertCard.className = alertCount > 0 ? 'stat-card critical' : 'stat-card';
-            }
         }
         
-        async function updateThroughputChart(device, timeRange) {
+        async function updateTotalThroughputChart(device, timeRange) {
             const deviceFilter = device !== 'all' ? `{net_host_name="${device}"}` : '';
-            const query = `sum by (net_host_name) (rate(cumulus_nvswitch_interface_if_in_octets${deviceFilter}[1m]) + rate(cumulus_nvswitch_interface_if_out_octets${deviceFilter}[1m])) * 8 / 1000000`;
+            // Total throughput in Gbps (single line)
+            const query = `sum(rate(cumulus_nvswitch_interface_if_in_octets${deviceFilter}[2m]) + rate(cumulus_nvswitch_interface_if_out_octets${deviceFilter}[2m])) * 8 / 1000000000`;
             
             const result = await queryPrometheusRange(query, timeRange, '30s');
-            if (result.success && result.data?.result) {
-                updateChart(throughputChart, result.data.result, 'Mbps');
+            if (result.success && result.data?.result && result.data.result.length > 0) {
+                const timestamps = result.data.result[0].values.map(v => {
+                    const date = new Date(v[0] * 1000);
+                    return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+                });
+                
+                totalThroughputChart.data.labels = timestamps;
+                totalThroughputChart.data.datasets = [{
+                    label: 'Total Throughput',
+                    data: result.data.result[0].values.map(v => parseFloat(v[1]) || 0),
+                    borderColor: '#76b900',
+                    backgroundColor: '#76b90020',
+                    fill: true,
+                    tension: 0.3,
+                    pointRadius: 0
+                }];
+                totalThroughputChart.update();
             }
         }
         
         async function updateErrorsChart(device, timeRange) {
             const deviceFilter = device !== 'all' ? `{net_host_name="${device}"}` : '';
-            const query = `sum by (net_host_name) (rate(cumulus_nvswitch_interface_if_in_errors${deviceFilter}[1m]) + rate(cumulus_nvswitch_interface_if_out_errors${deviceFilter}[1m]))`;
+            const query = `sum by (net_host_name) (rate(cumulus_nvswitch_interface_if_in_errors${deviceFilter}[2m]) + rate(cumulus_nvswitch_interface_if_out_errors${deviceFilter}[2m]))`;
             
             const result = await queryPrometheusRange(query, timeRange, '30s');
             if (result.success && result.data?.result) {
@@ -1294,7 +1218,7 @@
         
         async function updateDropsChart(device, timeRange) {
             const deviceFilter = device !== 'all' ? `{net_host_name="${device}"}` : '';
-            const query = `sum by (net_host_name) (rate(cumulus_nvswitch_interface_ether_stats_drop_events${deviceFilter}[1m]))`;
+            const query = `sum by (net_host_name) (rate(cumulus_nvswitch_interface_ether_stats_drop_events${deviceFilter}[2m]))`;
             
             const result = await queryPrometheusRange(query, timeRange, '30s');
             if (result.success && result.data?.result) {
@@ -1305,7 +1229,7 @@
         async function updateTopTalkersChart(device) {
             // Query for top 10 interfaces by throughput
             const deviceFilter = device !== 'all' ? `{net_host_name="${device}"}` : '';
-            const query = `topk(10, sum by (interface, net_host_name) (rate(cumulus_nvswitch_interface_if_in_octets${deviceFilter}[5m]) + rate(cumulus_nvswitch_interface_if_out_octets${deviceFilter}[5m])) * 8 / 1000000)`;
+            const query = `topk(20, sum by (interface, net_host_name) (rate(cumulus_nvswitch_interface_if_in_octets${deviceFilter}[5m]) + rate(cumulus_nvswitch_interface_if_out_octets${deviceFilter}[5m])) * 8 / 1000000)`;
             
             try {
                 const response = await fetch('/fabric-api.sh?action=prometheus-query', {
@@ -1324,12 +1248,12 @@
                             value: parseFloat(r.value[1]) || 0
                         }))
                         .sort((a, b) => b.value - a.value)
-                        .slice(0, 10);
+                        .slice(0, 20);
                     
                     topTalkersChart.data.labels = sorted.map(s => s.label);
                     topTalkersChart.data.datasets = [{
                         data: sorted.map(s => s.value.toFixed(2)),
-                        backgroundColor: chartColors.slice(0, sorted.length),
+                        backgroundColor: chartColors.concat(chartColors).slice(0, sorted.length),
                         borderWidth: 0
                     }];
                     topTalkersChart.update();
@@ -1357,7 +1281,7 @@
                 return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
             });
             
-            const datasets = results.slice(0, 10).map((result, idx) => ({
+            const datasets = results.slice(0, 20).map((result, idx) => ({
                 label: result.metric.net_host_name || result.metric.interface || `Series ${idx + 1}`,
                 data: result.values.map(v => parseFloat(v[1]) || 0),
                 borderColor: chartColors[idx % chartColors.length],
@@ -1373,55 +1297,9 @@
             chart.update();
         }
         
-        async function updateAlerts() {
-            const result = await queryPrometheus('ALERTS{alertstate="firing"}');
-            const container = document.getElementById('alertsContainer');
-            
-            if (!result.success || !result.data?.result || result.data.result.length === 0) {
-                container.innerHTML = `
-                    <div class="no-alerts">
-                        <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
-                        <div>No active alerts</div>
-                    </div>
-                `;
-                return;
-            }
-            
-            const alerts = result.data.result;
-            let html = `
-                <table class="alerts-table">
-                    <thead>
-                        <tr>
-                            <th>Severity</th>
-                            <th>Alert</th>
-                            <th>Device</th>
-                            <th>Interface</th>
-                            <th>Description</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-            `;
-            
-            for (const alert of alerts) {
-                const severity = alert.metric.severity || 'info';
-                html += `
-                    <tr>
-                        <td><span class="alert-badge ${severity}">${severity}</span></td>
-                        <td>${alert.metric.alertname || '-'}</td>
-                        <td>${alert.metric.device || '-'}</td>
-                        <td>${alert.metric.interface || '-'}</td>
-                        <td>${alert.metric.description || '-'}</td>
-                    </tr>
-                `;
-            }
-            
-            html += '</tbody></table>';
-            container.innerHTML = html;
-        }
-        
         async function updateInterfaceTable(device) {
-            const deviceFilter = device !== 'all' ? `{device="${device}"}` : '';
-            const query = `topk(10, rate(cumulus_interface_tx_bytes${deviceFilter}[5m]) + rate(cumulus_interface_rx_bytes${deviceFilter}[5m]))`;
+            const deviceFilter = device !== 'all' ? `{net_host_name="${device}"}` : '';
+            const query = `topk(20, rate(cumulus_nvswitch_interface_if_in_octets${deviceFilter}[5m]) + rate(cumulus_nvswitch_interface_if_out_octets${deviceFilter}[5m]))`;
             
             const result = await queryPrometheus(query);
             const tbody = document.getElementById('interfaceTableBody');
@@ -1439,7 +1317,7 @@
             
             let html = '';
             for (const iface of result.data.result) {
-                const deviceName = iface.metric.device || '-';
+                const deviceName = iface.metric.net_host_name || '-';
                 const ifName = iface.metric.interface || '-';
                 const bytesPerSec = parseFloat(iface.value?.[1] || 0);
                 const mbps = (bytesPerSec * 8 / 1000000).toFixed(2);
