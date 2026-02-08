@@ -1467,7 +1467,11 @@
             // Reset loaded flags for lazy loading
             tabsLoaded = { overview: false, ports: false, optical: false, bgp: false, logs: false, commands: false, capture: false, clsupport: false };
             
-            // Stop any running polling (capture or clsupport)
+            // Stop any active capture on previous device
+            if (captureAbortController) {
+                captureAbortController.abort();
+                captureAbortController = null;
+            }
             if (livePollingInterval) {
                 clearInterval(livePollingInterval);
                 livePollingInterval = null;
@@ -1476,9 +1480,35 @@
                 clearInterval(clsupportPollingInterval);
                 clsupportPollingInterval = null;
             }
+            
+            // Clear capture state and form
             capturePcapPath = null;
             liveCaptureFile = null;
             clsupportFilePath = null;
+            
+            // Reset capture form and output
+            const captureInterface = document.getElementById('captureInterface');
+            const captureOutput = document.getElementById('captureOutput');
+            const capturePcapResult = document.getElementById('capturePcapResult');
+            const captureStatus = document.getElementById('captureStatus');
+            if (captureInterface) captureInterface.value = '';
+            if (captureOutput) captureOutput.textContent = '';
+            if (capturePcapResult) capturePcapResult.style.display = 'none';
+            if (captureStatus) captureStatus.textContent = '';
+            
+            // Reset capture buttons
+            const btnStartCapture = document.getElementById('btnStartCapture');
+            const btnStopCapture = document.getElementById('btnStopCapture');
+            if (btnStartCapture) btnStartCapture.style.display = 'inline-block';
+            if (btnStopCapture) btnStopCapture.style.display = 'none';
+            
+            // Reset cl-support display
+            const clsupportStatus = document.getElementById('clsupportStatus');
+            const clsupportResult = document.getElementById('clsupportResult');
+            const clsupportProgress = document.getElementById('clsupportProgress');
+            if (clsupportStatus) clsupportStatus.textContent = '';
+            if (clsupportResult) clsupportResult.style.display = 'none';
+            if (clsupportProgress) clsupportProgress.style.display = 'none';
             
             // Always switch to Overview tab when changing devices
             document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
