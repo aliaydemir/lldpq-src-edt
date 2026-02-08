@@ -4517,6 +4517,117 @@ except Exception as e:
 PYTHON_CLSUPPORT
         exit 0
         ;;
+    check-telemetry-capability)
+        # Check which devices support OTLP telemetry export
+        read -r POST_DATA
+        export POST_DATA
+        
+        python3 << 'PYTHON_CHECK_TELEM'
+import json
+import subprocess
+import os
+import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+def read_lldpq_conf():
+    conf = {}
+    conf_paths = ['/etc/lldpq.conf', os.path.expanduser('~/lldpq.conf')]
+    for conf_path in conf_paths:
+        if os.path.exists(conf_path):
+            with open(conf_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#') and '=' in line:
+                        key, val = line.split('=', 1)
+                        conf[key.strip()] = val.strip()
+            break
+    return conf
+
+def get_device_ip(device, ansible_dir):
+    """Get device IP from inventory"""
+    import re
+    for inv_file in [f"{ansible_dir}/inventory/inventory.ini", f"{ansible_dir}/inventory/hosts"]:
+        if os.path.exists(inv_file):
+            with open(inv_file, 'r') as f:
+                for line in f:
+                    if line.strip().startswith(device + ' ') or line.strip().startswith(device + '\t'):
+                        match = re.search(r'ansible_host=(\S+)', line)
+                        if match:
+                            return match.group(1)
+    return device
+
+def check_device(device, device_ip, lldpq_user):
+    """Check if device supports telemetry export"""
+    try:
+        ssh_cmd = [
+            'sudo', '-u', lldpq_user,
+            'ssh',
+            '-T',
+            '-o', 'StrictHostKeyChecking=no',
+            '-o', 'ConnectTimeout=10',
+            '-o', 'LogLevel=ERROR',
+            device_ip,
+            'nv show system telemetry export 2>&1 | head -5'
+        ]
+        
+        result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=30)
+        output = result.stdout + result.stderr
+        
+        # Check if export is supported
+        if "'export' is not one of" in output or "Error:" in output:
+            return {'device': device, 'supported': False}
+        else:
+            return {'device': device, 'supported': True}
+    
+    except subprocess.TimeoutExpired:
+        return {'device': device, 'supported': False, 'error': 'timeout'}
+    except Exception as e:
+        return {'device': device, 'supported': False, 'error': str(e)}
+
+try:
+    data = json.loads(os.environ.get('POST_DATA', '{}'))
+except:
+    data = {}
+
+devices = data.get('devices', [])
+
+if not devices:
+    print(json.dumps({'success': False, 'error': 'Devices required'}))
+    sys.exit()
+
+lldpq_conf = read_lldpq_conf()
+ansible_dir = lldpq_conf.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+lldpq_user = lldpq_conf.get('LLDPQ_USER', os.environ.get('USER', 'root'))
+
+supported = []
+unsupported = []
+
+# Check all devices in parallel
+with ThreadPoolExecutor(max_workers=300) as executor:
+    futures = {}
+    for device in devices:
+        device_ip = get_device_ip(device, ansible_dir)
+        future = executor.submit(check_device, device, device_ip, lldpq_user)
+        futures[future] = device
+    
+    for future in as_completed(futures):
+        result = future.result()
+        if result.get('supported'):
+            supported.append(result['device'])
+        else:
+            unsupported.append(result['device'])
+
+print(json.dumps({
+    'success': True,
+    'supported': supported,
+    'unsupported': unsupported,
+    'supported_count': len(supported),
+    'unsupported_count': len(unsupported)
+}))
+
+PYTHON_CHECK_TELEM
+        exit 0
+        ;;
     run-telemetry-commands)
         # Run telemetry commands on ALL devices in parallel
         read -r POST_DATA
@@ -4544,8 +4655,36 @@ def read_lldpq_conf():
             break
     return conf
 
-def get_device_ip(device, ansible_dir):
-    """Get device IP from inventory"""
+def get_device_ip(device, ansible_dir, lldpq_conf):
+    """Get device IP from devices.yaml or inventory.ini"""
+    import yaml
+    
+    # First try devices.yaml (preferred source)
+    lldpq_dir = lldpq_conf.get('LLDPQ_DIR', '')
+    lldpq_user = lldpq_conf.get('LLDPQ_USER', '')
+    
+    devices_paths = []
+    if lldpq_dir:
+        devices_paths.append(f"{lldpq_dir}/devices.yaml")
+    if lldpq_user:
+        devices_paths.append(f"/home/{lldpq_user}/lldpq/devices.yaml")
+    
+    for path in devices_paths:
+        if os.path.exists(path):
+            try:
+                with open(path, 'r') as f:
+                    data = yaml.safe_load(f) or {}
+                    devices_dict = data.get('devices', {})
+                    # Format: { "192.168.58.11": "hostname @role" }
+                    for ip, hostname_info in devices_dict.items():
+                        hostname = hostname_info.split()[0] if isinstance(hostname_info, str) else str(hostname_info)
+                        if hostname == device:
+                            return str(ip)
+            except:
+                pass
+            break
+    
+    # Fallback to inventory.ini
     for inv_file in [f"{ansible_dir}/inventory/inventory.ini", f"{ansible_dir}/inventory/hosts"]:
         if os.path.exists(inv_file):
             with open(inv_file, 'r') as f:
@@ -4561,7 +4700,8 @@ def run_on_device(device, device_ip, combined_cmd, lldpq_user):
     try:
         ssh_cmd = [
             'sudo', '-u', lldpq_user, 
-            'ssh', 
+            'ssh',
+            '-T',  # Disable pseudo-tty (avoids stty errors from .bashrc)
             '-o', 'StrictHostKeyChecking=no', 
             '-o', 'ConnectTimeout=30',
             '-o', 'LogLevel=ERROR',
@@ -4624,7 +4764,7 @@ results = []
 with ThreadPoolExecutor(max_workers=300) as executor:
     futures = {}
     for device in devices:
-        device_ip = get_device_ip(device, ansible_dir)
+        device_ip = get_device_ip(device, ansible_dir, lldpq_conf)
         future = executor.submit(run_on_device, device, device_ip, combined_cmd, lldpq_user)
         futures[future] = device
     
@@ -4840,14 +4980,21 @@ def get_server_ips():
         pass
     return list(set(ips))
 
-def get_device_mgmt_ips():
+def get_device_mgmt_ips(conf):
     """Get management IPs from devices.yaml"""
     import yaml
     mgmt_ips = []
-    devices_paths = [
-        os.path.expanduser('~/lldpq/devices.yaml'),
-        '/var/www/html/lldpq/devices.yaml'
-    ]
+    
+    # Get LLDPQ_DIR from config
+    lldpq_dir = conf.get('LLDPQ_DIR', '')
+    lldpq_user = conf.get('LLDPQ_USER', '')
+    
+    devices_paths = []
+    if lldpq_dir:
+        devices_paths.append(f"{lldpq_dir}/devices.yaml")
+    if lldpq_user:
+        devices_paths.append(f"/home/{lldpq_user}/lldpq/devices.yaml")
+    devices_paths.append('/var/www/html/lldpq/devices.yaml')
     for path in devices_paths:
         if os.path.exists(path):
             try:
@@ -4886,7 +5033,7 @@ stack_running = check_stack_running()
 
 # Get server IPs and find best match
 server_ips = get_server_ips()
-device_ips = get_device_mgmt_ips()
+device_ips = get_device_mgmt_ips(lldpq_conf)
 suggested_ip = find_matching_server_ip(server_ips, device_ips) if not collector_ip else collector_ip
 
 print(json.dumps({
@@ -4935,12 +5082,23 @@ config_updates = [
 ]
 
 try:
+    # Read current config
+    config_lines = []
+    if os.path.exists('/etc/lldpq.conf'):
+        with open('/etc/lldpq.conf', 'r') as f:
+            config_lines = f.readlines()
+    
+    # Update or add each config key
     for update in config_updates:
         key = update.split('=')[0]
-        # Remove existing key if present
-        subprocess.run(['sudo', 'sed', '-i', f'/^{key}=/d', '/etc/lldpq.conf'], capture_output=True)
+        # Remove existing key
+        config_lines = [l for l in config_lines if not l.strip().startswith(f'{key}=')]
         # Add new value
-        subprocess.run(f"echo '{update}' | sudo tee -a /etc/lldpq.conf > /dev/null", shell=True, capture_output=True)
+        config_lines.append(update + '\n')
+    
+    # Write back
+    with open('/etc/lldpq.conf', 'w') as f:
+        f.writelines(config_lines)
     
     print(json.dumps({'success': True}))
 except Exception as e:

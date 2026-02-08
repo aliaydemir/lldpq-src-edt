@@ -911,7 +911,7 @@
     
         <div class="progress-section" id="progressSection">
             <h3>
-                <svg viewBox="0 0 24 24"><path d="M12 4V2A10 10 0 0 0 2 12h2a8 8 0 0 1 8-8z"/></svg>
+                <svg id="progressSpinner" viewBox="0 0 24 24"><path d="M12 4V2A10 10 0 0 0 2 12h2a8 8 0 0 1 8-8z"/></svg>
                 <span id="progressTitle">Processing...</span>
             </h3>
             <div class="progress-log" id="progressLog"></div>
@@ -1055,19 +1055,23 @@
                 const data = await response.json();
                 
                 if (data.success && data.devices) {
-                    allDevices = [];
+                    // Use Set to track unique devices
+                    const uniqueDevices = new Set();
                     const deviceSelect = document.getElementById('dashboardDevice');
                     
                     for (const [group, devices] of Object.entries(data.devices)) {
                         devices.forEach(d => {
-                            allDevices.push(d.hostname);
-                            const option = document.createElement('option');
-                            option.value = d.hostname;
-                            option.textContent = d.hostname;
-                            deviceSelect.appendChild(option);
+                            if (!uniqueDevices.has(d.hostname)) {
+                                uniqueDevices.add(d.hostname);
+                                const option = document.createElement('option');
+                                option.value = d.hostname;
+                                option.textContent = d.hostname;
+                                deviceSelect.appendChild(option);
+                            }
                         });
                     }
-                    console.log(`Loaded ${allDevices.length} devices`);
+                    allDevices = [...uniqueDevices];
+                    console.log(`Loaded ${allDevices.length} unique devices`);
                 }
             } catch (error) {
                 console.error('Failed to load devices:', error);
@@ -1581,6 +1585,7 @@
             progressSection.classList.add('active');
             progressLog.innerHTML = '';
             document.getElementById('progressTitle').textContent = 'Enabling Telemetry...';
+            document.getElementById('progressSpinner').style.display = '';
             
             // Save collector config for later (used when disabling)
             addLogEntry('Saving collector configuration...', 'info');
@@ -1599,7 +1604,51 @@
                 addLogEntry('Warning: Could not save collector config', 'error');
             }
             
-            addLogEntry(`Starting telemetry configuration for ${allDevices.length} devices (parallel)`, 'info');
+            // Step 1: Check device capability
+            addLogEntry(`Checking telemetry support on ${allDevices.length} devices...`, 'info');
+            
+            let supportedDevices = [];
+            let unsupportedDevices = [];
+            
+            try {
+                const capResponse = await fetch('/fabric-api.sh?action=check-telemetry-capability', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ devices: allDevices })
+                });
+                
+                const capData = await capResponse.json();
+                
+                if (capData.success) {
+                    supportedDevices = capData.supported || [];
+                    unsupportedDevices = capData.unsupported || [];
+                    addLogEntry(`${supportedDevices.length} supported, ${unsupportedDevices.length} unsupported`, 'info');
+                    
+                    // Log unsupported devices
+                    unsupportedDevices.forEach(d => {
+                        addLogEntry('Skipped: OTLP export not supported', 'info', d);
+                    });
+                } else {
+                    // Fallback to all devices if check fails
+                    addLogEntry('Capability check failed, trying all devices...', 'error');
+                    supportedDevices = allDevices;
+                }
+            } catch (error) {
+                addLogEntry('Capability check failed, trying all devices...', 'error');
+                supportedDevices = allDevices;
+            }
+            
+            if (supportedDevices.length === 0) {
+                addLogEntry('No devices support telemetry export', 'error');
+                document.getElementById('progressTitle').textContent = 'No Supported Devices';
+                document.getElementById('progressSpinner').style.display = 'none';
+                showNotification('No devices support telemetry export', 'error');
+                return;
+            }
+            
+            // Step 2: Configure supported devices
+            addLogEntry('', 'info');
+            addLogEntry(`Configuring ${supportedDevices.length} supported devices...`, 'info');
             addLogEntry(`Collector: ${collectorIP}:${collectorPort}, VRF: ${vrf}`, 'info');
             
             // Build commands
@@ -1621,13 +1670,13 @@
             let successCount = 0;
             let errorCount = 0;
             
-            // Process all devices in parallel via backend
+            // Process only supported devices
             try {
                 const response = await fetch('/fabric-api.sh?action=run-telemetry-commands', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        devices: allDevices,
+                        devices: supportedDevices,
                         commands: commands
                     })
                 });
@@ -1646,6 +1695,8 @@
                             // Individual device result
                             if (result.success) {
                                 addLogEntry('Telemetry enabled', 'success', result.device);
+                            } else if (result.error && result.error.includes('Stale revision')) {
+                                addLogEntry('Failed: Pending config exists - run "nv config detach" on device', 'error', result.device);
                             } else {
                                 addLogEntry(`Failed: ${result.error || 'Unknown error'}`, 'error', result.device);
                             }
@@ -1661,13 +1712,21 @@
             
             // Summary
             addLogEntry('', 'info');
-            addLogEntry(`Completed: ${successCount} success, ${errorCount} failed`, successCount === allDevices.length ? 'success' : 'info');
+            const skippedCount = unsupportedDevices.length;
+            let summaryMsg = `Completed: ${successCount} enabled, ${errorCount} failed`;
+            if (skippedCount > 0) {
+                summaryMsg += `, ${skippedCount} skipped (unsupported)`;
+            }
+            addLogEntry(summaryMsg, errorCount === 0 ? 'success' : 'info');
             document.getElementById('progressTitle').textContent = 'Telemetry Configuration Complete';
+            document.getElementById('progressSpinner').style.display = 'none';
             
-            if (errorCount === 0) {
-                showNotification(`Telemetry enabled on all ${successCount} devices`, 'success');
+            if (errorCount === 0 && successCount > 0) {
+                showNotification(`Telemetry enabled on ${successCount} devices`, 'success');
+            } else if (successCount > 0) {
+                showNotification(`Telemetry enabled on ${successCount}/${supportedDevices.length} devices`, 'error');
             } else {
-                showNotification(`Telemetry enabled on ${successCount}/${allDevices.length} devices`, 'error');
+                showNotification('Failed to enable telemetry', 'error');
             }
         }
         
@@ -1680,75 +1739,105 @@
             progressSection.classList.add('active');
             progressLog.innerHTML = '';
             document.getElementById('progressTitle').textContent = 'Disabling Telemetry...';
+            document.getElementById('progressSpinner').style.display = '';
             
-            // Get specific disable commands based on saved config
-            addLogEntry('Getting saved collector configuration...', 'info');
-            let commands = [];
-            let hasWarning = false;
+            // Step 1: Check device capability
+            addLogEntry(`Checking telemetry support on ${allDevices.length} devices...`, 'info');
+            
+            let supportedDevices = [];
+            let unsupportedDevices = [];
             
             try {
-                const configResponse = await fetch('/fabric-api.sh?action=get-telemetry-disable-commands');
-                const configData = await configResponse.json();
-                
-                if (configData.success) {
-                    commands = configData.commands;
-                    if (configData.warning) {
-                        addLogEntry(`Warning: ${configData.warning}`, 'error');
-                        hasWarning = true;
-                    } else {
-                        addLogEntry(`Removing config for collector: ${configData.collector_ip}`, 'info');
-                    }
-                } else {
-                    // Fallback to generic unset
-                    commands = ['nv unset system telemetry', 'nv config apply -y'];
-                    addLogEntry('Warning: Using generic unset (will remove ALL telemetry config)', 'error');
-                    hasWarning = true;
-                }
-            } catch (error) {
-                commands = ['nv unset system telemetry', 'nv config apply -y'];
-                addLogEntry('Warning: Could not get saved config, using generic unset', 'error');
-                hasWarning = true;
-            }
-            
-            addLogEntry(`Disabling telemetry on ${allDevices.length} devices (parallel)`, 'info');
-            
-            let successCount = 0;
-            let errorCount = 0;
-            
-            // Process all devices in parallel via backend
-            try {
-                const response = await fetch('/fabric-api.sh?action=run-telemetry-commands', {
+                const capResponse = await fetch('/fabric-api.sh?action=check-telemetry-capability', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        devices: allDevices,
-                        commands: commands
-                    })
+                    body: JSON.stringify({ devices: allDevices })
                 });
                 
-                const text = await response.text();
-                const lines = text.trim().split('\n');
+                const capData = await capResponse.json();
                 
-                for (const line of lines) {
-                    try {
-                        const result = JSON.parse(line);
-                        if (result.complete) {
-                            successCount = result.success;
-                            errorCount = result.failed;
-                        } else if (result.device) {
-                            if (result.success) {
-                                addLogEntry('Telemetry disabled', 'success', result.device);
-                            } else {
-                                addLogEntry(`Failed: ${result.error || 'Unknown error'}`, 'error', result.device);
-                            }
-                        }
-                    } catch (e) {
-                        // Skip malformed lines
-                    }
+                if (capData.success) {
+                    supportedDevices = capData.supported || [];
+                    unsupportedDevices = capData.unsupported || [];
+                    addLogEntry(`${supportedDevices.length} supported, ${unsupportedDevices.length} unsupported`, 'info');
+                    
+                    // Log unsupported devices
+                    unsupportedDevices.forEach(d => {
+                        addLogEntry('Skipped: OTLP export not supported', 'info', d);
+                    });
+                } else {
+                    addLogEntry('Capability check failed, trying all devices...', 'error');
+                    supportedDevices = allDevices;
                 }
             } catch (error) {
-                addLogEntry(`Error: ${error.message}`, 'error');
-                errorCount = allDevices.length;
+                addLogEntry('Capability check failed, trying all devices...', 'error');
+                supportedDevices = allDevices;
+            }
+            
+            if (supportedDevices.length === 0) {
+                addLogEntry('No devices have telemetry export configured', 'info');
+                // Still stop the stack
+            } else {
+                // Step 2: Disable on supported devices
+                addLogEntry('', 'info');
+                addLogEntry(`Disabling telemetry on ${supportedDevices.length} devices...`, 'info');
+                
+                // Disable commands
+                const commands = [
+                    'nv unset system telemetry ai-ethernet-stats',
+                    'nv unset system telemetry export',
+                    'nv unset system telemetry interface-stats',
+                    'nv unset system telemetry lldp',
+                    'nv unset system telemetry platform-stats',
+                    'nv config apply -y'
+                ];
+                
+                let successCount = 0;
+                let errorCount = 0;
+                
+                try {
+                    const response = await fetch('/fabric-api.sh?action=run-telemetry-commands', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            devices: supportedDevices,
+                            commands: commands
+                        })
+                    });
+                    
+                    const text = await response.text();
+                    const lines = text.trim().split('\n');
+                    
+                    for (const line of lines) {
+                        try {
+                            const result = JSON.parse(line);
+                            if (result.complete) {
+                                successCount = result.success;
+                                errorCount = result.failed;
+                            } else if (result.device) {
+                                if (result.success) {
+                                    addLogEntry('Telemetry disabled', 'success', result.device);
+                                } else if (result.error && result.error.includes('Stale revision')) {
+                                    addLogEntry('Failed: Pending config exists - run "nv config detach" on device', 'error', result.device);
+                                } else {
+                                    addLogEntry(`Failed: ${result.error || 'Unknown error'}`, 'error', result.device);
+                                }
+                            }
+                        } catch (e) {
+                            // Skip malformed lines
+                        }
+                    }
+                    
+                    addLogEntry('', 'info');
+                    const skippedCount = unsupportedDevices.length;
+                    let summaryMsg = `Completed: ${successCount} disabled, ${errorCount} failed`;
+                    if (skippedCount > 0) {
+                        summaryMsg += `, ${skippedCount} skipped (unsupported)`;
+                    }
+                    addLogEntry(summaryMsg, errorCount === 0 ? 'success' : 'info');
+                } catch (error) {
+                    addLogEntry(`Error: ${error.message}`, 'error');
+                }
             }
             
             // Stop Docker stack
@@ -1770,6 +1859,7 @@
             addLogEntry('', 'info');
             addLogEntry(`Completed: ${successCount} success, ${errorCount} failed`, successCount === allDevices.length ? 'success' : 'info');
             document.getElementById('progressTitle').textContent = 'Telemetry Disabled';
+            document.getElementById('progressSpinner').style.display = 'none';
             
             if (errorCount === 0) {
                 showNotification(`Telemetry disabled on all ${successCount} devices`, 'success');

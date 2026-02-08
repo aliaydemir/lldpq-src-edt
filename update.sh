@@ -437,7 +437,12 @@ echo "# LLDPq Configuration" | sudo tee /etc/lldpq.conf > /dev/null
 echo "LLDPQ_DIR=$HOME/lldpq" | sudo tee -a /etc/lldpq.conf > /dev/null
 echo "WEB_ROOT=$WEB_ROOT" | sudo tee -a /etc/lldpq.conf > /dev/null
 echo "ANSIBLE_DIR=$ANSIBLE_DIR" | sudo tee -a /etc/lldpq.conf > /dev/null
-sudo chmod 644 /etc/lldpq.conf
+# Set permissions so web server can update telemetry config
+USER_GROUP=$(id -gn)
+sudo chown root:$USER_GROUP /etc/lldpq.conf
+sudo chmod 664 /etc/lldpq.conf
+# Add www-data to user's group for web access
+sudo usermod -a -G $USER_GROUP www-data 2>/dev/null || true
 echo "     Configuration saved to /etc/lldpq.conf"
 
 echo "   - Updating bin/* to /usr/local/bin/"
