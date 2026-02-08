@@ -927,8 +927,10 @@
             </h2>
             <div class="form-group">
                 <label>OTLP Collector IP Address</label>
-                <input type="text" id="collectorIP" placeholder="192.168.58.200" value="">
-                <div class="hint">IP address of the OpenTelemetry collector (e.g., this server)</div>
+                <select id="collectorIP" style="width: 100%;">
+                    <option value="">Loading server IPs...</option>
+                </select>
+                <div class="hint">Select the IP address that devices can reach (matching mgmt subnet is recommended)</div>
             </div>
             <div class="form-group">
                 <label>OTLP Collector Port</label>
@@ -937,11 +939,8 @@
             </div>
             <div class="form-group">
                 <label>VRF</label>
-                <select id="telemetryVRF">
-                    <option value="mgmt">mgmt</option>
-                    <option value="default">default</option>
-                </select>
-                <div class="hint">VRF to use for telemetry export (usually mgmt)</div>
+                <input type="text" id="telemetryVRF" value="mgmt" placeholder="mgmt">
+                <div class="hint">VRF to use for telemetry export (default: mgmt, or enter custom)</div>
             </div>
             <div class="modal-actions">
                 <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
@@ -1439,7 +1438,7 @@
         }
         
         async function showEnableModal() {
-            // Check if stack is running first
+            // Check if stack is running first and get server IPs
             try {
                 const response = await fetch('/fabric-api.sh?action=get-telemetry-config');
                 const data = await response.json();
@@ -1449,6 +1448,38 @@
                     showStackWarningModal();
                     return;
                 }
+                
+                // Populate IP dropdown
+                const ipSelect = document.getElementById('collectorIP');
+                ipSelect.innerHTML = '';
+                
+                const serverIPs = data.server_ips || [];
+                const suggestedIP = data.suggested_ip || '';
+                
+                if (serverIPs.length > 0) {
+                    serverIPs.forEach(ip => {
+                        const option = document.createElement('option');
+                        option.value = ip;
+                        option.textContent = ip;
+                        if (ip === suggestedIP) {
+                            option.textContent += ' (recommended - matches device subnet)';
+                            option.selected = true;
+                        }
+                        ipSelect.appendChild(option);
+                    });
+                } else {
+                    // No IPs found, allow manual entry
+                    const option = document.createElement('option');
+                    option.value = '';
+                    option.textContent = 'Enter IP manually below';
+                    ipSelect.appendChild(option);
+                }
+                
+                // Set VRF if saved
+                if (data.collector_vrf) {
+                    document.getElementById('telemetryVRF').value = data.collector_vrf;
+                }
+                
             } catch (error) {
                 console.error('Failed to check stack status:', error);
             }
@@ -1528,7 +1559,7 @@
         async function enableTelemetry() {
             const collectorIP = document.getElementById('collectorIP').value.trim();
             const collectorPort = document.getElementById('collectorPort').value.trim() || '4317';
-            const vrf = document.getElementById('telemetryVRF').value;
+            const vrf = document.getElementById('telemetryVRF').value.trim() || 'mgmt';
             
             if (!collectorIP) {
                 showNotification('Please enter the collector IP address', 'error');
@@ -1568,7 +1599,7 @@
                 addLogEntry('Warning: Could not save collector config', 'error');
             }
             
-            addLogEntry(`Starting telemetry configuration for ${allDevices.length} devices`, 'info');
+            addLogEntry(`Starting telemetry configuration for ${allDevices.length} devices (parallel)`, 'info');
             addLogEntry(`Collector: ${collectorIP}:${collectorPort}, VRF: ${vrf}`, 'info');
             
             // Build commands
@@ -1590,33 +1621,42 @@
             let successCount = 0;
             let errorCount = 0;
             
-            // Process devices sequentially
-            for (const device of allDevices) {
-                addLogEntry('Configuring telemetry...', 'info', device);
+            // Process all devices in parallel via backend
+            try {
+                const response = await fetch('/fabric-api.sh?action=run-telemetry-commands', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        devices: allDevices,
+                        commands: commands
+                    })
+                });
                 
-                try {
-                    const response = await fetch('/fabric-api.sh?action=run-telemetry-commands', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            device: device,
-                            commands: commands
-                        })
-                    });
-                    
-                    const result = await response.json();
-                    
-                    if (result.success) {
-                        addLogEntry('Telemetry enabled successfully', 'success', device);
-                        successCount++;
-                    } else {
-                        addLogEntry(`Failed: ${result.error || 'Unknown error'}`, 'error', device);
-                        errorCount++;
+                const text = await response.text();
+                const lines = text.trim().split('\n');
+                
+                for (const line of lines) {
+                    try {
+                        const result = JSON.parse(line);
+                        if (result.complete) {
+                            // Final summary from backend
+                            successCount = result.success;
+                            errorCount = result.failed;
+                        } else if (result.device) {
+                            // Individual device result
+                            if (result.success) {
+                                addLogEntry('Telemetry enabled', 'success', result.device);
+                            } else {
+                                addLogEntry(`Failed: ${result.error || 'Unknown error'}`, 'error', result.device);
+                            }
+                        }
+                    } catch (e) {
+                        // Skip malformed lines
                     }
-                } catch (error) {
-                    addLogEntry(`Error: ${error.message}`, 'error', device);
-                    errorCount++;
                 }
+            } catch (error) {
+                addLogEntry(`Error: ${error.message}`, 'error');
+                errorCount = allDevices.length;
             }
             
             // Summary
@@ -1670,37 +1710,45 @@
                 hasWarning = true;
             }
             
-            addLogEntry(`Disabling telemetry on ${allDevices.length} devices`, 'info');
+            addLogEntry(`Disabling telemetry on ${allDevices.length} devices (parallel)`, 'info');
             
             let successCount = 0;
             let errorCount = 0;
             
-            for (const device of allDevices) {
-                addLogEntry('Removing telemetry configuration...', 'info', device);
+            // Process all devices in parallel via backend
+            try {
+                const response = await fetch('/fabric-api.sh?action=run-telemetry-commands', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        devices: allDevices,
+                        commands: commands
+                    })
+                });
                 
-                try {
-                    const response = await fetch('/fabric-api.sh?action=run-telemetry-commands', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            device: device,
-                            commands: commands
-                        })
-                    });
-                    
-                    const result = await response.json();
-                    
-                    if (result.success) {
-                        addLogEntry('Telemetry disabled successfully', 'success', device);
-                        successCount++;
-                    } else {
-                        addLogEntry(`Failed: ${result.error || 'Unknown error'}`, 'error', device);
-                        errorCount++;
+                const text = await response.text();
+                const lines = text.trim().split('\n');
+                
+                for (const line of lines) {
+                    try {
+                        const result = JSON.parse(line);
+                        if (result.complete) {
+                            successCount = result.success;
+                            errorCount = result.failed;
+                        } else if (result.device) {
+                            if (result.success) {
+                                addLogEntry('Telemetry disabled', 'success', result.device);
+                            } else {
+                                addLogEntry(`Failed: ${result.error || 'Unknown error'}`, 'error', result.device);
+                            }
+                        }
+                    } catch (e) {
+                        // Skip malformed lines
                     }
-                } catch (error) {
-                    addLogEntry(`Error: ${error.message}`, 'error', device);
-                    errorCount++;
                 }
+            } catch (error) {
+                addLogEntry(`Error: ${error.message}`, 'error');
+                errorCount = allDevices.length;
             }
             
             // Stop Docker stack
