@@ -877,14 +877,6 @@
                 <h4>Interface Stats</h4>
                 <p>Standard interface counters: bytes, packets, errors, discards with configurable sample interval.</p>
             </div>
-            <div class="info-item">
-                <h4>LLDP Export</h4>
-                <p>Exports LLDP neighbor information for topology discovery and visualization.</p>
-            </div>
-            <div class="info-item">
-                <h4>Platform Stats</h4>
-                <p>Hardware health metrics: CPU, memory, temperature, fan speeds, power consumption.</p>
-            </div>
         </div>
     </div>
     
@@ -1252,19 +1244,19 @@
         
         async function updateStats(device, timeRange) {
             // Active devices count
-            const devicesResult = await queryPrometheus('count(count by (device) (cumulus_interface_tx_bytes))');
+            const devicesResult = await queryPrometheus('count(count by (net_host_name) (cumulus_nvswitch_interface_if_out_octets))');
             if (devicesResult.success && devicesResult.data?.result?.[0]) {
                 document.querySelector('#statDevices .value').textContent = devicesResult.data.result[0].value?.[1] || '-';
             }
             
             // Interfaces count
-            const ifResult = await queryPrometheus('count(cumulus_interface_tx_bytes)');
+            const ifResult = await queryPrometheus('count(cumulus_nvswitch_interface_if_out_octets)');
             if (ifResult.success && ifResult.data?.result?.[0]) {
                 document.querySelector('#statInterfaces .value').textContent = ifResult.data.result[0].value?.[1] || '-';
             }
             
             // Total throughput
-            const tpResult = await queryPrometheus('sum(rate(cumulus_interface_tx_bytes[5m]) + rate(cumulus_interface_rx_bytes[5m])) * 8 / 1000000000');
+            const tpResult = await queryPrometheus('sum(rate(cumulus_nvswitch_interface_if_in_octets[5m]) + rate(cumulus_nvswitch_interface_if_out_octets[5m])) * 8 / 1000000000');
             if (tpResult.success && tpResult.data?.result?.[0]) {
                 const value = parseFloat(tpResult.data.result[0].value?.[1] || 0).toFixed(2);
                 document.querySelector('#statThroughput .value').innerHTML = `${value}<span class="unit">Gbps</span>`;
@@ -1281,8 +1273,8 @@
         }
         
         async function updateThroughputChart(device, timeRange) {
-            const deviceFilter = device !== 'all' ? `{device="${device}"}` : '';
-            const query = `sum by (device) (rate(cumulus_interface_tx_bytes${deviceFilter}[1m]) * 8 / 1000000)`;
+            const deviceFilter = device !== 'all' ? `{net_host_name="${device}"}` : '';
+            const query = `sum by (net_host_name) (rate(cumulus_nvswitch_interface_if_in_octets${deviceFilter}[1m]) + rate(cumulus_nvswitch_interface_if_out_octets${deviceFilter}[1m])) * 8 / 1000000`;
             
             const result = await queryPrometheusRange(query, timeRange, '30s');
             if (result.success && result.data?.result) {
@@ -1291,8 +1283,8 @@
         }
         
         async function updateErrorsChart(device, timeRange) {
-            const deviceFilter = device !== 'all' ? `{device="${device}"}` : '';
-            const query = `sum by (device) (rate(cumulus_interface_rx_errors${deviceFilter}[1m]))`;
+            const deviceFilter = device !== 'all' ? `{net_host_name="${device}"}` : '';
+            const query = `sum by (net_host_name) (rate(cumulus_nvswitch_interface_if_in_errors${deviceFilter}[1m]) + rate(cumulus_nvswitch_interface_if_out_errors${deviceFilter}[1m]))`;
             
             const result = await queryPrometheusRange(query, timeRange, '30s');
             if (result.success && result.data?.result) {
@@ -1301,8 +1293,8 @@
         }
         
         async function updateDropsChart(device, timeRange) {
-            const deviceFilter = device !== 'all' ? `{device="${device}"}` : '';
-            const query = `sum by (device) (rate(cumulus_interface_rx_drops${deviceFilter}[1m]) + rate(cumulus_interface_tx_drops${deviceFilter}[1m]))`;
+            const deviceFilter = device !== 'all' ? `{net_host_name="${device}"}` : '';
+            const query = `sum by (net_host_name) (rate(cumulus_nvswitch_interface_ether_stats_drop_events${deviceFilter}[1m]))`;
             
             const result = await queryPrometheusRange(query, timeRange, '30s');
             if (result.success && result.data?.result) {
@@ -1313,7 +1305,7 @@
         async function updateTopTalkersChart(device) {
             // Query for top 10 interfaces by throughput
             const deviceFilter = device !== 'all' ? `{net_host_name="${device}"}` : '';
-            const query = `topk(10, sum by (interface, net_host_name) (rate(cumulus_interface_statistics_rx_bytes${deviceFilter}[5m]) + rate(cumulus_interface_statistics_tx_bytes${deviceFilter}[5m])) * 8 / 1000000)`;
+            const query = `topk(10, sum by (interface, net_host_name) (rate(cumulus_nvswitch_interface_if_in_octets${deviceFilter}[5m]) + rate(cumulus_nvswitch_interface_if_out_octets${deviceFilter}[5m])) * 8 / 1000000)`;
             
             try {
                 const response = await fetch('/fabric-api.sh?action=prometheus-query', {
@@ -1366,7 +1358,7 @@
             });
             
             const datasets = results.slice(0, 10).map((result, idx) => ({
-                label: result.metric.device || result.metric.interface || `Series ${idx + 1}`,
+                label: result.metric.net_host_name || result.metric.interface || `Series ${idx + 1}`,
                 data: result.values.map(v => parseFloat(v[1]) || 0),
                 borderColor: chartColors[idx % chartColors.length],
                 backgroundColor: chartColors[idx % chartColors.length] + '20',
