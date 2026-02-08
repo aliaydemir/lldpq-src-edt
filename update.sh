@@ -2,7 +2,7 @@
 # LLDPq Update Script
 # Updates system files while preserving configuration
 # 
-# Copyright (c) 2024 LLDPq Project
+# Copyright (c) 2024-2026 LLDPq Project
 # Licensed under MIT License - see LICENSE file for details
 #
 # Usage: ./update.sh [-y] [--enable-telemetry] [--disable-telemetry]

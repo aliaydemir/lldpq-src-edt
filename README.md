@@ -387,8 +387,9 @@ real-time telemetry dashboard with OTEL Collector + Prometheus (optional feature
 | Action | Tool | What Happens |
 |--------|------|--------------|
 | Install stack | CLI: `./update.sh --enable-telemetry` | Docker installed, stack started |
-| Enable on switches | Web UI: Enable Telemetry | Switches configured, metrics flow |
-| Disable on switches | Web UI: Disable Telemetry | Switches unconfigured, stack stops |
+| Enable on switches | Web UI: Enable Telemetry | Selected switches configured, metrics flow |
+| Disable on switches | Web UI: Disable Telemetry | Selected switches unconfigured |
+| Stop stack | CLI: `./update.sh --disable-telemetry` | Containers stopped |
 | Remove everything | CLI: `./update.sh --disable-telemetry` | Containers + data deleted |
 
 ### enable on switches
@@ -397,24 +398,23 @@ from the web UI (admin only):
 1. go to **Telemetry** page (`http://<server>/telemetry.html`)
 2. click **Configuration** tab → **Enable Telemetry**
 3. enter your Collector IP (the server running OTEL)
-4. telemetry is configured on all switches automatically
+4. select devices to configure (grouped by inventory, with real-time status)
+5. click **Enable on Selected Devices**
 
 **note**: operators can view the dashboard but cannot enable/disable telemetry.
 
 ### dashboard features
-- **real-time metrics**: interface throughput, errors, drops, temperature
+- **real-time metrics**: interface throughput, errors, drops
 - **chart visualization**: time-series graphs with device filtering
-- **active alerts**: live alert display from Prometheus
-- **top interfaces**: utilization ranking across fabric
-- **auto-refresh**: updates every 30 seconds
+- **top interfaces**: top 20 interface utilization ranking across fabric
+- **AI ethernet stats**: TX wait, buffer utilization, pause frames, AR congestion, ECN marked packets
+- **auto-refresh**: updates every 5 seconds
 
 ### available metrics
 | Metric | Description |
 |--------|-------------|
 | Interface Stats | TX/RX bytes, packets, errors, drops |
-| AI Ethernet Stats | RoCE, ECN, PFC counters for AI/ML workloads |
-| LLDP Telemetry | Neighbor discovery data |
-| Platform Stats | CPU temp, fan speed, memory, PSU |
+| AI Ethernet Stats | TX wait, buffer utilization, pause frames, AR congestion, ECN marked packets |
 
 ### configuration files
 
@@ -460,9 +460,9 @@ TELEMETRY_COLLECTOR_VRF=mgmt         # saved VRF
 ### safe disable behavior
 
 when disabling via web UI:
-- only LLDPq telemetry config is removed from switches
+- only LLDPq telemetry config is removed from selected switches
 - other telemetry configurations (if any) are preserved
-- docker containers are stopped (not removed)
+- docker stack continues running (manage via CLI)
 - metrics history is preserved
 
 when disabling via CLI (`--disable-telemetry`):

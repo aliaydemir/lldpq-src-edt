@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # LLDPq Installation Script
 # 
-# Copyright (c) 2024 LLDPq Project  
+# Copyright (c) 2024-2026 LLDPq Project  
 # Licensed under MIT License - see LICENSE file for details
 #
 # Usage: ./install.sh [-y]
