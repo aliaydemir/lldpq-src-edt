@@ -1,0 +1,1038 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>..::LLDPQ::..</title>
+    <link rel="shortcut icon" href="/png/favicon.ico">
+    <!-- Codicons - VS Code icon set -->
+    <link rel="stylesheet" href="/css/codicon.css">
+    <!-- Authentication -->
+    <script src="/css/auth.js"></script>
+    <!-- js-yaml for YAML validation -->
+    <script src="/css/js-yaml.min.js"></script>
+    
+    <!-- CodeMirror -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/material-darker.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/dialog/dialog.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/yaml/yaml.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/matchbrackets.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/search/search.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/search/searchcursor.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/search/jump-to-line.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/dialog/dialog.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/fold/foldcode.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/fold/foldgutter.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/fold/indent-fold.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/fold/foldgutter.min.css">
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        /* Header - hidden like fabric-editor */
+        .header {
+            display: none;
+        }
+        
+        .editor-toolbar {
+            display: flex;
+            gap: 2px;
+            align-items: center;
+            background: #252526;
+            padding: 4px 8px;
+            border-bottom: 1px solid #3c3c3c;
+        }
+        
+        .toolbar-right {
+            margin-left: auto;
+            display: flex;
+            align-items: center;
+            gap: 2px;
+        }
+        
+        .toolbar-btn {
+            background: transparent;
+            border: none;
+            color: #888;
+            padding: 4px 6px;
+            cursor: pointer;
+            border-radius: 3px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .toolbar-btn:hover {
+            background: #3d3d3d;
+            color: #fff;
+        }
+        
+        .toolbar-btn .codicon {
+            font-size: 14px;
+        }
+        
+        .toolbar-separator {
+            width: 1px;
+            height: 16px;
+            background: #444;
+            margin: 0 4px;
+        }
+        
+        .status {
+            font-size: 12px;
+            padding: 4px 10px;
+            border-radius: 4px;
+            background: #333;
+        }
+        
+        .status.saved { color: #4ec9b0; }
+        .status.modified { color: #dcdcaa; }
+        .status.error { color: #f44747; }
+        .status.valid { color: #4ec9b0; }
+        .status.invalid { color: #f44747; }
+        
+        /* Main container */
+        .main-container {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+        
+        /* Sidebar - File Tree */
+        .sidebar {
+            width: 250px;
+            background: #252526;
+            border-right: 1px solid #404040;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        
+        .sidebar-header {
+            padding: 15px;
+            background: linear-gradient(0deg, #76b900 0%, #5a8c00 100%);
+            color: white;
+            font-weight: bold;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .file-search-container {
+            padding: 8px 10px;
+            background: #252526;
+            border-bottom: 1px solid #3c3c3c;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .file-search-input {
+            flex: 1;
+            padding: 6px 10px;
+            background: #1e1e1e;
+            border: 1px solid #3c3c3c;
+            border-radius: 4px;
+            color: #ccc;
+            font-size: 12px;
+            outline: none;
+        }
+        
+        .file-search-input:focus {
+            border-color: #76b900;
+        }
+        
+        .file-search-input::placeholder {
+            color: #666;
+        }
+        
+        .file-tree {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px 0;
+        }
+        
+        .folder {
+            cursor: pointer;
+            user-select: none;
+        }
+        
+        .folder-header {
+            display: flex;
+            align-items: center;
+            padding: 6px 15px;
+            color: #ccc;
+            font-size: 13px;
+            cursor: pointer;
+        }
+        
+        .folder-header:hover {
+            background: #2a2d2e;
+        }
+        
+        .folder-chevron {
+            margin-right: 4px;
+            font-size: 14px;
+            transition: transform 0.15s;
+            color: #888;
+        }
+        
+        .folder-icon {
+            margin-right: 6px;
+            font-size: 14px;
+            color: #dcb67a;
+        }
+        
+        .folder.collapsed .folder-chevron {
+            transform: rotate(0deg);
+        }
+        
+        .folder:not(.collapsed) .folder-chevron {
+            transform: rotate(90deg);
+        }
+        
+        .folder.collapsed .folder-contents {
+            display: none;
+        }
+        
+        .folder-contents {
+            padding-left: 15px;
+        }
+        
+        .file-item {
+            display: flex;
+            align-items: center;
+            padding: 5px 15px 5px 25px;
+            cursor: pointer;
+            font-size: 13px;
+            color: #aaa;
+        }
+        
+        .file-item:hover {
+            background: #2a2d2e;
+        }
+        
+        .file-item.active {
+            background: #37373d;
+            color: #fff;
+        }
+        
+        .file-item.modified::after {
+            content: '●';
+            margin-left: 8px;
+            color: #dcdcaa;
+            font-size: 10px;
+        }
+        
+        .file-icon {
+            margin-right: 6px;
+            font-size: 14px;
+            color: #888;
+        }
+        
+        .file-item .codicon-file-code { color: #6997d5; }
+        .file-item .codicon-list-tree { color: #8db9e8; }
+        .file-item .codicon-markdown { color: #519aba; }
+        .file-item .codicon-note { color: #a8a8a8; }
+        .file-item .codicon-terminal { color: #4ec9b0; }
+        
+        /* Editor area */
+        .editor-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        
+        .editor-tabs {
+            display: flex;
+            background: #252526;
+            border-bottom: 1px solid #404040;
+            overflow-x: auto;
+        }
+        
+        .editor-tab {
+            padding: 8px 15px;
+            font-size: 13px;
+            color: #888;
+            cursor: pointer;
+            border-right: 1px solid #404040;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            white-space: nowrap;
+        }
+        
+        .editor-tab:hover {
+            background: #2d2d2d;
+        }
+        
+        .editor-tab.active {
+            background: #1e1e1e;
+            color: #fff;
+            border-bottom: 2px solid #76b900;
+        }
+        
+        .editor-tab.modified::before {
+            content: '●';
+            color: #dcdcaa;
+            font-size: 10px;
+        }
+        
+        .tab-close {
+            opacity: 0;
+            font-size: 14px;
+            color: #888;
+        }
+        
+        .editor-tab:hover .tab-close {
+            opacity: 1;
+        }
+        
+        .tab-close:hover {
+            color: #fff;
+        }
+        
+        #editor-container {
+            flex: 1;
+            overflow: hidden;
+        }
+        
+        .CodeMirror {
+            height: 100%;
+            font-family: 'Fira Code', 'Consolas', 'Monaco', monospace;
+            font-size: 14px;
+        }
+        
+        .no-file-open {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: #666;
+            font-size: 14px;
+            height: 100%;
+        }
+
+        .no-file-open svg {
+            width: 80px;
+            height: 80px;
+            margin-bottom: 20px;
+            opacity: 0.5;
+        }
+
+        .no-file-open h2 {
+            font-size: 24px;
+            font-style: italic;
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #888;
+        }
+
+        .no-file-open p {
+            font-size: 14px;
+        }
+        
+        /* Bottom bar */
+        .bottom-bar {
+            background: linear-gradient(135deg, #2d2d2d 0%, #3a3a3a 100%);
+            padding: 8px 15px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-top: 1px solid #404040;
+        }
+        
+        .bottom-left {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .bottom-right {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            font-size: 13px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s;
+        }
+        
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .btn-primary {
+            background: #76b900;
+            color: #fff;
+        }
+        
+        .btn-primary:hover:not(:disabled) {
+            background: #8ed100;
+        }
+        
+        .btn-secondary {
+            background: #404040;
+            color: #ccc;
+        }
+        
+        .btn-secondary:hover:not(:disabled) {
+            background: #505050;
+        }
+        
+        .btn-danger {
+            background: #c53030;
+            color: #fff;
+        }
+        
+        .btn-danger:hover:not(:disabled) {
+            background: #e53e3e;
+        }
+        
+        .validation-indicator {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            padding: 4px 10px;
+            border-radius: 4px;
+            background: #333;
+        }
+        
+        .validation-indicator.valid {
+            color: #4ec9b0;
+        }
+        
+        .validation-indicator.invalid {
+            color: #f44747;
+        }
+        
+        /* Loading overlay */
+        .loading-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.7);
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            flex-direction: column;
+            gap: 15px;
+        }
+        
+        .loading-overlay.visible {
+            display: flex;
+        }
+        
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid #333;
+            border-top-color: #76b900;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        .loading-text {
+            color: #888;
+            font-size: 14px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="main-container">
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M14.6,16.6L19.2,12L14.6,7.4L16,6L22,12L16,18L14.6,16.6M9.4,16.6L4.8,12L9.4,7.4L8,6L2,12L8,18L9.4,16.6Z"/>
+                </svg>
+                Fabric Editor
+            </div>
+            <div class="file-search-container">
+                <input type="text" id="file-search" class="file-search-input" placeholder="Search files..." oninput="filterFileTree(this.value)">
+            </div>
+            <div id="file-tree" class="file-tree">
+                <!-- File tree will be populated by JavaScript -->
+            </div>
+        </div>
+        
+        <div class="editor-area">
+            <div class="editor-toolbar">
+                <button class="toolbar-btn" onclick="editorAction('find')" title="Find (Ctrl+F)">
+                    <span class="codicon codicon-search"></span>
+                </button>
+                <button class="toolbar-btn" onclick="editorAction('replace')" title="Find & Replace (Ctrl+H)">
+                    <span class="codicon codicon-find-replace"></span>
+                </button>
+                <span class="toolbar-separator"></span>
+                <button class="toolbar-btn" onclick="editorAction('undo')" title="Undo (Ctrl+Z)">
+                    <span class="codicon codicon-discard"></span>
+                </button>
+                <button class="toolbar-btn" onclick="editorAction('redo')" title="Redo (Ctrl+Shift+Z)">
+                    <span class="codicon codicon-redo"></span>
+                </button>
+                <span class="toolbar-separator"></span>
+                <button class="toolbar-btn" onclick="editorAction('foldAll')" title="Fold All">
+                    <span class="codicon codicon-fold"></span>
+                </button>
+                <button class="toolbar-btn" onclick="editorAction('unfoldAll')" title="Unfold All">
+                    <span class="codicon codicon-unfold"></span>
+                </button>
+                <span class="toolbar-separator"></span>
+                <button class="toolbar-btn" onclick="editorAction('gotoLine')" title="Go to Line (Ctrl+G)">
+                    <span class="codicon codicon-go-to-file"></span>
+                </button>
+                <div class="toolbar-right">
+                    <div id="yaml-validation" class="validation-indicator valid" style="display: none;">
+                        <span class="icon">✓</span>
+                        <span class="text">YAML Valid</span>
+                    </div>
+                    <span id="status" class="status saved">Ready</span>
+                </div>
+            </div>
+            <div id="editor-tabs" class="editor-tabs">
+                <!-- Tabs will be added dynamically -->
+            </div>
+            <div id="editor-container">
+                <div class="no-file-open" id="no-file-message">
+                    <svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M14.06 9.02l.92.92L5.92 19H5v-.92l9.06-9.06M17.66 3c-.25 0-.51.1-.7.29l-1.83 1.83 3.75 3.75 1.83-1.83c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.2-.2-.45-.29-.71-.29zm-3.6 3.19L3 17.25V21h3.75L17.81 9.94l-3.75-3.75z"/>
+                    </svg>
+                    <h2>Fabric Editor</h2>
+                    <p>Select a file from the left panel to view and edit its content</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="bottom-bar">
+        <div class="bottom-left">
+            <button id="btn-new" class="btn btn-secondary" onclick="createNewFile()">
+                + New
+            </button>
+            <button id="btn-save" class="btn btn-secondary" onclick="saveCurrentFile()" disabled>
+                Save
+            </button>
+            <button id="btn-save-all" class="btn btn-secondary" onclick="saveAllFiles()" disabled>
+                Save All
+            </button>
+            <button id="btn-delete" class="btn btn-danger" onclick="deleteCurrentFile()" disabled>
+                Delete
+            </button>
+            <button id="btn-rename" class="btn btn-secondary" onclick="renameCurrentFile()" disabled>
+                Rename
+            </button>
+            <button id="btn-validate" class="btn btn-secondary" onclick="validateCurrentFile()">
+                Validate YAML
+            </button>
+            <span style="margin: 0 10px; border-left: 1px solid #444; height: 24px; display: inline-block;"></span>
+            <button id="btn-commit" class="btn btn-primary" onclick="gitCommitPush()">
+                Commit & Push
+            </button>
+            <button id="btn-pull" class="btn btn-secondary" onclick="gitPull()">
+                Pull
+            </button>
+            <button class="btn btn-secondary" onclick="gitStatus()" title="View uncommitted changes">
+                Status
+            </button>
+            <button class="btn btn-secondary" onclick="gitLog()" title="View commit history">
+                History
+            </button>
+            <button class="btn btn-secondary" onclick="gitDiff()" title="Show git diff">
+                Diff
+            </button>
+            <button class="btn btn-secondary" onclick="confirmResetFile()" style="color: #ffb347;" title="Reset current file to last commit">
+                Reset File
+            </button>
+            <button class="btn btn-secondary" onclick="gitReset()" style="color: #ff6b6b;" title="Discard all uncommitted changes">
+                Reset All
+            </button>
+        </div>
+        <div class="bottom-right" style="display: flex; align-items: center; gap: 15px;">
+            <div id="file-stats" style="display: flex; gap: 20px; align-items: center; font-size: 12px;">
+                <span id="host-vars-count" style="color: #666;">
+                    host vars: <span style="color: #666;">0</span>
+                </span>
+                <span id="group-vars-count" style="color: #666;">
+                    group vars: <span style="color: #666;">0</span>
+                </span>
+            </div>
+        </div>
+    </div>
+    
+    <div id="loading" class="loading-overlay">
+        <div class="loading-spinner"></div>
+        <div id="loading-text" class="loading-text">Loading...</div>
+    </div>
+    
+    <script>
+        // State management
+        const state = {
+            files: {},           // { path: { content, originalContent, modified } }
+            currentFile: null,
+            fileList: [],
+            editor: null
+        };
+        
+        // Initialize CodeMirror
+        function initEditor() {
+            const container = document.getElementById('editor-container');
+            const noFileMsg = document.getElementById('no-file-message');
+            
+            // Create editor div
+            const editorDiv = document.createElement('div');
+            editorDiv.id = 'codemirror-wrapper';
+            editorDiv.style.display = 'none';
+            editorDiv.style.height = '100%';
+            container.appendChild(editorDiv);
+            
+            state.editor = CodeMirror(editorDiv, {
+                mode: 'yaml',
+                theme: 'material-darker',
+                lineNumbers: true,
+                indentUnit: 2,
+                tabSize: 2,
+                indentWithTabs: false,
+                lineWrapping: false,
+                matchBrackets: true,
+                autoCloseBrackets: true,
+                foldGutter: true,
+                gutters: ["CodeMirror-linenumbers", "CodeMirror-foldgutter"],
+                extraKeys: {
+                    'Ctrl-S': saveCurrentFile,
+                    'Cmd-S': saveCurrentFile,
+                    'Ctrl-F': function(cm) { cm.execCommand('find'); },
+                    'Cmd-F': function(cm) { cm.execCommand('find'); },
+                    'Ctrl-G': function(cm) { cm.execCommand('jumpToLine'); },
+                    'Cmd-G': function(cm) { cm.execCommand('jumpToLine'); }
+                }
+            });
+            
+            state.editor.setSize('100%', '100%');
+            
+            // Track changes
+            state.editor.on('change', function() {
+                if (state.currentFile && state.files[state.currentFile]) {
+                    const file = state.files[state.currentFile];
+                    file.content = state.editor.getValue();
+                    file.modified = file.content !== file.originalContent;
+                    updateUI();
+                }
+            });
+        }
+        
+        // Load file tree
+        async function loadFileTree() {
+            showLoading(true, 'Loading files...');
+            try {
+                const response = await fetch('/ansible-api?action=list');
+                const data = await response.json();
+                
+                if (data.success) {
+                    state.fileList = data.files;
+                    renderFileTree(data.files);
+                    updateFileStats();
+                }
+            } catch (e) {
+                console.error('Error loading files:', e);
+            }
+            showLoading(false);
+        }
+        
+        // Render file tree (matching fabric-editor structure)
+        function renderFileTree(files) {
+            const tree = document.getElementById('file-tree');
+            tree.innerHTML = '';
+            
+            // Build tree structure
+            const root = {};
+            files.forEach(file => {
+                const parts = file.split('/');
+                let current = root;
+                
+                parts.forEach((part, idx) => {
+                    if (idx === parts.length - 1) {
+                        if (!current._files) current._files = [];
+                        current._files.push({ name: part, path: file });
+                    } else {
+                        if (!current[part]) current[part] = {};
+                        current = current[part];
+                    }
+                });
+            });
+            
+            // Folders to hide
+            const hiddenFolders = ['assets', 'configs', 'files', 'scripts', 'srv-configs', 'topology'];
+            const hiddenFiles = ['.gitignore', 'ansible.cfg'];
+            
+            // Render recursively
+            function renderNode(node, parentEl, depth = 0, currentPath = '') {
+                let entries = Object.keys(node).filter(k => k !== '_files').sort();
+                
+                if (depth === 0) {
+                    entries = entries.filter(k => !hiddenFolders.includes(k));
+                }
+                
+                // Render folders
+                entries.forEach(folderName => {
+                    const folderPath = currentPath ? currentPath + '/' + folderName : folderName;
+                    const folderEl = document.createElement('div');
+                    folderEl.className = 'folder collapsed';
+                    folderEl.dataset.path = folderPath;
+                    
+                    folderEl.innerHTML = `
+                        <div class="folder-header" onclick="toggleFolder(this.parentElement)">
+                            <span class="codicon codicon-chevron-right folder-chevron"></span>
+                            <span class="codicon codicon-folder folder-icon"></span>
+                            ${folderName}
+                        </div>
+                        <div class="folder-contents"></div>
+                    `;
+                    
+                    const contents = folderEl.querySelector('.folder-contents');
+                    renderNode(node[folderName], contents, depth + 1, folderPath);
+                    
+                    parentEl.appendChild(folderEl);
+                });
+                
+                // Render files
+                if (node._files) {
+                    let filesToRender = node._files.sort((a, b) => a.name.localeCompare(b.name));
+                    if (depth === 0) {
+                        filesToRender = filesToRender.filter(f => !hiddenFiles.includes(f.name));
+                    }
+                    filesToRender.forEach(file => {
+                        const fileEl = document.createElement('div');
+                        fileEl.className = 'file-item';
+                        fileEl.style.paddingLeft = (depth * 0 + 25) + 'px';
+                        fileEl.dataset.path = file.path;
+                        
+                        // Get icon
+                        const ext = file.name.split('.').pop().toLowerCase();
+                        let iconClass = 'codicon-file';
+                        if (ext === 'yaml' || ext === 'yml') iconClass = 'codicon-file-code';
+                        else if (ext === 'md') iconClass = 'codicon-markdown';
+                        else if (ext === 'sh') iconClass = 'codicon-terminal';
+                        else if (file.name === 'hosts') iconClass = 'codicon-list-tree';
+                        
+                        fileEl.innerHTML = `
+                            <span class="codicon ${iconClass} file-icon"></span>
+                            ${file.name}
+                        `;
+                        
+                        fileEl.onclick = () => openFile(file.path);
+                        parentEl.appendChild(fileEl);
+                    });
+                }
+            }
+            
+            renderNode(root, tree);
+        }
+        
+        function toggleFolder(folder) {
+            folder.classList.toggle('collapsed');
+        }
+        
+        function filterFileTree(query) {
+            const items = document.querySelectorAll('.file-item, .folder');
+            const q = query.toLowerCase();
+            
+            if (!q) {
+                items.forEach(el => el.style.display = '');
+                return;
+            }
+            
+            items.forEach(item => {
+                const path = item.dataset.path || '';
+                if (item.classList.contains('folder')) {
+                    // Show folder if any child matches
+                    const hasMatch = item.querySelector('.file-item[data-path*="' + q + '"]');
+                    item.style.display = hasMatch ? '' : 'none';
+                    if (hasMatch) item.classList.remove('collapsed');
+                } else {
+                    item.style.display = path.toLowerCase().includes(q) ? '' : 'none';
+                }
+            });
+        }
+        
+        // Open file
+        async function openFile(path) {
+            showLoading(true, 'Loading ' + path + '...');
+            
+            try {
+                // Check cache
+                if (!state.files[path]) {
+                    const response = await fetch('/ansible-api?action=read&file=' + encodeURIComponent(path));
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        state.files[path] = {
+                            content: data.content,
+                            originalContent: data.content,
+                            modified: false
+                        };
+                    } else {
+                        throw new Error(data.error);
+                    }
+                }
+                
+                state.currentFile = path;
+                
+                // Show editor
+                document.getElementById('no-file-message').style.display = 'none';
+                document.getElementById('codemirror-wrapper').style.display = 'block';
+                
+                // Set content
+                state.editor.setValue(state.files[path].content);
+                
+                // Set mode
+                const ext = path.split('.').pop().toLowerCase();
+                if (ext === 'yaml' || ext === 'yml') {
+                    state.editor.setOption('mode', 'yaml');
+                } else {
+                    state.editor.setOption('mode', 'text');
+                }
+                
+                state.editor.refresh();
+                updateUI();
+                updateTabs();
+                
+            } catch (e) {
+                alert('Error loading file: ' + e.message);
+            }
+            
+            showLoading(false);
+        }
+        
+        function updateTabs() {
+            const tabsEl = document.getElementById('editor-tabs');
+            tabsEl.innerHTML = '';
+            
+            Object.keys(state.files).forEach(path => {
+                const file = state.files[path];
+                const tab = document.createElement('div');
+                tab.className = 'editor-tab' + (path === state.currentFile ? ' active' : '') + (file.modified ? ' modified' : '');
+                tab.innerHTML = `
+                    ${path.split('/').pop()}
+                    <span class="tab-close" onclick="event.stopPropagation(); closeTab('${path}')">×</span>
+                `;
+                tab.onclick = () => openFile(path);
+                tabsEl.appendChild(tab);
+            });
+        }
+        
+        function closeTab(path) {
+            if (state.files[path]?.modified) {
+                if (!confirm('File has unsaved changes. Close anyway?')) return;
+            }
+            
+            delete state.files[path];
+            
+            if (state.currentFile === path) {
+                const remaining = Object.keys(state.files);
+                if (remaining.length > 0) {
+                    openFile(remaining[0]);
+                } else {
+                    state.currentFile = null;
+                    document.getElementById('no-file-message').style.display = 'flex';
+                    document.getElementById('codemirror-wrapper').style.display = 'none';
+                }
+            }
+            
+            updateTabs();
+            updateUI();
+        }
+        
+        function updateUI() {
+            // Update file tree selection
+            document.querySelectorAll('.file-item').forEach(el => {
+                el.classList.toggle('active', el.dataset.path === state.currentFile);
+                el.classList.toggle('modified', state.files[el.dataset.path]?.modified);
+            });
+            
+            // Update buttons
+            const hasFile = state.currentFile !== null;
+            const hasModified = Object.values(state.files).some(f => f.modified);
+            
+            document.getElementById('btn-save').disabled = !hasFile || !state.files[state.currentFile]?.modified;
+            document.getElementById('btn-save-all').disabled = !hasModified;
+            document.getElementById('btn-delete').disabled = !hasFile;
+            document.getElementById('btn-rename').disabled = !hasFile;
+            
+            // Update status
+            const status = document.getElementById('status');
+            if (hasFile && state.files[state.currentFile]?.modified) {
+                status.textContent = 'Modified';
+                status.className = 'status modified';
+            } else {
+                status.textContent = 'Ready';
+                status.className = 'status saved';
+            }
+        }
+        
+        function updateFileStats() {
+            const hostVars = state.fileList.filter(f => f.startsWith('host_vars/')).length;
+            const groupVars = state.fileList.filter(f => f.startsWith('group_vars/')).length;
+            
+            document.getElementById('host-vars-count').innerHTML = `host vars: <span style="color: #76b900;">${hostVars}</span>`;
+            document.getElementById('group-vars-count').innerHTML = `group vars: <span style="color: #76b900;">${groupVars}</span>`;
+        }
+        
+        // Editor actions
+        function editorAction(action) {
+            if (!state.editor) return;
+            
+            switch(action) {
+                case 'find':
+                    state.editor.execCommand('find');
+                    break;
+                case 'replace':
+                    state.editor.execCommand('replace');
+                    break;
+                case 'undo':
+                    state.editor.undo();
+                    break;
+                case 'redo':
+                    state.editor.redo();
+                    break;
+                case 'foldAll':
+                    state.editor.execCommand('foldAll');
+                    break;
+                case 'unfoldAll':
+                    state.editor.execCommand('unfoldAll');
+                    break;
+                case 'gotoLine':
+                    state.editor.execCommand('jumpToLine');
+                    break;
+            }
+        }
+        
+        // Save file
+        async function saveCurrentFile() {
+            if (!state.currentFile) return;
+            
+            const file = state.files[state.currentFile];
+            if (!file.modified) return;
+            
+            showLoading(true, 'Saving...');
+            
+            try {
+                const response = await fetch('/ansible-api?action=write&file=' + encodeURIComponent(state.currentFile), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content: file.content })
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    file.originalContent = file.content;
+                    file.modified = false;
+                    updateUI();
+                    updateTabs();
+                } else {
+                    throw new Error(data.error);
+                }
+            } catch (e) {
+                alert('Error saving: ' + e.message);
+            }
+            
+            showLoading(false);
+        }
+        
+        async function saveAllFiles() {
+            for (const path of Object.keys(state.files)) {
+                if (state.files[path].modified) {
+                    state.currentFile = path;
+                    await saveCurrentFile();
+                }
+            }
+        }
+        
+        function validateCurrentFile() {
+            if (!state.currentFile) return;
+            
+            const content = state.editor.getValue();
+            const validation = document.getElementById('yaml-validation');
+            
+            try {
+                if (content.includes('\t')) {
+                    throw new Error('YAML should use spaces, not tabs');
+                }
+                
+                if (typeof jsyaml !== 'undefined') {
+                    jsyaml.load(content);
+                }
+                
+                validation.className = 'validation-indicator valid';
+                validation.innerHTML = '<span class="icon">✓</span><span class="text">YAML Valid</span>';
+                validation.style.display = 'flex';
+                
+                setTimeout(() => validation.style.display = 'none', 3000);
+                
+            } catch (e) {
+                validation.className = 'validation-indicator invalid';
+                validation.innerHTML = '<span class="icon">✕</span><span class="text">' + e.message + '</span>';
+                validation.style.display = 'flex';
+            }
+        }
+        
+        // Stub functions for git operations
+        function createNewFile() { alert('Coming soon: New file creation'); }
+        function deleteCurrentFile() { alert('Coming soon: Delete file'); }
+        function renameCurrentFile() { alert('Coming soon: Rename file'); }
+        function gitCommitPush() { alert('Coming soon: Git commit & push'); }
+        function gitPull() { alert('Coming soon: Git pull'); }
+        function gitStatus() { alert('Coming soon: Git status'); }
+        function gitLog() { alert('Coming soon: Git log'); }
+        function gitDiff() { alert('Coming soon: Git diff'); }
+        function confirmResetFile() { alert('Coming soon: Reset file'); }
+        function gitReset() { alert('Coming soon: Reset all'); }
+        
+        function showLoading(show, text = 'Loading...') {
+            const overlay = document.getElementById('loading');
+            document.getElementById('loading-text').textContent = text;
+            overlay.classList.toggle('visible', show);
+        }
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            initEditor();
+            loadFileTree();
+        });
+    </script>
+</body>
+</html>
