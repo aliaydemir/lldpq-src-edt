@@ -180,7 +180,7 @@ fi
 
 # Running as root is OK (for dedicated servers)
 if [[ $EUID -eq 0 ]]; then
-    echo "Running as root - files will be in /root/lldpq"
+    echo "Running as root - files will be in /opt/lldpq"
 fi
 
 # Check if we're in the lldpq-src directory
