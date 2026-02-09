@@ -1547,22 +1547,12 @@ try:
         
         if shared:
             # Same pod: leaf → shared_spines → leaf (3-stage)
-            # But check if there are also cores above
-            core_nbrs = set()
-            for spine in shared:
-                for nbr in get_lldp_neighbors(spine):
-                    if get_tier(nbr) == 2:
-                        core_nbrs.add(nbr)
-            
-            if core_nbrs:
-                # 5-stage but same pod: leaf → spines → cores → spines → leaf
-                return [
-                    {"tier": 1, "devices": shared, "label": "Spine"},
-                    {"tier": 2, "devices": sorted(core_nbrs), "label": "Core"},
-                    {"tier": 1, "devices": shared, "label": "Spine"}
-                ]
-            else:
-                return [{"tier": 1, "devices": shared, "label": "Spine"}]
+            # In Clos, same-pod traffic NEVER goes through cores.
+            # Cores are only for cross-pod routing (different spine groups).
+            # Single spine layer — ascending and descending are the SAME devices.
+            return [
+                {"tier": 1, "devices": shared, "label": "Spine"}
+            ]
         else:
             # Cross-pod: leaf → src_spines → cores → dst_spines → leaf
             # Find cores: tier-2 neighbors of src_spines that also connect to dst_spines
@@ -1593,20 +1583,10 @@ try:
     if not source_leaf:
         print(json.dumps({"error": f"Source IP {source_ip} not found in any device."}))
         exit()
-    if not dest_leaf:
-        print(json.dumps({"error": f"Destination IP {dest_ip} not found in any device."}))
-        exit()
-    
-    # VRF resolution: use explicit hints from user, fall back to auto-detect.
-    src_vrf = vrf_hint if vrf_hint else (detected_vrf or 'default')
-    dst_vrf = dst_vrf_hint if dst_vrf_hint else src_vrf
-    vrf = src_vrf
-    has_inter_vrf = (src_vrf != dst_vrf)
     
     # Check if dest IP is local to the fabric (in ANY device's ARP, any VRF).
-    # If it exists anywhere in the fabric, it's not "external" (like 8.8.8.8).
-    # VRF is a routing domain, not physical location — an IP in compute VRF
-    # is still fabric-local even when tracing from tenant1.
+    # Must check BEFORE error handling — external IPs (8.8.8.8) won't be in
+    # any device and that's OK.
     dest_is_local = False
     for hn, dd in all_data.items():
         for arp in dd.get('arp', []):
@@ -1615,6 +1595,49 @@ try:
                 break
         if dest_is_local:
             break
+    
+    # External IPs: find_device_prefer_leaf may return a wrong device via
+    # route fallback (e.g. 8.8.8.8 matching a wide connected prefix).
+    # Clear it — external destinations have no fabric device.
+    if not dest_is_local:
+        dest_leaf = None
+    
+    # Only error if dest is local but device not found (shouldn't happen)
+    if not dest_leaf and dest_is_local:
+        print(json.dumps({"error": f"Destination IP {dest_ip} not found in any device."}))
+        exit()
+    
+    # VRF resolution: use explicit hints from user, fall back to auto-detect.
+    src_vrf = vrf_hint if vrf_hint else (detected_vrf or 'default')
+    dst_vrf = dst_vrf_hint if dst_vrf_hint else src_vrf
+    vrf = src_vrf
+    
+    # ─── Dest VRF validation ───
+    # If user manually selected a dest VRF, verify the dest IP actually
+    # exists in that VRF. If it doesn't, auto-correct to the VRF where
+    # the IP was actually found (from ARP). This prevents false inter-VRF
+    # paths when user selects wrong VRF.
+    if dest_is_local and dst_vrf_hint and dest_vrf:
+        # dest_vrf = VRF where find_device_prefer_leaf found the dest IP
+        # dst_vrf_hint = what user selected
+        if dst_vrf_hint != dest_vrf:
+            # Check if dest IP truly exists in the user-selected VRF
+            dest_in_selected_vrf = False
+            for hn, dd in all_data.items():
+                for arp in dd.get('arp', []):
+                    if arp.get('ip') == dest_ip:
+                        v = arp.get('vrf', 'default')
+                        if (v or 'default') == dst_vrf_hint:
+                            dest_in_selected_vrf = True
+                            break
+                if dest_in_selected_vrf:
+                    break
+            
+            if not dest_in_selected_vrf:
+                # Dest IP not in selected VRF → auto-correct
+                dst_vrf = dest_vrf
+    
+    has_inter_vrf = (src_vrf != dst_vrf)
     
     # External = dest not in fabric ARP (same VRF, traffic exits via border leaf)
     dest_is_external = not dest_is_local and not has_inter_vrf
@@ -1647,9 +1670,12 @@ try:
             "role": "source", "indent": 1
         })
         
-        # Same device, same VRF
+        # Same device, same VRF — traffic stays local, no network traversal
         if source_leaf == dest_leaf and not has_external:
             path[1]["role"] = "source+destination"
+            path[1]["prefix"] = "local"
+            path[1]["nexthop"] = "local switching"
+            path[1]["protocol"] = "connected"
             path.append({"device": dest_ip, "role": "endpoint_dst", "indent": 0})
             return path
         
@@ -1782,20 +1808,86 @@ try:
         return path
     
     path = build_path()
+    
+    # ─── Post-process: enrich ECMP/transit hops with link health ───
+    
+    def enrich_link_health(path):
+        """Add links_up / links_down to ECMP and transit hops.
+        
+        For each ECMP/transit hop, check LLDP link status between it and
+        its adjacent hops (previous and next). This gives:
+          - ascending spines: link health from source leaf → spines
+          - descending spines: link health from spines → dest leaf
+          - cores: link health from spines → cores (both sides)
+        """
+        for i, hop in enumerate(path):
+            if hop.get('role') not in ('ecmp', 'transit'):
+                continue
+            
+            # Get this hop's actual device list
+            ecmp_devs = hop.get('devices', [])
+            if not ecmp_devs:
+                d = hop.get('device', '')
+                if d:
+                    ecmp_devs = [d]
+            ecmp_devs = [base(d) for d in ecmp_devs if d]
+            if not ecmp_devs:
+                continue
+            
+            total_up, total_down = 0, 0
+            
+            # Check links FROM previous hop → this layer
+            if i > 0:
+                prev = path[i - 1]
+                if prev.get('role') not in ('endpoint_src', 'endpoint_dst', 'external'):
+                    pdevs = prev.get('devices', [])
+                    if not pdevs:
+                        pd = prev.get('device', '')
+                        if pd:
+                            pdevs = [pd]
+                    for pd in pdevs:
+                        u, d = get_link_health(base(pd), ecmp_devs)
+                        total_up += u
+                        total_down += d
+            
+            # Check links FROM this layer → next hop
+            if i < len(path) - 1:
+                nxt = path[i + 1]
+                if nxt.get('role') not in ('endpoint_src', 'endpoint_dst', 'external'):
+                    ndevs = nxt.get('devices', [])
+                    if not ndevs:
+                        nd = nxt.get('device', '')
+                        if nd:
+                            ndevs = [nd]
+                    for nd in ndevs:
+                        u, d = get_link_health(base(nd), ecmp_devs)
+                        total_up += u
+                        total_down += d
+            
+            if total_up > 0 or total_down > 0:
+                hop['links_up'] = total_up
+                hop['links_down'] = total_down
+    
+    enrich_link_health(path)
+    
     vrf_display = f"{src_vrf} -> {dst_vrf}" if has_external else vrf
     if dest_is_external:
         vrf_display = f"{src_vrf} -> external"
     
-    print(json.dumps({
+    result = {
         "path": path,
         "source_device": source_leaf,
-        "dest_device": dest_leaf,
         "source_ip": source_ip,
         "destination": dest_ip,
         "vrf": vrf_display,
         "inter_vrf": has_external,
         "tiers_found": len(set(device_tiers.values())) if device_tiers else 0
-    }))
+    }
+    # Only include dest_device for fabric-local destinations
+    if dest_is_local and dest_leaf:
+        result["dest_device"] = dest_leaf
+    
+    print(json.dumps(result))
 
 except Exception as e:
     import traceback
