@@ -20,8 +20,8 @@ echo ""
 if [ "$METHOD" = "GET" ]; then
     # Read and return devices.yaml content
     if [ -f "$DEVICES_FILE" ]; then
-        # Escape content for JSON (read as LLDPQ_USER in case of permission issues)
-        CONTENT=$( (sudo -u "$LLDPQ_USER" cat "$DEVICES_FILE" 2>/dev/null || cat "$DEVICES_FILE") | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')
+        # Escape content for JSON
+        CONTENT=$(cat "$DEVICES_FILE" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')
         echo "{\"success\": true, \"content\": $CONTENT}"
     else
         echo "{\"success\": false, \"error\": \"File not found: $DEVICES_FILE\"}"
@@ -59,13 +59,13 @@ except Exception as e:
 ' 2>/dev/null)
         
         if [ "$VALIDATION" = "valid" ]; then
-            # Create backup before writing (as LLDPQ_USER who owns the file)
+            # Create backup before writing
             if [ -f "$DEVICES_FILE" ]; then
-                sudo -u "$LLDPQ_USER" cp "$DEVICES_FILE" "${DEVICES_FILE}.bak" 2>/dev/null || cp "$DEVICES_FILE" "${DEVICES_FILE}.bak"
+                cp "$DEVICES_FILE" "${DEVICES_FILE}.bak" 2>/dev/null
             fi
             
-            # Write new content (as LLDPQ_USER who owns the file)
-            echo "$CONTENT" | sudo -u "$LLDPQ_USER" tee "$DEVICES_FILE" > /dev/null 2>&1
+            # Write new content
+            echo "$CONTENT" > "$DEVICES_FILE"
             
             if [ $? -eq 0 ]; then
                 echo "{\"success\": true, \"message\": \"devices.yaml saved successfully\"}"
