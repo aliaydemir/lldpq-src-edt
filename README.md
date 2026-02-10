@@ -23,7 +23,7 @@ No installation needed. Download the pre-built Docker image and run:
 
 ```bash
 # Download (100MB)
-curl -O https://aliaydemir.com/lldpq.tar.gz
+curl -LkO http://aliaydemir.com/lldpq.tar.gz
 
 # Load image
 docker load < lldpq.tar.gz
