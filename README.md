@@ -29,30 +29,48 @@ curl -O https://aliaydemir.com/lldpq.tar.gz
 sudo docker load < lldpq.tar.gz
 
 # Run (mount your devices.yaml)
-sudo docker run -d --name lldpq -p 80:80 -v $(pwd)/devices.yaml:/home/lldpq/lldpq/devices.yaml lldpq:latest
-
-# Enter container and setup SSH keys (first time only, see [08] ssh setup)
-sudo docker exec -it lldpq bash
+sudo docker run -d --name lldpq --network host \
+  -v $(pwd)/devices.yaml:/home/lldpq/lldpq/devices.yaml \
+  lldpq:latest
 ```
 
-Open `http://localhost` in your browser. That's it.
+Open `http://<host-ip>` in your browser. That's it.
+
+**First time SSH setup** — no need to enter the container:
+1. Login as admin → go to **Assets** page
+2. Click the orange **SSH Setup** button
+3. Enter device password (twice to confirm)
+4. Click **Run Setup** → SSH keys are generated and distributed to all devices automatically
+5. Failed devices can be retried with a different password
 
 **What you need:**
 - `devices.yaml` — your switch inventory (see format below)
-- SSH keys are generated and distributed inside the container via `send-key.sh`
+- That's it. SSH keys are generated and distributed from the web UI.
 
 **Works on:** Ubuntu, CentOS, RHEL, Debian, NVIDIA Cumulus Linux 5.x, any x86_64 with Docker.
 
 **Cumulus switch only** — open port 80 in the ACL before accessing the web UI:
 ```bash
 nv set acl acl-default-whitelist rule 200 match ip tcp dest-port 80
-nv set acl acl-default-whitelist type ipv4
+nv set acl acl-default-whitelist rule 200 action permit
 nv config apply -y
 ```
 
 **Persistent data** (optional — keeps monitoring data across restarts):
 ```bash
-sudo docker run -d --name lldpq -p 80:80 -v lldpq-data:/home/lldpq/lldpq/monitor-results lldpq:latest
+sudo docker run -d --name lldpq --network host \
+  -v $(pwd)/devices.yaml:/home/lldpq/lldpq/devices.yaml \
+  -v lldpq-data:/home/lldpq/lldpq/monitor-results \
+  lldpq:latest
+```
+
+**Ansible support** (optional — enables VLAN/BGP reports, Fabric Config/Editor):
+```bash
+sudo docker run -d --name lldpq --network host \
+  -v $(pwd)/devices.yaml:/home/lldpq/lldpq/devices.yaml \
+  -v ~/ansible:/home/lldpq/ansible:rw \
+  -e ANSIBLE_DIR=/home/lldpq/ansible \
+  lldpq:latest
 ```
 
 ## Requirements (non-Docker install)
@@ -303,15 +321,18 @@ monitor data grows ~50MB/day. history cleanup after 24h automatically.
 
 ## [08] ssh setup
 
-setup ssh keys to all switches:
+### web UI (recommended — works in Docker too)
+
+1. Login as admin → go to **Assets** page
+2. Click the orange **SSH Setup** button
+3. Enter device password (twice to confirm)
+4. Click **Run Setup** — generates SSH key (if missing) + distributes to all devices + configures sudo
+5. Results shown per device. Failed devices can be retried with a different password.
+
+### CLI (bare metal install)
 
 ```
 cd ~/lldpq && ./send-key.sh   # auto-installs deps, generates key, prompts password
-```
-
-setup passwordless sudo on all switches:
-
-```
 cd ~/lldpq && ./sudo-fix.sh   # configures passwordless sudo for cumulus user
 ```
 
@@ -363,8 +384,8 @@ web interface is protected with session-based authentication:
 
 ### default credentials:
 ```
-admin / admin         # full access (includes Ansible Config Editor)
-operator / operator   # limited access (no Ansible)
+admin / admin         # full access (includes Ansible Config Editor if configured)
+operator / operator   # limited access
 ```
 
 ### features:
@@ -375,14 +396,16 @@ operator / operator   # limited access (no Ansible)
 - **user management**: admin can create/delete operator users
 
 ### roles:
-| Role | Dashboard | Topology View | Topology Edit | Configs | Ansible Editor | User Management |
-|------|-----------|---------------|---------------|---------|----------------|-----------------|
-| admin | Yes | Yes | Yes | Yes | Yes | Yes |
-| operator | Yes | Yes | No | Yes | No | No |
+| Role | Dashboard | Topology View | Topology Edit | Configs | SSH Setup | Ansible Editor* | User Management |
+|------|-----------|---------------|---------------|---------|-----------|-----------------|-----------------|
+| admin | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| operator | Yes | Yes | No | Yes | No | No | No |
+
+*Ansible Editor only visible when Ansible is configured (not required for core features).
 
 **Operator restrictions:**
 - Cannot edit `topology.dot` or `topology_config.yaml`
-- Cannot access Ansible Config Editor
+- Cannot access SSH Setup or Ansible Config Editor
 - Cannot manage users
 
 ### user management (admin only):

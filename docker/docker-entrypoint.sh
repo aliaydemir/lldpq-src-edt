@@ -9,6 +9,16 @@ echo "║      LLDPq Network Monitoring        ║"
 echo "║      Docker Container v$(cat /var/www/html/VERSION 2>/dev/null || echo '?')        ║"
 echo "╚══════════════════════════════════════╝"
 
+# ─── VRF Setup (Cumulus switch only) ───
+# If mgmt VRF exists (Cumulus Linux), route outbound traffic through it
+if ip vrf show mgmt >/dev/null 2>&1; then
+    MGMT_TABLE=$(ip vrf show mgmt 2>/dev/null | awk '/mgmt/{print $2}')
+    if [ -n "$MGMT_TABLE" ]; then
+        ip rule add pref 100 table "$MGMT_TABLE" 2>/dev/null || true
+        echo "✓ mgmt VRF detected (table $MGMT_TABLE) — outbound via mgmt"
+    fi
+fi
+
 # ─── SSH Key Setup ───
 if [ -f /home/lldpq/.ssh/id_rsa ] || [ -f /home/lldpq/.ssh/id_ed25519 ]; then
     echo "✓ SSH keys found"

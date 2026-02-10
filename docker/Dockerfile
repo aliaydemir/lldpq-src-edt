@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     openssh-client sshpass \
     sudo cron \
     iproute2 iputils-ping dnsutils tcpdump \
-    curl jq git \
+    curl jq git bsdmainutils \
     && rm -rf /var/lib/apt/lists/*
 
 # Create lldpq user (matches host user pattern)
@@ -63,6 +63,17 @@ LLDPQ_DIR=/home/lldpq/lldpq\n\
 LLDPQ_USER=lldpq\n\
 WEB_ROOT=/var/www/html\n\
 ANSIBLE_DIR=NoNe' > /etc/lldpq.conf
+
+# Create auth: default users (admin/admin, operator/operator) + sessions directory
+RUN ADMIN_HASH=$(echo -n "admin" | openssl dgst -sha256 | awk '{print $2}') \
+    && OPERATOR_HASH=$(echo -n "operator" | openssl dgst -sha256 | awk '{print $2}') \
+    && echo "admin:$ADMIN_HASH:admin" > /etc/lldpq-users.conf \
+    && echo "operator:$OPERATOR_HASH:operator" >> /etc/lldpq-users.conf \
+    && chmod 600 /etc/lldpq-users.conf \
+    && chown www-data:www-data /etc/lldpq-users.conf \
+    && mkdir -p /var/lib/lldpq/sessions \
+    && chown -R www-data:www-data /var/lib/lldpq \
+    && chmod 700 /var/lib/lldpq/sessions
 
 # Copy entrypoint
 COPY docker/docker-entrypoint.sh /docker-entrypoint.sh
