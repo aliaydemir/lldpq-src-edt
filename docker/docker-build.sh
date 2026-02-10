@@ -26,7 +26,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 VERSION=$(cat "$REPO_ROOT/VERSION" 2>/dev/null || echo "dev")
 
 echo -e "${CYAN}╔══════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║    LLDPq Docker Build v${VERSION}          ║${NC}"
+echo -e "${CYAN}║    LLDPq Docker Build v${VERSION}         ║${NC}"
 echo -e "${CYAN}╚══════════════════════════════════════╝${NC}"
 echo ""
 
