@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-yaml \
     python3-pip \
     openssh-client \
+    sshpass \
     sudo \
     cron \
     iproute2 \
