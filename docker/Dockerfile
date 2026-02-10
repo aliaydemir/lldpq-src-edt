@@ -23,8 +23,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN useradd -m -s /bin/bash -G www-data lldpq \
     && echo "lldpq ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/lldpq
 
-# Allow www-data to sudo as lldpq (for SSH operations from CGI)
-RUN echo "www-data ALL=(lldpq) NOPASSWD: /usr/bin/timeout, /usr/bin/ssh" > /etc/sudoers.d/www-data-lldpq
+# Allow www-data to sudo as lldpq (for SSH operations from CGI + SSH Setup)
+RUN echo "www-data ALL=(lldpq) NOPASSWD: ALL" > /etc/sudoers.d/www-data-lldpq
 
 # Create directory structure
 RUN mkdir -p /home/lldpq/lldpq/monitor-results/fabric-tables \
