@@ -851,6 +851,8 @@
         <div class="stat-card" style="border-left-color:#ff9800; cursor:pointer;" onclick="setDiscoveredFilter('not_provisioned')"><div class="stat-value" id="statNotProv">-</div><div class="stat-label">Not Provisioned</div></div>
         <div class="stat-card" style="border-left-color:#78909c; cursor:pointer;" onclick="setDiscoveredFilter('other')"><div class="stat-value" id="statOther">-</div><div class="stat-label">Other</div></div>
         <div class="stat-card" style="border-left-color:#f44336; cursor:pointer;" onclick="setDiscoveredFilter('unreachable')"><div class="stat-value" id="statUnreachable">-</div><div class="stat-label">Unreachable</div></div>
+        <div class="stat-card" style="border-left-color:#e53935; cursor:pointer;" onclick="setDiscoveredFilter('mismatch')"><div class="stat-value" id="statMismatch">-</div><div class="stat-label">MAC Mismatch</div></div>
+        <div class="stat-card" style="border-left-color:#42a5f5; cursor:pointer;" onclick="setDiscoveredFilter('no_binding')"><div class="stat-value" id="statNoBinding">-</div><div class="stat-label">No Binding</div></div>
         <div class="stat-card" style="border-left-color:#888; cursor:pointer;" onclick="setDiscoveredFilter('all')"><div class="stat-value" id="statAll">-</div><div class="stat-label">All</div></div>
     </div>
     <div class="toolbar">
@@ -1238,7 +1240,13 @@ async function checkDHCPStatus() {
 
 // ===================== DHCP SERVICE CONTROL =====================
 async function dhcpServiceAction(action) {
-    if (action === 'stop' && !confirm('Stop DHCP server? New devices will not get IP addresses.')) return;
+    if (action === 'stop') {
+        showConfirmModal('Stop DHCP Server', 'Stop DHCP server? New devices will not get IP addresses.', () => _dhcpServiceAction(action));
+        return;
+    }
+    _dhcpServiceAction(action);
+}
+async function _dhcpServiceAction(action) {
     showToast(`DHCP: ${action}...`, 'info');
     const data = await apiCall('dhcp-service-control', { action });
     if (data.success) {
@@ -1594,12 +1602,13 @@ function saveBinding() {
 }
 
 function deleteBinding(hostname) {
-    if (!confirm(`Delete binding for "${hostname}"?`)) return;
-    allBindings = allBindings.filter(x => x.hostname !== hostname);
-    bindingsModified = true;
-    document.getElementById('btnSaveBindings').style.display = '';
-    renderBindings();
-    showToast(`Binding "${hostname}" deleted (unsaved)`, 'info');
+    showConfirmModal('Delete Binding', `Delete binding for <strong>${hostname}</strong>?`, () => {
+        allBindings = allBindings.filter(x => x.hostname !== hostname);
+        bindingsModified = true;
+        document.getElementById('btnSaveBindings').style.display = '';
+        renderBindings();
+        showToast(`Binding "${hostname}" deleted (unsaved)`, 'info');
+    });
 }
 
 async function saveBindings() {
@@ -1641,38 +1650,65 @@ async function loadDiscoveryCache() {
         allDiscovered = data.entries;
         renderDiscoveredStats();
         renderDiscovered();
-        const age = data.age_seconds || 0;
-        const info = document.getElementById('discoveredInfo');
-        if (age < 60) info.textContent = `Cache: ${age}s ago`;
-        else if (age < 3600) info.textContent = `Cache: ${Math.round(age/60)}m ago`;
-        else info.textContent = `Cache: ${Math.round(age/3600)}h ago (stale)`;
-        // If stale, auto-trigger scan in background
-        if (data.stale) {
-            runSubnetScan();
-        }
+        updateDiscoveryInfo(data.age_seconds || 0);
+        // If stale, silent background scan (no loading indicators)
+        if (data.stale) silentSubnetScan();
     } else {
-        // No cache — run scan
-        runSubnetScan();
+        // No cache — silent scan
+        document.getElementById('discoveredBody').innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:#666;">No scan data yet. Click Scan or wait...</td></tr>';
+        silentSubnetScan();
     }
 }
+
+function updateDiscoveryInfo(ageSec) {
+    const info = document.getElementById('discoveredInfo');
+    if (ageSec < 60) info.textContent = `${ageSec}s ago`;
+    else if (ageSec < 3600) info.textContent = `${Math.round(ageSec/60)}m ago`;
+    else info.textContent = `${Math.round(ageSec/3600)}h ago`;
+}
+
+// Silent background scan — no loading indicators, just updates data
+async function silentSubnetScan() {
+    const data = await apiCall('subnet-scan');
+    if (data.success) {
+        allDiscovered = data.entries || [];
+        renderDiscoveredStats();
+        renderDiscovered();
+        updateDiscoveryInfo(0);
+        // Refresh bindings table if loaded (uses discovery cache for MAC/Live columns)
+        if (allBindings.length > 0) renderBindings();
+    }
+}
+
+// Start periodic background scan (every 5 minutes)
+setInterval(silentSubnetScan, 300000);
 
 function renderDiscoveredStats() {
     const provisioned = allDiscovered.filter(d => d.device_type === 'provisioned').length;
     const notProv = allDiscovered.filter(d => d.device_type === 'not_provisioned').length;
     const other = allDiscovered.filter(d => d.device_type === 'other').length;
-    const unreachable = allDiscovered.filter(d => d.device_type === 'unreachable').length;
+    // Unreachable: only count binding IPs (empty IPs in range are noise)
+    const unreachable = allDiscovered.filter(d => d.device_type === 'unreachable' && d.has_binding).length;
+    const mismatch = allDiscovered.filter(d => d.mac_status === 'mismatch').length;
+    // No Binding: reachable IPs without binding (new unknown devices on network)
+    const noBinding = allDiscovered.filter(d => !d.has_binding && d.device_type !== 'unreachable').length;
+    // All: meaningful entries (exclude empty unreachable IPs)
+    const meaningful = allDiscovered.filter(d => d.has_binding || d.device_type !== 'unreachable').length;
     document.getElementById('statProvisioned').textContent = provisioned;
     document.getElementById('statNotProv').textContent = notProv;
     document.getElementById('statOther').textContent = other;
     document.getElementById('statUnreachable').textContent = unreachable;
-    document.getElementById('statAll').textContent = allDiscovered.length;
+    document.getElementById('statMismatch').textContent = mismatch;
+    document.getElementById('statNoBinding').textContent = noBinding;
+    document.getElementById('statAll').textContent = meaningful;
 }
 
 async function runSubnetScan() {
+    // Manual scan — shows loading indicator
     const btn = document.getElementById('btnScan');
     btn.disabled = true;
     btn.textContent = 'Scanning...';
-    document.getElementById('discoveredBody').innerHTML = '<tr><td colspan="6" class="loading">Subnet scan: ping + SSH probe + post-provision...</td></tr>';
+    document.getElementById('discoveredBody').innerHTML = '<tr><td colspan="6" class="loading">Scanning subnet: ping + SSH probe + post-provision...</td></tr>';
     
     const data = await apiCall('subnet-scan');
     if (data.success) {
@@ -1685,8 +1721,7 @@ async function runSubnetScan() {
         let msg = `Scan: ${data.reachable || 0}/${data.total_ips || 0} reachable, ${prov} provisioned`;
         if (deployed > 0) msg += `, ${deployed} newly configured`;
         showToast(msg, 'success');
-        document.getElementById('discoveredInfo').textContent = 'Just scanned';
-        // Also refresh bindings if loaded (they use discovery cache for MAC column)
+        updateDiscoveryInfo(0);
         if (allBindings.length > 0) renderBindings();
     } else {
         document.getElementById('discoveredBody').innerHTML = `<tr><td colspan="6" style="color:#f44336;padding:20px;">Scan failed: ${data.error}</td></tr>`;
@@ -1701,11 +1736,20 @@ function renderDiscovered() {
     const typeFilter = document.getElementById('discoveredFilter').value;
 
     let filtered = allDiscovered;
-    if (typeFilter !== 'all') {
-        if (typeFilter === 'has_binding') filtered = filtered.filter(d => d.has_binding);
-        else if (typeFilter === 'no_binding') filtered = filtered.filter(d => !d.has_binding);
-        else if (typeFilter === 'mismatch') filtered = filtered.filter(d => d.mac_status === 'mismatch');
-        else filtered = filtered.filter(d => d.device_type === typeFilter);
+    // Default: hide empty IPs (unreachable + no binding = unused IP in range)
+    if (typeFilter === 'all') {
+        filtered = filtered.filter(d => d.has_binding || d.device_type !== 'unreachable');
+    } else if (typeFilter === 'has_binding') {
+        filtered = filtered.filter(d => d.has_binding);
+    } else if (typeFilter === 'no_binding') {
+        filtered = filtered.filter(d => !d.has_binding && d.device_type !== 'unreachable');
+    } else if (typeFilter === 'mismatch') {
+        filtered = filtered.filter(d => d.mac_status === 'mismatch');
+    } else if (typeFilter === 'unreachable') {
+        // Unreachable filter: only show binding IPs that are unreachable (interesting ones)
+        filtered = filtered.filter(d => d.device_type === 'unreachable' && d.has_binding);
+    } else {
+        filtered = filtered.filter(d => d.device_type === typeFilter);
     }
     if (filter) {
         filtered = filtered.filter(d =>
@@ -1826,17 +1870,18 @@ async function loadSSHKey() {
     }
 }
 
-async function generateSSHKey() {
-    if (!confirm('Generate a new SSH key pair? This will be used for ZTP and device management.')) return;
-    showToast('Generating SSH key...', 'info');
-    const data = await apiCall('generate-ssh-key', {});
-    if (data.success) {
-        document.getElementById('ztpSSHKey').value = data.public_key || '';
-        document.getElementById('sshKeyStatus').innerHTML = `<span style="color:#4caf50;">New key generated!</span> ${data.key_type || ''} (${data.key_file || ''})`;
-        showToast('SSH key generated. Apply to ZTP script with "Apply to Script".', 'success');
-    } else {
-        showToast('Key generation failed: ' + (data.error || 'Unknown error'), 'error');
-    }
+function generateSSHKey() {
+    showConfirmModal('Generate SSH Key', 'Generate a new SSH key pair?<br>This will be used for ZTP and device management.', async () => {
+        showToast('Generating SSH key...', 'info');
+        const data = await apiCall('generate-ssh-key', {});
+        if (data.success) {
+            document.getElementById('ztpSSHKey').value = data.public_key || '';
+            document.getElementById('sshKeyStatus').innerHTML = `<span style="color:#4caf50;">New key generated!</span> ${data.key_type || ''} (${data.key_file || ''})`;
+            showToast('SSH key generated. Apply to ZTP script with "Apply to Script".', 'success');
+        } else {
+            showToast('Key generation failed: ' + (data.error || 'Unknown error'), 'error');
+        }
+    });
 }
 
 function copySSHKey() {
@@ -1925,11 +1970,12 @@ async function uploadImage(input) {
     input.value = '';
 }
 
-async function deleteOSImage(name) {
-    if (!confirm(`Delete image "${name}"?`)) return;
-    const data = await apiCall('delete-os-image', { name });
-    if (data.success) { showToast('Image deleted', 'success'); loadOSImages(); }
-    else { showToast('Delete failed: ' + (data.error || ''), 'error'); }
+function deleteOSImage(name) {
+    showConfirmModal('Delete OS Image', `Delete image <strong>${name}</strong>?`, async () => {
+        const data = await apiCall('delete-os-image', { name });
+        if (data.success) { showToast('Image deleted', 'success'); loadOSImages(); }
+        else { showToast('Delete failed: ' + (data.error || ''), 'error'); }
+    });
 }
 
 // --- Script Editor Toggle ---
@@ -2229,6 +2275,64 @@ function escAttr(s) {
     if (!s) return '';
     return s.replace(/'/g, "\\'").replace(/"/g, '&quot;');
 }
+
+// ===================== CUSTOM CONFIRM MODAL =====================
+let _confirmCallback = null;
+function showConfirmModal(title, message, callback, btnText) {
+    document.getElementById('confirm-modal-title').textContent = title;
+    document.getElementById('confirm-modal-message').innerHTML = message;
+    // Set button text based on context
+    const btn = document.querySelector('.btn-confirm-action');
+    if (btnText) btn.textContent = btnText;
+    else if (title.toLowerCase().includes('delete')) btn.textContent = 'Delete';
+    else if (title.toLowerCase().includes('stop')) btn.textContent = 'Stop';
+    else if (title.toLowerCase().includes('generate')) btn.textContent = 'Generate';
+    else btn.textContent = 'Confirm';
+    _confirmCallback = callback;
+    document.getElementById('confirm-modal').classList.add('visible');
+}
+function closeConfirmModal() {
+    document.getElementById('confirm-modal').classList.remove('visible');
+    _confirmCallback = null;
+}
+function executeConfirmModal() {
+    if (_confirmCallback) _confirmCallback();
+    closeConfirmModal();
+}
 </script>
+
+<!-- Confirm Modal -->
+<div id="confirm-modal" class="confirm-modal" onclick="if(event.target===this)closeConfirmModal()">
+    <div class="confirm-modal-content">
+        <div class="confirm-modal-header">
+            <h3 id="confirm-modal-title">Confirm</h3>
+            <button class="confirm-modal-close" onclick="closeConfirmModal()">&times;</button>
+        </div>
+        <div class="confirm-modal-body">
+            <p id="confirm-modal-message"></p>
+        </div>
+        <div class="confirm-modal-footer">
+            <button type="button" class="btn-cancel" onclick="closeConfirmModal()">Cancel</button>
+            <button type="button" class="btn-confirm-action" onclick="executeConfirmModal()">Confirm</button>
+        </div>
+    </div>
+</div>
+
+<style>
+    .confirm-modal { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); z-index:10000; justify-content:center; align-items:center; }
+    .confirm-modal.visible { display:flex; }
+    .confirm-modal-content { background:#2d2d2d; border-radius:8px; width:420px; max-width:90%; box-shadow:0 10px 40px rgba(0,0,0,0.5); overflow:hidden; }
+    .confirm-modal-header { background:linear-gradient(135deg,#c53030 0%,#9b2c2c 100%); padding:15px 20px; display:flex; justify-content:space-between; align-items:center; }
+    .confirm-modal-header h3 { margin:0; color:#fff; font-size:16px; }
+    .confirm-modal-close { background:none; border:none; color:#fff; font-size:24px; cursor:pointer; opacity:0.8; }
+    .confirm-modal-close:hover { opacity:1; }
+    .confirm-modal-body { padding:25px 20px; }
+    .confirm-modal-body p { color:#ccc; line-height:1.6; margin:0; text-align:center; }
+    .confirm-modal-footer { padding:15px 20px; display:flex; justify-content:flex-end; gap:10px; background:#252526; border-top:1px solid #3c3c3c; }
+    .confirm-modal-footer .btn-cancel { background:#3c3c3c; color:#d4d4d4; border:none; padding:10px 20px; border-radius:4px; cursor:pointer; }
+    .confirm-modal-footer .btn-cancel:hover { background:#4a4a4a; }
+    .confirm-modal-footer .btn-confirm-action { background:#c53030; color:#fff; border:none; padding:10px 20px; border-radius:4px; cursor:pointer; }
+    .confirm-modal-footer .btn-confirm-action:hover { background:#e53e3e; }
+</style>
 </body>
 </html>
