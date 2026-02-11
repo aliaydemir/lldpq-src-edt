@@ -53,14 +53,18 @@ COPY etc/nginx/sites-available/lldpq /etc/nginx/sites-available/lldpq
 RUN rm -f /etc/nginx/sites-enabled/default \
     && ln -sf /etc/nginx/sites-available/lldpq /etc/nginx/sites-enabled/lldpq
 
-# Set permissions
+# Set ALL permissions explicitly (never rely on host umask or chmod +x)
+# /var/www/html: lldpq:www-data, dirs=775, files=664, scripts=775
 RUN chown -R lldpq:www-data /var/www/html/ \
     && find /var/www/html -type d -exec chmod 775 {} \; \
     && find /var/www/html -type f -exec chmod 664 {} \; \
-    && chmod +x /var/www/html/*.sh \
-    && chown -R lldpq:lldpq /home/lldpq/ \
-    && chmod +x /usr/local/bin/* \
-    && chmod +x /home/lldpq/lldpq/*.sh /home/lldpq/lldpq/*.py 2>/dev/null || true
+    && find /var/www/html -name '*.sh' -exec chmod 775 {} \;
+# /usr/local/bin: root-owned, readable+executable by ALL users (755)
+RUN chmod 755 /usr/local/bin/*
+# /home/lldpq: lldpq-owned, scripts=755
+RUN chown -R lldpq:lldpq /home/lldpq/ \
+    && find /home/lldpq/lldpq -name '*.sh' -exec chmod 755 {} \; \
+    && find /home/lldpq/lldpq -name '*.py' -exec chmod 755 {} \;
 
 # Setup topology files: real files in web root, symlinks in lldpq dir
 # Same pattern as native install - web UI edits files in /var/www/html/
