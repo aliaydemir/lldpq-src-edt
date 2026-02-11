@@ -607,7 +607,25 @@ def action_get_dhcp_config():
         except Exception:
             pass
     
-    result_json({"success": True, **config})
+    # List network interfaces with IP addresses
+    interfaces = []
+    try:
+        r = subprocess.run(['ip', '-4', '-o', 'addr', 'show'], capture_output=True, text=True, timeout=5)
+        if r.returncode == 0:
+            seen = set()
+            for line in r.stdout.strip().split('\n'):
+                parts = line.split()
+                if len(parts) >= 4:
+                    iface_name = parts[1]
+                    ip_cidr = parts[3]  # e.g. 192.168.58.200/24
+                    ip_addr = ip_cidr.split('/')[0]
+                    if iface_name not in seen and iface_name != 'lo':
+                        interfaces.append({'name': iface_name, 'ip': ip_addr})
+                        seen.add(iface_name)
+    except Exception:
+        pass
+    
+    result_json({"success": True, "interfaces": interfaces, **config})
 
 def action_save_dhcp_config():
     """Write dhcpd.conf from settings and restart DHCP."""

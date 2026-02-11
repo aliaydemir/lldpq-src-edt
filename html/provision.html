@@ -758,25 +758,6 @@
 <!-- ==================== TAB 0: DHCPd ==================== -->
 <div class="tab-content active" id="tab-dhcpd">
 
-    <!-- Discovery Stats (clickable — filters Discovered tab) -->
-    <div class="stats-row" id="dhcpdDiscoveryStats" style="margin-bottom: 20px;">
-        <div class="stat-card" style="cursor:pointer;" onclick="goDiscoveredFilter('match')">
-            <div class="stat-value" id="dhcpdStatMatch">-</div><div class="stat-label">Matched</div>
-        </div>
-        <div class="stat-card" style="border-left-color:#ff9800; cursor:pointer;" onclick="goDiscoveredFilter('mismatch')">
-            <div class="stat-value" id="dhcpdStatMismatch">-</div><div class="stat-label">Mismatch</div>
-        </div>
-        <div class="stat-card" style="border-left-color:#42a5f5; cursor:pointer;" onclick="goDiscoveredFilter('unbound')">
-            <div class="stat-value" id="dhcpdStatUnbound">-</div><div class="stat-label">No Binding</div>
-        </div>
-        <div class="stat-card" style="border-left-color:#f44336; cursor:pointer;" onclick="goDiscoveredFilter('missing')">
-            <div class="stat-value" id="dhcpdStatMissing">-</div><div class="stat-label">Not Discovered</div>
-        </div>
-        <div class="stat-card" style="border-left-color:#888;">
-            <div class="stat-value" id="dhcpdStatBindings">-</div><div class="stat-label">Total Bindings</div>
-        </div>
-    </div>
-
     <!-- DHCP Server Configuration -->
     <div class="section-title">DHCP Server Configuration</div>
     <div class="section-desc">Subnet, IP range, gateway, DNS and ZTP settings. Changes require DHCP restart.</div>
@@ -816,7 +797,7 @@
             </div>
             <div>
                 <label style="font-size: 11px; color: #888; display: block; margin-bottom: 4px;">LISTEN INTERFACE</label>
-                <input type="text" class="form-input" id="dhcpInterface" style="width: 100%;" placeholder="eth0">
+                <select class="form-input" id="dhcpInterface" style="width: 100%;"><option value="">Loading...</option></select>
             </div>
             <div>
                 <label style="font-size: 11px; color: #888; display: block; margin-bottom: 4px;">DEFAULT LEASE TIME (sec)</label>
@@ -830,6 +811,51 @@
             </button>
             <button class="btn btn-secondary btn-sm" onclick="loadDHCPConfig()">Reload</button>
         </div>
+    </div>
+
+    <!-- Discovered Section (inside DHCP Server tab) -->
+    <div class="section-title" style="margin-top: 10px;">Discovered Devices</div>
+    <div class="section-desc">Cross-reference LLDP/ARP data with DHCP bindings. Click stats to filter.</div>
+    <div class="stats-row" id="discoveredStats">
+        <div class="stat-card" style="cursor:pointer;" onclick="setDiscoveredFilter('match')"><div class="stat-value" id="statMatched">-</div><div class="stat-label">Matched</div></div>
+        <div class="stat-card" style="border-left-color:#ff9800; cursor:pointer;" onclick="setDiscoveredFilter('mismatch')"><div class="stat-value" id="statMismatch">-</div><div class="stat-label">Mismatch</div></div>
+        <div class="stat-card" style="border-left-color:#42a5f5; cursor:pointer;" onclick="setDiscoveredFilter('unbound')"><div class="stat-value" id="statUnbound">-</div><div class="stat-label">No Binding</div></div>
+        <div class="stat-card" style="border-left-color:#f44336; cursor:pointer;" onclick="setDiscoveredFilter('missing')"><div class="stat-value" id="statMissing">-</div><div class="stat-label">Not Discovered</div></div>
+    </div>
+    <div class="toolbar">
+        <div class="toolbar-left">
+            <input type="text" class="search-filter" id="discoveredSearch" placeholder="Filter..." oninput="filterDiscovered()">
+            <select class="form-input" id="discoveredFilter" onchange="filterDiscovered()" style="width:180px;">
+                <option value="all">All</option>
+                <option value="match">Matched</option>
+                <option value="mismatch">Mismatch Only</option>
+                <option value="unbound">No Binding</option>
+                <option value="missing">Not Discovered</option>
+            </select>
+        </div>
+        <div class="toolbar-right">
+            <button class="btn btn-secondary" onclick="loadDiscovered()">
+                <svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+                Refresh
+            </button>
+        </div>
+    </div>
+    <div class="table-wrapper">
+        <table class="data-table" id="discoveredTable">
+            <thead>
+                <tr>
+                    <th>Hostname</th>
+                    <th>Binding MAC</th>
+                    <th>Discovered MAC</th>
+                    <th>Binding IP</th>
+                    <th>Source</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody id="discoveredBody">
+                <tr><td colspan="6" class="loading">Loading...</td></tr>
+            </tbody>
+        </table>
     </div>
 </div>
 
@@ -873,52 +899,6 @@
             </thead>
             <tbody id="bindingsBody">
                 <tr><td colspan="6" class="loading">Loading bindings...</td></tr>
-            </tbody>
-        </table>
-    </div>
-</div>
-
-<!-- ==================== TAB 2: DISCOVERED ==================== -->
-<div class="tab-content" id="tab-discovered">
-    <div class="section-desc">Cross-reference LLDP/ARP data with DHCP bindings to detect MAC mismatches and undiscovered devices.</div>
-    <div class="stats-row" id="discoveredStats">
-        <div class="stat-card"><div class="stat-value" id="statMatched">-</div><div class="stat-label">Matched</div></div>
-        <div class="stat-card" style="border-left-color:#ff9800;"><div class="stat-value" id="statMismatch">-</div><div class="stat-label">Mismatch</div></div>
-        <div class="stat-card" style="border-left-color:#42a5f5;"><div class="stat-value" id="statUnbound">-</div><div class="stat-label">No Binding</div></div>
-        <div class="stat-card" style="border-left-color:#f44336;"><div class="stat-value" id="statMissing">-</div><div class="stat-label">Not Discovered</div></div>
-    </div>
-    <div class="toolbar">
-        <div class="toolbar-left">
-            <input type="text" class="search-filter" id="discoveredSearch" placeholder="Filter..." oninput="filterDiscovered()">
-            <select class="form-input" id="discoveredFilter" onchange="filterDiscovered()" style="width:180px;">
-                <option value="all">All</option>
-                <option value="match">Matched</option>
-                <option value="mismatch">Mismatch Only</option>
-                <option value="unbound">No Binding</option>
-                <option value="missing">Not Discovered</option>
-            </select>
-        </div>
-        <div class="toolbar-right">
-            <button class="btn btn-secondary" onclick="loadDiscovered()">
-                <svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
-                Refresh
-            </button>
-        </div>
-    </div>
-    <div class="table-wrapper">
-        <table class="data-table" id="discoveredTable">
-            <thead>
-                <tr>
-                    <th>Hostname</th>
-                    <th>Binding MAC</th>
-                    <th>Discovered MAC</th>
-                    <th>Binding IP</th>
-                    <th>Source</th>
-                    <th>Status</th>
-                </tr>
-            </thead>
-            <tbody id="discoveredBody">
-                <tr><td colspan="6" class="loading">Loading...</td></tr>
             </tbody>
         </table>
     </div>
@@ -1159,52 +1139,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Load initial data
     loadDHCPConfig();
-    loadDHCPdStats();
+    loadDiscovered();
     loadDeviceList();
     renderBaseConfigFiles();
     checkDHCPStatus();
 });
 
 function onTabSwitch(tab) {
-    if (tab === 'dhcpd') { loadDHCPConfig(); loadDHCPdStats(); }
+    if (tab === 'dhcpd') { loadDHCPConfig(); loadDiscovered(); }
     if (tab === 'bindings' && allBindings.length === 0) loadBindings();
-    if (tab === 'discovered') loadDiscovered();
     if (tab === 'ztp-script') loadZTPScript();
 }
 
-// ===================== DHCPd TAB — Discovery Stats =====================
-async function loadDHCPdStats() {
-    const data = await apiCall('discovered');
-    if (data.success) {
-        const entries = data.entries || [];
-        allDiscovered = entries;  // cache for Discovered tab
-        const match = entries.filter(e => e.status === 'match').length;
-        const mismatch = entries.filter(e => e.status === 'mismatch').length;
-        const unbound = entries.filter(e => e.status === 'unbound').length;
-        const missing = entries.filter(e => e.status === 'missing').length;
-        document.getElementById('dhcpdStatMatch').textContent = match;
-        document.getElementById('dhcpdStatMismatch').textContent = mismatch;
-        document.getElementById('dhcpdStatUnbound').textContent = unbound;
-        document.getElementById('dhcpdStatMissing').textContent = missing;
-        document.getElementById('dhcpdStatBindings').textContent = entries.length;
-    }
-}
-
-function goDiscoveredFilter(status) {
-    // Switch to Discovered tab with filter pre-set
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-    document.querySelector('.tab-btn[data-tab="discovered"]').classList.add('active');
-    document.getElementById('tab-discovered').classList.add('active');
-    // Set filter
+function setDiscoveredFilter(status) {
     document.getElementById('discoveredFilter').value = status;
-    // Render with cached data if available, otherwise load
-    if (allDiscovered.length > 0) {
-        renderDiscoveredStats();
-        renderDiscovered();
-    } else {
-        loadDiscovered();
-    }
+    renderDiscovered();
+    // Scroll to discovered table
+    document.getElementById('discoveredTable').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 // ===================== API HELPER =====================
@@ -1273,8 +1224,21 @@ async function loadDHCPConfig() {
         document.getElementById('dhcpDNS').value = data.dns || '';
         document.getElementById('dhcpDomain').value = data.domain || '';
         document.getElementById('dhcpProvisionURL').value = data.provision_url || '';
-        document.getElementById('dhcpInterface').value = data.interface || '';
         document.getElementById('dhcpLeaseTime').value = data.lease_time || '';
+        
+        // Populate interface dropdown
+        const sel = document.getElementById('dhcpInterface');
+        const currentIface = data.interface || 'eth0';
+        const ifaces = data.interfaces || [];
+        if (ifaces.length > 0) {
+            sel.innerHTML = ifaces.map(i => {
+                const selected = i.name === currentIface ? ' selected' : '';
+                const ipLabel = i.ip ? ` (${i.ip})` : ' (no IP)';
+                return `<option value="${escHtml(i.name)}"${selected}>${escHtml(i.name)}${ipLabel}</option>`;
+            }).join('');
+        } else {
+            sel.innerHTML = `<option value="${escHtml(currentIface)}" selected>${escHtml(currentIface)}</option>`;
+        }
     }
 }
 
