@@ -106,17 +106,6 @@ def ensure_ssh_key(lldpq_user):
     except Exception as e:
         return None, False, str(e)
 
-def ping_check(ip, timeout=2):
-    """Quick ping check to see if device is reachable."""
-    try:
-        result = subprocess.run(
-            ['ping', '-c', '1', '-W', str(timeout), ip],
-            capture_output=True, text=True, timeout=timeout + 1
-        )
-        return result.returncode == 0
-    except Exception:
-        return False
-
 def setup_device(device, password, ssh_key_path, lldpq_user):
     """Run send-key + sudo-fix for a single device. Returns result dict."""
     ip = device['ip']
@@ -132,14 +121,6 @@ def setup_device(device, password, ssh_key_path, lldpq_user):
         'send_key_msg': '',
         'sudo_fix_msg': ''
     }
-    
-    # Step 0: Quick ping check - skip unreachable devices immediately
-    if not ping_check(ip):
-        result['send_key'] = 'fail'
-        result['send_key_msg'] = 'Unreachable (ping failed)'
-        result['sudo_fix'] = 'skipped'
-        result['sudo_fix_msg'] = 'Skipped (device unreachable)'
-        return result
     
     # Step 1: Check if key already works
     try:
