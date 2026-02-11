@@ -26,17 +26,25 @@ try:
     with open('devices.yaml', 'r') as f:
         data = yaml.safe_load(f)
     
+    defaults = data.get('defaults', {})
+    default_username = defaults.get('username', 'cumulus')
+    
     devices = data.get('devices', data)
     for ip, info in devices.items():
         if ip in ['defaults', 'endpoint_hosts']:
             continue
         if isinstance(info, dict):
             hostname = info.get('hostname', ip)
+            username = info.get('username', default_username)
         elif isinstance(info, str):
-            hostname = info  # Format: IP: hostname
+            import re
+            match = re.match(r'^(.+?)\s+@\w+$', info.strip())
+            hostname = match.group(1).strip() if match else info.strip()
+            username = default_username
         else:
             hostname = ip
-        print(f"{ip}|{hostname}")
+            username = default_username
+        print(f"{ip}|{hostname}|{username}")
 except Exception as e:
     print(f"Error: {e}", file=sys.stderr)
     sys.exit(1)
@@ -60,6 +68,7 @@ is_reachable() {
 collect_device_data() {
     local ip="$1"
     local hostname="$2"
+    local username="${3:-cumulus}"
     local output_file="$OUTPUT_DIR/${hostname}.json"
     
     # Skip unreachable hosts
@@ -70,7 +79,7 @@ collect_device_data() {
     
     # Collect raw data via SSH
     local raw_data
-    raw_data=$(timeout $SSH_TIMEOUT ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes "$ip" '
+    raw_data=$(timeout $SSH_TIMEOUT ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes "${username}@${ip}" '
         echo "===ARP==="
         /usr/sbin/ip neigh show 2>/dev/null | head -300
         echo "===VRFMAP==="
@@ -392,11 +401,12 @@ tmp_devices=$(mktemp)
 echo "$devices_list" > "$tmp_devices"
 
 job_count=0
-while IFS='|' read -r ip hostname; do
+while IFS='|' read -r ip hostname username; do
     [ -z "$ip" ] && continue
+    username="${username:-cumulus}"
     
     (
-        result=$(collect_device_data "$ip" "$hostname" 2>/dev/null)
+        result=$(collect_device_data "$ip" "$hostname" "$username" 2>/dev/null)
         case "$result" in
             OK) echo -n "." ;;
             SKIP) echo -n "-" ;;
