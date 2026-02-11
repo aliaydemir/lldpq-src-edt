@@ -29,7 +29,7 @@ curl -O https://aliaydemir.com/lldpq.tar.gz
 sudo docker load < lldpq.tar.gz
 
 # Run (example data included, ready to use)
-sudo docker run -d --name lldpq --network host lldpq:latest
+sudo docker run -d --name lldpq --network host --privileged lldpq:latest
 ```
 
 Open `http://<host-ip>` in your browser. That's it.
