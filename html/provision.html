@@ -926,12 +926,23 @@
             <div style="display: flex; gap: 8px; padding-top: 18px;">
                 <button class="btn btn-primary btn-sm" onclick="generateSSHKey()">
                     <svg viewBox="0 0 24 24" style="width:14px;height:14px;"><path d="M12.65 10C11.83 7.67 9.61 6 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6c2.61 0 4.83-1.67 5.65-4H17v4h4v-4h3v-4H12.65zM7 14c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z"/></svg>
-                    Generate New Key
+                    Generate
                 </button>
+                <button class="btn btn-secondary btn-sm" onclick="toggleImportKey()">Import</button>
                 <button class="btn btn-secondary btn-sm" onclick="loadSSHKey()">Refresh</button>
             </div>
         </div>
         <div id="sshKeyStatus" style="margin-top: 8px; font-size: 12px; color: #888;"></div>
+        <!-- Import Key Area (hidden by default) -->
+        <div id="importKeyArea" style="display: none; margin-top: 10px; padding-top: 10px; border-top: 1px solid #3c3c3c;">
+            <label style="font-size: 11px; color: #888; display: block; margin-bottom: 4px;">PASTE PRIVATE KEY</label>
+            <textarea id="importKeyText" spellcheck="false" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----" style="width:100%; height:120px; padding:10px; background:#1a1a1a; color:#4fc3f7; border:1px solid #555; border-radius:4px; font-family:'Cascadia Code','Consolas',monospace; font-size:11px; resize:vertical; box-sizing:border-box;"></textarea>
+            <div style="margin-top: 8px; display: flex; gap: 8px; align-items: center;">
+                <button class="btn btn-primary btn-sm" onclick="importSSHKey()">Save Key</button>
+                <button class="btn btn-secondary btn-sm" onclick="toggleImportKey()">Cancel</button>
+                <span id="importKeyMsg" style="font-size: 12px; color: #888;"></span>
+            </div>
+        </div>
     </div>
 
     <!-- Quick Settings Section -->
@@ -1716,6 +1727,31 @@ function copySSHKey() {
     const key = document.getElementById('ztpSSHKey').value;
     if (!key) { showToast('No key to copy', 'error'); return; }
     navigator.clipboard.writeText(key).then(() => showToast('Public key copied!', 'success'));
+}
+
+function toggleImportKey() {
+    const area = document.getElementById('importKeyArea');
+    area.style.display = area.style.display === 'none' ? '' : 'none';
+    if (area.style.display !== 'none') document.getElementById('importKeyText').focus();
+}
+
+async function importSSHKey() {
+    const key = document.getElementById('importKeyText').value.trim();
+    if (!key || !key.includes('PRIVATE KEY')) {
+        document.getElementById('importKeyMsg').innerHTML = '<span style="color:#f44336;">Paste a valid private key</span>';
+        return;
+    }
+    document.getElementById('importKeyMsg').innerHTML = '<span style="color:#888;">Saving...</span>';
+    const data = await apiCall('import-ssh-key', { private_key: key });
+    if (data.success) {
+        document.getElementById('importKeyMsg').innerHTML = '<span style="color:#4caf50;">Key imported!</span>';
+        document.getElementById('importKeyText').value = '';
+        toggleImportKey();
+        loadSSHKey();
+        showToast('SSH key imported successfully', 'success');
+    } else {
+        document.getElementById('importKeyMsg').innerHTML = `<span style="color:#f44336;">${data.error || 'Failed'}</span>`;
+    }
 }
 
 // --- Password Toggle ---

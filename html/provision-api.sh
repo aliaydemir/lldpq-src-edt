@@ -1155,6 +1155,72 @@ def action_generate_ssh_key():
     except Exception as e:
         error_json(str(e))
 
+def action_import_ssh_key():
+    """Import an existing private key (paste from another server/setup)."""
+    try:
+        data = json.loads(POST_DATA)
+    except Exception:
+        error_json("Invalid JSON data")
+    
+    private_key = data.get('private_key', '').strip()
+    if not private_key or 'PRIVATE KEY' not in private_key:
+        error_json("Invalid private key")
+    
+    # Ensure newline at end
+    if not private_key.endswith('\n'):
+        private_key += '\n'
+    
+    home = os.path.expanduser(f'~{LLDPQ_USER}')
+    ssh_dir = os.path.join(home, '.ssh')
+    
+    # Detect key type from content
+    if 'ed25519' in private_key.lower() or 'ED25519' in private_key:
+        key_name = 'id_ed25519'
+        key_type = 'ed25519'
+    elif 'RSA' in private_key:
+        key_name = 'id_rsa'
+        key_type = 'rsa'
+    else:
+        key_name = 'id_ed25519'
+        key_type = 'unknown'
+    
+    key_path = os.path.join(ssh_dir, key_name)
+    pub_path = key_path + '.pub'
+    
+    try:
+        os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
+        
+        # Write private key
+        with open(key_path, 'w') as f:
+            f.write(private_key)
+        os.chmod(key_path, 0o600)
+        
+        # Extract public key from private key
+        result = subprocess.run(
+            ['ssh-keygen', '-y', '-f', key_path],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            with open(pub_path, 'w') as f:
+                f.write(result.stdout.strip() + f' {LLDPQ_USER}@imported\n')
+            os.chmod(pub_path, 0o644)
+        else:
+            # Clean up on failure
+            os.remove(key_path)
+            error_json(f"Invalid private key: {result.stderr.strip()[:200]}")
+        
+        # Fix ownership
+        subprocess.run(['chown', f'{LLDPQ_USER}:{LLDPQ_USER}', key_path, pub_path],
+                       capture_output=True, timeout=5)
+        
+        # Read public key
+        with open(pub_path, 'r') as f:
+            pub_key = f.read().strip()
+        
+        result_json({"success": True, "public_key": pub_key, "key_type": key_type, "key_file": pub_path})
+    except Exception as e:
+        error_json(str(e))
+
 # ======================== OS IMAGES ========================
 
 def action_list_os_images():
@@ -1295,6 +1361,8 @@ elif ACTION == 'get-ssh-key':
     action_get_ssh_key()
 elif ACTION == 'generate-ssh-key':
     action_generate_ssh_key()
+elif ACTION == 'import-ssh-key':
+    action_import_ssh_key()
 elif ACTION == 'list-os-images':
     action_list_os_images()
 elif ACTION == 'upload-os-image':
