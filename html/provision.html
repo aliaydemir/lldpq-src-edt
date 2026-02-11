@@ -1687,20 +1687,16 @@ function renderDiscoveredStats() {
     const provisioned = allDiscovered.filter(d => d.device_type === 'provisioned').length;
     const notProv = allDiscovered.filter(d => d.device_type === 'not_provisioned').length;
     const other = allDiscovered.filter(d => d.device_type === 'other').length;
-    // Unreachable: only count binding IPs (empty IPs in range are noise)
-    const unreachable = allDiscovered.filter(d => d.device_type === 'unreachable' && d.has_binding).length;
+    const unreachable = allDiscovered.filter(d => d.device_type === 'unreachable').length;
     const mismatch = allDiscovered.filter(d => d.mac_status === 'mismatch').length;
-    // No Binding: reachable IPs without binding (new unknown devices on network)
-    const noBinding = allDiscovered.filter(d => !d.has_binding && d.device_type !== 'unreachable').length;
-    // All: meaningful entries (exclude empty unreachable IPs)
-    const meaningful = allDiscovered.filter(d => d.has_binding || d.device_type !== 'unreachable').length;
+    const noBinding = allDiscovered.filter(d => !d.has_binding).length;
     document.getElementById('statProvisioned').textContent = provisioned;
     document.getElementById('statNotProv').textContent = notProv;
     document.getElementById('statOther').textContent = other;
     document.getElementById('statUnreachable').textContent = unreachable;
     document.getElementById('statMismatch').textContent = mismatch;
     document.getElementById('statNoBinding').textContent = noBinding;
-    document.getElementById('statAll').textContent = meaningful;
+    document.getElementById('statAll').textContent = allDiscovered.length;
 }
 
 async function runSubnetScan() {
@@ -1736,20 +1732,11 @@ function renderDiscovered() {
     const typeFilter = document.getElementById('discoveredFilter').value;
 
     let filtered = allDiscovered;
-    // Default: hide empty IPs (unreachable + no binding = unused IP in range)
-    if (typeFilter === 'all') {
-        filtered = filtered.filter(d => d.has_binding || d.device_type !== 'unreachable');
-    } else if (typeFilter === 'has_binding') {
-        filtered = filtered.filter(d => d.has_binding);
-    } else if (typeFilter === 'no_binding') {
-        filtered = filtered.filter(d => !d.has_binding && d.device_type !== 'unreachable');
-    } else if (typeFilter === 'mismatch') {
-        filtered = filtered.filter(d => d.mac_status === 'mismatch');
-    } else if (typeFilter === 'unreachable') {
-        // Unreachable filter: only show binding IPs that are unreachable (interesting ones)
-        filtered = filtered.filter(d => d.device_type === 'unreachable' && d.has_binding);
-    } else {
-        filtered = filtered.filter(d => d.device_type === typeFilter);
+    if (typeFilter !== 'all') {
+        if (typeFilter === 'has_binding') filtered = filtered.filter(d => d.has_binding);
+        else if (typeFilter === 'no_binding') filtered = filtered.filter(d => !d.has_binding);
+        else if (typeFilter === 'mismatch') filtered = filtered.filter(d => d.mac_status === 'mismatch');
+        else filtered = filtered.filter(d => d.device_type === typeFilter);
     }
     if (filter) {
         filtered = filtered.filter(d =>
