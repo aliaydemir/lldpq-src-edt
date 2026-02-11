@@ -766,7 +766,7 @@
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px;">
             <div>
                 <label style="font-size: 11px; color: #888; display: block; margin-bottom: 4px;">SUBNET</label>
-                <input type="text" class="form-input" id="dhcpSubnet" style="width: 100%;" placeholder="192.168.58.0">
+                <input type="text" class="form-input" id="dhcpSubnet" style="width: 100%;" placeholder="192.168.100.0">
             </div>
             <div>
                 <label style="font-size: 11px; color: #888; display: block; margin-bottom: 4px;">NETMASK</label>
@@ -774,19 +774,19 @@
             </div>
             <div>
                 <label style="font-size: 11px; color: #888; display: block; margin-bottom: 4px;">DYNAMIC RANGE START</label>
-                <input type="text" class="form-input" id="dhcpRangeStart" style="width: 100%;" placeholder="192.168.58.210">
+                <input type="text" class="form-input" id="dhcpRangeStart" style="width: 100%;" placeholder="192.168.100.210">
             </div>
             <div>
                 <label style="font-size: 11px; color: #888; display: block; margin-bottom: 4px;">DYNAMIC RANGE END</label>
-                <input type="text" class="form-input" id="dhcpRangeEnd" style="width: 100%;" placeholder="192.168.58.249">
+                <input type="text" class="form-input" id="dhcpRangeEnd" style="width: 100%;" placeholder="192.168.100.249">
             </div>
             <div>
                 <label style="font-size: 11px; color: #888; display: block; margin-bottom: 4px;">GATEWAY (ROUTER)</label>
-                <input type="text" class="form-input" id="dhcpGateway" style="width: 100%;" placeholder="192.168.58.1">
+                <input type="text" class="form-input" id="dhcpGateway" style="width: 100%;" placeholder="192.168.100.1">
             </div>
             <div>
                 <label style="font-size: 11px; color: #888; display: block; margin-bottom: 4px;">DNS SERVER</label>
-                <input type="text" class="form-input" id="dhcpDNS" style="width: 100%;" placeholder="192.168.58.1">
+                <input type="text" class="form-input" id="dhcpDNS" style="width: 100%;" placeholder="192.168.100.1">
             </div>
             <div>
                 <label style="font-size: 11px; color: #888; display: block; margin-bottom: 4px;">DOMAIN NAME</label>
@@ -794,7 +794,7 @@
             </div>
             <div>
                 <label style="font-size: 11px; color: #888; display: block; margin-bottom: 4px;">ZTP PROVISION URL</label>
-                <input type="text" class="form-input" id="dhcpProvisionURL" style="width: 100%;" placeholder="http://192.168.58.200/cumulus-ztp.sh">
+                <input type="text" class="form-input" id="dhcpProvisionURL" style="width: 100%;" placeholder="http://192.168.100.200/cumulus-ztp.sh">
             </div>
             <div>
                 <label style="font-size: 11px; color: #888; display: block; margin-bottom: 4px;">LISTEN INTERFACE</label>
@@ -820,7 +820,7 @@
             <div>
                 <div class="section-title" style="font-size: 13px; margin-bottom: 8px;">Discovery Range</div>
                 <div class="section-desc" style="margin-bottom: 8px; font-size: 11px;">IP range to scan for device discovery. Only IPs in this range will be pinged and probed.</div>
-                <input type="text" class="form-input" id="discoveryRange" style="width: 100%; font-family: 'Cascadia Code','Consolas',monospace;" placeholder="192.168.58.10-192.168.58.249">
+                <input type="text" class="form-input" id="discoveryRange" style="width: 100%; font-family: 'Cascadia Code','Consolas',monospace;" placeholder="192.168.100.10-192.168.100.249">
             </div>
             <div>
                 <div class="section-title" style="font-size: 13px; margin-bottom: 8px;">Post-Provision Actions</div>
@@ -998,7 +998,7 @@
             </div>
             <div>
                 <label style="font-size: 11px; color: #888; display: block; margin-bottom: 4px;">IMAGE SERVER IP</label>
-                <input type="text" class="form-input input-ip" id="ztpImageServer" style="width: 100%;" placeholder="e.g. 192.168.58.200">
+                <input type="text" class="form-input input-ip" id="ztpImageServer" style="width: 100%;" placeholder="e.g. 192.168.100.200">
             </div>
         </div>
         <button class="btn btn-secondary btn-sm" style="margin-top: 10px;" onclick="applyQuickSettings()">Apply to Script</button>
@@ -1111,7 +1111,7 @@
         </div>
         <div class="modal-field">
             <label>IP Address</label>
-            <input type="text" id="modalIP" class="mono" placeholder="e.g. 192.168.58.11">
+            <input type="text" id="modalIP" class="mono" placeholder="e.g. 192.168.100.11">
         </div>
         <input type="hidden" id="modalOrigHostname">
         <div class="modal-actions">
@@ -1130,9 +1130,9 @@
         </div>
         <div style="margin-bottom: 10px; padding: 10px; background: #1e1e1e; border-radius: 4px; font-size: 12px; color: #888; font-family: 'Cascadia Code','Consolas',monospace;">
             Example:<br>
-            leaf-01&nbsp;&nbsp;54:9b:24:aa:68:16&nbsp;&nbsp;192.168.58.11<br>
-            leaf-02&nbsp;&nbsp;54:9b:24:8d:35:44&nbsp;&nbsp;192.168.58.12<br>
-            spine-01&nbsp;8c:91:3a:b4:aa:60&nbsp;&nbsp;192.168.58.17
+            leaf-01&nbsp;&nbsp;54:9b:24:aa:68:16&nbsp;&nbsp;192.168.100.11<br>
+            leaf-02&nbsp;&nbsp;54:9b:24:8d:35:44&nbsp;&nbsp;192.168.100.12<br>
+            spine-01&nbsp;8c:91:3a:b4:aa:60&nbsp;&nbsp;192.168.100.17
         </div>
         <textarea id="bulkImportText" style="width:100%; min-height:250px; padding:12px; background:#1a1a1a; color:#d4d4d4; border:1px solid #555; border-radius:4px; font-family:'Cascadia Code','Consolas',monospace; font-size:13px; line-height:1.6; resize:vertical;" spellcheck="false" placeholder="hostname  MAC  IP&#10;hostname  MAC  IP&#10;..."></textarea>
         <div id="bulkImportPreview" style="margin-top: 10px; font-size: 12px; color: #888;"></div>
@@ -2003,7 +2003,7 @@ function applyQuickSettings() {
     let content = document.getElementById('ztpEditor').value;
     const os = document.getElementById('ztpTargetOS').value.trim() || '5.14.0';
     const pw = document.getElementById('ztpPassword').value.trim() || 'CumulusLinux!';
-    const ip = document.getElementById('ztpImageServer').value.trim() || '192.168.58.200';
+    const ip = document.getElementById('ztpImageServer').value.trim() || '192.168.100.200';
     const key = document.getElementById('ztpSSHKey').value.trim();
 
     // If script is placeholder/empty, generate full template
