@@ -15,10 +15,17 @@ mkdir -p ~/configs/configs-${date}/nv-set
 sudo mkdir -p "$WEB_ROOT/configs"
 unreachable_hosts_file=$(mktemp)
 
+# VRF-aware ping (Cumulus switches use mgmt VRF for management network)
+if ip vrf show mgmt &>/dev/null; then
+    PING="ip vrf exec mgmt ping"
+else
+    PING="ping"
+fi
+
 ping_test() {
     local device=$1
     local hostname=$2
-    ping -c 1 -W 0.5 "$device" > /dev/null 2>&1
+    $PING -c 1 -W 0.5 "$device" > /dev/null 2>&1
     if [ $? -ne 0 ]; then
         echo "$device $hostname" >> "$unreachable_hosts_file"
         return 1

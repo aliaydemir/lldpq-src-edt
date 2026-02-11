@@ -115,9 +115,16 @@ printf '%-20s %-15s %-17s %-12s %-20s %-10s %-15s %-12s %s\n' \
   "DEVICE-NAME" "IP" "ETH0-MAC" "SERIAL" "MODEL" "RELEASE" "UPTIME" "STATUS" "LAST-SEEN" > "$TMPFILE"
 
 #### WORKFLOW
+# VRF-aware ping (Cumulus switches use mgmt VRF for management network)
+if ip vrf show mgmt &>/dev/null; then
+    PING="ip vrf exec mgmt ping"
+else
+    PING="ping"
+fi
+
 ping_test() {
   local ip=$1 host=$2
-  if ! ping -c1 -W1 "$ip" &>/dev/null; then
+  if ! $PING -c1 -W1 "$ip" &>/dev/null; then
     echo "$host" >> "$UNREACH"
     return 1
   fi

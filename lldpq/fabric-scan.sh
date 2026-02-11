@@ -44,9 +44,16 @@ PYEOF
 }
 
 # Check if host is reachable
+# VRF-aware ping (Cumulus switches use mgmt VRF for management network)
+if ip vrf show mgmt &>/dev/null; then
+    PING="ip vrf exec mgmt ping"
+else
+    PING="ping"
+fi
+
 is_reachable() {
     local ip="$1"
-    ping -c 1 -W 1 "$ip" >/dev/null 2>&1
+    $PING -c 1 -W 1 "$ip" >/dev/null 2>&1
 }
 
 # Collect data from a single device

@@ -120,12 +120,19 @@ echo ""
 echo -e "\e[1;34mExecuting ${#commands[@]} command(s) on ${#devices[@]} device(s)...\e[0m"
 echo ""
 
+# VRF-aware ping (Cumulus switches use mgmt VRF for management network)
+if ip vrf show mgmt &>/dev/null; then
+    PING="ip vrf exec mgmt ping"
+else
+    PING="ping"
+fi
+
 unreachable_hosts=()
 
 ping_test() {
     local device=$1
     local hostname=$2
-    ping -c 1 -W 1 "$device" >/dev/null 2>&1 || { unreachable_hosts+=("$device $hostname"); return 1; }
+    $PING -c 1 -W 1 "$device" >/dev/null 2>&1 || { unreachable_hosts+=("$device $hostname"); return 1; }
     return 0
 }
 
