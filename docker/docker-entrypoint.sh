@@ -130,6 +130,48 @@ cat > /etc/cron.d/lldpq << 'CRON'
 CRON
 chmod 644 /etc/cron.d/lldpq
 
+# ─── DHCP Server Setup ───
+# Ensure DHCP directories and files exist
+mkdir -p /var/lib/dhcp /etc/dhcp
+touch /var/lib/dhcp/dhcpd.leases
+[ ! -f /etc/dhcp/dhcpd.hosts ] && touch /etc/dhcp/dhcpd.hosts
+chown lldpq:www-data /etc/dhcp/dhcpd.hosts
+chmod 664 /etc/dhcp/dhcpd.hosts
+
+# ZTP script in web root (writable by lldpq)
+if [ ! -f /var/www/html/cumulus-ztp.sh ]; then
+    echo '#!/bin/bash' > /var/www/html/cumulus-ztp.sh
+    echo '# CUMULUS-AUTOPROVISIONING' >> /var/www/html/cumulus-ztp.sh
+    echo '# Edit this script from the Provision page' >> /var/www/html/cumulus-ztp.sh
+fi
+chown lldpq:www-data /var/www/html/cumulus-ztp.sh
+chmod 775 /var/www/html/cumulus-ztp.sh
+
+# Base config files permissions
+if [ -d /home/lldpq/lldpq/base-config ]; then
+    chown -R lldpq:lldpq /home/lldpq/lldpq/base-config
+    chmod 755 /home/lldpq/lldpq/base-config
+    find /home/lldpq/lldpq/base-config -type f -exec chmod 644 {} \;
+    # Binaries and scripts need execute
+    for f in btop exa iftop cmd nvc nvt motd.sh; do
+        [ -f "/home/lldpq/lldpq/base-config/$f" ] && chmod 755 "/home/lldpq/lldpq/base-config/$f"
+    done
+    echo "✓ Base config files ready ($(ls /home/lldpq/lldpq/base-config/ 2>/dev/null | wc -l) files)"
+fi
+
+# Start DHCP server if config exists
+if [ -f /etc/dhcp/dhcpd.conf ]; then
+    # Determine interface
+    DHCP_IFACE="eth0"
+    if [ -f /etc/default/isc-dhcp-server ]; then
+        DHCP_IFACE=$(grep '^INTERFACES=' /etc/default/isc-dhcp-server 2>/dev/null | sed 's/INTERFACES="//;s/"//' || echo "eth0")
+    fi
+    # Start dhcpd
+    dhcpd -cf /etc/dhcp/dhcpd.conf "$DHCP_IFACE" 2>/dev/null && echo "✓ DHCP server started (interface: $DHCP_IFACE)" || echo "  DHCP: not started (no config or interface issue)"
+else
+    echo "  DHCP: no /etc/dhcp/dhcpd.conf (configure from Provision page)"
+fi
+
 # ─── Start Services ───
 echo ""
 echo "Starting services..."

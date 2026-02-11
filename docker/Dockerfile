@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sudo cron \
     iproute2 iputils-ping dnsutils tcpdump \
     curl jq git bsdmainutils bsdextrautils \
+    isc-dhcp-server \
     && pip3 install --no-cache-dir ruamel.yaml requests \
     && rm -rf /var/lib/apt/lists/*
 
@@ -78,11 +79,23 @@ RUN mv /home/lldpq/lldpq/topology.dot /var/www/html/topology.dot \
     && chown lldpq:www-data /home/lldpq/lldpq/devices.yaml \
     && chmod 664 /home/lldpq/lldpq/devices.yaml
 
+# Prepare DHCP server directories and config
+RUN mkdir -p /etc/dhcp /var/lib/dhcp /var/run \
+    && touch /var/lib/dhcp/dhcpd.leases \
+    && touch /etc/dhcp/dhcpd.hosts \
+    && chown lldpq:www-data /etc/dhcp/dhcpd.hosts \
+    && chmod 664 /etc/dhcp/dhcpd.hosts
+
 # Create lldpq config
 RUN echo '# LLDPq Configuration (Docker)\n\
 LLDPQ_DIR=/home/lldpq/lldpq\n\
 LLDPQ_USER=lldpq\n\
 WEB_ROOT=/var/www/html\n\
+DHCP_HOSTS_FILE=/etc/dhcp/dhcpd.hosts\n\
+DHCP_CONF_FILE=/etc/dhcp/dhcpd.conf\n\
+DHCP_LEASES_FILE=/var/lib/dhcp/dhcpd.leases\n\
+ZTP_SCRIPT_FILE=/var/www/html/cumulus-ztp.sh\n\
+BASE_CONFIG_DIR=/home/lldpq/lldpq/base-config\n\
 ANSIBLE_DIR=NoNe' > /etc/lldpq.conf
 
 # Create auth users file + sessions directory
