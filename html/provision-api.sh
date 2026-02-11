@@ -17,7 +17,7 @@ DHCP_HOSTS_FILE="${DHCP_HOSTS_FILE:-/etc/dhcp/dhcpd.hosts}"
 DHCP_CONF_FILE="${DHCP_CONF_FILE:-/etc/dhcp/dhcpd.conf}"
 DHCP_LEASES_FILE="${DHCP_LEASES_FILE:-/var/lib/dhcp/dhcpd.leases}"
 ZTP_SCRIPT_FILE="${ZTP_SCRIPT_FILE:-${WEB_ROOT}/cumulus-ztp.sh}"
-BASE_CONFIG_DIR="${BASE_CONFIG_DIR:-${LLDPQ_DIR}/base-config}"
+BASE_CONFIG_DIR="${BASE_CONFIG_DIR:-${LLDPQ_DIR}/sw-base}"
 
 # Output JSON header
 echo "Content-Type: application/json"
@@ -53,7 +53,7 @@ WEB_ROOT = os.environ.get('WEB_ROOT', '/var/www/html')
 DHCP_HOSTS_FILE = os.environ.get('DHCP_HOSTS_FILE', '/etc/dhcp/dhcpd.hosts')
 DHCP_LEASES_FILE = os.environ.get('DHCP_LEASES_FILE', '/var/lib/dhcp/dhcpd.leases')
 ZTP_SCRIPT_FILE = os.environ.get('ZTP_SCRIPT_FILE', f'{WEB_ROOT}/cumulus-ztp.sh')
-BASE_CONFIG_DIR = os.environ.get('BASE_CONFIG_DIR', f'{LLDPQ_DIR}/base-config')
+BASE_CONFIG_DIR = os.environ.get('BASE_CONFIG_DIR', f'{LLDPQ_DIR}/sw-base')
 
 # Also check alternate path for dhcpd.hosts (some setups use dhcpd.host)
 DHCP_HOSTS_ALT = DHCP_HOSTS_FILE.replace('dhcpd.hosts', 'dhcpd.host')
@@ -188,7 +188,7 @@ def get_server_ip():
         ips = result.stdout.strip().split()
         if ips:
             return ips[0]
-    except:
+    except Exception:
         pass
     
     return '192.168.58.200'
@@ -201,7 +201,7 @@ def action_list_bindings():
 def action_save_bindings():
     try:
         data = json.loads(POST_DATA)
-    except:
+    except Exception:
         error_json("Invalid JSON data")
     
     bindings = data.get('bindings', [])
@@ -247,7 +247,7 @@ def restart_dhcp():
             )
             if result.returncode == 0:
                 return True, f"{svc} restarted"
-        except:
+        except Exception:
             continue
     
     # Try direct dhcpd restart (Docker)
@@ -276,31 +276,70 @@ def restart_dhcp():
 # ======================== DISCOVERED ========================
 
 def action_discovered():
-    """Cross-reference LLDP/ARP data with DHCP bindings."""
+    """Cross-reference fabric ARP/LLDP data with DHCP bindings.
+    
+    Data sources (in priority order):
+    1. fabric-tables/*.json — per-device ARP tables from fabric-scan.sh
+       Contains eth0/mgmt ARP entries with IP→MAC mappings
+    2. device-cache.json — assets data with hostname→MAC
+    3. devices.yaml — known devices with IP→hostname mapping
+    
+    Cross-reference approach:
+    - Build IP→MAC map from all ARP tables (eth0 interface = mgmt MAC)
+    - For each DHCP binding (hostname, IP, MAC), look up discovered MAC by IP
+    - Compare binding MAC vs discovered MAC
+    """
+    import glob
+    
     # Load bindings
     bindings = parse_dhcp_hosts(get_dhcp_hosts_path())
-    binding_map = {b['hostname']: b for b in bindings}
-    binding_mac_map = {b['mac'].lower(): b for b in bindings}
+    binding_ip_map = {b['ip']: b for b in bindings}
     
     entries = []
-    discovered_hostnames = set()
+    discovered_ips = {}   # ip -> mac (from ARP)
+    discovered_hosts = {} # hostname -> mac (from device-cache)
     
-    # Load fabric-scan cache (contains LLDP neighbor + ARP data)
-    cache_file = os.path.join(WEB_ROOT, 'fabric-scan-cache.json')
-    if not os.path.exists(cache_file):
-        cache_file = os.path.join(WEB_ROOT, 'device-cache.json')
+    # --- Source 1: fabric-tables ARP data ---
+    # Each fabric-table JSON has "arp" list with entries like:
+    # {"ip": "192.168.58.11", "mac": "54:9b:24:aa:68:16", "interface": "eth0", "vrf": "mgmt"}
+    fabric_tables_dir = os.path.join(LLDPQ_DIR, 'monitor-results', 'fabric-tables')
+    if os.path.isdir(fabric_tables_dir):
+        for fpath in glob.glob(os.path.join(fabric_tables_dir, '*.json')):
+            try:
+                with open(fpath, 'r') as f:
+                    data = json.load(f)
+                for arp_entry in data.get('arp', []):
+                    iface = arp_entry.get('interface', '')
+                    ip = arp_entry.get('ip', '')
+                    mac = arp_entry.get('mac', '').lower()
+                    # Only mgmt interface ARP = management MAC (used in DHCP bindings)
+                    if iface == 'eth0' and ip and mac and ip.startswith('192.168.'):
+                        # Keep the entry (last writer wins, but they should all agree)
+                        discovered_ips[ip] = mac
+            except Exception:
+                continue
     
-    scan_data = {}
-    if os.path.exists(cache_file):
+    # --- Source 2: device-cache.json ---
+    device_cache = os.path.join(WEB_ROOT, 'device-cache.json')
+    if os.path.exists(device_cache):
         try:
-            with open(cache_file, 'r') as f:
-                scan_data = json.load(f)
-        except:
+            with open(device_cache, 'r') as f:
+                dc = json.load(f)
+            if isinstance(dc, dict):
+                for hostname, info in dc.items():
+                    if isinstance(info, dict):
+                        mac = info.get('mac', '').lower()
+                        ip = info.get('ip', '')
+                        if mac:
+                            discovered_hosts[hostname] = mac
+                        if ip and mac:
+                            discovered_ips[ip] = mac
+        except Exception:
             pass
     
-    # Also load devices.yaml for known devices
+    # --- Source 3: devices.yaml for hostname→IP mapping ---
     devices_file = os.path.join(LLDPQ_DIR, 'devices.yaml')
-    known_devices = {}
+    hostname_to_ip = {}
     if os.path.exists(devices_file):
         try:
             import yaml
@@ -310,92 +349,72 @@ def action_discovered():
             for ip, info in devices_section.items():
                 if ip in ('defaults', 'endpoint_hosts'):
                     continue
-                hostname = info.get('hostname', str(info)) if isinstance(info, dict) else str(info).split('@')[0].strip()
-                known_devices[hostname] = str(ip)
-        except:
+                if isinstance(info, dict):
+                    hostname = info.get('hostname', str(ip))
+                elif isinstance(info, str):
+                    hostname = info.strip().split('@')[0].strip()
+                else:
+                    hostname = str(info) if info else str(ip)
+                hostname_to_ip[hostname] = str(ip)
+        except Exception:
             pass
     
-    # Extract discovered MACs from scan data
-    # scan_data may have per-device LLDP neighbor info
-    discovered_macs = {}  # hostname -> mac
+    # --- Cross-reference ---
+    seen_hostnames = set()
     
-    if isinstance(scan_data, dict):
-        for device_name, device_data in scan_data.items():
-            if not isinstance(device_data, dict):
-                continue
-            # Check LLDP neighbors
-            neighbors = device_data.get('lldp_neighbors', device_data.get('neighbors', {}))
-            if isinstance(neighbors, dict):
-                for iface, neigh_list in neighbors.items():
-                    if isinstance(neigh_list, list):
-                        for n in neigh_list:
-                            nh = n.get('hostname', n.get('neighbor', ''))
-                            nm = n.get('mac', n.get('chassis_id', '')).lower()
-                            if nh and nm:
-                                discovered_macs[nh] = nm
-                    elif isinstance(neigh_list, dict):
-                        nh = neigh_list.get('hostname', neigh_list.get('neighbor', ''))
-                        nm = neigh_list.get('mac', neigh_list.get('chassis_id', '')).lower()
-                        if nh and nm:
-                            discovered_macs[nh] = nm
-            
-            # Check ARP table
-            arp = device_data.get('arp', {})
-            if isinstance(arp, dict):
-                for ip_addr, arp_entry in arp.items():
-                    if isinstance(arp_entry, dict):
-                        am = arp_entry.get('mac', '').lower()
-                        ah = arp_entry.get('hostname', '')
-                        if am and ah:
-                            discovered_macs[ah] = am
-    
-    # Also try device-cache.json format (simpler)
-    device_cache = os.path.join(WEB_ROOT, 'device-cache.json')
-    if os.path.exists(device_cache) and device_cache != cache_file:
-        try:
-            with open(device_cache, 'r') as f:
-                dc = json.load(f)
-            if isinstance(dc, dict):
-                for hostname, info in dc.items():
-                    if isinstance(info, dict) and 'mac' in info:
-                        discovered_macs[hostname] = info['mac'].lower()
-        except:
-            pass
-    
-    # Cross-reference: for each binding, check if discovered
     for b in bindings:
         hostname = b['hostname']
-        discovered_hostnames.add(hostname)
-        disc_mac = discovered_macs.get(hostname, '')
+        binding_mac = b['mac'].lower()
+        binding_ip = b['ip']
+        seen_hostnames.add(hostname)
+        
+        # Try to find discovered MAC: by IP first, then by hostname
+        disc_mac = discovered_ips.get(binding_ip, '')
+        source = 'ARP' if disc_mac else ''
+        
+        if not disc_mac:
+            disc_mac = discovered_hosts.get(hostname, '')
+            source = 'Cache' if disc_mac else ''
         
         entry = {
             'hostname': hostname,
             'binding_mac': b['mac'],
-            'binding_ip': b['ip'],
-            'discovered_mac': disc_mac or '',
-            'source': 'LLDP/ARP' if disc_mac else '',
-            'status': 'missing'  # not discovered
+            'binding_ip': binding_ip,
+            'discovered_mac': disc_mac,
+            'source': source,
+            'status': 'missing'
         }
         
         if disc_mac:
-            if disc_mac == b['mac'].lower():
+            if disc_mac == binding_mac:
                 entry['status'] = 'match'
             else:
                 entry['status'] = 'mismatch'
         
         entries.append(entry)
     
-    # Devices discovered but not in bindings
-    for hostname, mac in discovered_macs.items():
-        if hostname not in discovered_hostnames:
-            entries.append({
-                'hostname': hostname,
-                'binding_mac': '',
-                'binding_ip': '',
-                'discovered_mac': mac,
-                'source': 'LLDP/ARP',
-                'status': 'unbound'
-            })
+    # Discovered IPs not in bindings (devices seen in ARP but no DHCP binding)
+    for ip, mac in discovered_ips.items():
+        if ip not in binding_ip_map and ip.startswith('192.168.58.'):
+            # Try to find hostname from devices.yaml
+            hostname = ''
+            for h, h_ip in hostname_to_ip.items():
+                if h_ip == ip:
+                    hostname = h
+                    break
+            if not hostname:
+                hostname = ip  # fallback to IP
+            
+            if hostname not in seen_hostnames:
+                entries.append({
+                    'hostname': hostname,
+                    'binding_mac': '',
+                    'binding_ip': '',
+                    'discovered_mac': mac,
+                    'source': 'ARP',
+                    'status': 'unbound'
+                })
+                seen_hostnames.add(hostname)
     
     result_json({"success": True, "entries": entries})
 
@@ -417,7 +436,7 @@ def action_get_ztp_script():
 def action_save_ztp_script():
     try:
         data = json.loads(POST_DATA)
-    except:
+    except Exception:
         error_json("Invalid JSON data")
     
     content = data.get('content', '')
@@ -461,7 +480,7 @@ def action_dhcp_service_status():
             if r.stdout.strip() == 'active':
                 running = True
                 break
-    except:
+    except Exception:
         pass
     
     if not running:
@@ -469,10 +488,223 @@ def action_dhcp_service_status():
         try:
             r = subprocess.run(['pgrep', '-x', 'dhcpd'], capture_output=True, timeout=5)
             running = r.returncode == 0
-        except:
+        except Exception:
             pass
     
     result_json({"success": True, "running": running})
+
+def action_dhcp_service_control():
+    """Start, stop, or restart DHCP service."""
+    try:
+        data = json.loads(POST_DATA)
+    except Exception:
+        error_json("Invalid JSON data")
+    
+    action = data.get('action', '')
+    if action not in ('start', 'stop', 'restart'):
+        error_json(f"Invalid action: {action}")
+    
+    # Try systemctl first
+    for svc in ['isc-dhcp-server', 'dhcpd']:
+        try:
+            r = subprocess.run(
+                ['sudo', 'systemctl', action, svc],
+                capture_output=True, text=True, timeout=15
+            )
+            if r.returncode == 0:
+                # Stop also disables (prevent auto-start on boot)
+                if action == 'stop':
+                    subprocess.run(['sudo', 'systemctl', 'disable', svc],
+                                   capture_output=True, text=True, timeout=10)
+                    result_json({"success": True, "message": f"{svc} stopped & disabled"})
+                # Start also enables
+                elif action == 'start':
+                    subprocess.run(['sudo', 'systemctl', 'enable', svc],
+                                   capture_output=True, text=True, timeout=10)
+                    result_json({"success": True, "message": f"{svc} started & enabled"})
+                else:
+                    result_json({"success": True, "message": f"{svc} restarted"})
+        except Exception:
+            continue
+    
+    # Fallback: direct process management (Docker)
+    if action in ('stop', 'restart'):
+        subprocess.run(['sudo', 'pkill', '-x', 'dhcpd'], capture_output=True, timeout=5)
+        if action == 'stop':
+            result_json({"success": True, "message": "dhcpd stopped"})
+    
+    if action in ('start', 'restart'):
+        ok, msg = restart_dhcp()
+        result_json({"success": ok, "message": msg, "error": "" if ok else msg})
+    
+    error_json("Could not control DHCP service")
+
+def action_get_dhcp_config():
+    """Read dhcpd.conf and isc-dhcp-server defaults, return parsed settings."""
+    conf_path = os.environ.get('DHCP_CONF_FILE', '/etc/dhcp/dhcpd.conf')
+    isc_default = '/etc/default/isc-dhcp-server'
+    
+    config = {
+        'subnet': '', 'netmask': '', 'range_start': '', 'range_end': '',
+        'gateway': '', 'dns': '', 'domain': '', 'provision_url': '',
+        'interface': 'eth0', 'lease_time': '172800'
+    }
+    
+    # Parse dhcpd.conf
+    if os.path.exists(conf_path):
+        try:
+            with open(conf_path, 'r') as f:
+                content = f.read()
+        except PermissionError:
+            r = subprocess.run(['sudo', 'cat', conf_path], capture_output=True, text=True, timeout=5)
+            content = r.stdout if r.returncode == 0 else ''
+        
+        # subnet X netmask Y
+        m = re.search(r'subnet\s+([\d.]+)\s+netmask\s+([\d.]+)', content)
+        if m:
+            config['subnet'] = m.group(1)
+            config['netmask'] = m.group(2)
+        
+        # range START END
+        m = re.search(r'range\s+([\d.]+)\s+([\d.]+)', content)
+        if m:
+            config['range_start'] = m.group(1)
+            config['range_end'] = m.group(2)
+        
+        # option routers
+        m = re.search(r'option\s+routers\s+([\d.]+)', content)
+        if m:
+            config['gateway'] = m.group(1)
+        
+        # option domain-name-servers
+        m = re.search(r'option\s+domain-name-servers\s+([\d.]+)', content)
+        if m:
+            config['dns'] = m.group(1)
+        
+        # option domain-name
+        m = re.search(r'option\s+domain-name\s+"([^"]*)"', content)
+        if m:
+            config['domain'] = m.group(1)
+        
+        # cumulus-provision-url
+        m = re.search(r'cumulus-provision-url\s+"([^"]*)"', content)
+        if m:
+            config['provision_url'] = m.group(1)
+        
+        # default-lease-time
+        m = re.search(r'default-lease-time\s+(\d+)', content)
+        if m:
+            config['lease_time'] = m.group(1)
+    
+    # Parse interface from /etc/default/isc-dhcp-server
+    if os.path.exists(isc_default):
+        try:
+            with open(isc_default, 'r') as f:
+                isc_content = f.read()
+            m = re.search(r'INTERFACES="([^"]*)"', isc_content)
+            if m:
+                config['interface'] = m.group(1)
+        except Exception:
+            pass
+    
+    result_json({"success": True, **config})
+
+def action_save_dhcp_config():
+    """Write dhcpd.conf from settings and restart DHCP."""
+    try:
+        data = json.loads(POST_DATA)
+    except Exception:
+        error_json("Invalid JSON data")
+    
+    subnet = data.get('subnet', '192.168.58.0')
+    netmask = data.get('netmask', '255.255.255.0')
+    range_start = data.get('range_start', '')
+    range_end = data.get('range_end', '')
+    gateway = data.get('gateway', '192.168.58.1')
+    dns = data.get('dns', gateway)
+    domain = data.get('domain', 'nvidia')
+    provision_url = data.get('provision_url', '')
+    iface = data.get('interface', 'eth0')
+    lease_time = data.get('lease_time', '172800')
+    
+    # Find hosts include path
+    hosts_path = get_dhcp_hosts_path()
+    
+    # Generate dhcpd.conf
+    range_line = f'    range {range_start} {range_end};' if range_start and range_end else '    # range not configured'
+    prov_line = f'    option cumulus-provision-url "{provision_url}";' if provision_url else ''
+    
+    conf = f"""# /etc/dhcp/dhcpd.conf - Generated by LLDPq Provision
+
+ddns-update-style none;
+authoritative;
+log-facility local7;
+
+option www-server code 72 = ip-address;
+option default-url code 114 = text;
+option cumulus-provision-url code 239 = text;
+option space onie code width 1 length width 1;
+option onie.installer_url code 1 = text;
+option onie.updater_url   code 2 = text;
+option onie.machine       code 3 = text;
+option onie.arch          code 4 = text;
+option onie.machine_rev   code 5 = text;
+
+option space vivso code width 4 length width 1;
+option vivso.onie code 42623 = encapsulate onie;
+option vivso.iana code 0 = string;
+option op125 code 125 = encapsulate vivso;
+
+class "onie-vendor-classes" {{
+  match if substring(option vendor-class-identifier, 0, 11) = "onie_vendor";
+  option vivso.iana 01:01:01;
+}}
+
+# OOB Management subnet
+shared-network OOB {{
+  subnet {subnet} netmask {netmask} {{
+{range_line}
+    option routers {gateway};
+    option domain-name "{domain}";
+    option domain-name-servers {dns};
+    option www-server {gateway};
+    option default-url "http://{gateway}/";
+{prov_line}
+    default-lease-time {lease_time};
+    max-lease-time     {int(lease_time) * 2};
+  }}
+}}
+
+include "{hosts_path}";
+"""
+    
+    conf_path = os.environ.get('DHCP_CONF_FILE', '/etc/dhcp/dhcpd.conf')
+    
+    # Write dhcpd.conf
+    try:
+        with open(conf_path, 'w') as f:
+            f.write(conf)
+    except PermissionError:
+        proc = subprocess.run(['sudo', 'tee', conf_path], input=conf, capture_output=True, text=True, timeout=10)
+        if proc.returncode != 0:
+            error_json(f"Failed to write dhcpd.conf: {proc.stderr}")
+    
+    # Write interface config
+    isc_default = '/etc/default/isc-dhcp-server'
+    isc_content = f'INTERFACES="{iface}"\n'
+    try:
+        with open(isc_default, 'w') as f:
+            f.write(isc_content)
+    except PermissionError:
+        subprocess.run(['sudo', 'tee', isc_default], input=isc_content, capture_output=True, text=True, timeout=5)
+    
+    # Restart DHCP
+    ok, msg = restart_dhcp()
+    result_json({
+        "success": True,
+        "message": f"Config saved. DHCP: {msg}",
+        "dhcp_restart": ok
+    })
 
 def parse_dhcp_leases(filepath):
     """Parse ISC dhcpd.leases file."""
@@ -713,7 +945,7 @@ def deploy_to_device(device, files, disable_ztp):
 def action_deploy_base_config():
     try:
         data = json.loads(POST_DATA)
-    except:
+    except Exception:
         error_json("Invalid JSON data")
     
     files = data.get('files', [])
@@ -761,6 +993,169 @@ def action_deploy_base_config():
         "summary": {"ok": ok, "fail": fail, "total": len(results)}
     })
 
+# ======================== SSH KEY ========================
+
+def get_ssh_key_info():
+    """Find existing SSH key for LLDPQ_USER. Returns (pub_key_content, key_type, key_file) or (None,None,None)."""
+    home = os.path.expanduser(f'~{LLDPQ_USER}')
+    for key_type, key_name in [('ed25519', 'id_ed25519'), ('rsa', 'id_rsa')]:
+        pub_path = os.path.join(home, '.ssh', f'{key_name}.pub')
+        if os.path.isfile(pub_path):
+            try:
+                with open(pub_path, 'r') as f:
+                    return f.read().strip(), key_type, pub_path
+            except PermissionError:
+                r = subprocess.run(['sudo', '-u', LLDPQ_USER, 'cat', pub_path],
+                                   capture_output=True, text=True, timeout=5)
+                if r.returncode == 0:
+                    return r.stdout.strip(), key_type, pub_path
+    return None, None, None
+
+def action_get_ssh_key():
+    pub_key, key_type, key_file = get_ssh_key_info()
+    if pub_key:
+        result_json({"success": True, "public_key": pub_key, "key_type": key_type, "key_file": key_file})
+    else:
+        result_json({"success": True, "public_key": "", "key_type": "", "key_file": ""})
+
+def action_generate_ssh_key():
+    home = os.path.expanduser(f'~{LLDPQ_USER}')
+    ssh_dir = os.path.join(home, '.ssh')
+    key_path = os.path.join(ssh_dir, 'id_ed25519')
+    pub_path = key_path + '.pub'
+    
+    try:
+        os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
+        
+        # Remove old keys if exist
+        for f in [key_path, pub_path]:
+            if os.path.exists(f):
+                os.remove(f)
+        
+        # Generate as LLDPQ_USER
+        result = subprocess.run(
+            ['sudo', '-u', LLDPQ_USER, 'ssh-keygen', '-t', 'ed25519', '-N', '', '-f', key_path, '-C', f'lldpq@provision'],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode != 0:
+            error_json(f'ssh-keygen failed: {result.stderr}')
+        
+        # Read public key
+        with open(pub_path, 'r') as f:
+            pub_key = f.read().strip()
+        
+        result_json({"success": True, "public_key": pub_key, "key_type": "ed25519", "key_file": pub_path})
+    except Exception as e:
+        error_json(str(e))
+
+# ======================== OS IMAGES ========================
+
+def action_list_os_images():
+    """List Cumulus Linux image files in web root."""
+    images = []
+    for ext in ['*.bin', '*.img', '*.iso']:
+        import glob as g
+        for f in g.glob(os.path.join(WEB_ROOT, ext)):
+            name = os.path.basename(f)
+            size_bytes = os.path.getsize(f)
+            if size_bytes > 1048576:
+                size = f'{size_bytes / 1048576:.0f} MB'
+            else:
+                size = f'{size_bytes / 1024:.0f} KB'
+            images.append({"name": name, "size": size, "path": f})
+    images.sort(key=lambda x: x['name'])
+    result_json({"success": True, "images": images})
+
+def action_upload_os_image():
+    """Handle multipart file upload for OS images.
+    Since we're behind fcgiwrap, we read raw stdin.
+    """
+    # For multipart uploads through fcgiwrap, we need to handle it differently
+    # The file comes through POST_DATA or stdin
+    content_type = os.environ.get('CONTENT_TYPE', '')
+    
+    if 'multipart/form-data' in content_type:
+        # Parse boundary
+        boundary = content_type.split('boundary=')[-1].strip()
+        
+        # Read raw POST data from stdin (already read as POST_DATA)
+        raw = POST_DATA.encode('latin-1') if POST_DATA else b''
+        if not raw:
+            # Try reading from stdin
+            import sys
+            raw = sys.stdin.buffer.read()
+        
+        if not raw:
+            error_json("No file data received")
+        
+        # Parse multipart
+        parts = raw.split(f'--{boundary}'.encode())
+        for part in parts:
+            if b'filename=' in part:
+                # Extract filename
+                header_end = part.find(b'\r\n\r\n')
+                if header_end < 0:
+                    continue
+                headers = part[:header_end].decode('latin-1', errors='replace')
+                file_data = part[header_end + 4:]
+                # Remove trailing \r\n--
+                if file_data.endswith(b'\r\n'):
+                    file_data = file_data[:-2]
+                if file_data.endswith(b'--'):
+                    file_data = file_data[:-2]
+                if file_data.endswith(b'\r\n'):
+                    file_data = file_data[:-2]
+                
+                # Extract filename
+                fn_match = re.search(r'filename="([^"]+)"', headers)
+                if not fn_match:
+                    continue
+                filename = os.path.basename(fn_match.group(1))
+                
+                # Validate extension
+                if not any(filename.endswith(ext) for ext in ['.bin', '.img', '.iso']):
+                    error_json(f"Invalid file type: {filename}. Only .bin, .img, .iso allowed.")
+                
+                # Write file
+                dest = os.path.join(WEB_ROOT, filename)
+                try:
+                    with open(dest, 'wb') as f:
+                        f.write(file_data)
+                    os.chmod(dest, 0o644)
+                    result_json({"success": True, "message": f"Uploaded {filename}", "size": len(file_data)})
+                except PermissionError:
+                    # Use sudo
+                    proc = subprocess.run(['sudo', 'tee', dest], input=file_data,
+                                          capture_output=True, timeout=120)
+                    if proc.returncode == 0:
+                        subprocess.run(['sudo', 'chmod', '644', dest], capture_output=True, timeout=5)
+                        result_json({"success": True, "message": f"Uploaded {filename}"})
+                    else:
+                        error_json(f"Write failed: {proc.stderr.decode()[:200]}")
+    
+    error_json("No file found in upload")
+
+def action_delete_os_image():
+    try:
+        data = json.loads(POST_DATA)
+    except Exception:
+        error_json("Invalid JSON data")
+    
+    name = data.get('name', '')
+    if not name or '/' in name or '..' in name:
+        error_json("Invalid filename")
+    
+    filepath = os.path.join(WEB_ROOT, name)
+    if not os.path.exists(filepath):
+        error_json(f"File not found: {name}")
+    
+    try:
+        os.remove(filepath)
+    except PermissionError:
+        subprocess.run(['sudo', 'rm', '-f', filepath], capture_output=True, timeout=5)
+    
+    result_json({"success": True, "message": f"Deleted {name}"})
+
 # ======================== ROUTER ========================
 
 if ACTION == 'list-bindings':
@@ -775,12 +1170,28 @@ elif ACTION == 'save-ztp-script':
     action_save_ztp_script()
 elif ACTION == 'dhcp-service-status':
     action_dhcp_service_status()
+elif ACTION == 'dhcp-service-control':
+    action_dhcp_service_control()
+elif ACTION == 'get-dhcp-config':
+    action_get_dhcp_config()
+elif ACTION == 'save-dhcp-config':
+    action_save_dhcp_config()
 elif ACTION == 'dhcp-leases':
     action_dhcp_leases()
 elif ACTION == 'list-devices':
     action_list_devices()
 elif ACTION == 'deploy-base-config':
     action_deploy_base_config()
+elif ACTION == 'get-ssh-key':
+    action_get_ssh_key()
+elif ACTION == 'generate-ssh-key':
+    action_generate_ssh_key()
+elif ACTION == 'list-os-images':
+    action_list_os_images()
+elif ACTION == 'upload-os-image':
+    action_upload_os_image()
+elif ACTION == 'delete-os-image':
+    action_delete_os_image()
 else:
     error_json(f"Unknown action: {ACTION}")
 

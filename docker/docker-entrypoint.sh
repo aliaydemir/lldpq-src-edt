@@ -148,15 +148,15 @@ chown lldpq:www-data /var/www/html/cumulus-ztp.sh
 chmod 775 /var/www/html/cumulus-ztp.sh
 
 # Base config files permissions
-if [ -d /home/lldpq/lldpq/base-config ]; then
-    chown -R lldpq:lldpq /home/lldpq/lldpq/base-config
-    chmod 755 /home/lldpq/lldpq/base-config
-    find /home/lldpq/lldpq/base-config -type f -exec chmod 644 {} \;
+if [ -d /home/lldpq/lldpq/sw-base ]; then
+    chown -R lldpq:lldpq /home/lldpq/lldpq/sw-base
+    chmod 755 /home/lldpq/lldpq/sw-base
+    find /home/lldpq/lldpq/sw-base -type f -exec chmod 644 {} \;
     # Binaries and scripts need execute
     for f in btop exa iftop cmd nvc nvt motd.sh; do
-        [ -f "/home/lldpq/lldpq/base-config/$f" ] && chmod 755 "/home/lldpq/lldpq/base-config/$f"
+        [ -f "/home/lldpq/lldpq/sw-base/$f" ] && chmod 755 "/home/lldpq/lldpq/sw-base/$f"
     done
-    echo "✓ Base config files ready ($(ls /home/lldpq/lldpq/base-config/ 2>/dev/null | wc -l) files)"
+    echo "✓ sw-base files ready ($(ls /home/lldpq/lldpq/sw-base/ 2>/dev/null | wc -l) files)"
 fi
 
 # Start DHCP server if config exists

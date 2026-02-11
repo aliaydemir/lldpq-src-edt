@@ -95,7 +95,7 @@ DHCP_HOSTS_FILE=/etc/dhcp/dhcpd.hosts\n\
 DHCP_CONF_FILE=/etc/dhcp/dhcpd.conf\n\
 DHCP_LEASES_FILE=/var/lib/dhcp/dhcpd.leases\n\
 ZTP_SCRIPT_FILE=/var/www/html/cumulus-ztp.sh\n\
-BASE_CONFIG_DIR=/home/lldpq/lldpq/base-config\n\
+BASE_CONFIG_DIR=/home/lldpq/lldpq/sw-base\n\
 ANSIBLE_DIR=NoNe' > /etc/lldpq.conf
 
 # Create auth users file + sessions directory

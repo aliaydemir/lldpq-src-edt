@@ -196,5 +196,7 @@ server {
             
             # Longer timeout for parallel SCP/SSH deploy operations
             fastcgi_read_timeout 180;
+            # Allow large OS image uploads (up to 2GB)
+            client_max_body_size 2048m;
         }
 }

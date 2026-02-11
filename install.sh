@@ -392,6 +392,12 @@ HOOKEOF
     echo "www-data ALL=($(whoami)) NOPASSWD: /usr/bin/timeout, /usr/bin/ssh" | sudo tee /etc/sudoers.d/www-data-lldpq > /dev/null
     sudo chmod 440 /etc/sudoers.d/www-data-lldpq
     echo "   Sudoers configured for MAC/ARP table access"
+    
+    # Configure sudoers for www-data to manage DHCP and provision operations
+    echo "   Configuring sudoers for provision/DHCP access..."
+    echo "www-data ALL=(root) NOPASSWD: /usr/bin/systemctl start isc-dhcp-server, /usr/bin/systemctl stop isc-dhcp-server, /usr/bin/systemctl restart isc-dhcp-server, /usr/bin/systemctl disable isc-dhcp-server, /usr/bin/systemctl enable isc-dhcp-server, /usr/bin/tee /etc/dhcp/dhcpd.conf, /usr/bin/tee /etc/dhcp/dhcpd.hosts, /usr/bin/tee /etc/default/isc-dhcp-server, /usr/bin/pkill -x dhcpd, /usr/sbin/dhcpd, /usr/bin/cat /etc/dhcp/dhcpd.conf, /usr/bin/chmod 755 *" | sudo tee /etc/sudoers.d/www-data-provision > /dev/null
+    sudo chmod 440 /etc/sudoers.d/www-data-provision
+    echo "   Sudoers configured for DHCP/provision access"
 elif [[ -n "$ANSIBLE_DIR" ]]; then
     # User specified a path but it doesn't exist
     echo "   [!] Warning: Ansible directory '$ANSIBLE_DIR' does not exist"
@@ -415,7 +421,7 @@ echo "DHCP_HOSTS_FILE=/etc/dhcp/dhcpd.hosts" | sudo tee -a /etc/lldpq.conf > /de
 echo "DHCP_CONF_FILE=/etc/dhcp/dhcpd.conf" | sudo tee -a /etc/lldpq.conf > /dev/null
 echo "DHCP_LEASES_FILE=/var/lib/dhcp/dhcpd.leases" | sudo tee -a /etc/lldpq.conf > /dev/null
 echo "ZTP_SCRIPT_FILE=$WEB_ROOT/cumulus-ztp.sh" | sudo tee -a /etc/lldpq.conf > /dev/null
-echo "BASE_CONFIG_DIR=$LLDPQ_INSTALL_DIR/base-config" | sudo tee -a /etc/lldpq.conf > /dev/null
+echo "BASE_CONFIG_DIR=$LLDPQ_INSTALL_DIR/sw-base" | sudo tee -a /etc/lldpq.conf > /dev/null
 # Set permissions so web server can update telemetry config
 USER_GROUP=$(id -gn)
 sudo chown root:$USER_GROUP /etc/lldpq.conf
@@ -423,6 +429,23 @@ sudo chmod 664 /etc/lldpq.conf
 # Add www-data to user's group for web access
 sudo usermod -a -G $USER_GROUP www-data 2>/dev/null || true
 echo "   Configuration saved to /etc/lldpq.conf"
+
+# Prepare DHCP and provision directories
+echo "   - Preparing DHCP/Provision directories..."
+sudo mkdir -p /etc/dhcp /var/lib/dhcp
+sudo touch /var/lib/dhcp/dhcpd.leases
+[ ! -f /etc/dhcp/dhcpd.hosts ] && sudo touch /etc/dhcp/dhcpd.hosts
+sudo chown "$(whoami):www-data" /etc/dhcp/dhcpd.hosts
+sudo chmod 664 /etc/dhcp/dhcpd.hosts
+# ZTP script placeholder (if not exists)
+if [ ! -f "$WEB_ROOT/cumulus-ztp.sh" ]; then
+    echo '#!/bin/bash' | sudo tee "$WEB_ROOT/cumulus-ztp.sh" > /dev/null
+    echo '# CUMULUS-AUTOPROVISIONING' | sudo tee -a "$WEB_ROOT/cumulus-ztp.sh" > /dev/null
+    echo '# Edit this script from the Provision page' | sudo tee -a "$WEB_ROOT/cumulus-ztp.sh" > /dev/null
+fi
+sudo chown "$(whoami):www-data" "$WEB_ROOT/cumulus-ztp.sh"
+sudo chmod 775 "$WEB_ROOT/cumulus-ztp.sh"
+echo "   DHCP/Provision directories ready"
 echo "Files copied successfully"
 
 echo ""

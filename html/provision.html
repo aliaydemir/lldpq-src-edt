@@ -423,28 +423,30 @@
         .lease-active { color: #4caf50; }
         .lease-expired { color: #f44336; }
 
-        /* Base Config file list */
+        /* Base Config file list — compact */
         .file-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-            gap: 10px;
-            margin-bottom: 20px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-bottom: 15px;
         }
 
         .file-card {
             background: #1e1e1e;
             border: 1px solid #3c3c3c;
-            border-radius: 6px;
-            padding: 12px 15px;
+            border-radius: 4px;
+            padding: 6px 10px;
             display: flex;
             align-items: center;
-            gap: 12px;
-            transition: all 0.2s;
-            cursor: default;
+            gap: 8px;
+            transition: all 0.15s;
+            cursor: pointer;
+            font-size: 12px;
         }
 
         .file-card:hover {
             border-color: #555;
+            background: #252526;
         }
 
         .file-card.selected {
@@ -454,36 +456,38 @@
 
         .file-card input[type="checkbox"] {
             accent-color: #76b900;
-            width: 16px;
-            height: 16px;
+            width: 14px;
+            height: 14px;
+            margin: 0;
         }
 
         .file-icon {
-            width: 32px;
-            height: 32px;
-            background: #2d2d2d;
-            border-radius: 4px;
+            width: 22px;
+            height: 22px;
             display: flex;
             align-items: center;
             justify-content: center;
+            flex-shrink: 0;
         }
 
-        .file-icon svg { width: 18px; height: 18px; fill: #76b900; }
+        .file-icon svg { width: 14px; height: 14px; fill: #76b900; }
         .file-icon.binary svg { fill: #ff9800; }
 
         .file-info {
-            flex: 1;
+            display: flex;
+            align-items: center;
+            gap: 6px;
         }
 
         .file-name {
-            font-size: 13px;
+            font-size: 12px;
             font-weight: 600;
             color: #d4d4d4;
         }
 
         .file-dest {
-            font-size: 11px;
-            color: #888;
+            font-size: 10px;
+            color: #666;
             font-family: 'Cascadia Code', 'Consolas', monospace;
         }
 
@@ -672,31 +676,31 @@
             margin-top: 20px;
         }
 
-        /* Device selector (for Base Config deploy) */
+        /* Device selector — compact chips */
         .device-selector {
             display: flex;
             flex-wrap: wrap;
-            gap: 8px;
-            margin-bottom: 15px;
-            max-height: 200px;
+            gap: 4px;
+            margin-bottom: 10px;
+            max-height: 180px;
             overflow-y: auto;
-            padding: 10px;
+            padding: 8px;
             background: #1e1e1e;
             border: 1px solid #3c3c3c;
-            border-radius: 6px;
+            border-radius: 4px;
         }
 
         .device-chip {
             display: flex;
             align-items: center;
-            gap: 6px;
-            padding: 4px 10px;
+            gap: 4px;
+            padding: 2px 8px;
             background: #2d2d2d;
             border: 1px solid #3c3c3c;
-            border-radius: 4px;
-            font-size: 12px;
+            border-radius: 3px;
+            font-size: 11px;
             cursor: pointer;
-            transition: all 0.2s;
+            transition: all 0.15s;
         }
 
         .device-chip:hover { border-color: #555; }
@@ -709,6 +713,9 @@
 
         .device-chip input[type="checkbox"] {
             accent-color: #76b900;
+            width: 12px;
+            height: 12px;
+            margin: 0;
         }
 
         /* Responsive */
@@ -732,20 +739,102 @@
             <span class="status-dot unknown" id="dhcpStatusDot"></span>
             <span id="dhcpStatusText">DHCP: Checking...</span>
         </div>
+        <div style="display: flex; gap: 6px; margin-left: 15px;">
+            <button class="btn btn-primary btn-sm" onclick="dhcpServiceAction('start')" title="Start DHCP">Start</button>
+            <button class="btn btn-secondary btn-sm" onclick="dhcpServiceAction('restart')" title="Restart DHCP">Restart</button>
+            <button class="btn btn-danger btn-sm" onclick="dhcpServiceAction('stop')" title="Stop DHCP">Stop</button>
+        </div>
     </div>
 </div>
 
 <!-- Tab Navigation -->
 <div class="tab-nav">
-    <button class="tab-btn active" data-tab="bindings">Bindings</button>
-    <button class="tab-btn" data-tab="discovered">Discovered</button>
+    <button class="tab-btn active" data-tab="dhcpd">DHCP Server</button>
+    <button class="tab-btn" data-tab="bindings">Bindings</button>
     <button class="tab-btn" data-tab="ztp-script">ZTP Script</button>
-    <button class="tab-btn" data-tab="dhcp-status">DHCP Status</button>
     <button class="tab-btn" data-tab="base-config">Base Config</button>
 </div>
 
+<!-- ==================== TAB 0: DHCPd ==================== -->
+<div class="tab-content active" id="tab-dhcpd">
+
+    <!-- Discovery Stats (clickable — filters Discovered tab) -->
+    <div class="stats-row" id="dhcpdDiscoveryStats" style="margin-bottom: 20px;">
+        <div class="stat-card" style="cursor:pointer;" onclick="goDiscoveredFilter('match')">
+            <div class="stat-value" id="dhcpdStatMatch">-</div><div class="stat-label">Matched</div>
+        </div>
+        <div class="stat-card" style="border-left-color:#ff9800; cursor:pointer;" onclick="goDiscoveredFilter('mismatch')">
+            <div class="stat-value" id="dhcpdStatMismatch">-</div><div class="stat-label">Mismatch</div>
+        </div>
+        <div class="stat-card" style="border-left-color:#42a5f5; cursor:pointer;" onclick="goDiscoveredFilter('unbound')">
+            <div class="stat-value" id="dhcpdStatUnbound">-</div><div class="stat-label">No Binding</div>
+        </div>
+        <div class="stat-card" style="border-left-color:#f44336; cursor:pointer;" onclick="goDiscoveredFilter('missing')">
+            <div class="stat-value" id="dhcpdStatMissing">-</div><div class="stat-label">Not Discovered</div>
+        </div>
+        <div class="stat-card" style="border-left-color:#888;">
+            <div class="stat-value" id="dhcpdStatBindings">-</div><div class="stat-label">Total Bindings</div>
+        </div>
+    </div>
+
+    <!-- DHCP Server Configuration -->
+    <div class="section-title">DHCP Server Configuration</div>
+    <div class="section-desc">Subnet, IP range, gateway, DNS and ZTP settings. Changes require DHCP restart.</div>
+    <div style="padding: 15px; background: #1e1e1e; border-radius: 6px; border: 1px solid #3c3c3c; margin-bottom: 20px;">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px;">
+            <div>
+                <label style="font-size: 11px; color: #888; display: block; margin-bottom: 4px;">SUBNET</label>
+                <input type="text" class="form-input" id="dhcpSubnet" style="width: 100%;" placeholder="192.168.58.0">
+            </div>
+            <div>
+                <label style="font-size: 11px; color: #888; display: block; margin-bottom: 4px;">NETMASK</label>
+                <input type="text" class="form-input" id="dhcpNetmask" style="width: 100%;" placeholder="255.255.255.0">
+            </div>
+            <div>
+                <label style="font-size: 11px; color: #888; display: block; margin-bottom: 4px;">DYNAMIC RANGE START</label>
+                <input type="text" class="form-input" id="dhcpRangeStart" style="width: 100%;" placeholder="192.168.58.210">
+            </div>
+            <div>
+                <label style="font-size: 11px; color: #888; display: block; margin-bottom: 4px;">DYNAMIC RANGE END</label>
+                <input type="text" class="form-input" id="dhcpRangeEnd" style="width: 100%;" placeholder="192.168.58.249">
+            </div>
+            <div>
+                <label style="font-size: 11px; color: #888; display: block; margin-bottom: 4px;">GATEWAY (ROUTER)</label>
+                <input type="text" class="form-input" id="dhcpGateway" style="width: 100%;" placeholder="192.168.58.1">
+            </div>
+            <div>
+                <label style="font-size: 11px; color: #888; display: block; margin-bottom: 4px;">DNS SERVER</label>
+                <input type="text" class="form-input" id="dhcpDNS" style="width: 100%;" placeholder="192.168.58.1">
+            </div>
+            <div>
+                <label style="font-size: 11px; color: #888; display: block; margin-bottom: 4px;">DOMAIN NAME</label>
+                <input type="text" class="form-input" id="dhcpDomain" style="width: 100%;" placeholder="nvidia">
+            </div>
+            <div>
+                <label style="font-size: 11px; color: #888; display: block; margin-bottom: 4px;">ZTP PROVISION URL</label>
+                <input type="text" class="form-input" id="dhcpProvisionURL" style="width: 100%;" placeholder="http://192.168.58.200/cumulus-ztp.sh">
+            </div>
+            <div>
+                <label style="font-size: 11px; color: #888; display: block; margin-bottom: 4px;">LISTEN INTERFACE</label>
+                <input type="text" class="form-input" id="dhcpInterface" style="width: 100%;" placeholder="eth0">
+            </div>
+            <div>
+                <label style="font-size: 11px; color: #888; display: block; margin-bottom: 4px;">DEFAULT LEASE TIME (sec)</label>
+                <input type="text" class="form-input" id="dhcpLeaseTime" style="width: 100%;" placeholder="172800">
+            </div>
+        </div>
+        <div style="margin-top: 15px; display: flex; gap: 10px;">
+            <button class="btn btn-primary btn-sm" onclick="saveDHCPConfig()">
+                <svg viewBox="0 0 24 24"><path d="M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"/></svg>
+                Save Config &amp; Restart DHCP
+            </button>
+            <button class="btn btn-secondary btn-sm" onclick="loadDHCPConfig()">Reload</button>
+        </div>
+    </div>
+</div>
+
 <!-- ==================== TAB 1: BINDINGS ==================== -->
-<div class="tab-content active" id="tab-bindings">
+<div class="tab-content" id="tab-bindings">
     <div class="toolbar">
         <div class="toolbar-left">
             <input type="text" class="search-filter" id="bindingSearch" placeholder="Filter by hostname, MAC, or IP..." oninput="filterBindings()">
@@ -759,6 +848,10 @@
             <button class="btn btn-primary" onclick="showAddBinding()">
                 <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
                 Add Binding
+            </button>
+            <button class="btn btn-secondary" onclick="showBulkImport()">
+                <svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm4 18H6V4h7v5h5v11zM8 15.01l1.41 1.41L11 14.84V19h2v-4.16l1.59 1.59L16 15.01 12.01 11z"/></svg>
+                Bulk Import
             </button>
             <button class="btn btn-warning" onclick="saveBindings()" id="btnSaveBindings" style="display:none;">
                 <svg viewBox="0 0 24 24"><path d="M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"/></svg>
@@ -833,9 +926,32 @@
 
 <!-- ==================== TAB 3: ZTP SCRIPT ==================== -->
 <div class="tab-content" id="tab-ztp-script">
-    <div class="section-desc">Edit the ZTP (Zero Touch Provisioning) script that runs on switches during first boot.</div>
+    <div class="section-desc">ZTP provisioning settings, SSH key management, OS image, and script editor.</div>
 
-    <!-- Quick Config Section -->
+    <!-- SSH Key Section -->
+    <div style="margin-bottom: 20px; padding: 15px; background: #1e1e1e; border-radius: 6px; border: 1px solid #76b900;">
+        <div class="section-title" style="font-size: 14px; margin-bottom: 5px;">SSH Key</div>
+        <div class="section-desc" style="margin-bottom: 10px;">Single key pair used for ZTP provisioning and device management (Assets SSH Setup).</div>
+        <div style="display: flex; gap: 15px; align-items: flex-start; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 300px;">
+                <label style="font-size: 11px; color: #888; display: block; margin-bottom: 4px;">PUBLIC KEY</label>
+                <div style="display: flex; gap: 8px;">
+                    <input type="text" class="form-input" id="ztpSSHKey" readonly style="flex:1; font-family:'Cascadia Code','Consolas',monospace; font-size:11px; background:#252526;" placeholder="No key generated yet...">
+                    <button class="btn btn-secondary btn-sm" onclick="copySSHKey()" title="Copy public key">Copy</button>
+                </div>
+            </div>
+            <div style="display: flex; gap: 8px; padding-top: 18px;">
+                <button class="btn btn-primary btn-sm" onclick="generateSSHKey()">
+                    <svg viewBox="0 0 24 24" style="width:14px;height:14px;"><path d="M12.65 10C11.83 7.67 9.61 6 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6c2.61 0 4.83-1.67 5.65-4H17v4h4v-4h3v-4H12.65zM7 14c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z"/></svg>
+                    Generate New Key
+                </button>
+                <button class="btn btn-secondary btn-sm" onclick="loadSSHKey()">Refresh</button>
+            </div>
+        </div>
+        <div id="sshKeyStatus" style="margin-top: 8px; font-size: 12px; color: #888;"></div>
+    </div>
+
+    <!-- Quick Settings Section -->
     <div style="margin-bottom: 20px; padding: 15px; background: #1e1e1e; border-radius: 6px; border: 1px solid #3c3c3c;">
         <div class="section-title" style="font-size: 14px; margin-bottom: 10px;">Quick Settings</div>
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px;">
@@ -845,25 +961,42 @@
             </div>
             <div>
                 <label style="font-size: 11px; color: #888; display: block; margin-bottom: 4px;">DEFAULT PASSWORD</label>
-                <input type="text" class="form-input" id="ztpPassword" style="width: 100%;" placeholder="e.g. Nvidia01!" autocomplete="off">
+                <div style="position: relative;">
+                    <input type="password" class="form-input" id="ztpPassword" style="width: 100%; padding-right: 36px;" placeholder="e.g. Nvidia01!" autocomplete="off">
+                    <button onclick="togglePasswordVisibility()" style="position:absolute; right:4px; top:50%; transform:translateY(-50%); background:none; border:none; color:#888; cursor:pointer; padding:4px; font-size:16px;" title="Show/Hide" id="pwToggle">👁</button>
+                </div>
             </div>
             <div>
                 <label style="font-size: 11px; color: #888; display: block; margin-bottom: 4px;">IMAGE SERVER IP</label>
                 <input type="text" class="form-input input-ip" id="ztpImageServer" style="width: 100%;" placeholder="e.g. 192.168.58.200">
             </div>
         </div>
-        <div style="margin-top: 10px;">
-            <label style="font-size: 11px; color: #888; display: block; margin-bottom: 4px;">SSH PUBLIC KEY</label>
-            <input type="text" class="form-input" id="ztpSSHKey" style="width: 100%; font-family: 'Cascadia Code', 'Consolas', monospace; font-size: 11px;" placeholder="ssh-rsa AAAA...">
-        </div>
         <button class="btn btn-secondary btn-sm" style="margin-top: 10px;" onclick="applyQuickSettings()">Apply to Script</button>
     </div>
 
-    <!-- Script Editor -->
+    <!-- OS Image Upload Section -->
+    <div style="margin-bottom: 20px; padding: 15px; background: #1e1e1e; border-radius: 6px; border: 1px solid #3c3c3c;">
+        <div class="section-title" style="font-size: 14px; margin-bottom: 5px;">OS Image</div>
+        <div class="section-desc" style="margin-bottom: 10px;">Cumulus Linux image served via HTTP for ZTP OS upgrades.</div>
+        <div id="imageList" style="margin-bottom: 10px;"><span style="color:#888;">Checking...</span></div>
+        <div style="display: flex; gap: 10px; align-items: center;">
+            <label class="btn btn-secondary btn-sm" style="cursor: pointer;">
+                <svg viewBox="0 0 24 24" style="width:14px;height:14px;"><path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z"/></svg>
+                Upload Image
+                <input type="file" id="imageUpload" style="display: none;" accept=".bin,.img,.iso" onchange="uploadImage(this)">
+            </label>
+            <span id="uploadProgress" style="font-size: 12px; color: #888;"></span>
+        </div>
+    </div>
+
+    <!-- Script Editor (collapsed by default) -->
     <div class="editor-container">
-        <div class="editor-toolbar">
-            <span class="editor-filename">cumulus-ztp.sh</span>
-            <div style="display: flex; gap: 8px;">
+        <div class="editor-toolbar" style="cursor: pointer;" onclick="toggleScriptEditor()">
+            <span class="editor-filename">
+                <span id="editorToggle" style="margin-right: 6px;">&#9654;</span>
+                cumulus-ztp.sh — Click to edit
+            </span>
+            <div style="display: flex; gap: 8px;" onclick="event.stopPropagation();">
                 <button class="btn btn-secondary btn-sm" onclick="loadZTPScript()">Reload</button>
                 <button class="btn btn-primary btn-sm" onclick="saveZTPScript()">
                     <svg viewBox="0 0 24 24"><path d="M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"/></svg>
@@ -871,92 +1004,60 @@
                 </button>
             </div>
         </div>
-        <textarea class="editor-textarea" id="ztpEditor" spellcheck="false"></textarea>
-    </div>
-</div>
-
-<!-- ==================== TAB 4: DHCP STATUS ==================== -->
-<div class="tab-content" id="tab-dhcp-status">
-    <div class="section-desc">Active DHCP leases and server status.</div>
-    <div class="stats-row" id="dhcpStats">
-        <div class="stat-card"><div class="stat-value" id="statLeaseActive">-</div><div class="stat-label">Active Leases</div></div>
-        <div class="stat-card" style="border-left-color:#f44336;"><div class="stat-value" id="statLeaseExpired">-</div><div class="stat-label">Expired</div></div>
-        <div class="stat-card" style="border-left-color:#42a5f5;"><div class="stat-value" id="statLeaseReserved">-</div><div class="stat-label">Static Reservations</div></div>
-    </div>
-    <div class="toolbar">
-        <div class="toolbar-left">
-            <input type="text" class="search-filter" id="leaseSearch" placeholder="Search leases..." oninput="filterLeases()">
-        </div>
-        <div class="toolbar-right">
-            <button class="btn btn-secondary" onclick="loadDHCPStatus()">
-                <svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
-                Refresh
-            </button>
-        </div>
-    </div>
-    <div class="table-wrapper">
-        <table class="data-table" id="leaseTable">
-            <thead>
-                <tr>
-                    <th>IP Address</th>
-                    <th>MAC Address</th>
-                    <th>Hostname</th>
-                    <th>Lease Start</th>
-                    <th>Lease End</th>
-                    <th>State</th>
-                </tr>
-            </thead>
-            <tbody id="leaseBody">
-                <tr><td colspan="6" class="loading">Loading...</td></tr>
-            </tbody>
-        </table>
+        <textarea class="editor-textarea" id="ztpEditor" spellcheck="false" style="display: none;"></textarea>
     </div>
 </div>
 
 <!-- ==================== TAB 5: BASE CONFIG ==================== -->
 <div class="tab-content" id="tab-base-config">
-    <div class="section-desc">Deploy standard tools and configs to switches via parallel SSH/SCP. No Ansible required.</div>
 
-    <!-- Files to Deploy -->
-    <div class="section-title">Files to Deploy</div>
-    <div style="margin-bottom: 10px;">
+    <!-- Two-column layout: Files | Devices -->
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+
+        <!-- Left: Files -->
+        <div style="background: #1e1e1e; border: 1px solid #3c3c3c; border-radius: 6px; padding: 12px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <div class="section-title" style="margin: 0; font-size: 13px;">Files to Deploy</div>
+                <label style="font-size: 11px; cursor: pointer; color: #888;">
+                    <input type="checkbox" id="selectAllFiles" onchange="toggleSelectAllFiles()" checked style="accent-color: #76b900;">
+                    All
+                </label>
+            </div>
+            <div class="file-grid" id="fileGrid"></div>
+        </div>
+
+        <!-- Right: Devices -->
+        <div style="background: #1e1e1e; border: 1px solid #3c3c3c; border-radius: 6px; padding: 12px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <div class="section-title" style="margin: 0; font-size: 13px;">Target Devices</div>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                    <input type="text" class="search-filter" id="deviceFilter" placeholder="Filter..." oninput="filterDeviceChips()" style="width: 140px; padding: 4px 8px; font-size: 11px;">
+                    <label style="font-size: 11px; cursor: pointer; color: #888; white-space: nowrap;">
+                        <input type="checkbox" id="selectAllDevices" onchange="toggleSelectAllDevices()" checked style="accent-color: #76b900;">
+                        All
+                    </label>
+                </div>
+            </div>
+            <div class="device-selector" id="deviceSelector">
+                <div class="loading">Loading devices...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Deploy bar -->
+    <div style="display: flex; gap: 12px; align-items: center; padding: 10px 15px; background: #252526; border: 1px solid #3c3c3c; border-radius: 6px; margin-bottom: 15px;">
+        <button class="btn btn-primary" onclick="deployBaseConfig()" id="btnDeploy">
+            <svg viewBox="0 0 24 24"><path d="M19.35 10.04A7.49 7.49 0 0012 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 000 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/></svg>
+            Deploy
+        </button>
         <label style="font-size: 12px; cursor: pointer; color: #888;">
-            <input type="checkbox" id="selectAllFiles" onchange="toggleSelectAllFiles()" checked style="accent-color: #76b900;">
-            Select All
-        </label>
-    </div>
-    <div class="file-grid" id="fileGrid"></div>
-
-    <!-- Target Devices -->
-    <div class="section-title" style="margin-top: 20px;">Target Devices</div>
-    <div style="margin-bottom: 10px; display: flex; gap: 10px; align-items: center;">
-        <label style="font-size: 12px; cursor: pointer; color: #888;">
-            <input type="checkbox" id="selectAllDevices" onchange="toggleSelectAllDevices()" checked style="accent-color: #76b900;">
-            Select All
-        </label>
-        <input type="text" class="search-filter" id="deviceFilter" placeholder="Filter devices..." oninput="filterDeviceChips()" style="width: 200px; padding: 5px 10px; font-size: 12px;">
-    </div>
-    <div class="device-selector" id="deviceSelector">
-        <div class="loading">Loading devices...</div>
-    </div>
-
-    <!-- Deploy Options -->
-    <div style="margin: 15px 0; display: flex; gap: 20px; align-items: center;">
-        <label style="font-size: 13px; cursor: pointer;">
             <input type="checkbox" id="disableZTPAfter" style="accent-color: #76b900;">
             Disable ZTP after deploy
         </label>
+        <span id="deployStatusText" style="font-size: 12px; color: #888; margin-left: auto;"></span>
     </div>
 
-    <!-- Deploy Button + Progress -->
-    <div style="display: flex; gap: 10px; margin-bottom: 15px;">
-        <button class="btn btn-primary" onclick="deployBaseConfig()" id="btnDeploy">
-            <svg viewBox="0 0 24 24"><path d="M19.35 10.04A7.49 7.49 0 0012 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 000 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/></svg>
-            Deploy to Selected Devices
-        </button>
-        <span id="deployStatusText" style="font-size: 13px; color: #888; line-height: 36px;"></span>
-    </div>
-
+    <!-- Deploy Progress -->
     <div id="deployProgress" style="display: none;">
         <div class="table-wrapper">
             <table class="data-table">
@@ -998,6 +1099,28 @@
     </div>
 </div>
 
+<!-- Bulk Import Modal -->
+<div class="modal-overlay" id="bulkImportModal" style="display: none;" onclick="if(event.target===this)closeBulkImport()">
+    <div class="modal" style="min-width: 600px;">
+        <h3>Bulk Import Bindings</h3>
+        <div class="section-desc" style="margin-bottom: 10px;">
+            Paste one binding per line. Format: <code style="color:#76b900;">hostname  MAC  IP</code> (separated by space or tab)
+        </div>
+        <div style="margin-bottom: 10px; padding: 10px; background: #1e1e1e; border-radius: 4px; font-size: 12px; color: #888; font-family: 'Cascadia Code','Consolas',monospace;">
+            Example:<br>
+            leaf-01&nbsp;&nbsp;54:9b:24:aa:68:16&nbsp;&nbsp;192.168.58.11<br>
+            leaf-02&nbsp;&nbsp;54:9b:24:8d:35:44&nbsp;&nbsp;192.168.58.12<br>
+            spine-01&nbsp;8c:91:3a:b4:aa:60&nbsp;&nbsp;192.168.58.17
+        </div>
+        <textarea id="bulkImportText" style="width:100%; min-height:250px; padding:12px; background:#1a1a1a; color:#d4d4d4; border:1px solid #555; border-radius:4px; font-family:'Cascadia Code','Consolas',monospace; font-size:13px; line-height:1.6; resize:vertical;" spellcheck="false" placeholder="hostname  MAC  IP&#10;hostname  MAC  IP&#10;..."></textarea>
+        <div id="bulkImportPreview" style="margin-top: 10px; font-size: 12px; color: #888;"></div>
+        <div class="modal-actions">
+            <button class="btn btn-secondary" onclick="closeBulkImport()">Cancel</button>
+            <button class="btn btn-primary" onclick="applyBulkImport()">Import</button>
+        </div>
+    </div>
+</div>
+
 <!-- Toast container -->
 <div class="toast" id="toast"></div>
 
@@ -1006,7 +1129,6 @@
 let allBindings = [];
 let bindingsModified = false;
 let allDiscovered = [];
-let allLeases = [];
 let deviceList = [];
 
 const BASE_CONFIG_FILES = [
@@ -1036,16 +1158,53 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // Load initial data
-    loadBindings();
+    loadDHCPConfig();
+    loadDHCPdStats();
     loadDeviceList();
     renderBaseConfigFiles();
     checkDHCPStatus();
 });
 
 function onTabSwitch(tab) {
+    if (tab === 'dhcpd') { loadDHCPConfig(); loadDHCPdStats(); }
+    if (tab === 'bindings' && allBindings.length === 0) loadBindings();
     if (tab === 'discovered') loadDiscovered();
     if (tab === 'ztp-script') loadZTPScript();
-    if (tab === 'dhcp-status') loadDHCPStatus();
+}
+
+// ===================== DHCPd TAB — Discovery Stats =====================
+async function loadDHCPdStats() {
+    const data = await apiCall('discovered');
+    if (data.success) {
+        const entries = data.entries || [];
+        allDiscovered = entries;  // cache for Discovered tab
+        const match = entries.filter(e => e.status === 'match').length;
+        const mismatch = entries.filter(e => e.status === 'mismatch').length;
+        const unbound = entries.filter(e => e.status === 'unbound').length;
+        const missing = entries.filter(e => e.status === 'missing').length;
+        document.getElementById('dhcpdStatMatch').textContent = match;
+        document.getElementById('dhcpdStatMismatch').textContent = mismatch;
+        document.getElementById('dhcpdStatUnbound').textContent = unbound;
+        document.getElementById('dhcpdStatMissing').textContent = missing;
+        document.getElementById('dhcpdStatBindings').textContent = entries.length;
+    }
+}
+
+function goDiscoveredFilter(status) {
+    // Switch to Discovered tab with filter pre-set
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    document.querySelector('.tab-btn[data-tab="discovered"]').classList.add('active');
+    document.getElementById('tab-discovered').classList.add('active');
+    // Set filter
+    document.getElementById('discoveredFilter').value = status;
+    // Render with cached data if available, otherwise load
+    if (allDiscovered.length > 0) {
+        renderDiscoveredStats();
+        renderDiscovered();
+    } else {
+        loadDiscovered();
+    }
 }
 
 // ===================== API HELPER =====================
@@ -1087,6 +1246,147 @@ async function checkDHCPStatus() {
         dot.className = 'status-dot unknown';
         txt.textContent = 'DHCP: Unknown';
     }
+}
+
+// ===================== DHCP SERVICE CONTROL =====================
+async function dhcpServiceAction(action) {
+    if (action === 'stop' && !confirm('Stop DHCP server? New devices will not get IP addresses.')) return;
+    showToast(`DHCP: ${action}...`, 'info');
+    const data = await apiCall('dhcp-service-control', { action });
+    if (data.success) {
+        showToast(`DHCP ${action}: ${data.message || 'OK'}`, 'success');
+    } else {
+        showToast(`DHCP ${action} failed: ${data.error || 'Unknown error'}`, 'error');
+    }
+    checkDHCPStatus();
+}
+
+// ===================== DHCP CONFIG =====================
+async function loadDHCPConfig() {
+    const data = await apiCall('get-dhcp-config');
+    if (data.success) {
+        document.getElementById('dhcpSubnet').value = data.subnet || '';
+        document.getElementById('dhcpNetmask').value = data.netmask || '';
+        document.getElementById('dhcpRangeStart').value = data.range_start || '';
+        document.getElementById('dhcpRangeEnd').value = data.range_end || '';
+        document.getElementById('dhcpGateway').value = data.gateway || '';
+        document.getElementById('dhcpDNS').value = data.dns || '';
+        document.getElementById('dhcpDomain').value = data.domain || '';
+        document.getElementById('dhcpProvisionURL').value = data.provision_url || '';
+        document.getElementById('dhcpInterface').value = data.interface || '';
+        document.getElementById('dhcpLeaseTime').value = data.lease_time || '';
+    }
+}
+
+async function saveDHCPConfig() {
+    const config = {
+        subnet: document.getElementById('dhcpSubnet').value.trim(),
+        netmask: document.getElementById('dhcpNetmask').value.trim(),
+        range_start: document.getElementById('dhcpRangeStart').value.trim(),
+        range_end: document.getElementById('dhcpRangeEnd').value.trim(),
+        gateway: document.getElementById('dhcpGateway').value.trim(),
+        dns: document.getElementById('dhcpDNS').value.trim(),
+        domain: document.getElementById('dhcpDomain').value.trim(),
+        provision_url: document.getElementById('dhcpProvisionURL').value.trim(),
+        interface: document.getElementById('dhcpInterface').value.trim(),
+        lease_time: document.getElementById('dhcpLeaseTime').value.trim()
+    };
+
+    if (!config.subnet || !config.netmask || !config.gateway) {
+        showToast('Subnet, Netmask and Gateway are required', 'error');
+        return;
+    }
+
+    const data = await apiCall('save-dhcp-config', config);
+    if (data.success) {
+        showToast('DHCP config saved & server restarted', 'success');
+        checkDHCPStatus();
+    } else {
+        showToast('Save failed: ' + (data.error || 'Unknown error'), 'error');
+    }
+}
+
+// ===================== BULK IMPORT =====================
+function showBulkImport() {
+    document.getElementById('bulkImportText').value = '';
+    document.getElementById('bulkImportPreview').textContent = '';
+    document.getElementById('bulkImportModal').style.display = 'flex';
+    document.getElementById('bulkImportText').focus();
+}
+
+function closeBulkImport() {
+    document.getElementById('bulkImportModal').style.display = 'none';
+}
+
+function parseBulkText(text) {
+    const lines = text.trim().split('\n').filter(l => l.trim() && !l.trim().startsWith('#'));
+    const entries = [];
+    const errors = [];
+
+    lines.forEach((line, idx) => {
+        // Split by whitespace (spaces or tabs)
+        const parts = line.trim().split(/\s+/);
+        if (parts.length < 3) {
+            errors.push(`Line ${idx + 1}: Need 3 columns (hostname MAC IP), got ${parts.length}`);
+            return;
+        }
+        const hostname = parts[0];
+        const mac = parts[1].toLowerCase();
+        const ip = parts[2];
+
+        if (!/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(mac)) {
+            errors.push(`Line ${idx + 1}: Invalid MAC "${parts[1]}"`);
+            return;
+        }
+        if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip)) {
+            errors.push(`Line ${idx + 1}: Invalid IP "${ip}"`);
+            return;
+        }
+        entries.push({ hostname, mac, ip, commented: false });
+    });
+
+    return { entries, errors };
+}
+
+function applyBulkImport() {
+    const text = document.getElementById('bulkImportText').value;
+    if (!text.trim()) {
+        showToast('Paste binding data first', 'error');
+        return;
+    }
+
+    const { entries, errors } = parseBulkText(text);
+
+    if (errors.length > 0) {
+        document.getElementById('bulkImportPreview').innerHTML =
+            `<span style="color:#f44336;">Errors:</span><br>` +
+            errors.map(e => `• ${escHtml(e)}`).join('<br>');
+        return;
+    }
+
+    if (entries.length === 0) {
+        showToast('No valid entries found', 'error');
+        return;
+    }
+
+    // Merge with existing bindings
+    let added = 0, updated = 0;
+    entries.forEach(entry => {
+        const existing = allBindings.findIndex(b => b.hostname === entry.hostname);
+        if (existing >= 0) {
+            allBindings[existing] = entry;
+            updated++;
+        } else {
+            allBindings.push(entry);
+            added++;
+        }
+    });
+
+    bindingsModified = true;
+    document.getElementById('btnSaveBindings').style.display = '';
+    closeBulkImport();
+    renderBindings();
+    showToast(`Imported: ${added} added, ${updated} updated (unsaved)`, 'info');
 }
 
 // ===================== TAB 1: BINDINGS =====================
@@ -1321,6 +1621,7 @@ function filterDiscovered() { renderDiscovered(); }
 
 // ===================== TAB 3: ZTP SCRIPT =====================
 let ztpLoaded = false;
+let scriptEditorVisible = false;
 
 async function loadZTPScript() {
     const editor = document.getElementById('ztpEditor');
@@ -1333,19 +1634,124 @@ async function loadZTPScript() {
     } else {
         editor.value = `# Error loading: ${data.error}\n# You may need to create the file first.`;
     }
+    loadSSHKey();
+    loadOSImages();
 }
 
+// --- SSH Key ---
+async function loadSSHKey() {
+    const data = await apiCall('get-ssh-key');
+    const keyInput = document.getElementById('ztpSSHKey');
+    const status = document.getElementById('sshKeyStatus');
+    if (data.success && data.public_key) {
+        keyInput.value = data.public_key;
+        status.innerHTML = `<span style="color:#4caf50;">Key found:</span> ${data.key_type || 'ssh'} (${data.key_file || ''})`;
+    } else {
+        keyInput.value = '';
+        status.innerHTML = '<span style="color:#ff9800;">No SSH key found.</span> Click "Generate New Key" to create one.';
+    }
+}
+
+async function generateSSHKey() {
+    if (!confirm('Generate a new SSH key pair? This will be used for ZTP and device management.')) return;
+    showToast('Generating SSH key...', 'info');
+    const data = await apiCall('generate-ssh-key', {});
+    if (data.success) {
+        document.getElementById('ztpSSHKey').value = data.public_key || '';
+        document.getElementById('sshKeyStatus').innerHTML = `<span style="color:#4caf50;">New key generated!</span> ${data.key_type || ''} (${data.key_file || ''})`;
+        showToast('SSH key generated. Apply to ZTP script with "Apply to Script".', 'success');
+    } else {
+        showToast('Key generation failed: ' + (data.error || 'Unknown error'), 'error');
+    }
+}
+
+function copySSHKey() {
+    const key = document.getElementById('ztpSSHKey').value;
+    if (!key) { showToast('No key to copy', 'error'); return; }
+    navigator.clipboard.writeText(key).then(() => showToast('Public key copied!', 'success'));
+}
+
+// --- Password Toggle ---
+function togglePasswordVisibility() {
+    const pw = document.getElementById('ztpPassword');
+    const btn = document.getElementById('pwToggle');
+    if (pw.type === 'password') { pw.type = 'text'; btn.textContent = '🔒'; }
+    else { pw.type = 'password'; btn.textContent = '👁'; }
+}
+
+// --- OS Image ---
+async function loadOSImages() {
+    const container = document.getElementById('imageList');
+    const data = await apiCall('list-os-images');
+    if (data.success && data.images && data.images.length > 0) {
+        container.innerHTML = data.images.map(img => `
+            <div style="display:flex; align-items:center; gap:10px; padding:6px 0; border-bottom:1px solid #2d2d2d;">
+                <svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:#76b900;flex-shrink:0;"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/></svg>
+                <span style="flex:1;font-family:monospace;font-size:13px;">${escHtml(img.name)}</span>
+                <span style="color:#888;font-size:12px;">${escHtml(img.size)}</span>
+                <button class="btn btn-danger btn-sm" onclick="deleteOSImage('${escAttr(img.name)}')" style="padding:2px 8px;font-size:11px;">Del</button>
+            </div>
+        `).join('');
+    } else {
+        container.innerHTML = '<span style="color:#888;">No OS images found in web root. Upload a .bin image for ZTP.</span>';
+    }
+}
+
+async function uploadImage(input) {
+    const file = input.files[0];
+    if (!file) return;
+    
+    const progress = document.getElementById('uploadProgress');
+    progress.textContent = `Uploading ${file.name} (${(file.size / 1048576).toFixed(0)} MB)...`;
+    
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    try {
+        const resp = await fetch('/provision-api.sh?action=upload-os-image', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await resp.json();
+        if (data.success) {
+            showToast(`Image "${file.name}" uploaded successfully`, 'success');
+            loadOSImages();
+        } else {
+            showToast('Upload failed: ' + (data.error || 'Unknown'), 'error');
+        }
+    } catch (e) {
+        showToast('Upload failed: ' + e.message, 'error');
+    }
+    progress.textContent = '';
+    input.value = '';
+}
+
+async function deleteOSImage(name) {
+    if (!confirm(`Delete image "${name}"?`)) return;
+    const data = await apiCall('delete-os-image', { name });
+    if (data.success) { showToast('Image deleted', 'success'); loadOSImages(); }
+    else { showToast('Delete failed: ' + (data.error || ''), 'error'); }
+}
+
+// --- Script Editor Toggle ---
+function toggleScriptEditor() {
+    const editor = document.getElementById('ztpEditor');
+    const toggle = document.getElementById('editorToggle');
+    scriptEditorVisible = !scriptEditorVisible;
+    editor.style.display = scriptEditorVisible ? '' : 'none';
+    toggle.innerHTML = scriptEditorVisible ? '&#9660;' : '&#9654;';
+}
+
+// --- Quick Settings ---
 function parseQuickSettings(content) {
-    // Extract settings from script content
     const osMatch = content.match(/CUMULUS_TARGET_RELEASE=(\S+)/);
     const pwMatch = content.match(/echo\s+'cumulus:(.+?)'\s*\|\s*chpasswd/);
     const ipMatch = content.match(/IMAGE_SERVER_HOSTNAME=(\S+)/);
-    const keyMatch = content.match(/KEY="(ssh-\S+\s+\S+)"/);
+    // Don't overwrite SSH key from script — loadSSHKey() handles that from actual key file
 
     if (osMatch) document.getElementById('ztpTargetOS').value = osMatch[1];
     if (pwMatch) document.getElementById('ztpPassword').value = pwMatch[1];
     if (ipMatch) document.getElementById('ztpImageServer').value = ipMatch[1];
-    if (keyMatch) document.getElementById('ztpSSHKey').value = keyMatch[1];
 }
 
 function applyQuickSettings() {
@@ -1360,8 +1766,10 @@ function applyQuickSettings() {
     if (ip) content = content.replace(/IMAGE_SERVER_HOSTNAME=\S+/, `IMAGE_SERVER_HOSTNAME=${ip}`);
     if (key) content = content.replace(/KEY="ssh-\S+\s+\S+"/, `KEY="${key}"`);
 
+    // Show editor to see changes
+    if (!scriptEditorVisible) toggleScriptEditor();
     document.getElementById('ztpEditor').value = content;
-    showToast('Quick settings applied to script', 'info');
+    showToast('Quick settings applied to script (unsaved)', 'info');
 }
 
 async function saveZTPScript() {
@@ -1374,71 +1782,18 @@ async function saveZTPScript() {
     }
 }
 
-// ===================== TAB 4: DHCP STATUS =====================
-async function loadDHCPStatus() {
-    document.getElementById('leaseBody').innerHTML = '<tr><td colspan="6" class="loading">Loading...</td></tr>';
-    const data = await apiCall('dhcp-leases');
-    if (data.success) {
-        allLeases = data.leases || [];
-        const active = allLeases.filter(l => l.state === 'active').length;
-        const expired = allLeases.filter(l => l.state === 'expired' || l.state === 'free').length;
-        document.getElementById('statLeaseActive').textContent = active;
-        document.getElementById('statLeaseExpired').textContent = expired;
-        document.getElementById('statLeaseReserved').textContent = data.reserved_count || allBindings.length;
-        renderLeases();
-    } else {
-        document.getElementById('leaseBody').innerHTML = `<tr><td colspan="6" style="color:#f44336;padding:20px;">Error: ${data.error}</td></tr>`;
-    }
-    checkDHCPStatus();
-}
-
-function renderLeases() {
-    const filter = document.getElementById('leaseSearch').value.toLowerCase();
-    let filtered = allLeases;
-    if (filter) {
-        filtered = filtered.filter(l =>
-            (l.ip || '').includes(filter) ||
-            (l.mac || '').toLowerCase().includes(filter) ||
-            (l.hostname || '').toLowerCase().includes(filter)
-        );
-    }
-
-    if (filtered.length === 0) {
-        document.getElementById('leaseBody').innerHTML = '<tr><td colspan="6" style="text-align:center;padding:40px;color:#666;">No leases found.</td></tr>';
-        return;
-    }
-
-    document.getElementById('leaseBody').innerHTML = filtered.map(l => `
-        <tr>
-            <td style="font-family:monospace;font-size:12px;">${escHtml(l.ip)}</td>
-            <td style="font-family:monospace;font-size:12px;">${escHtml(l.mac || '-')}</td>
-            <td>${escHtml(l.hostname || '-')}</td>
-            <td style="font-size:12px;">${escHtml(l.start || '-')}</td>
-            <td style="font-size:12px;">${escHtml(l.end || '-')}</td>
-            <td>${l.state === 'active' ? '<span class="badge badge-active">Active</span>' : '<span class="badge badge-expired">Expired</span>'}</td>
-        </tr>
-    `).join('');
-}
-
-function filterLeases() { renderLeases(); }
-
 // ===================== TAB 5: BASE CONFIG =====================
 function renderBaseConfigFiles() {
     const grid = document.getElementById('fileGrid');
-    grid.innerHTML = BASE_CONFIG_FILES.map((f, i) => {
-        const iconClass = f.type === 'binary' ? 'binary' : '';
-        const icon = f.type === 'binary'
-            ? '<svg viewBox="0 0 24 24"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/></svg>'
-            : f.type === 'script'
-            ? '<svg viewBox="0 0 24 24"><path d="M14.6,16.6L19.2,12L14.6,7.4L16,6L22,12L16,18L14.6,16.6M9.4,16.6L4.8,12L9.4,7.4L8,6L2,12L8,18L9.4,16.6Z"/></svg>'
-            : '<svg viewBox="0 0 24 24"><path d="M12,15.5A3.5,3.5 0 0,1 8.5,12A3.5,3.5 0 0,1 12,8.5A3.5,3.5 0 0,1 15.5,12A3.5,3.5 0 0,1 12,15.5M19.43,12.97C19.47,12.65 19.5,12.33 19.5,12C19.5,11.67 19.47,11.34 19.43,11L21.54,9.37C21.73,9.22 21.78,8.95 21.66,8.73L19.66,5.27C19.54,5.05 19.27,4.96 19.05,5.05L16.56,6.05C16.04,5.66 15.5,5.32 14.87,5.07L14.5,2.42C14.46,2.18 14.25,2 14,2H10C9.75,2 9.54,2.18 9.5,2.42L9.13,5.07C8.5,5.32 7.96,5.66 7.44,6.05L4.95,5.05C4.73,4.96 4.46,5.05 4.34,5.27L2.34,8.73C2.21,8.95 2.27,9.22 2.46,9.37L4.57,11C4.53,11.34 4.5,11.67 4.5,12C4.5,12.33 4.53,12.65 4.57,12.97L2.46,14.63C2.27,14.78 2.21,15.05 2.34,15.27L4.34,18.73C4.46,18.95 4.73,19.03 4.95,18.95L7.44,17.94C7.96,18.34 8.5,18.68 9.13,18.93L9.5,21.58C9.54,21.82 9.75,22 10,22H14C14.25,22 14.46,21.82 14.5,21.58L14.87,18.93C15.5,18.67 16.04,18.34 16.56,17.94L19.05,18.95C19.27,19.03 19.54,18.95 19.66,18.73L21.66,15.27C21.78,15.05 21.73,14.78 21.54,14.63L19.43,12.97Z"/></svg>';
-
+    const typeColor = { 'config': '#76b900', 'script': '#42a5f5', 'binary': '#ff9800' };
+    grid.innerHTML = BASE_CONFIG_FILES.map(f => {
+        const color = typeColor[f.type] || '#76b900';
         return `<div class="file-card selected" data-file="${f.name}" onclick="toggleFileCard(this)">
             <input type="checkbox" checked class="file-cb" data-file="${f.name}" onclick="event.stopPropagation()">
-            <div class="file-icon ${iconClass}">${icon}</div>
+            <div class="file-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" fill="${color}"/></svg></div>
             <div class="file-info">
-                <div class="file-name">${f.name}</div>
-                <div class="file-dest">${f.dest}</div>
+                <span class="file-name">${f.name}</span>
+                <span class="file-dest">${f.dest}</span>
             </div>
         </div>`;
     }).join('');
