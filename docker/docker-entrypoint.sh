@@ -64,6 +64,23 @@ done
 # Symlink monitor-results to web root
 ln -sf /home/lldpq/lldpq/monitor-results /var/www/html/monitor-results 2>/dev/null || true
 
+# ─── Auth Setup ───
+# Ensure users file exists (may be missing if /etc was modified or overlay reset)
+if [ ! -f /etc/lldpq-users.conf ]; then
+    echo "  Creating default users file..."
+    ADMIN_HASH=$(echo -n "admin" | openssl dgst -sha256 | awk '{print $2}')
+    OPERATOR_HASH=$(echo -n "operator" | openssl dgst -sha256 | awk '{print $2}')
+    echo "admin:$ADMIN_HASH:admin" > /etc/lldpq-users.conf
+    echo "operator:$OPERATOR_HASH:operator" >> /etc/lldpq-users.conf
+    echo "  ⚠ Default credentials: admin/admin, operator/operator"
+fi
+chmod 600 /etc/lldpq-users.conf
+chown www-data:www-data /etc/lldpq-users.conf
+mkdir -p /var/lib/lldpq/sessions
+chown -R www-data:www-data /var/lib/lldpq
+chmod 700 /var/lib/lldpq/sessions
+echo "✓ Authentication ready"
+
 # ─── Cron Setup ───
 # Setup cron jobs for lldpq user
 cat > /etc/cron.d/lldpq << 'CRON'

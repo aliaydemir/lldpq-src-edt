@@ -73,6 +73,24 @@ sudo docker run -d --name lldpq --network host \
   lldpq:latest
 ```
 
+**Update/Rebuild Docker:**
+```bash
+# Stop and remove old container + image
+sudo docker stop lldpq && sudo docker rm lldpq && sudo docker rmi lldpq:latest
+
+# Load new image and run
+sudo docker load < lldpq.tar.gz
+sudo docker run -d --name lldpq --network host --privileged \
+  -v $(pwd)/devices.yaml:/home/lldpq/lldpq/devices.yaml \
+  lldpq:latest
+```
+
+**Remove completely:**
+```bash
+sudo docker stop lldpq && sudo docker rm lldpq && sudo docker rmi lldpq:latest
+sudo docker volume rm lldpq-data lldpq-configs lldpq-hstr 2>/dev/null
+```
+
 ## Requirements (non-Docker install)
 
 - **Ubuntu Server** 20.04+ (tested on 22.04, 24.04)
