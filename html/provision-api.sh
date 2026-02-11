@@ -141,7 +141,9 @@ def generate_dhcp_hosts(bindings, orig_filepath):
     lines.append(header.rstrip() + '\n')
     
     for b in bindings:
-        prefix = '#' if b.get('commented') else ''
+        # Auto-comment entries with placeholder MACs (contain 'x')
+        is_placeholder = 'x' in b.get('mac', '').lower()
+        prefix = '#' if (b.get('commented') or is_placeholder) else ''
         line = (
             f'{prefix}host {b["hostname"]} '
             f'{{hardware ethernet {b["mac"]}; '
@@ -417,6 +419,80 @@ def action_discovered():
                 seen_hostnames.add(hostname)
     
     result_json({"success": True, "entries": entries})
+
+def action_ping_scan():
+    """Parallel ping all binding IPs, then read local ARP for MAC cross-reference.
+    Much more accurate than fabric-tables — gives real-time reachability + MAC match.
+    """
+    bindings = parse_dhcp_hosts(get_dhcp_hosts_path())
+    if not bindings:
+        error_json("No bindings to scan")
+    
+    # Step 1: Parallel ping all binding IPs (all-at-once, like pping)
+    def ping_one(ip):
+        try:
+            r = subprocess.run(
+                ['ping', '-c', '1', '-W', '1', '-i', '0.2', ip],
+                capture_output=True, text=True, timeout=2
+            )
+            return ip, r.returncode == 0
+        except Exception:
+            return ip, False
+    
+    ping_results = {}  # ip -> True/False
+    with ThreadPoolExecutor(max_workers=250) as executor:
+        futures = {executor.submit(ping_one, b['ip']): b['ip'] for b in bindings}
+        for future in as_completed(futures):
+            ip, alive = future.result()
+            ping_results[ip] = alive
+    
+    # Step 2: Read local ARP table (populated by the pings we just did)
+    local_arp = {}  # ip -> mac
+    try:
+        r = subprocess.run(['ip', 'neigh', 'show'], capture_output=True, text=True, timeout=5)
+        if r.returncode == 0:
+            for line in r.stdout.strip().split('\n'):
+                parts = line.split()
+                # Format: IP dev IFACE lladdr MAC state
+                if 'lladdr' in parts:
+                    ip = parts[0]
+                    mac_idx = parts.index('lladdr') + 1
+                    if mac_idx < len(parts):
+                        local_arp[ip] = parts[mac_idx].lower()
+    except Exception:
+        pass
+    
+    # Step 3: Cross-reference
+    entries = []
+    for b in bindings:
+        hostname = b['hostname']
+        binding_mac = b['mac'].lower()
+        binding_ip = b['ip']
+        alive = ping_results.get(binding_ip, False)
+        disc_mac = local_arp.get(binding_ip, '')
+        
+        entry = {
+            'hostname': hostname,
+            'binding_mac': b['mac'],
+            'binding_ip': binding_ip,
+            'discovered_mac': disc_mac,
+            'source': 'Ping+ARP' if disc_mac else ('Ping' if alive else ''),
+            'status': 'unreachable'
+        }
+        
+        if alive and disc_mac:
+            if disc_mac == binding_mac:
+                entry['status'] = 'match'
+            else:
+                entry['status'] = 'mismatch'
+        elif alive and not disc_mac:
+            entry['status'] = 'match'  # alive but ARP not captured (rare)
+            entry['source'] = 'Ping'
+        # else: unreachable
+        
+        entries.append(entry)
+    
+    result_json({"success": True, "entries": entries, "scan_type": "ping"})
 
 # ======================== ZTP SCRIPT ========================
 
@@ -806,29 +882,45 @@ def action_list_devices():
     devices_section = data.get('devices', data)
     devices = []
     
+    groups = {}  # role -> [devices]
+    
     for ip, info in devices_section.items():
         if ip in ('defaults', 'endpoint_hosts'):
             continue
         
+        role = 'ungrouped'
         if isinstance(info, dict):
             hostname = info.get('hostname', str(ip))
             username = info.get('username', default_username)
+            role = info.get('role', 'ungrouped')
         elif isinstance(info, str):
-            parts = info.strip().split('@')
-            hostname = parts[0].strip()
+            # Format: "hostname @role" or just "hostname"
+            raw = info.strip()
+            if '@' in raw:
+                parts = raw.split('@')
+                hostname = parts[0].strip()
+                role = parts[1].strip()
+            else:
+                hostname = raw
             username = default_username
         else:
             hostname = str(info) if info else str(ip)
             username = default_username
         
-        devices.append({
-            'ip': str(ip),
-            'hostname': hostname,
-            'username': username
-        })
+        dev = {'ip': str(ip), 'hostname': hostname, 'username': username, 'role': role}
+        groups.setdefault(role, []).append(dev)
     
-    devices.sort(key=lambda x: x['hostname'])
-    result_json({"success": True, "devices": devices})
+    # Sort devices within each group by hostname
+    for role in groups:
+        groups[role].sort(key=lambda x: x['hostname'])
+    
+    # Flat list for backward compat
+    all_devices = []
+    for devs in groups.values():
+        all_devices.extend(devs)
+    all_devices.sort(key=lambda x: x['hostname'])
+    
+    result_json({"success": True, "devices": all_devices, "groups": groups})
 
 # ======================== BASE CONFIG DEPLOY ========================
 
@@ -858,12 +950,6 @@ FILE_DEPLOY_MAP = {
     ],
     'exa': [
         {'dest': '/usr/bin/exa', 'mode': '755'}
-    ],
-    'btop': [
-        {'dest': '/usr/bin/btop', 'mode': '755'}
-    ],
-    'iftop': [
-        {'dest': '/usr/bin/iftop', 'mode': '755'}
     ]
 }
 
@@ -970,15 +1056,18 @@ def action_deploy_base_config():
     devices = data.get('devices', [])
     disable_ztp = data.get('disable_ztp', False)
     
+    # If no files specified, deploy all known files (skip missing ones)
     if not files:
-        error_json("No files selected")
+        files = list(FILE_DEPLOY_MAP.keys())
+    
     if not devices:
         error_json("No devices selected")
     
-    # Validate files exist
-    for f in files:
-        if f not in FILE_DEPLOY_MAP:
-            error_json(f"Unknown file: {f}")
+    # Filter to only files that exist on disk (graceful skip)
+    available_files = [f for f in files if f in FILE_DEPLOY_MAP and os.path.exists(os.path.join(BASE_CONFIG_DIR, f))]
+    if not available_files:
+        error_json("No deploy files found in " + BASE_CONFIG_DIR)
+    files = available_files
     
     # Deploy in parallel (20 workers max)
     results = []
@@ -1200,6 +1289,8 @@ elif ACTION == 'list-devices':
     action_list_devices()
 elif ACTION == 'deploy-base-config':
     action_deploy_base_config()
+elif ACTION == 'ping-scan':
+    action_ping_scan()
 elif ACTION == 'get-ssh-key':
     action_get_ssh_key()
 elif ACTION == 'generate-ssh-key':

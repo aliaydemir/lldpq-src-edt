@@ -153,7 +153,7 @@ if [ -d /home/lldpq/lldpq/sw-base ]; then
     chmod 755 /home/lldpq/lldpq/sw-base
     find /home/lldpq/lldpq/sw-base -type f -exec chmod 644 {} \;
     # Binaries and scripts need execute
-    for f in btop exa iftop cmd nvc nvt motd.sh; do
+    for f in exa cmd nvc nvt motd.sh; do
         [ -f "/home/lldpq/lldpq/sw-base/$f" ] && chmod 755 "/home/lldpq/lldpq/sw-base/$f"
     done
     echo "✓ sw-base files ready ($(ls /home/lldpq/lldpq/sw-base/ 2>/dev/null | wc -l) files)"

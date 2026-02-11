@@ -299,6 +299,7 @@
         .badge-mismatch { background: #4a1515; color: #ff6b6b; }
         .badge-match { background: #1b5e20; color: #66bb6a; }
         .badge-pending { background: #333; color: #999; }
+        .badge-unreachable { background: #3d1515; color: #e57373; }
         .badge-active { background: #1b5e20; color: #4caf50; }
         .badge-expired { background: #4a1515; color: #f44336; }
 
@@ -820,7 +821,8 @@
         <div class="stat-card" style="cursor:pointer;" onclick="setDiscoveredFilter('match')"><div class="stat-value" id="statMatched">-</div><div class="stat-label">Matched</div></div>
         <div class="stat-card" style="border-left-color:#ff9800; cursor:pointer;" onclick="setDiscoveredFilter('mismatch')"><div class="stat-value" id="statMismatch">-</div><div class="stat-label">Mismatch</div></div>
         <div class="stat-card" style="border-left-color:#42a5f5; cursor:pointer;" onclick="setDiscoveredFilter('unbound')"><div class="stat-value" id="statUnbound">-</div><div class="stat-label">No Binding</div></div>
-        <div class="stat-card" style="border-left-color:#f44336; cursor:pointer;" onclick="setDiscoveredFilter('missing')"><div class="stat-value" id="statMissing">-</div><div class="stat-label">Not Discovered</div></div>
+        <div class="stat-card" style="border-left-color:#f44336; cursor:pointer;" onclick="setDiscoveredFilter(document.getElementById('statMissing').closest('.stat-card').querySelector('.stat-label').textContent === 'Unreachable' ? 'unreachable' : 'missing')"><div class="stat-value" id="statMissing">-</div><div class="stat-label">Not Discovered</div></div>
+        <div class="stat-card" style="border-left-color:#888; cursor:pointer;" onclick="setDiscoveredFilter('all')"><div class="stat-value" id="statAll">-</div><div class="stat-label">All</div></div>
     </div>
     <div class="toolbar">
         <div class="toolbar-left">
@@ -831,12 +833,13 @@
                 <option value="mismatch">Mismatch Only</option>
                 <option value="unbound">No Binding</option>
                 <option value="missing">Not Discovered</option>
+                <option value="unreachable">Unreachable</option>
             </select>
         </div>
         <div class="toolbar-right">
-            <button class="btn btn-secondary" onclick="loadDiscovered()">
-                <svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
-                Refresh
+            <button class="btn btn-primary btn-sm" onclick="runPingScan()" id="btnScan">
+                <svg viewBox="0 0 24 24" style="width:14px;height:14px;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+                Scan
             </button>
         </div>
     </div>
@@ -844,12 +847,12 @@
         <table class="data-table" id="discoveredTable">
             <thead>
                 <tr>
-                    <th>Hostname</th>
-                    <th>Binding MAC</th>
-                    <th>Discovered MAC</th>
-                    <th>Binding IP</th>
-                    <th>Source</th>
-                    <th>Status</th>
+                    <th style="cursor:pointer;" onclick="sortDiscovered('hostname')">Hostname <span id="sort-hostname" style="opacity:0.4;">&#9650;</span></th>
+                    <th style="cursor:pointer;" onclick="sortDiscovered('binding_mac')">Binding MAC <span id="sort-binding_mac" style="opacity:0.4;">&#9650;</span></th>
+                    <th style="cursor:pointer;" onclick="sortDiscovered('discovered_mac')">Discovered MAC <span id="sort-discovered_mac" style="opacity:0.4;">&#9650;</span></th>
+                    <th style="cursor:pointer;" onclick="sortDiscovered('binding_ip')">Binding IP <span id="sort-binding_ip" style="opacity:0.4;">&#9650;</span></th>
+                    <th style="cursor:pointer;" onclick="sortDiscovered('source')">Source <span id="sort-source" style="opacity:0.4;">&#9650;</span></th>
+                    <th style="cursor:pointer;" onclick="sortDiscovered('status')">Status <span id="sort-status" style="opacity:0.4;">&#9650;</span></th>
                 </tr>
             </thead>
             <tbody id="discoveredBody">
@@ -890,10 +893,10 @@
             <thead>
                 <tr>
                     <th style="width:30px;"><input type="checkbox" id="selectAllBindings" onchange="toggleSelectAllBindings()"></th>
-                    <th>Hostname</th>
-                    <th>MAC Address</th>
-                    <th>IP Address</th>
-                    <th>Status</th>
+                    <th style="cursor:pointer;" onclick="sortBindings('hostname')">Hostname <span id="bsort-hostname" style="opacity:0.4;">&#9650;</span></th>
+                    <th style="cursor:pointer;" onclick="sortBindings('mac')">MAC Address <span id="bsort-mac" style="opacity:0.4;">&#9650;</span></th>
+                    <th style="cursor:pointer;" onclick="sortBindings('ip')">IP Address <span id="bsort-ip" style="opacity:1;">&#9650;</span></th>
+                    <th style="cursor:pointer;" onclick="sortBindings('status')">Status <span id="bsort-status" style="opacity:0.4;">&#9650;</span></th>
                     <th style="width:120px;">Actions</th>
                 </tr>
             </thead>
@@ -943,7 +946,7 @@
                 <label style="font-size: 11px; color: #888; display: block; margin-bottom: 4px;">DEFAULT PASSWORD</label>
                 <div style="position: relative;">
                     <input type="password" class="form-input" id="ztpPassword" style="width: 100%; padding-right: 36px;" placeholder="e.g. Nvidia01!" autocomplete="off">
-                    <button onclick="togglePasswordVisibility()" style="position:absolute; right:4px; top:50%; transform:translateY(-50%); background:none; border:none; color:#888; cursor:pointer; padding:4px; font-size:16px;" title="Show/Hide" id="pwToggle">👁</button>
+                    <button onclick="togglePasswordVisibility()" style="position:absolute; right:4px; top:50%; transform:translateY(-50%); background:none; border:none; color:#888; cursor:pointer; padding:4px;" title="Show/Hide" id="pwToggle"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg></button>
                 </div>
             </div>
             <div>
@@ -990,67 +993,59 @@
 
 <!-- ==================== TAB 5: BASE CONFIG ==================== -->
 <div class="tab-content" id="tab-base-config">
+    <div style="display: flex; gap: 15px; height: calc(100vh - 250px); min-height: 400px;">
 
-    <!-- Two-column layout: Files | Devices -->
-    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
-
-        <!-- Left: Files -->
-        <div style="background: #1e1e1e; border: 1px solid #3c3c3c; border-radius: 6px; padding: 12px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                <div class="section-title" style="margin: 0; font-size: 13px;">Files to Deploy</div>
-                <label style="font-size: 11px; cursor: pointer; color: #888;">
-                    <input type="checkbox" id="selectAllFiles" onchange="toggleSelectAllFiles()" checked style="accent-color: #76b900;">
-                    All
-                </label>
+        <!-- Left: Device Selection Panel (Device Details pattern) -->
+        <div style="width: 300px; background: #252526; border: 1px solid #3c3c3c; border-radius: 6px; display: flex; flex-direction: column; overflow: hidden; flex-shrink: 0;">
+            <!-- Header -->
+            <div style="padding: 10px 12px; background: linear-gradient(0deg, #76b900 0%, #5a8c00 100%); color: white; font-weight: bold; font-size: 13px; display: flex; align-items: center; justify-content: space-between;">
+                <span>Select Devices</span>
+                <span style="font-weight: normal; font-size: 12px;" id="bcSelectedCount">0 selected</span>
             </div>
-            <div class="file-grid" id="fileGrid"></div>
+            <!-- Quick actions -->
+            <div style="padding: 6px 10px; border-bottom: 1px solid #404040; display: flex; gap: 8px; align-items: center; background: #2d2d2d;">
+                <a href="#" onclick="bcSelectAll(true); return false;" style="font-size: 11px; color: #76b900; text-decoration: none;">All</a>
+                <a href="#" onclick="bcSelectAll(false); return false;" style="font-size: 11px; color: #888; text-decoration: none;">None</a>
+                <span style="flex:1;"></span>
+                <span style="font-size: 11px; color: #666;" id="bcTotalDevices"></span>
+            </div>
+            <!-- Search -->
+            <div style="padding: 8px 10px; border-bottom: 1px solid #404040;">
+                <input type="text" id="bcDeviceSearch" placeholder="Search devices..." oninput="bcFilterDevices()" style="width: 100%; padding: 6px 10px; background: #3c3c3c; border: 1px solid #555; border-radius: 4px; color: #d4d4d4; font-size: 12px;">
+            </div>
+            <!-- Device list with role groups -->
+            <div style="flex: 1; overflow-y: auto; padding: 5px 0;" id="bcDeviceList">
+                <div class="loading" style="padding: 20px;">Loading devices...</div>
+            </div>
         </div>
 
-        <!-- Right: Devices -->
-        <div style="background: #1e1e1e; border: 1px solid #3c3c3c; border-radius: 6px; padding: 12px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                <div class="section-title" style="margin: 0; font-size: 13px;">Target Devices</div>
-                <div style="display: flex; gap: 8px; align-items: center;">
-                    <input type="text" class="search-filter" id="deviceFilter" placeholder="Filter..." oninput="filterDeviceChips()" style="width: 140px; padding: 4px 8px; font-size: 11px;">
-                    <label style="font-size: 11px; cursor: pointer; color: #888; white-space: nowrap;">
-                        <input type="checkbox" id="selectAllDevices" onchange="toggleSelectAllDevices()" checked style="accent-color: #76b900;">
-                        All
-                    </label>
+        <!-- Right: Deploy area -->
+        <div style="flex: 1; display: flex; flex-direction: column;">
+            <!-- Info bar -->
+            <div style="padding: 12px 15px; background: #252526; border: 1px solid #3c3c3c; border-radius: 6px; margin-bottom: 10px; display: flex; gap: 12px; align-items: center;">
+                <button class="btn btn-primary" onclick="deployBaseConfig()" id="btnDeploy">
+                    <svg viewBox="0 0 24 24"><path d="M19.35 10.04A7.49 7.49 0 0012 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 000 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/></svg>
+                    Deploy
+                </button>
+                <label style="font-size: 12px; cursor: pointer; color: #888;">
+                    <input type="checkbox" id="disableZTPAfter" style="accent-color: #76b900;">
+                    Disable ZTP after deploy
+                </label>
+                <span id="deployStatusText" style="font-size: 12px; color: #888; margin-left: auto;"></span>
+            </div>
+            <!-- Files info (compact) -->
+            <div style="padding: 8px 12px; background: #1e1e1e; border: 1px solid #3c3c3c; border-radius: 4px; margin-bottom: 10px; font-size: 12px; color: #888;">
+                <span style="color: #76b900; font-weight: 600;">Files:</span>
+                <span id="bcFileList"></span>
+            </div>
+            <!-- Deploy Progress -->
+            <div style="flex: 1; overflow-y: auto;" id="deployProgress">
+                <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: #555;">
+                    <svg viewBox="0 0 24 24" style="width: 60px; height: 60px; fill: #555; margin-bottom: 15px;"><path d="M19.35 10.04A7.49 7.49 0 0012 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 000 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/></svg>
+                    <div style="font-size: 14px; color: #888;">Select devices and click Deploy</div>
+                    <div style="font-size: 12px; margin-top: 5px;">All sw-base files will be deployed via parallel SSH/SCP</div>
                 </div>
             </div>
-            <div class="device-selector" id="deviceSelector">
-                <div class="loading">Loading devices...</div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Deploy bar -->
-    <div style="display: flex; gap: 12px; align-items: center; padding: 10px 15px; background: #252526; border: 1px solid #3c3c3c; border-radius: 6px; margin-bottom: 15px;">
-        <button class="btn btn-primary" onclick="deployBaseConfig()" id="btnDeploy">
-            <svg viewBox="0 0 24 24"><path d="M19.35 10.04A7.49 7.49 0 0012 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 000 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/></svg>
-            Deploy
-        </button>
-        <label style="font-size: 12px; cursor: pointer; color: #888;">
-            <input type="checkbox" id="disableZTPAfter" style="accent-color: #76b900;">
-            Disable ZTP after deploy
-        </label>
-        <span id="deployStatusText" style="font-size: 12px; color: #888; margin-left: auto;"></span>
-    </div>
-
-    <!-- Deploy Progress -->
-    <div id="deployProgress" style="display: none;">
-        <div class="table-wrapper">
-            <table class="data-table">
-                <thead>
-                    <tr>
-                        <th>Hostname</th>
-                        <th>IP</th>
-                        <th>Status</th>
-                        <th>Details</th>
-                    </tr>
-                </thead>
-                <tbody id="deployBody"></tbody>
-            </table>
         </div>
     </div>
 </div>
@@ -1119,9 +1114,7 @@ const BASE_CONFIG_FILES = [
     { name: 'cmd', dest: '/usr/local/bin/cmd', type: 'script', desc: 'tmux session manager' },
     { name: 'nvc', dest: '/usr/local/bin/nvc', type: 'script', desc: 'NV config colorizer' },
     { name: 'nvt', dest: '/usr/local/bin/nvt', type: 'script', desc: 'Interface table tool' },
-    { name: 'exa', dest: '/usr/bin/exa', type: 'binary', desc: 'Modern ls replacement' },
-    { name: 'btop', dest: '/usr/bin/btop', type: 'binary', desc: 'System monitor' },
-    { name: 'iftop', dest: '/usr/bin/iftop', type: 'binary', desc: 'Bandwidth monitor' }
+    { name: 'exa', dest: '/usr/bin/exa', type: 'binary', desc: 'Modern ls replacement' }
 ];
 
 // ===================== INIT =====================
@@ -1139,14 +1132,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Load initial data
     loadDHCPConfig();
-    loadDiscovered();
+    runPingScan();
     loadDeviceList();
-    renderBaseConfigFiles();
     checkDHCPStatus();
 });
 
 function onTabSwitch(tab) {
-    if (tab === 'dhcpd') { loadDHCPConfig(); loadDiscovered(); }
+    if (tab === 'dhcpd') { loadDHCPConfig(); runPingScan(); }
     if (tab === 'bindings' && allBindings.length === 0) loadBindings();
     if (tab === 'ztp-script') loadZTPScript();
 }
@@ -1298,7 +1290,7 @@ function parseBulkText(text) {
         const mac = parts[1].toLowerCase();
         const ip = parts[2];
 
-        if (!/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(mac)) {
+        if (!/^([0-9a-fx]{2}:){5}[0-9a-fx]{2}$/.test(mac)) {
             errors.push(`Line ${idx + 1}: Invalid MAC "${parts[1]}"`);
             return;
         }
@@ -1367,6 +1359,18 @@ async function loadBindings() {
     }
 }
 
+let bindSortCol = 'ip';
+let bindSortAsc = true;
+
+function sortBindings(col) {
+    if (bindSortCol === col) { bindSortAsc = !bindSortAsc; }
+    else { bindSortCol = col; bindSortAsc = true; }
+    document.querySelectorAll('[id^="bsort-"]').forEach(el => { el.style.opacity = '0.4'; el.innerHTML = '&#9650;'; });
+    const ind = document.getElementById('bsort-' + col);
+    if (ind) { ind.style.opacity = '1'; ind.innerHTML = bindSortAsc ? '&#9650;' : '&#9660;'; }
+    renderBindings();
+}
+
 function renderBindings() {
     const filter = document.getElementById('bindingSearch').value.toLowerCase();
     const filtered = allBindings.filter(b =>
@@ -1374,6 +1378,22 @@ function renderBindings() {
         b.mac.toLowerCase().includes(filter) ||
         b.ip.includes(filter)
     );
+
+    // Sort
+    filtered.sort((a, b) => {
+        let va = a[bindSortCol] || '';
+        let vb = b[bindSortCol] || '';
+        if (bindSortCol === 'ip') {
+            return bindSortAsc ? ipToNum(va) - ipToNum(vb) : ipToNum(vb) - ipToNum(va);
+        }
+        if (bindSortCol === 'status') {
+            va = a.commented ? 'z' : 'a'; vb = b.commented ? 'z' : 'a';
+        } else {
+            va = va.toLowerCase(); vb = vb.toLowerCase();
+        }
+        const cmp = va < vb ? -1 : va > vb ? 1 : 0;
+        return bindSortAsc ? cmp : -cmp;
+    });
 
     document.getElementById('bindingCount').textContent = `${filtered.length} of ${allBindings.length} bindings`;
 
@@ -1391,7 +1411,7 @@ function renderBindings() {
             <td><strong>${escHtml(b.hostname)}</strong></td>
             <td style="font-family:'Cascadia Code','Consolas',monospace; font-size:12px;">${escHtml(b.mac)}</td>
             <td style="font-family:'Cascadia Code','Consolas',monospace; font-size:12px;">${escHtml(b.ip)}</td>
-            <td>${b.commented ? '<span class="badge badge-pending">Disabled</span>' : '<span class="badge badge-active">Active</span>'}</td>
+            <td>${b.mac.toLowerCase().includes('x') ? '<span class="badge badge-warning">Pending MAC</span>' : b.commented ? '<span class="badge badge-pending">Disabled</span>' : '<span class="badge badge-active">Active</span>'}</td>
             <td class="row-actions">
                 <button class="btn btn-secondary btn-sm" onclick="editBinding('${escAttr(b.hostname)}')">Edit</button>
                 <button class="btn btn-danger btn-sm" onclick="deleteBinding('${escAttr(b.hostname)}')">Del</button>
@@ -1405,7 +1425,7 @@ function filterBindings() { renderBindings(); }
 function showAddBinding() {
     document.getElementById('modalTitle').textContent = 'Add Binding';
     document.getElementById('modalHostname').value = '';
-    document.getElementById('modalMAC').value = '';
+    document.getElementById('modalMAC').value = 'xx:xx:xx:xx:xx:xx';
     document.getElementById('modalIP').value = '';
     document.getElementById('modalOrigHostname').value = '';
     document.getElementById('modalSaveBtn').textContent = 'Add';
@@ -1441,8 +1461,8 @@ function saveBinding() {
         return;
     }
 
-    // MAC format validation
-    if (!/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(mac)) {
+    // MAC format validation — allow placeholder like xx:xx:xx:xx:xx:xx
+    if (!/^([0-9a-fx]{2}:){5}[0-9a-fx]{2}$/.test(mac)) {
         showToast('Invalid MAC format. Use xx:xx:xx:xx:xx:xx', 'error');
         return;
     }
@@ -1534,10 +1554,37 @@ function renderDiscoveredStats() {
     const mismatch = allDiscovered.filter(d => d.status === 'mismatch').length;
     const unbound = allDiscovered.filter(d => d.status === 'unbound').length;
     const missing = allDiscovered.filter(d => d.status === 'missing').length;
+    const unreachable = allDiscovered.filter(d => d.status === 'unreachable').length;
     document.getElementById('statMatched').textContent = matched;
     document.getElementById('statMismatch').textContent = mismatch;
     document.getElementById('statUnbound').textContent = unbound;
-    document.getElementById('statMissing').textContent = missing;
+    document.getElementById('statMissing').textContent = unreachable > 0 ? unreachable : missing;
+    // Update label based on scan type
+    document.getElementById('statMissing').closest('.stat-card').querySelector('.stat-label').textContent =
+        unreachable > 0 ? 'Unreachable' : 'Not Discovered';
+    document.getElementById('statAll').textContent = allDiscovered.length;
+}
+
+async function runPingScan() {
+    const btn = document.getElementById('btnScan');
+    btn.disabled = true;
+    btn.textContent = 'Scanning...';
+    document.getElementById('discoveredBody').innerHTML = '<tr><td colspan="6" class="loading">Ping scanning all bindings...</td></tr>';
+    
+    const data = await apiCall('ping-scan');
+    if (data.success) {
+        allDiscovered = data.entries || [];
+        renderDiscoveredStats();
+        renderDiscovered();
+        const match = allDiscovered.filter(d => d.status === 'match').length;
+        const unreach = allDiscovered.filter(d => d.status === 'unreachable').length;
+        showToast(`Scan complete: ${match} match, ${unreach} unreachable`, 'success');
+    } else {
+        document.getElementById('discoveredBody').innerHTML = `<tr><td colspan="6" style="color:#f44336;padding:20px;">Scan failed: ${data.error}</td></tr>`;
+        showToast('Scan failed: ' + (data.error || ''), 'error');
+    }
+    btn.disabled = false;
+    btn.innerHTML = '<svg viewBox="0 0 24 24" style="width:14px;height:14px;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg> Scan';
 }
 
 function renderDiscovered() {
@@ -1557,6 +1604,18 @@ function renderDiscovered() {
         );
     }
 
+    // Sort
+    filtered.sort((a, b) => {
+        let va = a[discSortCol] || '';
+        let vb = b[discSortCol] || '';
+        if (discSortCol === 'binding_ip') {
+            return discSortAsc ? ipToNum(va) - ipToNum(vb) : ipToNum(vb) - ipToNum(va);
+        }
+        va = va.toLowerCase(); vb = vb.toLowerCase();
+        const cmp = va < vb ? -1 : va > vb ? 1 : 0;
+        return discSortAsc ? cmp : -cmp;
+    });
+
     if (filtered.length === 0) {
         document.getElementById('discoveredBody').innerHTML = '<tr><td colspan="6" style="text-align:center;padding:40px;color:#666;">No entries found.</td></tr>';
         return;
@@ -1567,7 +1626,8 @@ function renderDiscovered() {
             'match': '<span class="badge badge-match">Match</span>',
             'mismatch': '<span class="badge badge-mismatch">Mismatch</span>',
             'unbound': '<span class="badge badge-info">No Binding</span>',
-            'missing': '<span class="badge badge-warning">Not Discovered</span>'
+            'missing': '<span class="badge badge-warning">Not Discovered</span>',
+            'unreachable': '<span class="badge badge-unreachable">Unreachable</span>'
         }[d.status] || '';
 
         return `<tr>
@@ -1579,6 +1639,29 @@ function renderDiscovered() {
             <td>${statusBadge}</td>
         </tr>`;
     }).join('');
+}
+
+let discSortCol = 'binding_ip';
+let discSortAsc = true;
+
+function sortDiscovered(col) {
+    if (discSortCol === col) {
+        discSortAsc = !discSortAsc;
+    } else {
+        discSortCol = col;
+        discSortAsc = true;
+    }
+    // Update sort indicators
+    document.querySelectorAll('[id^="sort-"]').forEach(el => { el.style.opacity = '0.4'; el.innerHTML = '&#9650;'; });
+    const indicator = document.getElementById('sort-' + col);
+    if (indicator) { indicator.style.opacity = '1'; indicator.innerHTML = discSortAsc ? '&#9650;' : '&#9660;'; }
+    renderDiscovered();
+}
+
+function ipToNum(ip) {
+    if (!ip) return 0;
+    const parts = ip.split('.');
+    return ((+parts[0]) << 24) + ((+parts[1]) << 16) + ((+parts[2]) << 8) + (+parts[3]);
 }
 
 function filterDiscovered() { renderDiscovered(); }
@@ -1639,8 +1722,8 @@ function copySSHKey() {
 function togglePasswordVisibility() {
     const pw = document.getElementById('ztpPassword');
     const btn = document.getElementById('pwToggle');
-    if (pw.type === 'password') { pw.type = 'text'; btn.textContent = '🔒'; }
-    else { pw.type = 'password'; btn.textContent = '👁'; }
+    if (pw.type === 'password') { pw.type = 'text'; btn.style.color = '#ff9800'; }
+    else { pw.type = 'password'; btn.style.color = '#888'; }
 }
 
 // --- OS Image ---
@@ -1747,147 +1830,162 @@ async function saveZTPScript() {
 }
 
 // ===================== TAB 5: BASE CONFIG =====================
-function renderBaseConfigFiles() {
-    const grid = document.getElementById('fileGrid');
-    const typeColor = { 'config': '#76b900', 'script': '#42a5f5', 'binary': '#ff9800' };
-    grid.innerHTML = BASE_CONFIG_FILES.map(f => {
-        const color = typeColor[f.type] || '#76b900';
-        return `<div class="file-card selected" data-file="${f.name}" onclick="toggleFileCard(this)">
-            <input type="checkbox" checked class="file-cb" data-file="${f.name}" onclick="event.stopPropagation()">
-            <div class="file-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" fill="${color}"/></svg></div>
-            <div class="file-info">
-                <span class="file-name">${f.name}</span>
-                <span class="file-dest">${f.dest}</span>
-            </div>
-        </div>`;
-    }).join('');
-}
-
-function toggleFileCard(card) {
-    const cb = card.querySelector('.file-cb');
-    cb.checked = !cb.checked;
-    card.classList.toggle('selected', cb.checked);
-}
-
-function toggleSelectAllFiles() {
-    const checked = document.getElementById('selectAllFiles').checked;
-    document.querySelectorAll('.file-cb').forEach(cb => {
-        cb.checked = checked;
-        cb.closest('.file-card').classList.toggle('selected', checked);
-    });
-}
+let bcDeviceGroups = {};
 
 async function loadDeviceList() {
     const data = await apiCall('list-devices');
     if (data.success) {
         deviceList = data.devices || [];
-        renderDeviceChips();
+        bcDeviceGroups = data.groups || {};
+        renderBCDeviceList();
+        renderBCFileList();
     }
 }
 
-function renderDeviceChips() {
-    const filter = document.getElementById('deviceFilter') ? document.getElementById('deviceFilter').value.toLowerCase() : '';
-    const container = document.getElementById('deviceSelector');
-    const filtered = deviceList.filter(d =>
-        d.hostname.toLowerCase().includes(filter) || d.ip.includes(filter)
-    );
-
-    container.innerHTML = filtered.map(d => `
-        <div class="device-chip selected" onclick="toggleDeviceChip(this)">
-            <input type="checkbox" checked class="dev-cb" data-ip="${d.ip}" data-hostname="${d.hostname}" onclick="event.stopPropagation()">
-            <span>${escHtml(d.hostname)}</span>
-        </div>
-    `).join('');
+function renderBCFileList() {
+    document.getElementById('bcFileList').textContent = BASE_CONFIG_FILES.map(f => f.name).join(', ');
 }
 
-function toggleDeviceChip(chip) {
-    const cb = chip.querySelector('.dev-cb');
-    cb.checked = !cb.checked;
-    chip.classList.toggle('selected', cb.checked);
+function renderBCDeviceList() {
+    const container = document.getElementById('bcDeviceList');
+    const filter = document.getElementById('bcDeviceSearch') ? document.getElementById('bcDeviceSearch').value.toLowerCase() : '';
+    const groups = bcDeviceGroups;
+    let html = '';
+    let totalCount = 0;
+
+    for (const [role, devices] of Object.entries(groups)) {
+        const filtered = devices.filter(d =>
+            d.hostname.toLowerCase().includes(filter) || d.ip.includes(filter)
+        );
+        if (filtered.length === 0) continue;
+        totalCount += filtered.length;
+
+        const groupId = role.replace(/[^a-zA-Z0-9]/g, '_');
+        html += `
+            <div style="margin-bottom: 2px;">
+                <div style="display:flex; align-items:center; gap:8px; padding:6px 10px; background:#2d2d2d; cursor:pointer; user-select:none;" onclick="bcToggleGroup('${groupId}')">
+                    <input type="checkbox" style="accent-color:#76b900; width:14px; height:14px;" id="bcg-${groupId}" onclick="event.stopPropagation(); bcToggleGroupDevices('${groupId}')">
+                    <span style="color:#76b900; font-size:12px; font-weight:600; text-transform:uppercase;">${escHtml(role)}</span>
+                    <span style="color:#888; font-size:11px; margin-left:auto;">${filtered.length}</span>
+                </div>
+                <div id="bcd-${groupId}" style="display:none;">
+                    ${filtered.map(d => `
+                        <label style="display:flex; align-items:center; gap:8px; padding:4px 10px 4px 28px; cursor:pointer; font-size:12px; transition:background 0.1s;" onmouseover="this.style.background='#2a2a2a'" onmouseout="this.style.background=''">
+                            <input type="checkbox" class="bc-dev-cb" data-ip="${d.ip}" data-hostname="${d.hostname}" data-username="${d.username || 'cumulus'}" data-group="${groupId}" style="accent-color:#76b900; width:13px; height:13px;" onchange="bcUpdateCounts()">
+                            <span style="flex:1; color:#d4d4d4;">${escHtml(d.hostname)}</span>
+                            <span style="color:#666; font-family:monospace; font-size:11px;">${escHtml(d.ip)}</span>
+                        </label>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    }
+
+    container.innerHTML = html || '<div style="padding:20px; color:#666; text-align:center;">No devices</div>';
+    document.getElementById('bcTotalDevices').textContent = `${totalCount} devices`;
+    bcUpdateCounts();
 }
 
-function toggleSelectAllDevices() {
-    const checked = document.getElementById('selectAllDevices').checked;
-    document.querySelectorAll('.dev-cb').forEach(cb => {
-        cb.checked = checked;
-        cb.closest('.device-chip').classList.toggle('selected', checked);
-    });
+function bcToggleGroup(groupId) {
+    const div = document.getElementById('bcd-' + groupId);
+    div.style.display = div.style.display === 'none' ? '' : 'none';
 }
 
-function filterDeviceChips() { renderDeviceChips(); }
+function bcToggleGroupDevices(groupId) {
+    const groupCb = document.getElementById('bcg-' + groupId);
+    document.querySelectorAll(`.bc-dev-cb[data-group="${groupId}"]`).forEach(cb => cb.checked = groupCb.checked);
+    bcUpdateCounts();
+}
+
+function bcSelectAll(checked) {
+    document.querySelectorAll('.bc-dev-cb').forEach(cb => cb.checked = checked);
+    document.querySelectorAll('[id^="bcg-"]').forEach(cb => cb.checked = checked);
+    bcUpdateCounts();
+}
+
+function bcUpdateCounts() {
+    const total = document.querySelectorAll('.bc-dev-cb').length;
+    const selected = document.querySelectorAll('.bc-dev-cb:checked').length;
+    document.getElementById('bcSelectedCount').textContent = `${selected} selected`;
+
+    // Update group checkboxes
+    for (const role of Object.keys(bcDeviceGroups)) {
+        const groupId = role.replace(/[^a-zA-Z0-9]/g, '_');
+        const groupCbs = document.querySelectorAll(`.bc-dev-cb[data-group="${groupId}"]`);
+        const groupChecked = document.querySelectorAll(`.bc-dev-cb[data-group="${groupId}"]:checked`);
+        const gcb = document.getElementById('bcg-' + groupId);
+        if (gcb) {
+            gcb.checked = groupCbs.length > 0 && groupChecked.length === groupCbs.length;
+            gcb.indeterminate = groupChecked.length > 0 && groupChecked.length < groupCbs.length;
+        }
+    }
+}
+
+function bcFilterDevices() { renderBCDeviceList(); }
 
 async function deployBaseConfig() {
-    const selectedFiles = Array.from(document.querySelectorAll('.file-cb:checked')).map(cb => cb.dataset.file);
-    const selectedDevices = Array.from(document.querySelectorAll('.dev-cb:checked')).map(cb => ({
+    const selectedDevices = Array.from(document.querySelectorAll('.bc-dev-cb:checked')).map(cb => ({
         ip: cb.dataset.ip,
-        hostname: cb.dataset.hostname
+        hostname: cb.dataset.hostname,
+        username: cb.dataset.username
     }));
 
-    if (selectedFiles.length === 0) {
-        showToast('Select at least one file to deploy', 'error');
-        return;
-    }
     if (selectedDevices.length === 0) {
         showToast('Select at least one device', 'error');
         return;
     }
 
     const disableZTP = document.getElementById('disableZTPAfter').checked;
-
-    // Show progress
-    document.getElementById('deployProgress').style.display = '';
     const btn = document.getElementById('btnDeploy');
     btn.disabled = true;
 
-    // Init progress table
-    document.getElementById('deployBody').innerHTML = selectedDevices.map(d => `
-        <tr id="deploy-${d.ip.replace(/\./g, '-')}">
-            <td><strong>${escHtml(d.hostname)}</strong></td>
-            <td style="font-family:monospace;font-size:12px;">${escHtml(d.ip)}</td>
-            <td><div class="spinner"></div></td>
-            <td style="color:#888;">Deploying...</td>
-        </tr>
-    `).join('');
+    // Show progress table
+    const progress = document.getElementById('deployProgress');
+    progress.innerHTML = `
+        <div class="table-wrapper">
+            <table class="data-table">
+                <thead><tr><th>Hostname</th><th>IP</th><th>Status</th><th>Details</th></tr></thead>
+                <tbody id="deployBody">
+                    ${selectedDevices.map(d => `
+                        <tr id="deploy-${d.ip.replace(/\./g, '-')}">
+                            <td><strong>${escHtml(d.hostname)}</strong></td>
+                            <td style="font-family:monospace;font-size:12px;">${escHtml(d.ip)}</td>
+                            <td><div class="spinner"></div></td>
+                            <td style="color:#888;">Deploying...</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>`;
 
     document.getElementById('deployStatusText').textContent = `Deploying to ${selectedDevices.length} devices...`;
 
+    // No files param = deploy all available sw-base files
     const data = await apiCall('deploy-base-config', {
-        files: selectedFiles,
         devices: selectedDevices,
         disable_ztp: disableZTP
     });
 
     if (data.success && data.results) {
-        let okCount = 0;
-        let failCount = 0;
+        let okCount = 0, failCount = 0;
         data.results.forEach(r => {
-            const rowId = `deploy-${r.ip.replace(/\./g, '-')}`;
-            const row = document.getElementById(rowId);
+            const row = document.getElementById(`deploy-${r.ip.replace(/\./g, '-')}`);
             if (row) {
                 if (r.success) {
                     okCount++;
-                    row.innerHTML = `
-                        <td><strong>${escHtml(r.hostname)}</strong></td>
-                        <td style="font-family:monospace;font-size:12px;">${escHtml(r.ip)}</td>
-                        <td><span class="badge badge-success">OK</span></td>
-                        <td style="color:#4caf50;">${escHtml(r.message || 'Deployed successfully')}</td>`;
+                    row.innerHTML = `<td><strong>${escHtml(r.hostname)}</strong></td><td style="font-family:monospace;font-size:12px;">${escHtml(r.ip)}</td><td><span class="badge badge-success">OK</span></td><td style="color:#4caf50;">${escHtml(r.message || 'OK')}</td>`;
                 } else {
                     failCount++;
-                    row.innerHTML = `
-                        <td><strong>${escHtml(r.hostname)}</strong></td>
-                        <td style="font-family:monospace;font-size:12px;">${escHtml(r.ip)}</td>
-                        <td><span class="badge badge-error">FAIL</span></td>
-                        <td style="color:#f44336;">${escHtml(r.error || 'Unknown error')}</td>`;
+                    row.innerHTML = `<td><strong>${escHtml(r.hostname)}</strong></td><td style="font-family:monospace;font-size:12px;">${escHtml(r.ip)}</td><td><span class="badge badge-error">FAIL</span></td><td style="color:#f44336;">${escHtml(r.error || 'Failed')}</td>`;
                 }
             }
         });
         document.getElementById('deployStatusText').textContent = `Done: ${okCount} OK, ${failCount} failed`;
-        showToast(`Deployment complete: ${okCount} OK, ${failCount} failed`, failCount > 0 ? 'error' : 'success');
+        showToast(`Deploy: ${okCount} OK, ${failCount} failed`, failCount > 0 ? 'error' : 'success');
     } else {
-        showToast('Deployment failed: ' + (data.error || 'Unknown error'), 'error');
-        document.getElementById('deployStatusText').textContent = 'Deployment failed';
+        showToast('Deploy failed: ' + (data.error || ''), 'error');
+        document.getElementById('deployStatusText').textContent = 'Failed';
     }
-
     btn.disabled = false;
 }
 

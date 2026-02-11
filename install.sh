@@ -389,7 +389,7 @@ HOOKEOF
     
     # Configure sudoers for www-data to run SSH commands as LLDPQ user (for search-api.sh)
     echo "   Configuring sudoers for network device access..."
-    echo "www-data ALL=($(whoami)) NOPASSWD: /usr/bin/timeout, /usr/bin/ssh" | sudo tee /etc/sudoers.d/www-data-lldpq > /dev/null
+    echo "www-data ALL=($(whoami)) NOPASSWD: /usr/bin/timeout, /usr/bin/ssh, /usr/bin/scp" | sudo tee /etc/sudoers.d/www-data-lldpq > /dev/null
     sudo chmod 440 /etc/sudoers.d/www-data-lldpq
     echo "   Sudoers configured for MAC/ARP table access"
     
