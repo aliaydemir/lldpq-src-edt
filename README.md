@@ -76,15 +76,22 @@ sudo docker stop lldpq && sudo docker rm lldpq && sudo docker rmi lldpq:latest
 
 # Load new image and run
 sudo docker load < lldpq.tar.gz
-sudo docker run -d --name lldpq --network host --privileged \
-  -v $(pwd)/devices.yaml:/home/lldpq/lldpq/devices.yaml \
-  lldpq:latest
+sudo docker run -d --name lldpq --network host lldpq:latest
 ```
 
 **Remove completely:**
 ```bash
 sudo docker stop lldpq && sudo docker rm lldpq && sudo docker rmi lldpq:latest
 sudo docker volume rm lldpq-data lldpq-configs lldpq-hstr 2>/dev/null
+rm -f ~/lldpq.tar.gz
+```
+
+**Useful Docker commands:**
+```bash
+sudo docker logs lldpq                    # Container logs
+sudo docker exec -it lldpq bash           # Shell into container
+sudo docker restart lldpq                 # Restart (keeps data + SSH keys)
+sudo docker ps -a --filter name=lldpq     # Container status
 ```
 
 ## Requirements (non-Docker install)
