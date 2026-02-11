@@ -57,6 +57,26 @@ else
     echo "  Mount with: -v /path/to/devices.yaml:/home/lldpq/lldpq/devices.yaml"
 fi
 
+# ─── Topology files Setup ───
+# Real files in web root (editable from web UI), symlinks in lldpq dir (used by scripts)
+for f in topology.dot topology_config.yaml; do
+    # If file exists in web root (baked in or volume-mounted), ensure symlink
+    if [ -f "/var/www/html/$f" ] && [ ! -L "/home/lldpq/lldpq/$f" ]; then
+        rm -f "/home/lldpq/lldpq/$f"
+        ln -sf "/var/www/html/$f" "/home/lldpq/lldpq/$f"
+    fi
+    # If file only exists in lldpq dir (not a symlink), move to web root
+    if [ -f "/home/lldpq/lldpq/$f" ] && [ ! -L "/home/lldpq/lldpq/$f" ] && [ ! -f "/var/www/html/$f" ]; then
+        mv "/home/lldpq/lldpq/$f" "/var/www/html/$f"
+        ln -sf "/var/www/html/$f" "/home/lldpq/lldpq/$f"
+    fi
+    if [ -f "/var/www/html/$f" ]; then
+        chown lldpq:www-data "/var/www/html/$f"
+        chmod 664 "/var/www/html/$f"
+    fi
+done
+echo "✓ Topology files ready"
+
 # ─── Persistent data directories ───
 for dir in /home/lldpq/lldpq/monitor-results \
            /home/lldpq/lldpq/monitor-results/fabric-tables \

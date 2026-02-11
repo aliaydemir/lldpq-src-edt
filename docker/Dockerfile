@@ -62,6 +62,18 @@ RUN chown -R lldpq:www-data /var/www/html/ \
     && chmod +x /usr/local/bin/* \
     && chmod +x /home/lldpq/lldpq/*.sh /home/lldpq/lldpq/*.py 2>/dev/null || true
 
+# Setup topology files: real files in web root, symlinks in lldpq dir
+# Same pattern as native install - web UI edits files in /var/www/html/
+# Scripts access them via symlink in /home/lldpq/lldpq/
+RUN mv /home/lldpq/lldpq/topology.dot /var/www/html/topology.dot \
+    && mv /home/lldpq/lldpq/topology_config.yaml /var/www/html/topology_config.yaml \
+    && ln -sf /var/www/html/topology.dot /home/lldpq/lldpq/topology.dot \
+    && ln -sf /var/www/html/topology_config.yaml /home/lldpq/lldpq/topology_config.yaml \
+    && chown lldpq:www-data /var/www/html/topology.dot /var/www/html/topology_config.yaml \
+    && chmod 664 /var/www/html/topology.dot /var/www/html/topology_config.yaml \
+    && chown lldpq:www-data /home/lldpq/lldpq/devices.yaml \
+    && chmod 664 /home/lldpq/lldpq/devices.yaml
+
 # Create lldpq config
 RUN echo '# LLDPq Configuration (Docker)\n\
 LLDPQ_DIR=/home/lldpq/lldpq\n\
