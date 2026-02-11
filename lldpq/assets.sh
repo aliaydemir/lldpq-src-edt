@@ -115,12 +115,9 @@ printf '%-20s %-15s %-17s %-12s %-20s %-10s %-15s %-12s %s\n' \
   "DEVICE-NAME" "IP" "ETH0-MAC" "SERIAL" "MODEL" "RELEASE" "UPTIME" "STATUS" "LAST-SEEN" > "$TMPFILE"
 
 #### WORKFLOW
-# VRF-aware ping (Cumulus switches use mgmt VRF for management network)
-if ip vrf show mgmt &>/dev/null 2>&1 || sudo ip vrf show mgmt &>/dev/null 2>&1; then
-    PING="sudo ip vrf exec mgmt ping"
-else
-    PING="ping"
-fi
+# Ping command - on Cumulus switches with Docker --privileged, the entrypoint
+# adds 'ip rule' for mgmt VRF so plain ping works. No ip vrf exec needed.
+PING="ping"
 
 ping_test() {
   local ip=$1 host=$2

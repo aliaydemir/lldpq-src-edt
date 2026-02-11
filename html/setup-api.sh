@@ -107,17 +107,9 @@ def ensure_ssh_key(lldpq_user):
         return None, False, str(e)
 
 def detect_ping_cmd(lldpq_user):
-    """Detect if we're on a Cumulus switch with mgmt VRF. Returns ping command prefix.
-    Uses sudo -u lldpq because fcgiwrap runs as www-data which can't use ip vrf directly."""
-    try:
-        result = subprocess.run(
-            ['sudo', '-u', lldpq_user, 'ip', 'vrf', 'show', 'mgmt'],
-            capture_output=True, text=True, timeout=3
-        )
-        if result.returncode == 0:
-            return ['sudo', '-u', lldpq_user, 'ip', 'vrf', 'exec', 'mgmt', 'ping']
-    except Exception:
-        pass
+    """Returns ping command. On Cumulus switches with --privileged, the entrypoint
+    adds 'ip rule add pref 100 table <mgmt>' which routes ALL traffic through mgmt VRF.
+    So plain 'ping' works without ip vrf exec (which needs BPF/root)."""
     return ['ping']
 
 def ping_check(ip, ping_cmd, timeout=2):

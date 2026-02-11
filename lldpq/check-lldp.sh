@@ -34,12 +34,9 @@ TOTAL_DEVICES=${#devices[@]}
 # SSH options with multiplexing
 SSH_OPTS="-o StrictHostKeyChecking=no -o ControlMaster=auto -o ControlPath=~/.ssh/cm-%r@%h:%p -o ControlPersist=60 -o BatchMode=yes -o ConnectTimeout=$SSH_TIMEOUT"
 
-# VRF-aware ping (Cumulus switches use mgmt VRF for management network)
-if ip vrf show mgmt &>/dev/null 2>&1 || sudo ip vrf show mgmt &>/dev/null 2>&1; then
-    PING="sudo ip vrf exec mgmt ping"
-else
-    PING="ping"
-fi
+# Ping command - on Cumulus switches with Docker --privileged, the entrypoint
+# adds 'ip rule' for mgmt VRF so plain ping works. No ip vrf exec needed.
+PING="ping"
 
 ping_test() {
     local device=$1
