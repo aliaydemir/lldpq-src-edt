@@ -836,7 +836,18 @@ step "Configuring nginx..."
 
 sudo ln -sf /etc/nginx/sites-available/lldpq /etc/nginx/sites-enabled/lldpq
 [ -L /etc/nginx/sites-enabled/default ] && sudo unlink /etc/nginx/sites-enabled/default || true
-sudo nginx -t
+
+# Fix IPv6 listen directive if IPv6 is not supported on this system
+if ! cat /proc/net/if_inet6 >/dev/null 2>&1; then
+    echo "  IPv6 not available — removing [::] listen directives from nginx config"
+    sudo sed -i '/listen \[::]/d' /etc/nginx/sites-available/lldpq
+fi
+
+if sudo nginx -t 2>&1; then
+    echo "  nginx config OK"
+else
+    echo "  [!] nginx -t reported warnings — check /etc/nginx/sites-available/lldpq"
+fi
 sudo systemctl restart nginx
 sudo systemctl restart fcgiwrap
 echo "  nginx and fcgiwrap configured and restarted"
