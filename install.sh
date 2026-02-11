@@ -483,10 +483,14 @@ if [[ "$INSTALL_MODE" == "update" ]]; then
     rm -rf "$LLDPQ_INSTALL_DIR"
     echo "  Ready for update"
 
-    # Save telemetry vars from sourced config (before /etc/lldpq.conf is overwritten)
+    # Save config vars from sourced config (before /etc/lldpq.conf is overwritten)
     _SAVE_TELEMETRY_ENABLED="${TELEMETRY_ENABLED:-}"
     _SAVE_PROMETHEUS_URL="${PROMETHEUS_URL:-}"
     _SAVE_TELEMETRY_COLLECTOR_IP="${TELEMETRY_COLLECTOR_IP:-}"
+    _SAVE_DISCOVERY_RANGE="${DISCOVERY_RANGE:-}"
+    _SAVE_AUTO_BASE_CONFIG="${AUTO_BASE_CONFIG:-true}"
+    _SAVE_AUTO_ZTP_DISABLE="${AUTO_ZTP_DISABLE:-true}"
+    _SAVE_AUTO_SET_HOSTNAME="${AUTO_SET_HOSTNAME:-true}"
     _SAVE_TELEMETRY_COLLECTOR_PORT="${TELEMETRY_COLLECTOR_PORT:-}"
     _SAVE_TELEMETRY_COLLECTOR_VRF="${TELEMETRY_COLLECTOR_VRF:-}"
     # Save Ansible dir from sourced config
@@ -799,6 +803,9 @@ echo "DHCP_CONF_FILE=/etc/dhcp/dhcpd.conf" | sudo tee -a /etc/lldpq.conf > /dev/
 echo "DHCP_LEASES_FILE=/var/lib/dhcp/dhcpd.leases" | sudo tee -a /etc/lldpq.conf > /dev/null
 echo "ZTP_SCRIPT_FILE=$WEB_ROOT/cumulus-ztp.sh" | sudo tee -a /etc/lldpq.conf > /dev/null
 echo "BASE_CONFIG_DIR=$LLDPQ_INSTALL_DIR/sw-base" | sudo tee -a /etc/lldpq.conf > /dev/null
+echo "AUTO_BASE_CONFIG=true" | sudo tee -a /etc/lldpq.conf > /dev/null
+echo "AUTO_ZTP_DISABLE=true" | sudo tee -a /etc/lldpq.conf > /dev/null
+echo "AUTO_SET_HOSTNAME=true" | sudo tee -a /etc/lldpq.conf > /dev/null
 
 # Preserve telemetry settings (update mode)
 if [[ "$INSTALL_MODE" == "update" ]]; then
@@ -812,7 +819,19 @@ if [[ "$INSTALL_MODE" == "update" ]]; then
         echo "TELEMETRY_COLLECTOR_PORT=$_SAVE_TELEMETRY_COLLECTOR_PORT" | sudo tee -a /etc/lldpq.conf > /dev/null
     [[ -n "$_SAVE_TELEMETRY_COLLECTOR_VRF" ]] && \
         echo "TELEMETRY_COLLECTOR_VRF=$_SAVE_TELEMETRY_COLLECTOR_VRF" | sudo tee -a /etc/lldpq.conf > /dev/null
+    # Preserve discovery settings
+    [[ -n "$_SAVE_DISCOVERY_RANGE" ]] && \
+        echo "DISCOVERY_RANGE=$_SAVE_DISCOVERY_RANGE" | sudo tee -a /etc/lldpq.conf > /dev/null
+    # Overwrite auto-provision toggles with preserved values
+    sudo sed -i "s/^AUTO_BASE_CONFIG=.*/AUTO_BASE_CONFIG=$_SAVE_AUTO_BASE_CONFIG/" /etc/lldpq.conf
+    sudo sed -i "s/^AUTO_ZTP_DISABLE=.*/AUTO_ZTP_DISABLE=$_SAVE_AUTO_ZTP_DISABLE/" /etc/lldpq.conf
+    sudo sed -i "s/^AUTO_SET_HOSTNAME=.*/AUTO_SET_HOSTNAME=$_SAVE_AUTO_SET_HOSTNAME/" /etc/lldpq.conf
 fi
+
+# Create discovery cache file
+sudo touch "$WEB_ROOT/discovery-cache.json"
+sudo chown "$LLDPQ_USER:www-data" "$WEB_ROOT/discovery-cache.json"
+sudo chmod 664 "$WEB_ROOT/discovery-cache.json"
 
 # Set permissions so web server can update telemetry config
 USER_GROUP=$(id -gn)

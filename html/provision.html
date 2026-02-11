@@ -814,14 +814,43 @@
         </div>
     </div>
 
+    <!-- Discovery & Post-Provision Settings -->
+    <div style="padding: 15px; background: #1e1e1e; border-radius: 6px; border: 1px solid #3c3c3c; margin-bottom: 20px;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+            <div>
+                <div class="section-title" style="font-size: 13px; margin-bottom: 8px;">Discovery Range</div>
+                <div class="section-desc" style="margin-bottom: 8px; font-size: 11px;">IP range to scan for device discovery. Only IPs in this range will be pinged and probed.</div>
+                <input type="text" class="form-input" id="discoveryRange" style="width: 100%; font-family: 'Cascadia Code','Consolas',monospace;" placeholder="192.168.58.10-192.168.58.249">
+            </div>
+            <div>
+                <div class="section-title" style="font-size: 13px; margin-bottom: 8px;">Post-Provision Actions</div>
+                <div class="section-desc" style="margin-bottom: 8px; font-size: 11px;">Automatically run on newly provisioned devices (SSH key auth OK + no marker).</div>
+                <div style="display: flex; flex-direction: column; gap: 6px;">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 12px; color: #ccc;">
+                        <input type="checkbox" id="autoBaseConfig" checked> Deploy Base Config (sw-base files)
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 12px; color: #ccc;">
+                        <input type="checkbox" id="autoZtpDisable" checked> Disable ZTP (sudo ztp -d)
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 12px; color: #ccc;">
+                        <input type="checkbox" id="autoSetHostname" checked> Set hostname from binding (nv set)
+                    </label>
+                </div>
+            </div>
+        </div>
+        <div style="margin-top: 10px;">
+            <button class="btn btn-secondary btn-sm" onclick="saveDiscoverySettings()">Save Discovery Settings</button>
+        </div>
+    </div>
+
     <!-- Discovered Section (inside DHCP Server tab) -->
     <div class="section-title" style="margin-top: 10px;">Discovered Devices</div>
-    <div class="section-desc">Cross-reference LLDP/ARP data with DHCP bindings. Click stats to filter.</div>
+    <div class="section-desc">Subnet-wide discovery with SSH classification. Provisioned devices get auto-configured.</div>
     <div class="stats-row" id="discoveredStats">
-        <div class="stat-card" style="cursor:pointer;" onclick="setDiscoveredFilter('match')"><div class="stat-value" id="statMatched">-</div><div class="stat-label">Matched</div></div>
-        <div class="stat-card" style="border-left-color:#ff9800; cursor:pointer;" onclick="setDiscoveredFilter('mismatch')"><div class="stat-value" id="statMismatch">-</div><div class="stat-label">Mismatch</div></div>
-        <div class="stat-card" style="border-left-color:#42a5f5; cursor:pointer;" onclick="setDiscoveredFilter('unbound')"><div class="stat-value" id="statUnbound">-</div><div class="stat-label">No Binding</div></div>
-        <div class="stat-card" style="border-left-color:#f44336; cursor:pointer;" onclick="setDiscoveredFilter(document.getElementById('statMissing').closest('.stat-card').querySelector('.stat-label').textContent === 'Unreachable' ? 'unreachable' : 'missing')"><div class="stat-value" id="statMissing">-</div><div class="stat-label">Not Discovered</div></div>
+        <div class="stat-card" style="cursor:pointer;" onclick="setDiscoveredFilter('provisioned')"><div class="stat-value" id="statProvisioned">-</div><div class="stat-label">Provisioned</div></div>
+        <div class="stat-card" style="border-left-color:#ff9800; cursor:pointer;" onclick="setDiscoveredFilter('not_provisioned')"><div class="stat-value" id="statNotProv">-</div><div class="stat-label">Not Provisioned</div></div>
+        <div class="stat-card" style="border-left-color:#78909c; cursor:pointer;" onclick="setDiscoveredFilter('other')"><div class="stat-value" id="statOther">-</div><div class="stat-label">Other</div></div>
+        <div class="stat-card" style="border-left-color:#f44336; cursor:pointer;" onclick="setDiscoveredFilter('unreachable')"><div class="stat-value" id="statUnreachable">-</div><div class="stat-label">Unreachable</div></div>
         <div class="stat-card" style="border-left-color:#888; cursor:pointer;" onclick="setDiscoveredFilter('all')"><div class="stat-value" id="statAll">-</div><div class="stat-label">All</div></div>
     </div>
     <div class="toolbar">
@@ -829,15 +858,18 @@
             <input type="text" class="search-filter" id="discoveredSearch" placeholder="Filter..." oninput="filterDiscovered()">
             <select class="form-input" id="discoveredFilter" onchange="filterDiscovered()" style="width:180px;">
                 <option value="all">All</option>
-                <option value="match">Matched</option>
-                <option value="mismatch">Mismatch Only</option>
-                <option value="unbound">No Binding</option>
-                <option value="missing">Not Discovered</option>
+                <option value="provisioned">Provisioned</option>
+                <option value="not_provisioned">Not Provisioned</option>
+                <option value="other">Other Device</option>
                 <option value="unreachable">Unreachable</option>
+                <option value="has_binding">Has Binding</option>
+                <option value="no_binding">No Binding</option>
+                <option value="mismatch">MAC Mismatch</option>
             </select>
+            <span id="discoveredInfo" style="font-size: 11px; color: #666;"></span>
         </div>
         <div class="toolbar-right">
-            <button class="btn btn-primary btn-sm" onclick="runPingScan()" id="btnScan">
+            <button class="btn btn-primary btn-sm" onclick="runSubnetScan()" id="btnScan">
                 <svg viewBox="0 0 24 24" style="width:14px;height:14px;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
                 Scan
             </button>
@@ -848,11 +880,11 @@
             <thead>
                 <tr>
                     <th style="cursor:pointer;" onclick="sortDiscovered('hostname')">Hostname <span id="sort-hostname" style="opacity:0.4;">&#9650;</span></th>
+                    <th style="cursor:pointer;" onclick="sortDiscovered('ip')">IP <span id="sort-ip" style="opacity:0.4;">&#9650;</span></th>
                     <th style="cursor:pointer;" onclick="sortDiscovered('binding_mac')">Binding MAC <span id="sort-binding_mac" style="opacity:0.4;">&#9650;</span></th>
                     <th style="cursor:pointer;" onclick="sortDiscovered('discovered_mac')">Discovered MAC <span id="sort-discovered_mac" style="opacity:0.4;">&#9650;</span></th>
-                    <th style="cursor:pointer;" onclick="sortDiscovered('binding_ip')">Binding IP <span id="sort-binding_ip" style="opacity:0.4;">&#9650;</span></th>
-                    <th style="cursor:pointer;" onclick="sortDiscovered('source')">Source <span id="sort-source" style="opacity:0.4;">&#9650;</span></th>
-                    <th style="cursor:pointer;" onclick="sortDiscovered('status')">Status <span id="sort-status" style="opacity:0.4;">&#9650;</span></th>
+                    <th style="cursor:pointer;" onclick="sortDiscovered('device_type')">Device Type <span id="sort-device_type" style="opacity:0.4;">&#9650;</span></th>
+                    <th style="cursor:pointer;" onclick="sortDiscovered('mac_status')">Status <span id="sort-mac_status" style="opacity:0.4;">&#9650;</span></th>
                 </tr>
             </thead>
             <tbody id="discoveredBody">
@@ -896,12 +928,14 @@
                     <th style="cursor:pointer;" onclick="sortBindings('hostname')">Hostname <span id="bsort-hostname" style="opacity:0.4;">&#9650;</span></th>
                     <th style="cursor:pointer;" onclick="sortBindings('mac')">MAC Address <span id="bsort-mac" style="opacity:0.4;">&#9650;</span></th>
                     <th style="cursor:pointer;" onclick="sortBindings('ip')">IP Address <span id="bsort-ip" style="opacity:1;">&#9650;</span></th>
+                    <th>Discovered MAC</th>
                     <th style="cursor:pointer;" onclick="sortBindings('status')">Status <span id="bsort-status" style="opacity:0.4;">&#9650;</span></th>
+                    <th style="width:50px; text-align:center;">Live</th>
                     <th style="width:120px;">Actions</th>
                 </tr>
             </thead>
             <tbody id="bindingsBody">
-                <tr><td colspan="6" class="loading">Loading bindings...</td></tr>
+                <tr><td colspan="8" class="loading">Loading bindings...</td></tr>
             </tbody>
         </table>
     </div>
@@ -1143,13 +1177,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Load initial data
     loadDHCPConfig();
-    runPingScan();
+    loadDiscoveryCache();
     loadDeviceList();
     checkDHCPStatus();
 });
 
 function onTabSwitch(tab) {
-    if (tab === 'dhcpd') { loadDHCPConfig(); runPingScan(); }
+    if (tab === 'dhcpd') { loadDHCPConfig(); loadDiscoveryCache(); }
     if (tab === 'bindings' && allBindings.length === 0) loadBindings();
     if (tab === 'ztp-script') loadZTPScript();
 }
@@ -1229,6 +1263,12 @@ async function loadDHCPConfig() {
         document.getElementById('dhcpProvisionURL').value = data.provision_url || '';
         document.getElementById('dhcpLeaseTime').value = data.lease_time || '';
         
+        // Discovery range and post-provision settings
+        document.getElementById('discoveryRange').value = data.discovery_range || '';
+        document.getElementById('autoBaseConfig').checked = data.auto_base_config !== false;
+        document.getElementById('autoZtpDisable').checked = data.auto_ztp_disable !== false;
+        document.getElementById('autoSetHostname').checked = data.auto_set_hostname !== false;
+        
         // Populate interface dropdown
         const sel = document.getElementById('dhcpInterface');
         const currentIface = data.interface || 'eth0';
@@ -1256,7 +1296,11 @@ async function saveDHCPConfig() {
         domain: document.getElementById('dhcpDomain').value.trim(),
         provision_url: document.getElementById('dhcpProvisionURL').value.trim(),
         interface: document.getElementById('dhcpInterface').value.trim(),
-        lease_time: document.getElementById('dhcpLeaseTime').value.trim()
+        lease_time: document.getElementById('dhcpLeaseTime').value.trim(),
+        discovery_range: document.getElementById('discoveryRange').value.trim(),
+        auto_base_config: document.getElementById('autoBaseConfig').checked,
+        auto_ztp_disable: document.getElementById('autoZtpDisable').checked,
+        auto_set_hostname: document.getElementById('autoSetHostname').checked,
     };
 
     if (!config.subnet || !config.netmask || !config.gateway) {
@@ -1270,6 +1314,21 @@ async function saveDHCPConfig() {
         checkDHCPStatus();
     } else {
         showToast('Save failed: ' + (data.error || 'Unknown error'), 'error');
+    }
+}
+
+async function saveDiscoverySettings() {
+    const settings = {
+        discovery_range: document.getElementById('discoveryRange').value.trim(),
+        auto_base_config: document.getElementById('autoBaseConfig').checked,
+        auto_ztp_disable: document.getElementById('autoZtpDisable').checked,
+        auto_set_hostname: document.getElementById('autoSetHostname').checked,
+    };
+    const data = await apiCall('save-post-provision', settings);
+    if (data.success) {
+        showToast('Discovery settings saved', 'success');
+    } else {
+        showToast('Save failed: ' + (data.error || ''), 'error');
     }
 }
 
@@ -1358,7 +1417,7 @@ function applyBulkImport() {
 
 // ===================== TAB 1: BINDINGS =====================
 async function loadBindings() {
-    document.getElementById('bindingsBody').innerHTML = '<tr><td colspan="6" class="loading">Loading bindings...</td></tr>';
+    document.getElementById('bindingsBody').innerHTML = '<tr><td colspan="8" class="loading">Loading bindings...</td></tr>';
     const data = await apiCall('list-bindings');
     if (data.success) {
         allBindings = data.bindings || [];
@@ -1366,7 +1425,7 @@ async function loadBindings() {
         document.getElementById('btnSaveBindings').style.display = 'none';
         renderBindings();
     } else {
-        document.getElementById('bindingsBody').innerHTML = `<tr><td colspan="6" style="color:#f44336;padding:20px;">Error: ${data.error}</td></tr>`;
+        document.getElementById('bindingsBody').innerHTML = `<tr><td colspan="8" style="color:#f44336;padding:20px;">Error: ${data.error}</td></tr>`;
     }
 }
 
@@ -1410,25 +1469,53 @@ function renderBindings() {
 
     if (filtered.length === 0) {
         document.getElementById('bindingsBody').innerHTML = `
-            <tr><td colspan="6" style="text-align:center; padding:40px; color:#666;">
+            <tr><td colspan="8" style="text-align:center; padding:40px; color:#666;">
                 ${allBindings.length === 0 ? 'No bindings configured. Click "Add Binding" to create one.' : 'No matches found.'}
             </td></tr>`;
         return;
     }
 
-    document.getElementById('bindingsBody').innerHTML = filtered.map((b, i) => `
-        <tr data-idx="${i}">
+    // Build discovery lookup from cache (allDiscovered from subnet scan)
+    const discByIp = {};
+    (allDiscovered || []).forEach(d => { if (d.ip) discByIp[d.ip] = d; });
+
+    document.getElementById('bindingsBody').innerHTML = filtered.map((b, i) => {
+        const disc = discByIp[b.ip] || {};
+        const dmac = disc.discovered_mac || '';
+        const isAlive = disc.device_type && disc.device_type !== 'unreachable';
+        const macMatch = dmac && b.mac && dmac === b.mac.toLowerCase();
+        const macMismatch = dmac && b.mac && !b.mac.toLowerCase().includes('x') && dmac !== b.mac.toLowerCase();
+        
+        let dmacHtml = '-';
+        if (dmac) {
+            if (macMismatch) dmacHtml = `<span style="color:#ff6b6b;" title="Mismatch!">${escHtml(dmac)}</span>`;
+            else if (macMatch) dmacHtml = `<span style="color:#4caf50;">${escHtml(dmac)}</span>`;
+            else dmacHtml = escHtml(dmac);
+        }
+        
+        let liveIcon;
+        if (!disc.device_type) {
+            liveIcon = '<span style="display:inline-block;width:24px;height:24px;line-height:24px;text-align:center;border-radius:4px;background:rgba(100,100,100,0.2);color:#555;font-size:13px;" title="Not scanned">-</span>';
+        } else if (isAlive) {
+            liveIcon = '<span style="display:inline-block;width:24px;height:24px;line-height:24px;text-align:center;border-radius:4px;background:rgba(76,175,80,0.2);color:#81c784;font-size:13px;" title="Reachable">&#10003;</span>';
+        } else {
+            liveIcon = '<span style="display:inline-block;width:24px;height:24px;line-height:24px;text-align:center;border-radius:4px;background:rgba(244,67,54,0.2);color:#e57373;font-size:13px;" title="Unreachable">&#10007;</span>';
+        }
+
+        return `<tr data-idx="${i}">
             <td><input type="checkbox" class="binding-cb" data-hostname="${b.hostname}"></td>
             <td><strong>${escHtml(b.hostname)}</strong></td>
             <td style="font-family:'Cascadia Code','Consolas',monospace; font-size:12px;">${escHtml(b.mac)}</td>
             <td style="font-family:'Cascadia Code','Consolas',monospace; font-size:12px;">${escHtml(b.ip)}</td>
+            <td style="font-family:'Cascadia Code','Consolas',monospace; font-size:12px;">${dmacHtml}</td>
             <td>${b.mac.toLowerCase().includes('x') ? '<span class="badge badge-warning">Pending MAC</span>' : b.commented ? '<span class="badge badge-pending">Disabled</span>' : '<span class="badge badge-active">Active</span>'}</td>
+            <td style="text-align:center;">${liveIcon}</td>
             <td class="row-actions">
                 <button class="btn btn-secondary btn-sm" onclick="editBinding('${escAttr(b.hostname)}')">Edit</button>
                 <button class="btn btn-danger btn-sm" onclick="deleteBinding('${escAttr(b.hostname)}')">Del</button>
             </td>
-        </tr>
-    `).join('');
+        </tr>`;
+    }).join('');
 }
 
 function filterBindings() { renderBindings(); }
@@ -1548,48 +1635,59 @@ function formatMAC(input) {
 }
 
 // ===================== TAB 2: DISCOVERED =====================
-async function loadDiscovered() {
-    document.getElementById('discoveredBody').innerHTML = '<tr><td colspan="6" class="loading">Loading...</td></tr>';
-    const data = await apiCall('discovered');
-    if (data.success) {
-        allDiscovered = data.entries || [];
+async function loadDiscoveryCache() {
+    const data = await apiCall('discovery-cache');
+    if (data.success && data.entries && data.entries.length > 0) {
+        allDiscovered = data.entries;
         renderDiscoveredStats();
         renderDiscovered();
+        const age = data.age_seconds || 0;
+        const info = document.getElementById('discoveredInfo');
+        if (age < 60) info.textContent = `Cache: ${age}s ago`;
+        else if (age < 3600) info.textContent = `Cache: ${Math.round(age/60)}m ago`;
+        else info.textContent = `Cache: ${Math.round(age/3600)}h ago (stale)`;
+        // If stale, auto-trigger scan in background
+        if (data.stale) {
+            runSubnetScan();
+        }
     } else {
-        document.getElementById('discoveredBody').innerHTML = `<tr><td colspan="6" style="color:#f44336;padding:20px;">Error: ${data.error}</td></tr>`;
+        // No cache — run scan
+        runSubnetScan();
     }
 }
 
 function renderDiscoveredStats() {
-    const matched = allDiscovered.filter(d => d.status === 'match').length;
-    const mismatch = allDiscovered.filter(d => d.status === 'mismatch').length;
-    const unbound = allDiscovered.filter(d => d.status === 'unbound').length;
-    const missing = allDiscovered.filter(d => d.status === 'missing').length;
-    const unreachable = allDiscovered.filter(d => d.status === 'unreachable').length;
-    document.getElementById('statMatched').textContent = matched;
-    document.getElementById('statMismatch').textContent = mismatch;
-    document.getElementById('statUnbound').textContent = unbound;
-    document.getElementById('statMissing').textContent = unreachable > 0 ? unreachable : missing;
-    // Update label based on scan type
-    document.getElementById('statMissing').closest('.stat-card').querySelector('.stat-label').textContent =
-        unreachable > 0 ? 'Unreachable' : 'Not Discovered';
+    const provisioned = allDiscovered.filter(d => d.device_type === 'provisioned').length;
+    const notProv = allDiscovered.filter(d => d.device_type === 'not_provisioned').length;
+    const other = allDiscovered.filter(d => d.device_type === 'other').length;
+    const unreachable = allDiscovered.filter(d => d.device_type === 'unreachable').length;
+    document.getElementById('statProvisioned').textContent = provisioned;
+    document.getElementById('statNotProv').textContent = notProv;
+    document.getElementById('statOther').textContent = other;
+    document.getElementById('statUnreachable').textContent = unreachable;
     document.getElementById('statAll').textContent = allDiscovered.length;
 }
 
-async function runPingScan() {
+async function runSubnetScan() {
     const btn = document.getElementById('btnScan');
     btn.disabled = true;
     btn.textContent = 'Scanning...';
-    document.getElementById('discoveredBody').innerHTML = '<tr><td colspan="6" class="loading">Ping scanning all bindings...</td></tr>';
+    document.getElementById('discoveredBody').innerHTML = '<tr><td colspan="6" class="loading">Subnet scan: ping + SSH probe + post-provision...</td></tr>';
     
-    const data = await apiCall('ping-scan');
+    const data = await apiCall('subnet-scan');
     if (data.success) {
         allDiscovered = data.entries || [];
         renderDiscoveredStats();
         renderDiscovered();
-        const match = allDiscovered.filter(d => d.status === 'match').length;
-        const unreach = allDiscovered.filter(d => d.status === 'unreachable').length;
-        showToast(`Scan complete: ${match} match, ${unreach} unreachable`, 'success');
+        const prov = allDiscovered.filter(d => d.device_type === 'provisioned').length;
+        const unreach = allDiscovered.filter(d => d.device_type === 'unreachable').length;
+        const deployed = Object.values(data.post_provision_results || {}).filter(s => s === 'deployed').length;
+        let msg = `Scan: ${data.reachable || 0}/${data.total_ips || 0} reachable, ${prov} provisioned`;
+        if (deployed > 0) msg += `, ${deployed} newly configured`;
+        showToast(msg, 'success');
+        document.getElementById('discoveredInfo').textContent = 'Just scanned';
+        // Also refresh bindings if loaded (they use discovery cache for MAC column)
+        if (allBindings.length > 0) renderBindings();
     } else {
         document.getElementById('discoveredBody').innerHTML = `<tr><td colspan="6" style="color:#f44336;padding:20px;">Scan failed: ${data.error}</td></tr>`;
         showToast('Scan failed: ' + (data.error || ''), 'error');
@@ -1604,14 +1702,17 @@ function renderDiscovered() {
 
     let filtered = allDiscovered;
     if (typeFilter !== 'all') {
-        filtered = filtered.filter(d => d.status === typeFilter);
+        if (typeFilter === 'has_binding') filtered = filtered.filter(d => d.has_binding);
+        else if (typeFilter === 'no_binding') filtered = filtered.filter(d => !d.has_binding);
+        else if (typeFilter === 'mismatch') filtered = filtered.filter(d => d.mac_status === 'mismatch');
+        else filtered = filtered.filter(d => d.device_type === typeFilter);
     }
     if (filter) {
         filtered = filtered.filter(d =>
             (d.hostname || '').toLowerCase().includes(filter) ||
             (d.binding_mac || '').toLowerCase().includes(filter) ||
             (d.discovered_mac || '').toLowerCase().includes(filter) ||
-            (d.binding_ip || '').includes(filter)
+            (d.ip || '').includes(filter)
         );
     }
 
@@ -1619,10 +1720,10 @@ function renderDiscovered() {
     filtered.sort((a, b) => {
         let va = a[discSortCol] || '';
         let vb = b[discSortCol] || '';
-        if (discSortCol === 'binding_ip') {
+        if (discSortCol === 'ip') {
             return discSortAsc ? ipToNum(va) - ipToNum(vb) : ipToNum(vb) - ipToNum(va);
         }
-        va = va.toLowerCase(); vb = vb.toLowerCase();
+        va = String(va).toLowerCase(); vb = String(vb).toLowerCase();
         const cmp = va < vb ? -1 : va > vb ? 1 : 0;
         return discSortAsc ? cmp : -cmp;
     });
@@ -1633,26 +1734,42 @@ function renderDiscovered() {
     }
 
     document.getElementById('discoveredBody').innerHTML = filtered.map(d => {
-        const statusBadge = {
-            'match': '<span class="badge badge-match">Match</span>',
-            'mismatch': '<span class="badge badge-mismatch">Mismatch</span>',
-            'unbound': '<span class="badge badge-info">No Binding</span>',
-            'missing': '<span class="badge badge-warning">Not Discovered</span>',
+        // Device type badge
+        const dtBadge = {
+            'provisioned': '<span class="badge badge-match">Provisioned</span>',
+            'not_provisioned': '<span class="badge badge-warning">Not Provisioned</span>',
+            'other': '<span class="badge" style="background:rgba(120,144,156,0.15);color:#78909c;">Other</span>',
             'unreachable': '<span class="badge badge-unreachable">Unreachable</span>'
-        }[d.status] || '';
+        }[d.device_type] || '';
+        
+        // Post-provision indicator
+        let ppIcon = '';
+        if (d.post_provision === 'deployed') ppIcon = ' <span title="Just configured" style="color:#4caf50;">&#10004;</span>';
+        else if (d.post_provision === 'already') ppIcon = ' <span title="Already configured" style="color:#888;">&#10003;</span>';
+        
+        // MAC status badge
+        let macBadge = '';
+        if (d.mac_status === 'match') macBadge = '<span class="badge badge-match" style="font-size:10px;">Match</span>';
+        else if (d.mac_status === 'mismatch') macBadge = '<span class="badge badge-mismatch" style="font-size:10px;">Mismatch</span>';
+        else if (d.mac_status === 'no_binding') macBadge = '<span class="badge badge-info" style="font-size:10px;">No Binding</span>';
+        else if (d.mac_status === 'unreachable' && d.has_binding) macBadge = '<span class="badge badge-unreachable" style="font-size:10px;">Unreachable</span>';
+
+        // Discovered MAC color
+        const dmac = d.discovered_mac || '-';
+        const dmacHtml = d.mac_status === 'mismatch' ? `<span style="color:#ff6b6b;">${escHtml(dmac)}</span>` : escHtml(dmac);
 
         return `<tr>
             <td><strong>${escHtml(d.hostname || '-')}</strong></td>
+            <td style="font-family:monospace;font-size:12px;">${escHtml(d.ip || '-')}</td>
             <td style="font-family:monospace;font-size:12px;">${escHtml(d.binding_mac || '-')}</td>
-            <td style="font-family:monospace;font-size:12px;">${d.status === 'mismatch' ? `<span style="color:#ff6b6b;">${escHtml(d.discovered_mac)}</span>` : escHtml(d.discovered_mac || '-')}</td>
-            <td style="font-family:monospace;font-size:12px;">${escHtml(d.binding_ip || '-')}</td>
-            <td>${escHtml(d.source || '-')}</td>
-            <td>${statusBadge}</td>
+            <td style="font-family:monospace;font-size:12px;">${dmacHtml}</td>
+            <td>${dtBadge}${ppIcon}</td>
+            <td>${macBadge}</td>
         </tr>`;
     }).join('');
 }
 
-let discSortCol = 'binding_ip';
+let discSortCol = 'ip';
 let discSortAsc = true;
 
 function sortDiscovered(col) {
@@ -1662,7 +1779,6 @@ function sortDiscovered(col) {
         discSortCol = col;
         discSortAsc = true;
     }
-    // Update sort indicators
     document.querySelectorAll('[id^="sort-"]').forEach(el => { el.style.opacity = '0.4'; el.innerHTML = '&#9650;'; });
     const indicator = document.getElementById('sort-' + col);
     if (indicator) { indicator.style.opacity = '1'; indicator.innerHTML = discSortAsc ? '&#9650;' : '&#9660;'; }
