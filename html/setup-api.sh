@@ -106,23 +106,25 @@ def ensure_ssh_key(lldpq_user):
     except Exception as e:
         return None, False, str(e)
 
-def detect_ping_cmd():
-    """Detect if we're on a Cumulus switch with mgmt VRF. Returns ping command prefix."""
+def detect_ping_cmd(lldpq_user):
+    """Detect if we're on a Cumulus switch with mgmt VRF. Returns ping command prefix.
+    Uses sudo -u lldpq because fcgiwrap runs as www-data which can't use ip vrf directly."""
     try:
-        result = subprocess.run(['ip', 'vrf', 'show', 'mgmt'], capture_output=True, text=True, timeout=3)
+        result = subprocess.run(
+            ['sudo', '-u', lldpq_user, 'ip', 'vrf', 'show', 'mgmt'],
+            capture_output=True, text=True, timeout=3
+        )
         if result.returncode == 0:
-            return ['ip', 'vrf', 'exec', 'mgmt', 'ping']
+            return ['sudo', '-u', lldpq_user, 'ip', 'vrf', 'exec', 'mgmt', 'ping']
     except Exception:
         pass
     return ['ping']
 
-PING_CMD = detect_ping_cmd()
-
-def ping_check(ip, timeout=2):
+def ping_check(ip, ping_cmd, timeout=2):
     """Quick ping check - VRF-aware on Cumulus switches."""
     try:
         result = subprocess.run(
-            PING_CMD + ['-c', '1', '-W', str(timeout), ip],
+            ping_cmd + ['-c', '1', '-W', str(timeout), ip],
             capture_output=True, text=True, timeout=timeout + 2
         )
         return result.returncode == 0
@@ -146,7 +148,7 @@ def setup_device(device, password, ssh_key_path, lldpq_user):
     }
     
     # Step 0: Quick ping check - skip unreachable devices
-    if not ping_check(ip):
+    if not ping_check(ip, PING_CMD):
         result['send_key'] = 'fail'
         result['send_key_msg'] = 'Unreachable (ping failed)'
         result['sudo_fix'] = 'skipped'
@@ -239,6 +241,9 @@ if not password:
 lldpq_user = os.environ.get('LLDPQ_USER', 'lldpq')
 lldpq_dir = os.environ.get('LLDPQ_DIR', '/home/lldpq/lldpq')
 devices_yaml = os.path.join(lldpq_dir, 'devices.yaml')
+
+# Detect VRF-aware ping command (once, at startup)
+PING_CMD = detect_ping_cmd(lldpq_user)
 
 # Ensure SSH key exists
 ssh_key_path, key_generated, key_error = ensure_ssh_key(lldpq_user)

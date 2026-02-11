@@ -121,8 +121,8 @@ echo -e "\e[1;34mExecuting ${#commands[@]} command(s) on ${#devices[@]} device(s
 echo ""
 
 # VRF-aware ping (Cumulus switches use mgmt VRF for management network)
-if ip vrf show mgmt &>/dev/null; then
-    PING="ip vrf exec mgmt ping"
+if ip vrf show mgmt &>/dev/null 2>&1 || sudo ip vrf show mgmt &>/dev/null 2>&1; then
+    PING="sudo ip vrf exec mgmt ping"
 else
     PING="ping"
 fi
