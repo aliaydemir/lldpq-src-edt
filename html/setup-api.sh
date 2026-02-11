@@ -231,16 +231,95 @@ except:
     print(json.dumps({'success': False, 'error': 'Invalid JSON'}))
     sys.exit(0)
 
+lldpq_user = os.environ.get('LLDPQ_USER', 'lldpq')
+lldpq_dir = os.environ.get('LLDPQ_DIR', '/home/lldpq/lldpq')
+devices_yaml = os.path.join(lldpq_dir, 'devices.yaml')
+action = post_data.get('action', 'setup')
+
+# ─── Action: Save existing private key ───
+if action == 'save-key':
+    private_key = post_data.get('private_key', '').strip()
+    if not private_key or 'PRIVATE KEY' not in private_key:
+        print(json.dumps({'success': False, 'error': 'Invalid private key'}))
+        sys.exit(0)
+    
+    # Determine key type
+    ssh_dir = os.path.expanduser(f'~{lldpq_user}/.ssh')
+    os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
+    
+    if 'RSA' in private_key:
+        key_file = os.path.join(ssh_dir, 'id_rsa')
+    else:
+        key_file = os.path.join(ssh_dir, 'id_ed25519')
+    
+    try:
+        # Write private key
+        with open(key_file, 'w') as f:
+            f.write(private_key + '\n')
+        os.chmod(key_file, 0o600)
+        
+        # Generate public key from private key
+        gen = subprocess.run(
+            ['ssh-keygen', '-y', '-f', key_file],
+            capture_output=True, text=True, timeout=5
+        )
+        if gen.returncode == 0:
+            with open(key_file + '.pub', 'w') as f:
+                f.write(gen.stdout.strip() + '\n')
+        
+        # Fix ownership
+        subprocess.run(['chown', '-R', f'{lldpq_user}:{lldpq_user}', ssh_dir],
+                      capture_output=True, timeout=5)
+        
+        # Quick connectivity test: try SSH to first 5 reachable devices
+        all_devices, _ = load_devices(devices_yaml)
+        reachable = 0
+        total = len(all_devices) if all_devices else 0
+        
+        if all_devices:
+            test_devices = all_devices[:10]  # Test first 10
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                def test_ssh(dev):
+                    try:
+                        r = subprocess.run(
+                            ['sudo', '-u', lldpq_user, 'ssh',
+                             '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=3',
+                             '-o', 'StrictHostKeyChecking=no', '-q',
+                             f"{dev['username']}@{dev['ip']}", 'exit'],
+                            capture_output=True, text=True, timeout=8
+                        )
+                        return r.returncode == 0
+                    except:
+                        return False
+                
+                futures = {executor.submit(test_ssh, d): d for d in test_devices}
+                for future in as_completed(futures):
+                    if future.result():
+                        reachable += 1
+            
+            # Extrapolate: if X/10 work, assume same ratio for all
+            if len(test_devices) < total:
+                reachable = int((reachable / len(test_devices)) * total)
+        
+        print(json.dumps({
+            'success': True,
+            'message': 'Key saved successfully',
+            'key_file': key_file,
+            'reachable': reachable,
+            'total': total
+        }))
+    except Exception as e:
+        print(json.dumps({'success': False, 'error': str(e)}))
+    
+    sys.exit(0)
+
+# ─── Action: Generate new key + distribute with password ───
 password = post_data.get('password', '')
 retry_devices = post_data.get('retry_devices', [])  # List of IPs for retry
 
 if not password:
     print(json.dumps({'success': False, 'error': 'Password is required'}))
     sys.exit(0)
-
-lldpq_user = os.environ.get('LLDPQ_USER', 'lldpq')
-lldpq_dir = os.environ.get('LLDPQ_DIR', '/home/lldpq/lldpq')
-devices_yaml = os.path.join(lldpq_dir, 'devices.yaml')
 
 # Detect VRF-aware ping command (once, at startup)
 PING_CMD = detect_ping_cmd(lldpq_user)
