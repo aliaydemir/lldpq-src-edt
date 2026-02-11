@@ -387,17 +387,6 @@ HOOKEOF
     
     echo "   Git safe.directory and sharedRepository configured for web access"
     
-    # Configure sudoers for www-data to run SSH commands as LLDPQ user (for search-api.sh)
-    echo "   Configuring sudoers for network device access..."
-    echo "www-data ALL=($(whoami)) NOPASSWD: /usr/bin/timeout, /usr/bin/ssh, /usr/bin/scp" | sudo tee /etc/sudoers.d/www-data-lldpq > /dev/null
-    sudo chmod 440 /etc/sudoers.d/www-data-lldpq
-    echo "   Sudoers configured for MAC/ARP table access"
-    
-    # Configure sudoers for www-data to manage DHCP and provision operations
-    echo "   Configuring sudoers for provision/DHCP access..."
-    echo "www-data ALL=(root) NOPASSWD: /usr/bin/systemctl start isc-dhcp-server, /usr/bin/systemctl stop isc-dhcp-server, /usr/bin/systemctl restart isc-dhcp-server, /usr/bin/systemctl disable isc-dhcp-server, /usr/bin/systemctl enable isc-dhcp-server, /usr/bin/tee /etc/dhcp/dhcpd.conf, /usr/bin/tee /etc/dhcp/dhcpd.hosts, /usr/bin/tee /etc/default/isc-dhcp-server, /usr/bin/pkill -x dhcpd, /usr/sbin/dhcpd, /usr/bin/cat /etc/dhcp/dhcpd.conf, /usr/bin/chmod 755 *" | sudo tee /etc/sudoers.d/www-data-provision > /dev/null
-    sudo chmod 440 /etc/sudoers.d/www-data-provision
-    echo "   Sudoers configured for DHCP/provision access"
 elif [[ -n "$ANSIBLE_DIR" ]]; then
     # User specified a path but it doesn't exist
     echo "   [!] Warning: Ansible directory '$ANSIBLE_DIR' does not exist"
@@ -429,6 +418,14 @@ sudo chmod 664 /etc/lldpq.conf
 # Add www-data to user's group for web access
 sudo usermod -a -G $USER_GROUP www-data 2>/dev/null || true
 echo "   Configuration saved to /etc/lldpq.conf"
+
+# Configure sudoers for www-data (web API needs SSH/SCP and DHCP control)
+echo "   - Configuring sudoers for web API access..."
+echo "www-data ALL=($(whoami)) NOPASSWD: /usr/bin/timeout, /usr/bin/ssh, /usr/bin/scp" | sudo tee /etc/sudoers.d/www-data-lldpq > /dev/null
+sudo chmod 440 /etc/sudoers.d/www-data-lldpq
+echo "www-data ALL=(root) NOPASSWD: /usr/bin/systemctl start isc-dhcp-server, /usr/bin/systemctl stop isc-dhcp-server, /usr/bin/systemctl restart isc-dhcp-server, /usr/bin/systemctl disable isc-dhcp-server, /usr/bin/systemctl enable isc-dhcp-server, /usr/bin/tee /etc/dhcp/dhcpd.conf, /usr/bin/tee /etc/dhcp/dhcpd.hosts, /usr/bin/tee /etc/default/isc-dhcp-server, /usr/bin/pkill -x dhcpd, /usr/sbin/dhcpd, /usr/bin/cat /etc/dhcp/dhcpd.conf, /usr/bin/chmod 755 *" | sudo tee /etc/sudoers.d/www-data-provision > /dev/null
+sudo chmod 440 /etc/sudoers.d/www-data-provision
+echo "   Sudoers configured (SSH/SCP + DHCP/Provision)"
 
 # Prepare DHCP and provision directories
 echo "   - Preparing DHCP/Provision directories..."
