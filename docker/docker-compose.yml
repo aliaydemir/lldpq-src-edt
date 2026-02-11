@@ -2,7 +2,7 @@
 # Usage: docker compose up -d
 #
 # Required: devices.yaml (device inventory)
-# Optional: SSH keys (needed for switch monitoring - can also be configured after start)
+# Optional: SSH keys (mount for persistent key-based auth to switches)
 # Optional: Ansible directory (enables VLAN/BGP reports, Fabric Config/Editor/Deploy)
 # Optional: Data directories for persistence
 
@@ -18,6 +18,10 @@ services:
     volumes:
       # Required: Device inventory
       - ../lldpq/devices.yaml:/home/lldpq/lldpq/devices.yaml
+
+      # SSH keys: mount host keys as read-only, entrypoint copies to writable .ssh
+      # This ensures keys survive container recreation
+      - ssh-keys:/home/lldpq/.ssh
       
       # Optional: Ansible directory (enables VLAN/BGP reports, Fabric Config/Editor/Deploy)
       # - ~/ansible:/home/lldpq/ansible:rw
@@ -26,7 +30,7 @@ services:
       - ../lldpq/topology.dot:/var/www/html/topology.dot
       - ../lldpq/topology_config.yaml:/var/www/html/topology_config.yaml
       
-      # Optional: Persistent monitoring data (survives container restart)
+      # Persistent monitoring data (survives container restart/recreation)
       - lldpq-data:/home/lldpq/lldpq/monitor-results
       - lldpq-configs:/var/www/html/configs
       - lldpq-hstr:/var/www/html/hstr
@@ -37,6 +41,7 @@ services:
       # - ANSIBLE_DIR=/home/lldpq/ansible
 
 volumes:
-  lldpq-data:
-  lldpq-configs:
-  lldpq-hstr:
+  ssh-keys:        # SSH keys persist across container recreation
+  lldpq-data:      # Monitoring results
+  lldpq-configs:   # Device configurations
+  lldpq-hstr:      # Historical data

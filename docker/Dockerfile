@@ -10,13 +10,18 @@ LABEL version="2.2.3"
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install all dependencies in one layer
+# bsdmainutils + bsdextrautils: 'column' command (moved in Ubuntu 22.04)
+# openssh-client + sshpass: SSH to switches
+# python3-yaml: devices.yaml parsing
+# ruamel.yaml via pip: comment-preserving YAML editing
 RUN apt-get update && apt-get install -y --no-install-recommends \
     nginx fcgiwrap \
     python3 python3-yaml python3-pip \
     openssh-client sshpass \
     sudo cron \
     iproute2 iputils-ping dnsutils tcpdump \
-    curl jq git bsdmainutils \
+    curl jq git bsdmainutils bsdextrautils \
+    && pip3 install --no-cache-dir ruamel.yaml requests \
     && rm -rf /var/lib/apt/lists/*
 
 # Create lldpq user (matches host user pattern)
@@ -54,7 +59,7 @@ RUN chown -R lldpq:www-data /var/www/html/ \
     && find /var/www/html -type f -exec chmod 664 {} \; \
     && chmod +x /var/www/html/*.sh \
     && chown -R lldpq:lldpq /home/lldpq/ \
-    && chmod +x /usr/local/bin/pping /usr/local/bin/zzh /usr/local/bin/send-cmd \
+    && chmod +x /usr/local/bin/* \
     && chmod +x /home/lldpq/lldpq/*.sh /home/lldpq/lldpq/*.py 2>/dev/null || true
 
 # Create lldpq config
@@ -64,7 +69,8 @@ LLDPQ_USER=lldpq\n\
 WEB_ROOT=/var/www/html\n\
 ANSIBLE_DIR=NoNe' > /etc/lldpq.conf
 
-# Create auth: default users (admin/admin, operator/operator) + sessions directory
+# Create auth users file + sessions directory
+# Entrypoint also recreates these if missing (self-healing)
 RUN ADMIN_HASH=$(echo -n "admin" | openssl dgst -sha256 | awk '{print $2}') \
     && OPERATOR_HASH=$(echo -n "operator" | openssl dgst -sha256 | awk '{print $2}') \
     && echo "admin:$ADMIN_HASH:admin" > /etc/lldpq-users.conf \
@@ -74,6 +80,12 @@ RUN ADMIN_HASH=$(echo -n "admin" | openssl dgst -sha256 | awk '{print $2}') \
     && mkdir -p /var/lib/lldpq/sessions \
     && chown -R www-data:www-data /var/lib/lldpq \
     && chmod 700 /var/lib/lldpq/sessions
+
+# Create cache files with correct permissions (assets.sh and fabric-scan need these)
+RUN echo '{}' > /var/www/html/device-cache.json \
+    && echo '{}' > /var/www/html/fabric-scan-cache.json \
+    && chown lldpq:www-data /var/www/html/device-cache.json /var/www/html/fabric-scan-cache.json \
+    && chmod 664 /var/www/html/device-cache.json /var/www/html/fabric-scan-cache.json
 
 # Copy entrypoint
 COPY docker/docker-entrypoint.sh /docker-entrypoint.sh

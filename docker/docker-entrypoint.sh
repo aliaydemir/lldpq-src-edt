@@ -1,5 +1,6 @@
 #!/bin/bash
 # LLDPq Docker Entrypoint
+# Self-healing startup: ensures all required files/dirs exist with correct permissions
 # Starts: nginx + fcgiwrap + cron
 
 set -e
@@ -20,16 +21,24 @@ if ip vrf show mgmt >/dev/null 2>&1; then
 fi
 
 # ─── SSH Key Setup ───
+# Support mounting host SSH keys as read-only volume
+if [ -d /home/lldpq/.ssh-mount ]; then
+    # Copy mounted keys (read-only mount → writable .ssh)
+    cp -n /home/lldpq/.ssh-mount/id_* /home/lldpq/.ssh/ 2>/dev/null || true
+    cp -n /home/lldpq/.ssh-mount/known_hosts /home/lldpq/.ssh/ 2>/dev/null || true
+    chown -R lldpq:lldpq /home/lldpq/.ssh/
+    chmod 700 /home/lldpq/.ssh
+    chmod 600 /home/lldpq/.ssh/id_* 2>/dev/null || true
+fi
+
 if [ -f /home/lldpq/.ssh/id_rsa ] || [ -f /home/lldpq/.ssh/id_ed25519 ]; then
     echo "✓ SSH keys found"
 else
-    echo "⚠ No SSH keys yet"
-    echo "  Run: docker exec -it lldpq bash"
-    echo "  Then: cd ~/lldpq && ./send-key.sh"
+    echo "⚠ No SSH keys — use SSH Setup from web UI, or mount keys:"
+    echo "  docker run ... -v ~/.ssh:/home/lldpq/.ssh-mount:ro ..."
 fi
 
 # ─── Ansible Directory Setup ───
-# If ANSIBLE_DIR env var is set (via docker-compose or docker run -e), update lldpq.conf
 if [ -n "$ANSIBLE_DIR" ] && [ "$ANSIBLE_DIR" != "NoNe" ] && [ -d "$ANSIBLE_DIR" ]; then
     sed -i "s|^ANSIBLE_DIR=.*|ANSIBLE_DIR=$ANSIBLE_DIR|" /etc/lldpq.conf
     chown -R lldpq:www-data "$ANSIBLE_DIR" 2>/dev/null || true
@@ -39,7 +48,6 @@ else
 fi
 
 # ─── devices.yaml Setup ───
-# If devices.yaml is mounted, symlink it
 if [ -f /home/lldpq/lldpq/devices.yaml ]; then
     chown lldpq:www-data /home/lldpq/lldpq/devices.yaml
     chmod 664 /home/lldpq/lldpq/devices.yaml
@@ -50,8 +58,8 @@ else
 fi
 
 # ─── Persistent data directories ───
-# Ensure correct ownership for mounted volumes
 for dir in /home/lldpq/lldpq/monitor-results \
+           /home/lldpq/lldpq/monitor-results/fabric-tables \
            /var/www/html/hstr \
            /var/www/html/configs \
            /var/www/html/monitor-results \
@@ -64,8 +72,14 @@ done
 # Symlink monitor-results to web root
 ln -sf /home/lldpq/lldpq/monitor-results /var/www/html/monitor-results 2>/dev/null || true
 
-# ─── Auth Setup ───
-# Ensure users file exists (may be missing if /etc was modified or overlay reset)
+# ─── Cache files (assets.sh, fabric-scan.sh need these writable by lldpq) ───
+for f in /var/www/html/device-cache.json /var/www/html/fabric-scan-cache.json; do
+    [ ! -f "$f" ] && echo '{}' > "$f"
+    chown lldpq:www-data "$f"
+    chmod 664 "$f"
+done
+
+# ─── Auth Setup (self-healing: recreate if missing) ───
 if [ ! -f /etc/lldpq-users.conf ]; then
     echo "  Creating default users file..."
     ADMIN_HASH=$(echo -n "admin" | openssl dgst -sha256 | awk '{print $2}')
@@ -82,11 +96,14 @@ chmod 700 /var/lib/lldpq/sessions
 echo "✓ Authentication ready"
 
 # ─── Cron Setup ───
-# Setup cron jobs for lldpq user
+# lldpq = assets.sh + check-lldp.sh + monitor.sh + fabric-scan.sh + alerts
+# lldpq-trigger = web UI refresh buttons (Refresh Assets, Refresh LLDP, etc.)
 cat > /etc/cron.d/lldpq << 'CRON'
-# LLDPq monitoring - every 5 minutes
-*/5 * * * * lldpq cd /home/lldpq/lldpq && ./check-lldp.sh > /dev/null 2>&1 && ./monitor.sh > /dev/null 2>&1
-# Fabric scan - every minute
+# LLDPq full run (assets + lldp + monitor + alerts) - every 5 minutes
+*/5 * * * * lldpq /usr/local/bin/lldpq > /dev/null 2>&1
+# Web trigger daemon (handles Refresh buttons from UI) - every minute
+* * * * * lldpq /usr/local/bin/lldpq-trigger > /dev/null 2>&1
+# Fabric scan (topology data for search) - every minute
 * * * * * lldpq cd /home/lldpq/lldpq && ./fabric-scan.sh > /dev/null 2>&1
 # Config backup - every 12 hours
 0 */12 * * * lldpq /usr/local/bin/get-conf > /dev/null 2>&1
@@ -101,10 +118,9 @@ echo "Starting services..."
 service cron start > /dev/null 2>&1
 echo "  ✓ cron"
 
-# Start fcgiwrap (as www-data for CGI scripts)
+# Start fcgiwrap (CGI scripts for web API)
 /usr/sbin/fcgiwrap -f -s unix:/var/run/fcgiwrap.socket &
 sleep 0.5
-# Fix socket permissions so nginx can connect
 chown www-data:www-data /var/run/fcgiwrap.socket
 chmod 660 /var/run/fcgiwrap.socket
 echo "  ✓ fcgiwrap"

@@ -168,8 +168,12 @@ done
 wait
 
 #### FORMAT & SORT
-# COLUMNS=200 prevents column from truncating long lines when not on a terminal
-COLUMNS=200 column -t "$TMPFILE" > "$SCRIPT_DIR/assets.sorted"
+# Use column -t if available, otherwise cat (printf already does fixed-width formatting)
+if command -v column &>/dev/null; then
+  COLUMNS=200 column -t "$TMPFILE" > "$SCRIPT_DIR/assets.sorted"
+else
+  cat "$TMPFILE" > "$SCRIPT_DIR/assets.sorted"
+fi
 rm -f "$TMPFILE"
 
 sort -t'.' -k1,1n -k2,2n -k3,3n -k4,4n "$SCRIPT_DIR/assets.sorted" > "$SCRIPT_DIR/assets.sorted2"
