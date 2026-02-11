@@ -16,9 +16,6 @@ services:
     ports:
       - "${LLDPQ_PORT:-80}:80"
     volumes:
-      # SSH keys: persist across container recreation
-      - ssh-keys:/home/lldpq/.ssh
-
       # Optional: Override baked-in example files with your own
       # - ./devices.yaml:/home/lldpq/lldpq/devices.yaml
       # - ./topology.dot:/var/www/html/topology.dot
@@ -38,7 +35,6 @@ services:
       # - ANSIBLE_DIR=/home/lldpq/ansible
 
 volumes:
-  ssh-keys:        # SSH keys persist across container recreation
   lldpq-data:      # Monitoring results
   lldpq-configs:   # Device configurations
   lldpq-hstr:      # Historical data

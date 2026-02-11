@@ -28,10 +28,8 @@ curl -O https://aliaydemir.com/lldpq.tar.gz
 # Load image
 sudo docker load < lldpq.tar.gz
 
-# Run (mount your devices.yaml)
-sudo docker run -d --name lldpq --network host \
-  -v $(pwd)/devices.yaml:/home/lldpq/lldpq/devices.yaml \
-  lldpq:latest
+# Run (example data included, ready to use)
+sudo docker run -d --name lldpq --network host lldpq:latest
 ```
 
 Open `http://<host-ip>` in your browser. That's it.
@@ -59,7 +57,6 @@ nv config apply -y
 **Persistent data** (optional — keeps monitoring data across restarts):
 ```bash
 sudo docker run -d --name lldpq --network host \
-  -v $(pwd)/devices.yaml:/home/lldpq/lldpq/devices.yaml \
   -v lldpq-data:/home/lldpq/lldpq/monitor-results \
   lldpq:latest
 ```
@@ -67,7 +64,6 @@ sudo docker run -d --name lldpq --network host \
 **Ansible support** (optional — enables VLAN/BGP reports, Fabric Config/Editor):
 ```bash
 sudo docker run -d --name lldpq --network host \
-  -v $(pwd)/devices.yaml:/home/lldpq/lldpq/devices.yaml \
   -v ~/ansible:/home/lldpq/ansible:rw \
   -e ANSIBLE_DIR=/home/lldpq/ansible \
   lldpq:latest
