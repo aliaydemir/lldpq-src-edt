@@ -276,7 +276,7 @@ if [[ $EUID -eq 0 ]]; then
     echo ""
     echo "[!] Running as root"
     echo "    Files will be installed in $LLDPQ_INSTALL_DIR"
-    echo "    Recommended: Install as a regular user (e.g., 'nvidia' or 'cumulus')"
+    echo "    Recommended: Install as a regular user (e.g., 'cumulus' or 'lldpq')"
     echo "    This allows better SSH key management and security."
     echo ""
     sleep 2
