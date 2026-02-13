@@ -342,17 +342,18 @@
         /* Stats row */
         .stats-row {
             display: flex;
-            gap: 20px;
+            gap: 8px;
             margin-bottom: 15px;
             flex-wrap: wrap;
         }
 
         .stat-card {
             background: #1e1e1e;
-            padding: 12px 20px;
+            padding: 10px 12px;
             border-radius: 6px;
             border-left: 3px solid #76b900;
-            min-width: 120px;
+            flex: 1 1 0;
+            min-width: 80px;
         }
 
         .stat-value {
@@ -879,7 +880,7 @@
     <div class="section-title">DHCP Server Configuration</div>
     <div class="section-desc">Subnet, IP range, gateway, DNS and ZTP settings. Changes require DHCP restart.</div>
     <div style="padding: 15px; background: #1e1e1e; border-radius: 6px; border: 1px solid #3c3c3c; margin-bottom: 20px;">
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px;">
+        <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px;">
             <div>
                 <label style="font-size: 11px; color: #888; display: block; margin-bottom: 4px;">SUBNET</label>
                 <input type="text" class="form-input" id="dhcpSubnet" style="width: 100%;" placeholder="192.168.100.0">
@@ -983,7 +984,7 @@
                 </tr>
             </thead>
             <tbody id="bindingsBody">
-                <tr><td colspan="10" class="loading">Loading bindings...</td></tr>
+                <tr><td colspan="10" class="loading">Loading inventory...</td></tr>
             </tbody>
         </table>
     </div>
@@ -1583,7 +1584,7 @@ function applyBulkImport() {
 
 // ===================== TAB 1: BINDINGS =====================
 async function loadBindings() {
-    document.getElementById('bindingsBody').innerHTML = '<tr><td colspan="9" class="loading">Loading bindings...</td></tr>';
+    document.getElementById('bindingsBody').innerHTML = '<tr><td colspan="10" class="loading">Loading inventory...</td></tr>';
     const data = await apiCall('list-bindings');
     if (data.success) {
         allBindings = data.bindings || [];
