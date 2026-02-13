@@ -143,8 +143,8 @@ def ip_range_to_list(range_str):
     """Parse comma-separated IP ranges and single IPs to list of IPs.
     Supports: '192.168.100.10-192.168.100.249'
               '192.168.100.11-192.168.100.199,192.168.100.201-192.168.100.252'
-              '10.128.131.6' (single IP)
-              '192.168.58.11-192.168.58.199,10.128.131.6' (mixed)
+              '10.20.30.6' (single IP)
+              '192.168.100.11-192.168.100.199,10.20.30.6' (mixed)
     """
     if not range_str:
         return []

@@ -1421,8 +1421,13 @@ async function saveDiscoverySettings() {
     const rangeVal = document.getElementById('discoveryRange').value.trim();
     const rangeWarning = checkPrivateRange(rangeVal);
     if (rangeWarning) {
-        if (!confirm(rangeWarning)) return;  // simple confirm OK here since it's a typo warning, not a destructive action
+        showConfirmModal('Non-Private IP Range', rangeWarning, () => _doSaveDiscoverySettings(rangeVal));
+        return;
     }
+    _doSaveDiscoverySettings(rangeVal);
+}
+
+async function _doSaveDiscoverySettings(rangeVal) {
     const settings = {
         discovery_range: rangeVal,
         auto_base_config: document.getElementById('autoBaseConfig').checked,
