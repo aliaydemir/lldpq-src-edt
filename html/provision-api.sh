@@ -381,7 +381,8 @@ def action_list_bindings():
         filepath = get_dhcp_hosts_path()
         bindings = parse_dhcp_hosts(filepath)
         source = 'dhcpd.hosts'
-        # Legacy entries from dhcpd.hosts are all DHCP entries
+        # Legacy entries from dhcpd.hosts: skip commented entries (they are not active DHCP)
+        bindings = [b for b in bindings if not b.get('commented')]
         for b in bindings:
             b['dhcp'] = True
     
@@ -601,17 +602,25 @@ def sync_bindings_to_devices_yaml(bindings, remove_hostnames):
         existing_key = hostname_to_key.get(hostname) or ip_to_key.get(ip)
         
         if existing_key and existing_key in devices:
-            # Update existing — preserve format, just update role
-            info = devices[existing_key]
-            if isinstance(info, str):
-                old_m = re.match(r'^(.+?)\s+@\w+$', info.strip())
-                old_h = old_m.group(1).strip() if old_m else info.strip()
+            # Update existing entry
+            # If IP changed (key is old IP, binding has new IP), move to new key
+            if str(existing_key) != ip:
+                old_info = devices[existing_key]
+                del devices[existing_key]
+                # Re-create at new IP key
                 if role:
-                    devices[existing_key] = f"{old_h} @{role}"
-                # Don't change if no role update needed
-            elif isinstance(info, dict):
-                if role:
-                    info['role'] = role
+                    devices[ip] = f"{hostname} @{role}"
+                else:
+                    devices[ip] = hostname
+            else:
+                # Same IP — just update role
+                info = devices[existing_key]
+                if isinstance(info, str):
+                    if role:
+                        devices[existing_key] = f"{hostname} @{role}"
+                elif isinstance(info, dict):
+                    if role:
+                        info['role'] = role
             updated += 1
         else:
             # Add new device
@@ -991,11 +1000,27 @@ def action_subnet_scan():
     except Exception:
         pass
     
+    # Check if range contains non-private IPs (possible typo like 92.x instead of 192.x)
+    non_private = []
+    for ip in all_ips[:5]:  # sample first 5
+        parts = ip.split('.')
+        first = int(parts[0]) if parts else 0
+        if not (first == 10 or (first == 172 and 16 <= int(parts[1]) <= 31) or (first == 192 and int(parts[1]) == 168)):
+            non_private.append(ip)
+    
+    warning = ''
+    if non_private:
+        warning = f"Warning: range contains non-private IPs ({non_private[0]}...). Typo? Scan continues with short timeout."
+    
     # Step 1: Parallel ping all IPs in discovery range
+    # Use shorter timeout for non-private IPs to avoid long hangs on typos
+    ping_timeout = 1 if non_private else 1
+    ping_wait = '0.5' if non_private else '1'
+    
     def ping_one(ip):
         try:
-            r = subprocess.run(['ping', '-c', '1', '-W', '1', '-i', '0.2', ip],
-                             capture_output=True, text=True, timeout=3)
+            r = subprocess.run(['ping', '-c', '1', '-W', ping_wait, '-i', '0.2', ip],
+                             capture_output=True, text=True, timeout=2)
             return ip, r.returncode == 0
         except Exception:
             return ip, False
@@ -1177,17 +1202,17 @@ def action_subnet_scan():
                     except Exception:
                         pass
             
-            # ZTP disable
+            # ZTP disable (wrapped in subshell so || true doesn't affect && chain)
             if auto_ztp:
-                cmds.append('sudo ztp -d 2>/dev/null || true')
+                cmds.append('(sudo ztp -d 2>/dev/null || true)')
             
-            # Hostname set
+            # Hostname set (wrapped in subshell)
             if auto_host and hostname:
-                cmds.append(f'sudo nv set system hostname {hostname} 2>/dev/null && sudo nv config apply -y 2>/dev/null || true')
+                cmds.append(f'(sudo nv set system hostname {hostname} 2>/dev/null && sudo nv config apply -y 2>/dev/null || true)')
             
-            # Write marker only if we have meaningful actions that should succeed
-            # (if SCP failed but we're still doing ztp/hostname, write marker only after those)
-            cmds.append('sudo touch /etc/lldpq-base-deployed')
+            # Write marker only if base config was deployed (or if SCP wasn't needed)
+            if scp_ok or not auto_base:
+                cmds.append('sudo touch /etc/lldpq-base-deployed')
             
             if cmds:
                 cmd_str = ' && '.join(cmds)
@@ -1243,6 +1268,7 @@ def action_subnet_scan():
         "total_ips": len(all_ips),
         "reachable": len(reachable_ips),
         "post_provision_results": {ip: s for ip, s in post_results.items()} if 'post_results' in dir() else {},
+        "warning": warning,
     })
 
 def action_get_discovery_cache():
@@ -2104,7 +2130,8 @@ def action_upload_os_image():
     if content_length <= 0:
         error_json("No file data received (CONTENT_LENGTH=0)")
     
-    # Stream stdin to a temp file first (handles files of any size)
+    # Stream stdin to temp file, then extract file body directly to destination
+    # (avoids loading entire file into RAM for large OS images)
     import tempfile
     tmp_upload = None
     try:
@@ -2118,46 +2145,32 @@ def action_upload_os_image():
             tmp_upload.write(chunk)
             remaining -= len(chunk)
         tmp_upload.close()
-        
-        # Read temp file for multipart parsing
-        with open(tmp_upload.name, 'rb') as f:
-            raw = f.read()
     except Exception as e:
         if tmp_upload:
             try: os.unlink(tmp_upload.name)
             except: pass
         error_json(f"Failed to read upload data: {e}")
     
-    if not raw:
-        if tmp_upload:
+    # Find file part boundaries by reading only the header portions
+    # (the multipart headers are small, only the file body is large)
+    with open(tmp_upload.name, 'rb') as f:
+        # Read first 8KB to find headers (boundary + Content-Disposition + blank line)
+        head = f.read(8192)
+        
+        # Find the file part
+        boundary_pos = head.find(boundary_bytes)
+        if boundary_pos < 0:
             try: os.unlink(tmp_upload.name)
             except: pass
-        error_json("No file data received")
-    
-    # Parse multipart
-    parts = raw.split(boundary_bytes)
-    for part in parts:
-        if b'filename=' not in part:
-            continue
-        # Extract headers and body
-        header_end = part.find(b'\r\n\r\n')
-        if header_end < 0:
-            continue
-        headers = part[:header_end].decode('latin-1', errors='replace')
-        file_data = part[header_end + 4:]
-        # Remove trailing boundary markers
-        if file_data.endswith(b'\r\n'):
-            file_data = file_data[:-2]
-        if file_data.endswith(b'--'):
-            file_data = file_data[:-2]
-        if file_data.endswith(b'\r\n'):
-            file_data = file_data[:-2]
+            error_json("No file found in upload (bad boundary)")
         
-        # Extract filename
-        fn_match = re.search(r'filename="([^"]+)"', headers)
+        # Find filename in headers
+        fn_match = re.search(rb'filename="([^"]+)"', head)
         if not fn_match:
-            continue
-        filename = os.path.basename(fn_match.group(1))
+            try: os.unlink(tmp_upload.name)
+            except: pass
+            error_json("No filename in upload")
+        filename = os.path.basename(fn_match.group(1).decode('latin-1'))
         
         # Validate extension
         if not any(filename.endswith(ext) for ext in ['.bin', '.img', '.iso']):
@@ -2165,25 +2178,62 @@ def action_upload_os_image():
             except: pass
             error_json(f"Invalid file type: {filename}. Only .bin, .img, .iso allowed.")
         
-        # Write file to web root
-        dest = os.path.join(WEB_ROOT, filename)
-        try:
-            with open(dest, 'wb') as f:
-                f.write(file_data)
-            os.chmod(dest, 0o644)
+        # Find the end of headers (blank line = \r\n\r\n)
+        body_start = head.find(b'\r\n\r\n', boundary_pos)
+        if body_start < 0:
             try: os.unlink(tmp_upload.name)
             except: pass
-            result_json({"success": True, "message": f"Uploaded {filename}", "size": len(file_data)})
-        except PermissionError:
-            proc = subprocess.run(['sudo', 'tee', dest], input=file_data,
-                                  capture_output=True, timeout=300)
-            try: os.unlink(tmp_upload.name)
-            except: pass
-            if proc.returncode == 0:
-                subprocess.run(['sudo', 'chmod', '644', dest], capture_output=True, timeout=5)
-                result_json({"success": True, "message": f"Uploaded {filename}", "size": len(file_data)})
-            else:
-                error_json(f"Write failed: {proc.stderr.decode('utf-8', errors='replace')[:200]}")
+            error_json("Malformed multipart upload")
+        body_start += 4  # skip \r\n\r\n
+    
+    # Calculate file body size (total - header - trailing boundary)
+    total_size = os.path.getsize(tmp_upload.name)
+    # Trailing boundary is: \r\n--boundary--\r\n (approx)
+    trailing_size = len(boundary_bytes) + 8  # generous estimate
+    file_size = total_size - body_start - trailing_size
+    if file_size < 0:
+        file_size = total_size - body_start
+    
+    # Stream file body from temp to destination (chunk by chunk, no full RAM load)
+    dest = os.path.join(WEB_ROOT, filename)
+    try:
+        with open(tmp_upload.name, 'rb') as src, open(dest, 'wb') as dst:
+            src.seek(body_start)
+            written = 0
+            while written < file_size:
+                chunk = src.read(min(65536, file_size - written))
+                if not chunk:
+                    break
+                dst.write(chunk)
+                written += len(chunk)
+        # Trim any trailing boundary bytes from the end of the file
+        # (read last 256 bytes and check for boundary)
+        with open(dest, 'r+b') as f:
+            f.seek(max(0, written - 256))
+            tail = f.read()
+            boundary_idx = tail.rfind(b'\r\n' + boundary_bytes)
+            if boundary_idx >= 0:
+                f.seek(max(0, written - 256) + boundary_idx)
+                f.truncate()
+        os.chmod(dest, 0o644)
+        final_size = os.path.getsize(dest)
+        try: os.unlink(tmp_upload.name)
+        except: pass
+        result_json({"success": True, "message": f"Uploaded {filename}", "size": final_size})
+    except PermissionError:
+        # Fallback: use sudo cp from temp file (body already extracted)
+        subprocess.run(['sudo', 'cp', tmp_upload.name, dest], capture_output=True, timeout=300)
+        subprocess.run(['sudo', 'chmod', '644', dest], capture_output=True, timeout=5)
+        try: os.unlink(tmp_upload.name)
+        except: pass
+        if os.path.exists(dest):
+            result_json({"success": True, "message": f"Uploaded {filename} (via sudo)"})
+        else:
+            error_json("Write failed: permission denied")
+    except Exception as e:
+        try: os.unlink(tmp_upload.name)
+        except: pass
+        error_json(f"Upload failed: {e}")
     
     if tmp_upload:
         try: os.unlink(tmp_upload.name)
