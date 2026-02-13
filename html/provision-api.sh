@@ -26,10 +26,14 @@ echo ""
 # Parse query string
 ACTION=$(echo "$QUERY_STRING" | grep -oP 'action=\K[^&]*' | head -1)
 
-# Read POST data if present
+# Read POST data if present (skip for file uploads — Python reads stdin directly)
 POST_DATA=""
 if [ "$REQUEST_METHOD" = "POST" ] && [ -n "$CONTENT_LENGTH" ] && [ "$CONTENT_LENGTH" -gt 0 ] 2>/dev/null; then
-    POST_DATA=$(dd bs=1 count="$CONTENT_LENGTH" 2>/dev/null)
+    # File uploads (multipart) go directly to Python via stdin — don't consume here
+    case "$CONTENT_TYPE" in
+        multipart/form-data*) ;;
+        *) POST_DATA=$(dd bs=4096 count=$(( (CONTENT_LENGTH + 4095) / 4096 )) 2>/dev/null | head -c "$CONTENT_LENGTH") ;;
+    esac
 fi
 
 # Discovery config
@@ -71,27 +75,58 @@ DISCOVERY_CACHE_FILE = f'{WEB_ROOT}/discovery-cache.json'
 INVENTORY_FILE = f'{WEB_ROOT}/inventory.json'
 
 def update_lldpq_conf(key, value):
-    """Update or add a key=value in /etc/lldpq.conf."""
+    """Update or add a key=value in /etc/lldpq.conf (with file locking)."""
+    import fcntl
     conf = '/etc/lldpq.conf'
     try:
-        with open(conf, 'r') as f:
-            lines = f.readlines()
+        # Use a lock file to prevent concurrent writes
+        lock_path = conf + '.lock'
+        lock_fd = open(lock_path, 'w')
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        try:
+            try:
+                with open(conf, 'r') as f:
+                    lines = f.readlines()
+            except Exception:
+                lines = []
+            found = False
+            for i, line in enumerate(lines):
+                if line.startswith(f'{key}='):
+                    lines[i] = f'{key}={value}\n'
+                    found = True
+                    break
+            if not found:
+                lines.append(f'{key}={value}\n')
+            content = ''.join(lines)
+            try:
+                with open(conf, 'w') as f:
+                    f.write(content)
+            except PermissionError:
+                subprocess.run(['sudo', 'tee', conf], input=content, capture_output=True, text=True, timeout=5)
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            lock_fd.close()
     except Exception:
-        lines = []
-    found = False
-    for i, line in enumerate(lines):
-        if line.startswith(f'{key}='):
-            lines[i] = f'{key}={value}\n'
-            found = True
-            break
-    if not found:
-        lines.append(f'{key}={value}\n')
-    content = ''.join(lines)
-    try:
-        with open(conf, 'w') as f:
-            f.write(content)
-    except PermissionError:
-        subprocess.run(['sudo', 'tee', conf], input=content, capture_output=True, text=True, timeout=5)
+        # Fallback: write without lock (better than failing silently)
+        try:
+            with open(conf, 'r') as f:
+                lines = f.readlines()
+        except Exception:
+            lines = []
+        found = False
+        for i, line in enumerate(lines):
+            if line.startswith(f'{key}='):
+                lines[i] = f'{key}={value}\n'
+                found = True
+                break
+        if not found:
+            lines.append(f'{key}={value}\n')
+        content = ''.join(lines)
+        try:
+            with open(conf, 'w') as f:
+                f.write(content)
+        except PermissionError:
+            subprocess.run(['sudo', 'tee', conf], input=content, capture_output=True, text=True, timeout=5)
 
 def read_lldpq_conf_key(key, default=''):
     """Read a single key from /etc/lldpq.conf."""
@@ -279,10 +314,17 @@ def generate_dhcp_hosts(bindings, orig_filepath):
     
     return '\n'.join(lines) + '\n', skipped
 
+_server_ip_cache = None
+
 def get_server_ip():
     """Try to determine this server's IP for ZTP URL.
     Falls back to reading from existing dhcpd.conf or hosts file.
+    Result is cached for the duration of the request.
     """
+    global _server_ip_cache
+    if _server_ip_cache is not None:
+        return _server_ip_cache
+    
     # Try to get from dhcpd.conf
     conf_path = os.environ.get('DHCP_CONF_FILE', '/etc/dhcp/dhcpd.conf')
     if os.path.exists(conf_path):
@@ -290,7 +332,8 @@ def get_server_ip():
             content = f.read()
         m = re.search(r'cumulus-provision-url\s+"http://([^/]+)/', content)
         if m:
-            return m.group(1)
+            _server_ip_cache = m.group(1)
+            return _server_ip_cache
     
     # Try existing hosts file
     hosts_path = get_dhcp_hosts_path()
@@ -299,7 +342,8 @@ def get_server_ip():
             content = f.read()
         m = re.search(r'cumulus-provision-url\s+"http://([^/]+)/', content)
         if m:
-            return m.group(1)
+            _server_ip_cache = m.group(1)
+            return _server_ip_cache
     
     # Fallback: try to get our own IP
     try:
@@ -308,11 +352,13 @@ def get_server_ip():
         )
         ips = result.stdout.strip().split()
         if ips:
-            return ips[0]
+            _server_ip_cache = ips[0]
+            return _server_ip_cache
     except Exception:
         pass
     
-    return '127.0.0.1'
+    _server_ip_cache = '127.0.0.1'
+    return _server_ip_cache
 
 def action_list_bindings():
     """Load inventory from inventory.json (primary) or dhcpd.hosts (fallback).
@@ -667,6 +713,13 @@ def action_discovered():
     # --- Source 1: fabric-tables ARP data ---
     # Each fabric-table JSON has "arp" list with entries like:
     # {"ip": "192.168.100.11", "mac": "54:9b:24:aa:68:16", "interface": "eth0", "vrf": "mgmt"}
+    # Determine binding subnets to filter relevant ARP entries (no hardcoded prefixes)
+    binding_subnets = set()
+    for b in bindings:
+        parts = b['ip'].split('.')
+        if len(parts) == 4:
+            binding_subnets.add('.'.join(parts[:3]) + '.')
+    
     fabric_tables_dir = os.path.join(LLDPQ_DIR, 'monitor-results', 'fabric-tables')
     if os.path.isdir(fabric_tables_dir):
         for fpath in glob.glob(os.path.join(fabric_tables_dir, '*.json')):
@@ -677,9 +730,8 @@ def action_discovered():
                     iface = arp_entry.get('interface', '')
                     ip = arp_entry.get('ip', '')
                     mac = arp_entry.get('mac', '').lower()
-                    # Only mgmt interface ARP = management MAC (used in DHCP bindings)
-                    if iface == 'eth0' and ip and mac and ip.startswith('192.168.'):
-                        # Keep the entry (last writer wins, but they should all agree)
+                    # Only mgmt interface ARP within binding subnets
+                    if iface == 'eth0' and ip and mac and any(ip.startswith(s) for s in binding_subnets):
                         discovered_ips[ip] = mac
             except Exception:
                 continue
@@ -889,6 +941,9 @@ def action_subnet_scan():
     all_ips = ip_range_to_list(disc_range)
     if not all_ips:
         error_json(f"Invalid discovery range: {disc_range}")
+    # Safety limit: prevent memory/timeout bombs from huge ranges
+    if len(all_ips) > 1500:
+        error_json(f"Discovery range too large: {len(all_ips)} IPs (max 1500). Narrow the range.")
     
     # Load inventory for cross-reference (inventory.json is source of truth, fallback to dhcpd.hosts)
     inv_bindings = []
@@ -912,10 +967,9 @@ def action_subnet_scan():
             import yaml
             with open(devices_path, 'r') as f:
                 data = yaml.safe_load(f) or {}
-            for section_key, section in data.items():
-                if not isinstance(section, dict) or section_key in ('defaults',):
-                    continue
-                for host_ip, info in section.items():
+            devices_section = data.get('devices', data)
+            if isinstance(devices_section, dict):
+                for host_ip, info in devices_section.items():
                     if host_ip in ('defaults', 'endpoint_hosts'):
                         continue
                     if isinstance(info, dict):
@@ -1087,6 +1141,7 @@ def action_subnet_scan():
             cmds = []
             
             # sw-base deploy via SCP + SSH
+            scp_ok = False
             if auto_base and os.path.isdir(BASE_CONFIG_DIR):
                 files_map = {
                     'bash.bashrc': '/etc/bash.bashrc',
@@ -1110,13 +1165,15 @@ def action_subnet_scan():
                 
                 if scp_files:
                     try:
-                        subprocess.run(
+                        scp_r = subprocess.run(
                             ['sudo', '-u', LLDPQ_USER, 'scp', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=3',
                              '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null',
                              '-o', 'LogLevel=ERROR'] + scp_files + [f'cumulus@{ip}:/tmp/'],
                             capture_output=True, text=True, timeout=15
                         )
-                        cmds.extend(copy_cmds)
+                        if scp_r.returncode == 0:
+                            cmds.extend(copy_cmds)
+                            scp_ok = True
                     except Exception:
                         pass
             
@@ -1128,21 +1185,26 @@ def action_subnet_scan():
             if auto_host and hostname:
                 cmds.append(f'sudo nv set system hostname {hostname} 2>/dev/null && sudo nv config apply -y 2>/dev/null || true')
             
-            # Write marker
+            # Write marker only if we have meaningful actions that should succeed
+            # (if SCP failed but we're still doing ztp/hostname, write marker only after those)
             cmds.append('sudo touch /etc/lldpq-base-deployed')
             
             if cmds:
                 cmd_str = ' && '.join(cmds)
                 try:
-                    subprocess.run(
+                    r = subprocess.run(
                         ['sudo', '-u', LLDPQ_USER, 'ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
                          '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null',
                          '-o', 'LogLevel=ERROR', f'cumulus@{ip}', cmd_str],
                         capture_output=True, text=True, timeout=30
                     )
-                    return ip, 'deployed'
+                    # Only report 'deployed' if SSH command actually succeeded
+                    if r.returncode == 0:
+                        return ip, 'deployed'
+                    else:
+                        return ip, 'failed'
                 except Exception:
-                    return ip, None
+                    return ip, 'failed'
             
             return ip, None
         
@@ -1896,12 +1958,16 @@ def action_generate_ssh_key():
     pub_path = key_path + '.pub'
     
     try:
-        os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
-        
-        # Remove old keys if exist
-        for f in [key_path, pub_path]:
-            if os.path.exists(f):
-                os.remove(f)
+        # Create .ssh dir and remove old keys as LLDPQ_USER (not www-data)
+        subprocess.run(
+            ['sudo', '-u', LLDPQ_USER, 'mkdir', '-p', ssh_dir],
+            capture_output=True, timeout=5)
+        subprocess.run(
+            ['sudo', 'chmod', '700', ssh_dir],
+            capture_output=True, timeout=5)
+        subprocess.run(
+            ['sudo', '-u', LLDPQ_USER, 'rm', '-f', key_path, pub_path],
+            capture_output=True, timeout=5)
         
         # Generate as LLDPQ_USER
         result = subprocess.run(
@@ -1911,16 +1977,20 @@ def action_generate_ssh_key():
         if result.returncode != 0:
             error_json(f'ssh-keygen failed: {result.stderr}')
         
-        # Read public key
-        with open(pub_path, 'r') as f:
-            pub_key = f.read().strip()
+        # Read public key (as LLDPQ_USER since file is owned by them)
+        r = subprocess.run(
+            ['sudo', '-u', LLDPQ_USER, 'cat', pub_path],
+            capture_output=True, text=True, timeout=5)
+        pub_key = r.stdout.strip() if r.returncode == 0 else ''
         
         result_json({"success": True, "public_key": pub_key, "key_type": "ed25519", "key_file": pub_path})
     except Exception as e:
         error_json(str(e))
 
 def action_import_ssh_key():
-    """Import an existing private key (paste from another server/setup)."""
+    """Import an existing private key (paste from another server/setup).
+    All file operations run as LLDPQ_USER via sudo to ensure correct ownership.
+    """
     try:
         data = json.loads(POST_DATA)
     except Exception:
@@ -1952,34 +2022,46 @@ def action_import_ssh_key():
     pub_path = key_path + '.pub'
     
     try:
-        os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
+        # Create .ssh dir as LLDPQ_USER (www-data can't write to user's home)
+        subprocess.run(
+            ['sudo', '-u', LLDPQ_USER, 'mkdir', '-p', ssh_dir],
+            capture_output=True, timeout=5)
+        subprocess.run(
+            ['sudo', 'chmod', '700', ssh_dir],
+            capture_output=True, timeout=5)
         
-        # Write private key
-        with open(key_path, 'w') as f:
-            f.write(private_key)
-        os.chmod(key_path, 0o600)
+        # Write private key via sudo tee (www-data can't write to LLDPQ_USER's .ssh)
+        proc = subprocess.run(
+            ['sudo', '-u', LLDPQ_USER, 'tee', key_path],
+            input=private_key, capture_output=True, text=True, timeout=10)
+        if proc.returncode != 0:
+            error_json(f"Failed to write private key: {proc.stderr.strip()[:200]}")
+        subprocess.run(['sudo', 'chmod', '600', key_path], capture_output=True, timeout=5)
         
         # Extract public key from private key
         result = subprocess.run(
-            ['ssh-keygen', '-y', '-f', key_path],
+            ['sudo', '-u', LLDPQ_USER, 'ssh-keygen', '-y', '-f', key_path],
             capture_output=True, text=True, timeout=10
         )
         if result.returncode == 0 and result.stdout.strip():
-            with open(pub_path, 'w') as f:
-                f.write(result.stdout.strip() + f' {LLDPQ_USER}@imported\n')
-            os.chmod(pub_path, 0o644)
+            pub_content = result.stdout.strip() + f' {LLDPQ_USER}@imported\n'
+            subprocess.run(
+                ['sudo', '-u', LLDPQ_USER, 'tee', pub_path],
+                input=pub_content, capture_output=True, text=True, timeout=10)
+            subprocess.run(['sudo', 'chmod', '644', pub_path], capture_output=True, timeout=5)
         else:
             # Clean up on failure
-            os.remove(key_path)
+            subprocess.run(['sudo', 'rm', '-f', key_path], capture_output=True, timeout=5)
             error_json(f"Invalid private key: {result.stderr.strip()[:200]}")
         
-        # Fix ownership
-        subprocess.run(['chown', f'{LLDPQ_USER}:{LLDPQ_USER}', key_path, pub_path],
+        # Fix ownership (with sudo)
+        subprocess.run(['sudo', 'chown', f'{LLDPQ_USER}:{LLDPQ_USER}', key_path, pub_path],
                        capture_output=True, timeout=5)
         
         # Read public key
-        with open(pub_path, 'r') as f:
-            pub_key = f.read().strip()
+        r = subprocess.run(['sudo', '-u', LLDPQ_USER, 'cat', pub_path],
+                          capture_output=True, text=True, timeout=5)
+        pub_key = r.stdout.strip() if r.returncode == 0 else ''
         
         result_json({"success": True, "public_key": pub_key, "key_type": key_type, "key_file": pub_path})
     except Exception as e:
@@ -2005,71 +2087,107 @@ def action_list_os_images():
 
 def action_upload_os_image():
     """Handle multipart file upload for OS images.
-    Since we're behind fcgiwrap, we read raw stdin.
+    Reads directly from stdin (bash wrapper skips reading for multipart).
+    Streams to temp file to avoid memory issues with large images.
     """
-    # For multipart uploads through fcgiwrap, we need to handle it differently
-    # The file comes through POST_DATA or stdin
     content_type = os.environ.get('CONTENT_TYPE', '')
     
-    if 'multipart/form-data' in content_type:
-        # Parse boundary
-        boundary = content_type.split('boundary=')[-1].strip()
-        
-        # Read raw POST data from stdin (already read as POST_DATA)
-        raw = POST_DATA.encode('latin-1') if POST_DATA else b''
-        if not raw:
-            # Try reading from stdin
-            import sys
-            raw = sys.stdin.buffer.read()
-        
-        if not raw:
-            error_json("No file data received")
-        
-        # Parse multipart
-        parts = raw.split(f'--{boundary}'.encode())
-        for part in parts:
-            if b'filename=' in part:
-                # Extract filename
-                header_end = part.find(b'\r\n\r\n')
-                if header_end < 0:
-                    continue
-                headers = part[:header_end].decode('latin-1', errors='replace')
-                file_data = part[header_end + 4:]
-                # Remove trailing \r\n--
-                if file_data.endswith(b'\r\n'):
-                    file_data = file_data[:-2]
-                if file_data.endswith(b'--'):
-                    file_data = file_data[:-2]
-                if file_data.endswith(b'\r\n'):
-                    file_data = file_data[:-2]
-                
-                # Extract filename
-                fn_match = re.search(r'filename="([^"]+)"', headers)
-                if not fn_match:
-                    continue
-                filename = os.path.basename(fn_match.group(1))
-                
-                # Validate extension
-                if not any(filename.endswith(ext) for ext in ['.bin', '.img', '.iso']):
-                    error_json(f"Invalid file type: {filename}. Only .bin, .img, .iso allowed.")
-                
-                # Write file
-                dest = os.path.join(WEB_ROOT, filename)
-                try:
-                    with open(dest, 'wb') as f:
-                        f.write(file_data)
-                    os.chmod(dest, 0o644)
-                    result_json({"success": True, "message": f"Uploaded {filename}", "size": len(file_data)})
-                except PermissionError:
-                    # Use sudo
-                    proc = subprocess.run(['sudo', 'tee', dest], input=file_data,
-                                          capture_output=True, timeout=120)
-                    if proc.returncode == 0:
-                        subprocess.run(['sudo', 'chmod', '644', dest], capture_output=True, timeout=5)
-                        result_json({"success": True, "message": f"Uploaded {filename}"})
-                    else:
-                        error_json(f"Write failed: {proc.stderr.decode()[:200]}")
+    if 'multipart/form-data' not in content_type:
+        error_json("Expected multipart/form-data upload")
     
+    # Parse boundary
+    boundary = content_type.split('boundary=')[-1].strip()
+    boundary_bytes = f'--{boundary}'.encode()
+    
+    # Read from stdin (not consumed by bash wrapper for multipart)
+    content_length = int(os.environ.get('CONTENT_LENGTH', '0'))
+    if content_length <= 0:
+        error_json("No file data received (CONTENT_LENGTH=0)")
+    
+    # Stream stdin to a temp file first (handles files of any size)
+    import tempfile
+    tmp_upload = None
+    try:
+        tmp_upload = tempfile.NamedTemporaryFile(delete=False, suffix='.upload')
+        remaining = content_length
+        buf_size = 65536  # 64KB chunks
+        while remaining > 0:
+            chunk = sys.stdin.buffer.read(min(buf_size, remaining))
+            if not chunk:
+                break
+            tmp_upload.write(chunk)
+            remaining -= len(chunk)
+        tmp_upload.close()
+        
+        # Read temp file for multipart parsing
+        with open(tmp_upload.name, 'rb') as f:
+            raw = f.read()
+    except Exception as e:
+        if tmp_upload:
+            try: os.unlink(tmp_upload.name)
+            except: pass
+        error_json(f"Failed to read upload data: {e}")
+    
+    if not raw:
+        if tmp_upload:
+            try: os.unlink(tmp_upload.name)
+            except: pass
+        error_json("No file data received")
+    
+    # Parse multipart
+    parts = raw.split(boundary_bytes)
+    for part in parts:
+        if b'filename=' not in part:
+            continue
+        # Extract headers and body
+        header_end = part.find(b'\r\n\r\n')
+        if header_end < 0:
+            continue
+        headers = part[:header_end].decode('latin-1', errors='replace')
+        file_data = part[header_end + 4:]
+        # Remove trailing boundary markers
+        if file_data.endswith(b'\r\n'):
+            file_data = file_data[:-2]
+        if file_data.endswith(b'--'):
+            file_data = file_data[:-2]
+        if file_data.endswith(b'\r\n'):
+            file_data = file_data[:-2]
+        
+        # Extract filename
+        fn_match = re.search(r'filename="([^"]+)"', headers)
+        if not fn_match:
+            continue
+        filename = os.path.basename(fn_match.group(1))
+        
+        # Validate extension
+        if not any(filename.endswith(ext) for ext in ['.bin', '.img', '.iso']):
+            try: os.unlink(tmp_upload.name)
+            except: pass
+            error_json(f"Invalid file type: {filename}. Only .bin, .img, .iso allowed.")
+        
+        # Write file to web root
+        dest = os.path.join(WEB_ROOT, filename)
+        try:
+            with open(dest, 'wb') as f:
+                f.write(file_data)
+            os.chmod(dest, 0o644)
+            try: os.unlink(tmp_upload.name)
+            except: pass
+            result_json({"success": True, "message": f"Uploaded {filename}", "size": len(file_data)})
+        except PermissionError:
+            proc = subprocess.run(['sudo', 'tee', dest], input=file_data,
+                                  capture_output=True, timeout=300)
+            try: os.unlink(tmp_upload.name)
+            except: pass
+            if proc.returncode == 0:
+                subprocess.run(['sudo', 'chmod', '644', dest], capture_output=True, timeout=5)
+                result_json({"success": True, "message": f"Uploaded {filename}", "size": len(file_data)})
+            else:
+                error_json(f"Write failed: {proc.stderr.decode('utf-8', errors='replace')[:200]}")
+    
+    if tmp_upload:
+        try: os.unlink(tmp_upload.name)
+        except: pass
     error_json("No file found in upload")
 
 def action_delete_os_image():
@@ -2349,10 +2467,9 @@ def action_list_roles():
             import yaml
             with open(devices_file, 'r') as f:
                 ddata = yaml.safe_load(f) or {}
-            for section_key, section in ddata.items():
-                if not isinstance(section, dict) or section_key in ('defaults',):
-                    continue
-                for ip, info in section.items():
+            devices_section = ddata.get('devices', ddata)
+            if isinstance(devices_section, dict):
+                for ip, info in devices_section.items():
                     if ip in ('defaults', 'endpoint_hosts'):
                         continue
                     if isinstance(info, str):
@@ -2365,6 +2482,17 @@ def action_list_roles():
                             roles.add(r.lower())
     except Exception:
         pass
+    # Also include roles from inventory.json
+    try:
+        if os.path.exists(INVENTORY_FILE):
+            with open(INVENTORY_FILE, 'r') as f:
+                inv = json.load(f)
+            for b in inv.get('bindings', []):
+                r = b.get('role', '').strip().lower()
+                if r:
+                    roles.add(r)
+    except Exception:
+        pass
     result_json({"success": True, "roles": sorted(roles)})
 
 # ======================== ROUTER ========================
@@ -2374,6 +2502,7 @@ if ACTION == 'list-bindings':
 elif ACTION == 'save-bindings':
     action_save_bindings()
 elif ACTION == 'discovered':
+    # Legacy: replaced by subnet-scan. Kept for backward compat.
     action_discovered()
 elif ACTION == 'get-ztp-script':
     action_get_ztp_script()
@@ -2394,6 +2523,7 @@ elif ACTION == 'list-devices':
 elif ACTION == 'deploy-base-config':
     action_deploy_base_config()
 elif ACTION == 'ping-scan':
+    # Legacy: replaced by subnet-scan. Kept for backward compat.
     action_ping_scan()
 elif ACTION == 'subnet-scan':
     action_subnet_scan()

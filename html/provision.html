@@ -1328,7 +1328,9 @@ async function _dhcpServiceAction(action) {
 
 // ===================== DHCP CONFIG =====================
 async function loadDHCPConfig() {
-    const data = await apiCall('get-dhcp-config');
+    // Use cached data from loadDiscoverySettings() if available, otherwise fetch
+    const data = _cachedDhcpConfig || await apiCall('get-dhcp-config');
+    _cachedDhcpConfig = null;  // clear cache after first use so Reload button works
     if (data.success) {
         document.getElementById('dhcpSubnet').value = data.subnet || '';
         document.getElementById('dhcpNetmask').value = data.netmask || '';
@@ -1411,6 +1413,8 @@ async function saveDiscoverySettings() {
 }
 
 async function loadDiscoverySettings() {
+    // Uses same endpoint as loadDHCPConfig() but only sets discovery-specific fields.
+    // On page load this runs first; loadDHCPConfig() runs when DHCP tab is opened.
     const data = await apiCall('get-dhcp-config');
     if (data.success) {
         document.getElementById('discoveryRange').value = data.discovery_range || '';
@@ -1421,15 +1425,19 @@ async function loadDiscoverySettings() {
         const interval = data.scan_interval !== undefined ? String(data.scan_interval) : '300';
         document.getElementById('scanInterval').value = interval;
         applyScanInterval();
+        // Cache for DHCP tab so it doesn't need to re-fetch
+        _cachedDhcpConfig = data;
     }
 }
 
+let _cachedDhcpConfig = null;
+
 // ===================== DOWNLOAD CSV =====================
 async function rebuildDevicesYaml() {
-    // Count what will be written
+    // Count what will be written (must match server-side logic: inv_status == 'planned' is the sole criterion)
     const withRole = allBindings.filter(b => b.hostname && b.ip && b.role);
-    const active = withRole.filter(b => b.inv_status === 'active' || (b.mac && b.mac !== '-'));
-    const planned = withRole.filter(b => b.inv_status === 'planned' || !b.mac || b.mac === '-');
+    const active = withRole.filter(b => b.inv_status !== 'planned');
+    const planned = withRole.filter(b => b.inv_status === 'planned');
     const noRole = allBindings.filter(b => b.hostname && b.ip && !b.role);
 
     let msg = `Rebuild devices.yaml from inventory?<br><br>`;
@@ -2150,12 +2158,9 @@ function saveBinding() {
         allBindings.push({ hostname, mac, ip, serial, role, commented: false });
     }
 
-    // Save role to devices.yaml if changed
-    if (role !== undefined) {
-        apiCall('update-role', { hostname, ip, role }).then(data => {
-            if (data.success && role && !knownRoles.includes(role)) knownRoles.push(role);
-        });
-    }
+    // Role is saved to devices.yaml when user clicks Save (via sync_devices),
+    // not immediately — avoids writing to disk for unsaved changes
+    if (role && !knownRoles.includes(role)) knownRoles.push(role);
 
     bindingsModified = true;
     document.getElementById('btnSaveBindings').style.display = ''; document.getElementById('btnDiscardBindings').style.display = '';
@@ -2286,8 +2291,8 @@ function applyScanInterval() {
     }
 }
 
-// Initialize default interval (5 min)
-applyScanInterval();
+// Scan interval is initialized after loadDiscoverySettings() fetches the server value.
+// Do not call applyScanInterval() here — it would start a timer with the wrong default.
 
 function renderDiscoveredStats() {
     const provisioned = allDiscovered.filter(d => d.device_type === 'provisioned').length;
@@ -2446,6 +2451,7 @@ function renderDiscovered() {
         let ppBadge = '-';
         if (d.post_provision === 'deployed') ppBadge = '<span class="badge badge-match" style="font-size:10px;">Just Now</span>';
         else if (d.post_provision === 'already') ppBadge = '<span class="badge" style="font-size:10px;background:rgba(100,100,100,0.2);color:#aaa;">Yes</span>';
+        else if (d.post_provision === 'failed') ppBadge = '<span class="badge badge-error" style="font-size:10px;">Failed</span>';
         else if (d.device_type === 'provisioned') ppBadge = '<span class="badge" style="font-size:10px;background:rgba(255,152,0,0.15);color:#ff9800;">Pending</span>';
         else if (d.device_type === 'not_provisioned') ppBadge = 'No SSH';
         else if (d.device_type === 'unreachable') ppBadge = '-';
@@ -2717,10 +2723,17 @@ function parseQuickSettings(content) {
     if (ipMatch) document.getElementById('ztpImageServer').value = ipMatch[1];
 }
 
+function escapeBashSingleQuote(s) {
+    // In bash single-quoted strings, single quotes can't be escaped.
+    // Use the pattern: end quote, escaped quote, start quote: 'it'\''s' → it's
+    return s.replace(/'/g, "'\\''");
+}
+
 function applyQuickSettings() {
     let content = document.getElementById('ztpEditor').value;
     const os = document.getElementById('ztpTargetOS').value.trim() || '5.14.0';
-    const pw = document.getElementById('ztpPassword').value.trim() || 'CumulusLinux!';
+    const pwRaw = document.getElementById('ztpPassword').value.trim() || 'CumulusLinux!';
+    const pw = escapeBashSingleQuote(pwRaw);
     const ip = document.getElementById('ztpImageServer').value.trim() || '192.168.100.200';
     const key = document.getElementById('ztpSSHKey').value.trim();
 
@@ -2991,7 +3004,7 @@ function escHtml(s) {
 }
 function escAttr(s) {
     if (!s) return '';
-    return s.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+    return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;').replace(/`/g, '\\`').replace(/\n/g, '').replace(/\r/g, '');
 }
 
 // ===================== CUSTOM CONFIRM MODAL =====================
