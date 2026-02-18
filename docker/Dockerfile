@@ -34,6 +34,13 @@ COPY docker/dotf/bashrc /etc/bash.bashrc
 COPY docker/dotf/UTC /etc/localtime
 RUN chmod 755 /usr/bin/exa && echo "UTC" > /etc/timezone
 
+# Ansible + dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ansible ansible-lint \
+    python3-jmespath python3-wheel \
+    && rm -rf /var/lib/apt/lists/*
+RUN ansible-galaxy collection install nvidia.nvue community.general ansible.netcommon
+
 # Create lldpq user (matches host user pattern)
 RUN useradd -m -s /bin/bash -G www-data lldpq \
     && echo "lldpq ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/lldpq \
