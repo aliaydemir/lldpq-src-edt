@@ -5758,13 +5758,13 @@ timestamp = time.strftime('%Y%m%d-%H%M%S')
 output_file = f'/tmp/tail_{device}_{timestamp}.txt'
 
 priority_map = {'critical': '0..2', 'error': '0..3', 'warning': '0..4', 'info': '0..6'}
-journal_cmd = f'sudo timeout {duration} journalctl -f --no-pager'
+journal_cmd = f'sudo timeout {duration} stdbuf -oL journalctl -f --no-pager'
 if severity != 'all' and severity in priority_map:
     journal_cmd += f' -p {priority_map[severity]}'
 if keyword:
-    journal_cmd += f' | grep --line-buffered -i "{keyword}"'
+    journal_cmd += f' | stdbuf -oL grep --line-buffered -i "{keyword}"'
 
-remote_cmd = f"nohup sh -c '{journal_cmd} > {output_file} 2>&1' > /dev/null 2>&1 & echo $!"
+remote_cmd = f"nohup sh -c '{journal_cmd}' > {output_file} 2>&1 & echo $!"
 
 ssh_command = [
     'sudo', '-u', lldpq_user,
