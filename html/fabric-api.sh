@@ -5853,6 +5853,7 @@ ALLOWED_PATTERNS = [
     # Logs
     r'^cat /var/log/',
     r'^cat /tmp/live_',
+    r'^cat /tmp/tail_',
     r'^sudo cat /var/log/',
     r'^tail\b',
     r'^sudo tail\b',
