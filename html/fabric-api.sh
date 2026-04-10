@@ -5854,6 +5854,7 @@ ALLOWED_PATTERNS = [
     r'^cat /var/log/',
     r'^cat /tmp/live_',
     r'^cat /tmp/tail_',
+    r'^cat /tmp/tail_',
     r'^sudo cat /var/log/',
     r'^tail\b',
     r'^sudo tail\b',
@@ -5884,6 +5885,7 @@ ALLOWED_PATTERNS = [
     r'^sudo rm -f "/tmp/capture_',
     r'^sudo rm -f /tmp/capture_\*\.pcap$',
     r'^sudo rm -f /tmp/live_',
+    r'^sudo rm -f /tmp/tail_',
 ]
 
 # Security: Blacklist dangerous patterns (only checked if NOT in whitelist)

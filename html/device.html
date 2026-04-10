@@ -2357,7 +2357,12 @@
                 fetch('/fabric-api.sh?action=run-device-command', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ device: deviceName, command: `sudo pkill -f "journalctl -f" 2>/dev/null; sudo rm -f ${tailOutputFile}` })
+                    body: JSON.stringify({ device: deviceName, command: 'sudo pkill -f "journalctl -f"' })
+                }).catch(() => {});
+                fetch('/fabric-api.sh?action=run-device-command', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ device: deviceName, command: `sudo rm -f ${tailOutputFile}` })
                 }).catch(() => {});
                 tailOutputFile = null;
             }
