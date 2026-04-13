@@ -6074,6 +6074,21 @@ PYTHON_END
             echo '{"success": true, "configured": false}'
         fi
         ;;
+    run-transceiver-scan)
+        echo "Content-Type: application/json"
+        echo ""
+        source /etc/lldpq.conf 2>/dev/null || true
+        LLDPQ_DIR="${LLDPQ_DIR:-$HOME/lldpq}"
+        LLDPQ_USER="${LLDPQ_USER:-$(whoami)}"
+        cd "$LLDPQ_DIR" 2>/dev/null || cd "$(dirname "$0")/../lldpq" 2>/dev/null
+        result=$(sudo -u "$LLDPQ_USER" bash collect-transceiver-fw.sh 2>&1 | tail -3)
+        if [ $? -eq 0 ]; then
+            echo '{"success": true, "message": "'"${result//\"/\\\"}"'"}'
+        else
+            echo '{"success": false, "error": "'"${result//\"/\\\"}"'"}'
+        fi
+        exit 0
+        ;;
     *)
         echo '{"success": false, "error": "Unknown action: '"$ACTION"'"}'
         ;;
