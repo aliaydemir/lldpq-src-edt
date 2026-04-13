@@ -175,6 +175,9 @@
     <div class="input-wrapper">
         <textarea id="chatInput" placeholder="Ask about your fabric..." rows="1" onkeydown="handleKeydown(event)" oninput="autoResize(this)"></textarea>
     </div>
+    <button id="btnAttachLogs" onclick="toggleAttachLogs()" title="Attach critical/error logs to next message" style="height: 42px; width: 42px; padding: 0; flex-shrink: 0; background: #333; border: 1px solid #555; border-radius: 6px; color: #888; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s;">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm-1 9h-2v3c0 1.1-.9 2-2 2s-2-.9-2-2v-4c0-1.66 1.34-3 3-3s3 1.34 3 3v1zm-3-7V3.5L18.5 9H14c-.55 0-1-.45-1-1V4z"/></svg>
+    </button>
     <button class="btn btn-primary" onclick="sendMessage()" id="btnSend" style="height: 42px; padding: 0 16px; flex-shrink: 0;">
         <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
     </button>
@@ -598,6 +601,16 @@ function linkDeviceNames(el) {
 }
 
 let _knownDevices = [];
+let attachLogsActive = false;
+
+function toggleAttachLogs() {
+    attachLogsActive = !attachLogsActive;
+    const btn = document.getElementById('btnAttachLogs');
+    btn.style.background = attachLogsActive ? '#76b900' : '#333';
+    btn.style.color = attachLogsActive ? '#000' : '#888';
+    btn.style.borderColor = attachLogsActive ? '#76b900' : '#555';
+    btn.title = attachLogsActive ? 'Logs will be attached to next message (click to cancel)' : 'Attach critical/error logs to next message';
+}
 
 async function sendMessage() {
     const input = document.getElementById('chatInput');
@@ -608,9 +621,34 @@ async function sendMessage() {
     const suggestions = document.getElementById('suggestions');
     if (suggestions) suggestions.remove();
     
-    // Add user message
+    // Build final message (with logs if attached)
+    let finalMessage = message;
+    if (attachLogsActive) {
+        try {
+            const logData = await apiCall('get-log-messages');
+            if (logData.success && logData.messages && Object.keys(logData.messages).length > 0) {
+                let logText = '[ATTACHED: Fabric Log Messages]\n';
+                const totals = logData.totals || {};
+                logText += `Totals: ${totals.critical || 0} critical, ${totals.error || 0} error, ${totals.warning || 0} warning\n\n`;
+                for (const [dev, msgs] of Object.entries(logData.messages).sort()) {
+                    for (const msg of msgs) {
+                        logText += `${dev}: ${msg}\n`;
+                    }
+                }
+                logText += '[END ATTACHED LOGS]\n\n';
+                finalMessage = logText + message;
+            }
+        } catch (e) {}
+        attachLogsActive = false;
+        const abtn = document.getElementById('btnAttachLogs');
+        abtn.style.background = '#333';
+        abtn.style.color = '#888';
+        abtn.style.borderColor = '#555';
+    }
+    
+    // Add user message (show original, not with logs)
     addMessage('user', message);
-    chatHistory.push({ role: 'user', content: message });
+    chatHistory.push({ role: 'user', content: finalMessage });
     saveChatToStorage();
     input.value = '';
     autoResize(input);
@@ -622,7 +660,7 @@ async function sendMessage() {
     showTypingIndicator();
     
     try {
-        const data = await apiCall('chat', { message, history: chatHistory.slice(-10) });
+        const data = await apiCall('chat', { message: finalMessage, history: chatHistory.slice(-10) });
         removeTypingIndicator();
         
         if (data.success && data.response) {

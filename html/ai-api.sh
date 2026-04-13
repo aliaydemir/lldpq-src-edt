@@ -208,11 +208,21 @@ def build_fabric_summary():
                 summary.append(f"LOGS: {critical} critical, {errors} errors, {warnings} warnings across all devices")
             if critical > 0:
                 crit_devices = []
-                for dev, counts in sorted(logs.items()):
+                device_counts = logs.get('device_counts', logs)
+                for dev, counts in sorted(device_counts.items()):
                     if isinstance(counts, dict) and counts.get('critical', 0) > 0:
                         crit_devices.append(f"  {dev}: {counts['critical']} critical")
                 if crit_devices:
                     summary.append("CRITICAL LOG DEVICES:\n" + "\n".join(crit_devices[:20]))
+            
+            recent = logs.get('recent_messages', {})
+            if recent:
+                log_lines = []
+                for dev in sorted(recent.keys())[:15]:
+                    for msg in recent[dev]:
+                        log_lines.append(f"  {dev}: {msg}")
+                if log_lines:
+                    summary.append("RECENT CRITICAL/ERROR LOG MESSAGES:\n" + "\n".join(log_lines[:50]))
     except Exception:
         pass
     
@@ -1200,6 +1210,17 @@ elif ACTION == 'analyze':
     action_analyze()
 elif ACTION == 'get-analysis':
     action_get_analysis()
+elif ACTION == 'get-log-messages':
+    try:
+        log_file = os.path.join(LLDPQ_DIR, 'monitor-results', 'log_summary.json')
+        if os.path.exists(log_file):
+            with open(log_file, 'r') as f:
+                data = json.load(f)
+            result_json({"success": True, "messages": data.get('recent_messages', {}), "totals": data.get('totals', {})})
+        else:
+            result_json({"success": True, "messages": {}, "totals": {}})
+    except Exception as e:
+        error_json(str(e))
 else:
     error_json(f"Unknown action: {ACTION}")
 
