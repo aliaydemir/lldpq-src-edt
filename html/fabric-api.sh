@@ -6075,14 +6075,12 @@ PYTHON_END
         fi
         ;;
     run-transceiver-scan)
-        echo "Content-Type: application/json"
-        echo ""
         source /etc/lldpq.conf 2>/dev/null || true
         LLDPQ_DIR="${LLDPQ_DIR:-$HOME/lldpq}"
         LLDPQ_USER="${LLDPQ_USER:-$(whoami)}"
-        cd "$LLDPQ_DIR" 2>/dev/null || cd "$(dirname "$0")/../lldpq" 2>/dev/null
-        sudo -u "$LLDPQ_USER" bash collect-transceiver-fw.sh > /tmp/transceiver-scan.log 2>&1 &
-        echo '{"success": true, "message": "Scan started in background. Refresh page in 1-2 minutes."}'
+        # Trigger via lldpq-trigger mechanism (runs as LLDPQ_USER via cron)
+        touch /tmp/.transceiver_scan_trigger
+        echo '{"success": true, "message": "Scan triggered. Results will update in 1-2 minutes."}'
         exit 0
         ;;
     *)
