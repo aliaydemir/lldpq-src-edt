@@ -218,11 +218,11 @@ def build_fabric_summary():
             recent = logs.get('recent_messages', {})
             if recent:
                 log_lines = []
-                for dev in sorted(recent.keys())[:15]:
-                    for msg in recent[dev]:
+                for dev in sorted(recent.keys())[:5]:
+                    for msg in recent[dev][:2]:
                         log_lines.append(f"  {dev}: {msg}")
                 if log_lines:
-                    summary.append("RECENT CRITICAL/ERROR LOG MESSAGES:\n" + "\n".join(log_lines[:50]))
+                    summary.append("LOG SAMPLES (top 5 devices, use Attach Logs button for full detail):\n" + "\n".join(log_lines))
     except Exception:
         pass
     
