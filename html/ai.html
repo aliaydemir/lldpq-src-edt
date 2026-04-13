@@ -646,9 +646,9 @@ async function sendMessage() {
         abtn.style.borderColor = '#555';
     }
     
-    // Add user message (show original, not with logs)
+    // Add user message (show original, send with logs)
     addMessage('user', message);
-    chatHistory.push({ role: 'user', content: finalMessage });
+    chatHistory.push({ role: 'user', content: message });
     saveChatToStorage();
     input.value = '';
     autoResize(input);
