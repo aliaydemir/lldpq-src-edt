@@ -740,6 +740,7 @@ const PROMPT_CATEGORIES = [
             { chip: 'Morning health check', full: 'Give me a morning health check — summarize all issues, BGP status, LLDP problems, and any devices that need attention. Rate severity.' },
             { chip: 'Unreachable devices', full: 'Show all unreachable devices. Are they expected to be down or is this a problem?' },
             { chip: 'Recent reboots', full: 'Any devices with very short uptime (recently rebooted)? What might have caused it?' },
+            { chip: 'Firmware versions', full: 'List all firmware versions across devices. Are all devices on the same version? Report any inconsistencies.' },
         ]
     },
     {
@@ -756,6 +757,15 @@ const PROMPT_CATEGORIES = [
             { chip: 'LLDP problems', full: 'List all LLDP problems (Fail status). What do these failures mean?' },
             { chip: 'Link flaps', full: 'Which devices have link flaps? How many carrier transitions? Suggest troubleshooting steps.' },
             { chip: 'Bond failures', full: 'Any bonds with missing or down members? This indicates partial LAG failure.' },
+            { chip: 'Optical health', full: 'Any optical transceivers with warnings or critical DOM values (RX/TX power, temperature)? List affected ports.' },
+            { chip: 'Hardware alerts', full: 'Any hardware issues — high temperature, fan failures, PSU problems? List affected devices with sensor values.' },
+        ]
+    },
+    {
+        label: 'Logs',
+        prompts: [
+            { chip: 'Critical logs', full: 'Analyze all critical logs — group by category (BGP, hardware, software, kernel) and suggest remediation for each group.' },
+            { chip: 'Recent errors', full: 'What errors occurred in the last monitoring cycle? Summarize by device and error type.' },
         ]
     },
     {
@@ -778,6 +788,7 @@ const PROMPT_CATEGORIES = [
         prompts: [
             { chip: 'Single points of failure', full: 'Are there any single points of failure in this fabric? What would happen if a spine went down?' },
             { chip: 'Compare spines', full: 'Compare all spine devices — do they have the same number of BGP sessions and LLDP neighbors? Asymmetry indicates problems.' },
+            { chip: 'Capacity planning', full: 'Based on current device counts, link utilization, and topology, which links or devices are nearing capacity? Any bottlenecks?' },
         ]
     }
 ];
