@@ -630,10 +630,13 @@ async function sendMessage() {
                 let logText = '[ATTACHED: Fabric Log Messages]\n';
                 const totals = logData.totals || {};
                 logText += `Totals: ${totals.critical || 0} critical, ${totals.error || 0} error, ${totals.warning || 0} warning\n\n`;
+                let lineCount = 0;
                 for (const [dev, msgs] of Object.entries(logData.messages).sort()) {
                     for (const msg of msgs) {
                         logText += `${dev}: ${msg}\n`;
+                        if (++lineCount >= 200) break;
                     }
+                    if (lineCount >= 200) break;
                 }
                 logText += '[END ATTACHED LOGS]\n\n';
                 finalMessage = logText + message;

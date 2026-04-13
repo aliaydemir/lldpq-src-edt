@@ -1108,10 +1108,12 @@ class LogAnalyzer:
         recent_messages = {}
         for device, categories in self.log_analysis.items():
             msgs = []
-            for msg in categories.get("critical", [])[-20:]:
-                msgs.append(f"[CRITICAL] {msg}")
-            for msg in categories.get("error", [])[-10:]:
-                msgs.append(f"[ERROR] {msg}")
+            for entry in categories.get("critical", [])[-20:]:
+                text = entry.get('message', str(entry)) if isinstance(entry, dict) else str(entry)
+                msgs.append(f"[CRITICAL] {text[:200]}")
+            for entry in categories.get("error", [])[-10:]:
+                text = entry.get('message', str(entry)) if isinstance(entry, dict) else str(entry)
+                msgs.append(f"[ERROR] {text[:200]}")
             if msgs:
                 recent_messages[device] = msgs
         
