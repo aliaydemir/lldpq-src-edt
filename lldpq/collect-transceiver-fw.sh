@@ -64,4 +64,6 @@ wait
 
 echo "Processing inventory..."
 python3 process_transceiver_data.py 2>/dev/null
+chown "$(whoami):www-data" monitor-results/transceiver_inventory.json 2>/dev/null
+chmod 664 monitor-results/transceiver_inventory.json 2>/dev/null
 echo "Done"
