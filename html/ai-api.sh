@@ -195,7 +195,7 @@ def build_fabric_summary():
     except Exception:
         pass
     
-    # 5. Log summary
+    # 5. Log summary (totals + per-device critical breakdown)
     try:
         log_file = os.path.join(LLDPQ_DIR, 'monitor-results', 'log_summary.json')
         if os.path.exists(log_file):
@@ -206,6 +206,13 @@ def build_fabric_summary():
             warnings = sum(d.get('warning', 0) for d in logs.values() if isinstance(d, dict))
             if critical or errors or warnings:
                 summary.append(f"LOGS: {critical} critical, {errors} errors, {warnings} warnings across all devices")
+            if critical > 0:
+                crit_devices = []
+                for dev, counts in sorted(logs.items()):
+                    if isinstance(counts, dict) and counts.get('critical', 0) > 0:
+                        crit_devices.append(f"  {dev}: {counts['critical']} critical")
+                if crit_devices:
+                    summary.append("CRITICAL LOG DEVICES:\n" + "\n".join(crit_devices[:20]))
     except Exception:
         pass
     
