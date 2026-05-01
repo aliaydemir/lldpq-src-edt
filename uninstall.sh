@@ -6,7 +6,8 @@
 #   ./uninstall.sh -y         # auto-yes
 #   ./uninstall.sh --dry-run  # show what would be removed, do nothing
 #   ./uninstall.sh --keep-data  # keep monitor-results/lldp-results/devices.yaml
-#   ./uninstall.sh --keep-docker # do not remove docker packages even if we installed them
+#   ./uninstall.sh --remove-docker # also remove Docker packages and data
+#   ./uninstall.sh --remove-dhcp   # also remove isc-dhcp-server package/config
 #
 # What it removes:
 #   - LLDPq cron entries (/etc/crontab + /etc/cron.d/lldpq)
@@ -252,9 +253,7 @@ if $REMOVE_DHCP; then
     for f in /etc/dhcp/dhcpd.conf /etc/dhcp/dhcpd.hosts /etc/default/isc-dhcp-server /var/lib/dhcp/dhcpd.leases; do
         [[ -e "$f" ]] && run "sudo rm -f '$f'" && echo "  removed $f"
     done
-    if $REMOVE_DOCKER_PKG; then
-        run "sudo apt-get remove -y --purge isc-dhcp-server >/dev/null 2>&1 || true"
-    fi
+    run "sudo apt-get remove -y --purge isc-dhcp-server >/dev/null 2>&1 || true"
 else
     echo "  --remove-dhcp not set, leaving DHCP service config alone"
 fi

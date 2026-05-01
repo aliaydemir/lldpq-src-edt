@@ -32,8 +32,11 @@ _guard_deny() {
 _guard_load_session() {
     [[ -n "$LLDPQ_AUTH_ROLE" ]] && return 0
     local token=$(_guard_get_cookie)
+    if [[ ! "$token" =~ ^[A-Fa-f0-9]{64}$ ]]; then
+        _guard_deny 401 "Not authenticated"
+    fi
     local f="$LLDPQ_GUARD_SESSIONS_DIR/$token"
-    if [[ -z "$token" ]] || [[ ! -f "$f" ]]; then
+    if [[ ! -f "$f" ]]; then
         _guard_deny 401 "Not authenticated"
     fi
     local expiry=$(head -1 "$f" 2>/dev/null)
