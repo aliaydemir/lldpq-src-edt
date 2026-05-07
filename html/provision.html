@@ -3356,8 +3356,8 @@ function applyQuickSettings() {
         if (pw) content = content.replace(/echo\s+'cumulus:.+?'\s*\|\s*chpasswd/, `echo 'cumulus:${pw}' | chpasswd`);
         if (ip) content = content.replace(/IMAGE_SERVER_HOSTNAME=\S+/, `IMAGE_SERVER_HOSTNAME=${ip}`);
         if (key) {
-            if (/^KEY=.*$/m.test(content)) {
-                content = content.replace(/^KEY=.*$/m, `KEY="${key}"`);
+            if (/^\s*KEY=.*$/m.test(content)) {
+                content = content.replace(/^(\s*)KEY=.*$/m, `$1KEY="${key}"`);
             } else {
                 content = content.replace(/(# Copy SSH keys\s*)/m, `$1\n    KEY="${key}"\n`);
             }
