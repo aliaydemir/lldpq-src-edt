@@ -1,14 +1,11 @@
 #!/bin/bash
 #
 # CUMULUS-AUTOPROVISIONING
-# LLDPq upgrade ZTP helper
+# LLDPq upgrade ZTP helper template
 #
-# Used only for in-place OS upgrades where onie-install is called with:
-#   -t /etc/nvue.d/startup.yaml
-#
-# Do not resolve serial mappings or fetch generated configs here. The running
-# switch passes its saved startup.yaml directly to onie-install.
+# LLDPq rewrites this file with the current ZTP password and SSH public key
+# immediately before an upgrade job starts.
 
-echo "LLDPq upgrade ZTP helper running"
+echo "LLDPq upgrade ZTP helper template: not generated yet"
 ztp -d 2>/dev/null || true
 exit 0
