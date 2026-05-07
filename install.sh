@@ -1117,6 +1117,10 @@ ZTPEOF
 fi
 sudo chown "$LLDPQ_USER:www-data" "$WEB_ROOT/cumulus-ztp.sh"
 sudo chmod 775 "$WEB_ROOT/cumulus-ztp.sh"
+if [[ -f "$WEB_ROOT/cumulus-upgrade-ztp.sh" ]]; then
+    sudo chown "$LLDPQ_USER:www-data" "$WEB_ROOT/cumulus-upgrade-ztp.sh"
+    sudo chmod 775 "$WEB_ROOT/cumulus-upgrade-ztp.sh"
+fi
 echo "  DHCP/Provision directories ready"
 
 # ============================================================================
@@ -1124,11 +1128,13 @@ echo "  DHCP/Provision directories ready"
 # ============================================================================
 step "Setting up authentication..."
 
-sudo mkdir -p /var/lib/lldpq/sessions
+sudo mkdir -p /var/lib/lldpq/sessions /var/lib/lldpq/upgrade-jobs
 sudo chown www-data:www-data /var/lib/lldpq
 sudo chown www-data:www-data /var/lib/lldpq/sessions
+sudo chown "$LLDPQ_USER:www-data" /var/lib/lldpq/upgrade-jobs
 sudo chmod 755 /var/lib/lldpq
 sudo chmod 700 /var/lib/lldpq/sessions
+sudo chmod 775 /var/lib/lldpq/upgrade-jobs
 echo "  Sessions directory configured"
 
 if [[ "$INSTALL_MODE" == "fresh" ]] || [[ ! -f /etc/lldpq-users.conf ]]; then

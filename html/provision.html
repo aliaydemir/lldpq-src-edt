@@ -764,6 +764,7 @@
     <button class="tab-btn" data-tab="bindings">Inventory</button>
     <button class="tab-btn" data-tab="dhcpd">DHCP Server</button>
     <button class="tab-btn" data-tab="ztp-script">ZTP</button>
+    <button class="tab-btn" data-tab="upgrade">Upgrade</button>
     <button class="tab-btn" data-tab="base-config">Base Config</button>
     <button class="tab-btn" data-tab="guide" style="margin-left:auto; color:#555;">Guide</button>
 </div>
@@ -1077,7 +1078,8 @@
     <!-- OS Image Upload Section -->
     <div style="margin-bottom: 20px; padding: 15px; background: #1e1e1e; border-radius: 6px; border: 1px solid #3c3c3c;">
         <div class="section-title" style="font-size: 14px; margin-bottom: 5px;">OS Image</div>
-        <div class="section-desc" style="margin-bottom: 10px;">Cumulus Linux image served via HTTP for ZTP OS upgrades.</div>
+        <div class="section-desc" style="margin-bottom: 10px;">Cumulus Linux images served via HTTP. Uploading an image does not make it active until you choose <strong>Use for ZTP</strong>.</div>
+        <div id="activeZtpTarget" style="margin-bottom: 8px; font-size: 12px; color: #888;">Active ZTP Target: checking...</div>
         <div id="imageList" style="margin-bottom: 10px;"><span style="color:#888;">Checking...</span></div>
         <div style="display: flex; gap: 10px; align-items: center;">
             <label class="btn btn-secondary btn-sm" style="cursor: pointer;">
@@ -1176,6 +1178,67 @@
             </div>
         </div>
         <textarea class="editor-textarea" id="ztpEditor" spellcheck="false" style="display: none;"></textarea>
+    </div>
+</div>
+
+<!-- ==================== TAB 5: UPGRADE ==================== -->
+<div class="tab-content" id="tab-upgrade">
+    <div class="section-desc">Upgrade already-running switches to a newer Cumulus image. ZTP is for new devices; this tab preserves each switch's local <code>/etc/nvue.d/startup.yaml</code> during OS upgrade.</div>
+
+    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 15px; padding: 15px; background:#1e1e1e; border:1px solid #3c3c3c; border-radius:6px;">
+        <div>
+            <label style="font-size:11px;color:#888;display:block;margin-bottom:4px;">TARGET IMAGE</label>
+            <select class="form-input" id="upgradeImage" onchange="onUpgradeImageChange()" style="width:100%;"></select>
+        </div>
+        <div>
+            <label style="font-size:11px;color:#888;display:block;margin-bottom:4px;">TARGET VERSION</label>
+            <input type="text" class="form-input" id="upgradeTargetVersion" style="width:100%;" placeholder="e.g. 5.16.1">
+        </div>
+        <div>
+            <label style="font-size:11px;color:#888;display:block;margin-bottom:4px;">IMAGE SERVER IP</label>
+            <input type="text" class="form-input input-ip" id="upgradeServerIP" style="width:100%;" placeholder="e.g. 192.168.100.200">
+        </div>
+        <div>
+            <label style="font-size:11px;color:#888;display:block;margin-bottom:4px;">BATCH SIZE</label>
+            <input type="number" class="form-input" id="upgradeBatchSize" min="1" max="10" value="1" style="width:100%;">
+        </div>
+    </div>
+
+    <div style="display:flex; gap:10px; align-items:center; margin-bottom: 12px; flex-wrap:wrap;">
+        <button class="btn btn-secondary btn-sm" onclick="loadUpgradeCandidates()">Refresh Candidates</button>
+        <button class="btn btn-secondary btn-sm" onclick="upgradeSelectAll(true)">Select All Candidates</button>
+        <button class="btn btn-secondary btn-sm" onclick="upgradeSelectAll(false)">None</button>
+        <button class="btn btn-primary btn-sm" onclick="runUpgradePrecheck()">Precheck Selected</button>
+        <button class="btn btn-warning btn-sm" onclick="startUpgradeJob()" id="btnStartUpgrade">Start Upgrade</button>
+        <button class="btn btn-danger btn-sm" onclick="cancelUpgradeJob()" id="btnCancelUpgrade" style="display:none;">Cancel Queue</button>
+        <label style="font-size:12px;color:#888;display:flex;gap:6px;align-items:center;">
+            <input type="checkbox" id="upgradeBaseAfter" checked style="accent-color:#76b900;"> Deploy Base Config after version verifies
+        </label>
+        <label style="font-size:12px;color:#888;display:flex;gap:6px;align-items:center;">
+            <input type="checkbox" id="upgradeStopOnFailure" checked style="accent-color:#76b900;"> Stop queue on first failure
+        </label>
+        <span id="upgradeStatusText" style="font-size:12px;color:#888;margin-left:auto;"></span>
+    </div>
+
+    <div class="table-wrapper" style="max-height: calc(100vh - 330px);">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th style="width:36px;"><input type="checkbox" id="upgradeSelectAllBox" onchange="upgradeSelectAll(this.checked)" style="accent-color:#76b900;"></th>
+                    <th>Hostname</th>
+                    <th>IP</th>
+                    <th>Role</th>
+                    <th>Current</th>
+                    <th>Target</th>
+                    <th>Startup</th>
+                    <th>Status</th>
+                    <th>Details</th>
+                </tr>
+            </thead>
+            <tbody id="upgradeBody">
+                <tr><td colspan="9" class="loading">Click Refresh Candidates to load devices...</td></tr>
+            </tbody>
+        </table>
     </div>
 </div>
 
@@ -1386,6 +1449,7 @@ function onTabSwitch(tab) {
         if (generatedConfigs.length === 0) apiCall('list-generated-configs').then(d => { if (d.success) { generatedConfigs = d.configs || []; renderBindings(); } });
     }
     if (tab === 'ztp-script') loadZTPScript();
+    if (tab === 'upgrade') loadUpgradeCandidates();
 }
 
 function setDiscoveredFilter(status) {
@@ -2990,6 +3054,63 @@ async function syncGeneratedConfigs() {
     }
 }
 
+function imageVersionFromName(name) {
+    const m = (name || '').match(/cumulus-linux-([0-9][A-Za-z0-9._-]*?)-/);
+    return m ? m[1] : '';
+}
+
+function normalizeImageSize(img) {
+    if (typeof img.size === 'number') return (img.size / 1048576).toFixed(0) + ' MB';
+    if (img.size_bytes) return (img.size_bytes / 1048576).toFixed(0) + ' MB';
+    return img.size || '';
+}
+
+function renderOSImages(images) {
+    const container = document.getElementById('imageList');
+    const activeTarget = (document.getElementById('ztpTargetOS').value || '').trim();
+    document.getElementById('activeZtpTarget').innerHTML = activeTarget
+        ? `Active ZTP Target: <span style="color:#76b900;font-family:monospace;">${escHtml(activeTarget)}</span>`
+        : 'Active ZTP Target: <span style="color:#ff9800;">not set</span>';
+
+    if (!images || images.length === 0) {
+        container.innerHTML = '<span style="color:#888;">No OS images found in web root. Upload a .bin image for ZTP.</span>';
+        return;
+    }
+
+    container.innerHTML = images.map(img => {
+        const version = img.version || imageVersionFromName(img.name);
+        const active = version && version === activeTarget;
+        return `
+            <div style="display:flex; align-items:center; gap:10px; padding:6px 10px; background:${active ? '#1a2e00' : '#252526'}; border:1px solid ${active ? '#76b900' : '#2d2d2d'}; border-radius:4px; margin-bottom:4px;">
+                <svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:#76b900;flex-shrink:0;"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/></svg>
+                <span style="flex:1;font-family:monospace;font-size:12px;">${escHtml(img.name)}</span>
+                ${active ? '<span class="badge badge-success">Active ZTP</span>' : ''}
+                <span style="color:#888;font-size:11px;">${escHtml(normalizeImageSize(img))}</span>
+                ${version ? `<button class="btn btn-primary btn-sm" onclick="useImageForZTP('${escAttr(img.name)}')" style="padding:2px 8px;font-size:11px;">Use for ZTP</button>` : ''}
+                <button class="btn btn-danger btn-sm" onclick="deleteOSImage('${escAttr(img.name)}')" style="padding:2px 8px;font-size:11px;">Del</button>
+            </div>`;
+    }).join('');
+}
+
+async function useImageForZTP(name) {
+    const version = imageVersionFromName(name);
+    if (!version) { showToast('Cannot detect version from image name', 'error'); return; }
+    if (!ztpLoaded) await loadZTPScript();
+    showConfirmModal('Use Image for ZTP',
+        `Set ZTP target version to <strong>${escHtml(version)}</strong> and save <code>cumulus-ztp.sh</code>?<br><br>Image: <code>${escHtml(name)}</code>`,
+        async () => {
+            document.getElementById('ztpTargetOS').value = version;
+            applyQuickSettings();
+            const ok = await saveZTPScript();
+            if (ok) {
+                showToast(`ZTP now targets ${version}`, 'success');
+                loadOSImages();
+            }
+        },
+        'Use for ZTP'
+    );
+}
+
 async function loadZTPScript() {
     const editor = document.getElementById('ztpEditor');
     editor.value = '# Loading...';
@@ -3023,21 +3144,7 @@ async function loadZTPScript() {
 
     // OS images
     if (data.os_images && data.os_images.success) {
-        const images = data.os_images.images || [];
-        const container = document.getElementById('imageList');
-        if (images.length > 0) {
-            container.innerHTML = images.map(img => `
-                <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 10px; background:#252526; border-radius:4px; margin-bottom:4px;">
-                    <span style="font-family:'Cascadia Code','Consolas',monospace; font-size:12px;">&#128196; ${escHtml(img.name)}</span>
-                    <span style="color:#888; font-size:11px; display:flex; align-items:center; gap:10px;">
-                        ${(img.size / 1048576).toFixed(0)} MB
-                        <button class="btn btn-danger btn-sm" onclick="deleteOSImage('${escAttr(img.name)}')" style="padding:2px 8px;font-size:11px;">Del</button>
-                    </span>
-                </div>
-            `).join('');
-        } else {
-            container.innerHTML = '<span style="color:#888;">No OS images found in web root. Upload a .bin image for ZTP.</span>';
-        }
+        renderOSImages(data.os_images.images || []);
     }
 
     // Serial mapping + generated configs (cross-dependent)
@@ -3139,14 +3246,7 @@ async function loadOSImages() {
     const container = document.getElementById('imageList');
     const data = await apiCall('list-os-images');
     if (data.success && data.images && data.images.length > 0) {
-        container.innerHTML = data.images.map(img => `
-            <div style="display:flex; align-items:center; gap:10px; padding:6px 0; border-bottom:1px solid #2d2d2d;">
-                <svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:#76b900;flex-shrink:0;"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/></svg>
-                <span style="flex:1;font-family:monospace;font-size:13px;">${escHtml(img.name)}</span>
-                <span style="color:#888;font-size:12px;">${escHtml(img.size)}</span>
-                <button class="btn btn-danger btn-sm" onclick="deleteOSImage('${escAttr(img.name)}')" style="padding:2px 8px;font-size:11px;">Del</button>
-            </div>
-        `).join('');
+        renderOSImages(data.images);
     } else {
         container.innerHTML = '<span style="color:#888;">No OS images found in web root. Upload a .bin image for ZTP.</span>';
     }
@@ -3392,12 +3492,203 @@ async function saveZTPScript() {
     const data = await apiCall('save-ztp-script', { content });
     if (data.success) {
         showToast('ZTP script saved', 'success');
+        return true;
     } else {
         showToast('Save failed: ' + (data.error || 'Unknown error'), 'error');
+        return false;
     }
 }
 
-// ===================== TAB 5: BASE CONFIG =====================
+// ===================== TAB 5: UPGRADE =====================
+let upgradeDevices = [];
+let upgradeImages = [];
+let upgradeJobId = null;
+let upgradePollTimer = null;
+
+function rowIdFromIp(ip) {
+    return String(ip || '').replace(/[^a-zA-Z0-9_-]/g, '-');
+}
+
+function renderUpgradeImages() {
+    const sel = document.getElementById('upgradeImage');
+    if (!sel) return;
+    if (!upgradeImages.length) {
+        sel.innerHTML = '<option value="">No images uploaded</option>';
+        return;
+    }
+    sel.innerHTML = upgradeImages.map(img => {
+        const version = img.version || imageVersionFromName(img.name);
+        return `<option value="${escAttr(img.name)}" data-version="${escAttr(version)}">${escHtml(img.name)}${version ? ` (${escHtml(version)})` : ''}</option>`;
+    }).join('');
+    onUpgradeImageChange();
+}
+
+function onUpgradeImageChange() {
+    const sel = document.getElementById('upgradeImage');
+    if (!sel || !sel.value) return;
+    const version = sel.selectedOptions[0].dataset.version || imageVersionFromName(sel.value);
+    if (version) document.getElementById('upgradeTargetVersion').value = version;
+    const ztpServer = document.getElementById('ztpImageServer') ? document.getElementById('ztpImageServer').value.trim() : '';
+    if (ztpServer && !document.getElementById('upgradeServerIP').value.trim()) {
+        document.getElementById('upgradeServerIP').value = ztpServer;
+    }
+}
+
+async function loadUpgradeCandidates() {
+    const body = document.getElementById('upgradeBody');
+    body.innerHTML = '<tr><td colspan="9" class="loading">Loading candidates...</td></tr>';
+    const data = await apiCall('upgrade-candidates');
+    if (!data.success) {
+        body.innerHTML = `<tr><td colspan="9" style="color:#f44336;text-align:center;padding:20px;">${escHtml(data.error || 'Failed to load')}</td></tr>`;
+        return;
+    }
+    upgradeImages = data.images || [];
+    upgradeDevices = data.devices || [];
+    renderUpgradeImages();
+    renderUpgradeTable();
+}
+
+function selectedUpgradeDevices() {
+    return Array.from(document.querySelectorAll('.upgrade-dev-cb:checked')).map(cb => {
+        const idx = parseInt(cb.dataset.index, 10);
+        return upgradeDevices[idx];
+    }).filter(Boolean);
+}
+
+function upgradeSelectAll(checked) {
+    document.querySelectorAll('.upgrade-dev-cb').forEach(cb => {
+        if (!cb.disabled) cb.checked = checked;
+    });
+    const all = document.getElementById('upgradeSelectAllBox');
+    if (all) all.checked = checked;
+}
+
+function renderUpgradeTable(job = null) {
+    const body = document.getElementById('upgradeBody');
+    const target = document.getElementById('upgradeTargetVersion').value.trim();
+    const jobByIp = new Map((job && job.devices ? job.devices : []).map(d => [d.ip, d]));
+    if (!upgradeDevices.length) {
+        body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#666;padding:20px;">No devices found</td></tr>';
+        return;
+    }
+    body.innerHTML = upgradeDevices.map((d, i) => {
+        const jd = jobByIp.get(d.ip);
+        const merged = Object.assign({}, d, jd || {});
+        const current = merged.current_version || '';
+        const already = target && current === target;
+        const candidate = merged.reachable && !already;
+        const status = merged.status || (already ? 'already' : (merged.reachable ? 'candidate' : 'unreachable'));
+        const badgeClass = status === 'done' ? 'badge-success' : status === 'failed' ? 'badge-error' : status === 'already' ? 'badge-info' : status === 'queued' ? 'badge-pending' : status === 'upgrading' || status === 'waiting_reboot' ? 'badge-warning' : candidate ? 'badge-match' : 'badge-unreachable';
+        const detail = merged.error || merged.message || (merged.checks ? merged.checks.join('; ') : '');
+        return `<tr id="upgrade-${rowIdFromIp(d.ip)}">
+            <td><input type="checkbox" class="upgrade-dev-cb" data-index="${i}" ${candidate ? '' : 'disabled'} style="accent-color:#76b900;"></td>
+            <td><strong>${escHtml(d.hostname)}</strong></td>
+            <td style="font-family:monospace;font-size:12px;">${escHtml(d.ip)}</td>
+            <td>${escHtml(d.role || '')}</td>
+            <td style="font-family:monospace;">${escHtml(current || '-')}</td>
+            <td style="font-family:monospace;">${escHtml(target || '-')}</td>
+            <td>${merged.startup_config ? '<span style="color:#76b900;">OK</span>' : '<span style="color:#f44336;">Missing</span>'}</td>
+            <td><span class="badge ${badgeClass}">${escHtml(status)}</span></td>
+            <td style="color:#888;">${escHtml(detail)}</td>
+        </tr>`;
+    }).join('');
+}
+
+async function runUpgradePrecheck() {
+    const devices = selectedUpgradeDevices();
+    const payload = getUpgradePayload(devices);
+    if (!payload) return;
+    document.getElementById('upgradeStatusText').textContent = `Prechecking ${devices.length} device(s)...`;
+    const data = await apiCall('upgrade-precheck', payload);
+    if (!data.success) { showToast('Precheck failed: ' + (data.error || ''), 'error'); return; }
+    const byIp = new Map((data.results || []).map(r => [r.ip, r]));
+    upgradeDevices = upgradeDevices.map(d => byIp.get(d.ip) ? Object.assign({}, d, byIp.get(d.ip)) : d);
+    renderUpgradeTable();
+    const ok = (data.results || []).filter(r => r.precheck_ok).length;
+    document.getElementById('upgradeStatusText').textContent = `Precheck: ${ok}/${data.results.length} OK`;
+    showToast(`Precheck: ${ok}/${data.results.length} OK`, ok === data.results.length ? 'success' : 'error');
+}
+
+function getUpgradePayload(devices) {
+    const imageName = document.getElementById('upgradeImage').value;
+    const targetVersion = document.getElementById('upgradeTargetVersion').value.trim();
+    const serverIp = document.getElementById('upgradeServerIP').value.trim();
+    if (!devices.length) { showToast('Select at least one upgrade candidate', 'error'); return null; }
+    if (!imageName || !targetVersion || !serverIp) { showToast('Target image, version and image server IP are required', 'error'); return null; }
+    return {
+        devices,
+        image_name: imageName,
+        target_version: targetVersion,
+        server_ip: serverIp,
+        batch_size: parseInt(document.getElementById('upgradeBatchSize').value) || 1,
+        base_config_after: document.getElementById('upgradeBaseAfter').checked,
+        stop_on_failure: document.getElementById('upgradeStopOnFailure').checked
+    };
+}
+
+function startUpgradeJob() {
+    const devices = selectedUpgradeDevices();
+    const payload = getUpgradePayload(devices);
+    if (!payload) return;
+    showConfirmModal('Start OS Upgrade',
+        `Start upgrade for <strong>${devices.length}</strong> device(s)?<br><br>` +
+        `Image: <code>${escHtml(payload.image_name)}</code><br>` +
+        `Command uses <code>-t /etc/nvue.d/startup.yaml</code> on each switch and will reboot upgraded devices.`,
+        async () => {
+            document.getElementById('btnStartUpgrade').disabled = true;
+            const data = await apiCall('upgrade-start', payload);
+            if (!data.success) {
+                showToast('Upgrade start failed: ' + (data.error || ''), 'error');
+                document.getElementById('btnStartUpgrade').disabled = false;
+                return;
+            }
+            upgradeJobId = data.job.id;
+            document.getElementById('btnCancelUpgrade').style.display = '';
+            renderUpgradeJob(data.job);
+            pollUpgradeStatus();
+        },
+        'Start Upgrade'
+    );
+}
+
+function renderUpgradeJob(job) {
+    const byIp = new Map((job.devices || []).map(d => [d.ip, d]));
+    upgradeDevices = upgradeDevices.map(d => byIp.get(d.ip) ? Object.assign({}, d, byIp.get(d.ip)) : d);
+    renderUpgradeTable(job);
+    const done = job.devices.filter(d => d.status === 'done').length;
+    const failed = job.devices.filter(d => d.status === 'failed').length;
+    const active = job.devices.filter(d => ['upgrading', 'waiting_reboot'].includes(d.status)).length;
+    document.getElementById('upgradeStatusText').textContent = `Job ${job.id.slice(0, 8)}: ${done} done, ${failed} failed, ${active} active`;
+    if (job.complete) {
+        clearInterval(upgradePollTimer);
+        upgradePollTimer = null;
+        document.getElementById('btnStartUpgrade').disabled = false;
+        document.getElementById('btnCancelUpgrade').style.display = 'none';
+        showToast(`Upgrade complete: ${done} done, ${failed} failed`, failed ? 'error' : 'success');
+    }
+}
+
+async function pollUpgradeStatus() {
+    if (!upgradeJobId) return;
+    if (upgradePollTimer) clearInterval(upgradePollTimer);
+    const poll = async () => {
+        const data = await apiCall('upgrade-status', { job_id: upgradeJobId });
+        if (data.success) renderUpgradeJob(data.job);
+    };
+    await poll();
+    upgradePollTimer = setInterval(poll, 15000);
+}
+
+async function cancelUpgradeJob() {
+    if (!upgradeJobId) return;
+    const data = await apiCall('upgrade-cancel', { job_id: upgradeJobId });
+    if (data.success) {
+        renderUpgradeJob(data.job);
+        showToast('Queued devices cancelled', 'info');
+    }
+}
+
+// ===================== TAB 6: BASE CONFIG =====================
 let bcDeviceGroups = {};
 
 async function loadDeviceList() {
