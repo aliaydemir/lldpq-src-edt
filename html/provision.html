@@ -1192,7 +1192,7 @@
         </div>
         <div>
             <label style="font-size:11px;color:#888;display:block;margin-bottom:4px;">TARGET VERSION</label>
-            <input type="text" class="form-input" id="upgradeTargetVersion" style="width:100%;" placeholder="e.g. 5.16.1">
+            <input type="text" class="form-input" id="upgradeTargetVersion" oninput="renderUpgradeTable()" style="width:100%;" placeholder="e.g. 5.16.1">
         </div>
         <div>
             <label style="font-size:11px;color:#888;display:block;margin-bottom:4px;">IMAGE SERVER IP</label>
@@ -3532,6 +3532,7 @@ function onUpgradeImageChange() {
     if (ztpServer && !document.getElementById('upgradeServerIP').value.trim()) {
         document.getElementById('upgradeServerIP').value = ztpServer;
     }
+    renderUpgradeTable();
 }
 
 async function loadUpgradeCandidates() {
@@ -3563,6 +3564,12 @@ function upgradeSelectAll(checked) {
     if (all) all.checked = checked;
 }
 
+function toggleUpgradeRow(index) {
+    const cb = document.querySelector(`.upgrade-dev-cb[data-index="${index}"]`);
+    if (!cb || cb.disabled) return;
+    cb.checked = !cb.checked;
+}
+
 function renderUpgradeTable(job = null) {
     const body = document.getElementById('upgradeBody');
     const target = document.getElementById('upgradeTargetVersion').value.trim();
@@ -3579,9 +3586,9 @@ function renderUpgradeTable(job = null) {
         const candidate = merged.reachable && !already;
         const status = merged.status || (already ? 'already' : (merged.reachable ? 'candidate' : 'unreachable'));
         const badgeClass = status === 'done' ? 'badge-success' : status === 'failed' ? 'badge-error' : status === 'already' ? 'badge-info' : status === 'queued' ? 'badge-pending' : status === 'upgrading' || status === 'waiting_reboot' ? 'badge-warning' : candidate ? 'badge-match' : 'badge-unreachable';
-        const detail = merged.error || merged.message || (merged.checks ? merged.checks.join('; ') : '');
-        return `<tr id="upgrade-${rowIdFromIp(d.ip)}">
-            <td><input type="checkbox" class="upgrade-dev-cb" data-index="${i}" ${candidate ? '' : 'disabled'} style="accent-color:#76b900;"></td>
+        const detail = merged.error || merged.message || (merged.checks ? merged.checks.join('; ') : '') || (already ? 'Already at selected target version' : '');
+        return `<tr id="upgrade-${rowIdFromIp(d.ip)}" onclick="toggleUpgradeRow(${i})" style="${candidate ? 'cursor:pointer;' : 'opacity:0.75;'}">
+            <td><input type="checkbox" class="upgrade-dev-cb" data-index="${i}" ${candidate ? '' : 'disabled'} onclick="event.stopPropagation();" style="accent-color:#76b900;"></td>
             <td><strong>${escHtml(d.hostname)}</strong></td>
             <td style="font-family:monospace;font-size:12px;">${escHtml(d.ip)}</td>
             <td>${escHtml(d.role || '')}</td>
