@@ -1069,7 +1069,7 @@
             </div>
             <div>
                 <label style="font-size: 11px; color: #888; display: block; margin-bottom: 4px;">IMAGE SERVER IP</label>
-                <input type="text" class="form-input input-ip" id="ztpImageServer" style="width: 100%;" placeholder="e.g. 192.168.100.200">
+                <input type="text" class="form-input input-ip" id="ztpImageServer" oninput="syncUpgradeServerIPFromZTP()" style="width: 100%;" placeholder="e.g. 192.168.100.200">
             </div>
         </div>
         <button class="btn btn-secondary btn-sm" style="margin-top: 10px;" onclick="applyQuickSettings()">Apply to Script</button>
@@ -1196,7 +1196,8 @@
         </div>
         <div>
             <label style="font-size:11px;color:#888;display:block;margin-bottom:4px;">IMAGE SERVER IP</label>
-            <input type="text" class="form-input input-ip" id="upgradeServerIP" style="width:100%;" placeholder="e.g. 192.168.100.200">
+            <input type="text" class="form-input input-ip" id="upgradeServerIP" readonly style="width:100%; background:#252526;" placeholder="Uses ZTP Image Server IP">
+            <div id="upgradeServerInfo" style="font-size:11px;color:#666;margin-top:4px;">Uses ZTP Quick Settings IMAGE SERVER IP</div>
         </div>
         <div>
             <label style="font-size:11px;color:#888;display:block;margin-bottom:4px;">BATCH SIZE</label>
@@ -3308,6 +3309,7 @@ function parseQuickSettings(content) {
     if (osMatch) document.getElementById('ztpTargetOS').value = osMatch[1];
     if (pwMatch) document.getElementById('ztpPassword').value = pwMatch[1];
     if (ipMatch) document.getElementById('ztpImageServer').value = ipMatch[1];
+    syncUpgradeServerIPFromZTP();
 }
 
 function escapeBashSingleQuote(s) {
@@ -3528,16 +3530,29 @@ function onUpgradeImageChange() {
     if (!sel || !sel.value) return;
     const version = sel.selectedOptions[0].dataset.version || imageVersionFromName(sel.value);
     if (version) document.getElementById('upgradeTargetVersion').value = version;
-    const ztpServer = document.getElementById('ztpImageServer') ? document.getElementById('ztpImageServer').value.trim() : '';
-    if (ztpServer && !document.getElementById('upgradeServerIP').value.trim()) {
-        document.getElementById('upgradeServerIP').value = ztpServer;
-    }
+    syncUpgradeServerIPFromZTP();
     renderUpgradeTable();
+}
+
+function syncUpgradeServerIPFromZTP() {
+    const source = document.getElementById('ztpImageServer');
+    const target = document.getElementById('upgradeServerIP');
+    const info = document.getElementById('upgradeServerInfo');
+    if (!source || !target) return;
+    const ztpServer = document.getElementById('ztpImageServer') ? document.getElementById('ztpImageServer').value.trim() : '';
+    target.value = ztpServer;
+    if (info) {
+        info.innerHTML = ztpServer
+            ? `Using ZTP image server: <span style="color:#76b900;font-family:monospace;">${escHtml(ztpServer)}</span>`
+            : '<span style="color:#ff9800;">Set IMAGE SERVER IP in the ZTP tab first.</span>';
+    }
 }
 
 async function loadUpgradeCandidates() {
     const body = document.getElementById('upgradeBody');
     body.innerHTML = '<tr><td colspan="9" class="loading">Loading candidates...</td></tr>';
+    if (!ztpLoaded) await loadZTPScript();
+    syncUpgradeServerIPFromZTP();
     const data = await apiCall('upgrade-candidates');
     if (!data.success) {
         body.innerHTML = `<tr><td colspan="9" style="color:#f44336;text-align:center;padding:20px;">${escHtml(data.error || 'Failed to load')}</td></tr>`;
@@ -3621,7 +3636,8 @@ function getUpgradePayload(devices) {
     const targetVersion = document.getElementById('upgradeTargetVersion').value.trim();
     const serverIp = document.getElementById('upgradeServerIP').value.trim();
     if (!devices.length) { showToast('Select at least one upgrade candidate', 'error'); return null; }
-    if (!imageName || !targetVersion || !serverIp) { showToast('Target image, version and image server IP are required', 'error'); return null; }
+    if (!imageName || !targetVersion) { showToast('Target image and version are required', 'error'); return null; }
+    if (!serverIp) { showToast('Set IMAGE SERVER IP in the ZTP tab first', 'error'); return null; }
     return {
         devices,
         image_name: imageName,
