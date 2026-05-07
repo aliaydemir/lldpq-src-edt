@@ -368,6 +368,11 @@ def get_server_ip():
     _server_ip_cache = '127.0.0.1'
     return _server_ip_cache
 
+def is_valid_server_ref(value):
+    if not value or '__' in value or '_' in value:
+        return False
+    return re.match(r'^[A-Za-z0-9.-]+(:[0-9]{1,5})?$', value) is not None
+
 def action_list_bindings():
     """Load inventory from inventory.json (primary) or dhcpd.hosts (fallback).
     inventory.json is the source of truth — it preserves ALL entries including planned (no MAC).
@@ -2082,7 +2087,7 @@ def action_upgrade_candidates():
         for future in as_completed(futures):
             candidates.append(future.result())
     candidates.sort(key=lambda x: x.get('hostname', ''))
-    result_json({'success': True, 'devices': candidates, 'images': list_os_image_objects()})
+    result_json({'success': True, 'devices': candidates, 'images': list_os_image_objects(), 'server_ip': get_server_ip()})
 
 def run_upgrade_precheck(device, target_version, image_name, server_ip):
     info = get_device_version(device)
@@ -2099,7 +2104,7 @@ def run_upgrade_precheck(device, target_version, image_name, server_ip):
         checks.append('startup.yaml missing')
     if not os.path.exists(os.path.join(WEB_ROOT, image_name)):
         checks.append('Image missing on server')
-    if not re.match(r'^[A-Za-z0-9_.:-]+$', server_ip or ''):
+    if not is_valid_server_ref(server_ip):
         checks.append('Invalid image server')
     if not checks:
         try:
@@ -2133,6 +2138,8 @@ def action_upgrade_precheck():
         error_json('devices, target_version, image_name and server_ip are required')
     if not re.match(r'^[A-Za-z0-9_.-]+\.(bin|img|iso)$', image_name):
         error_json('Invalid image filename')
+    if not is_valid_server_ref(server_ip):
+        error_json('Invalid image server. Set a real ZTP IMAGE SERVER IP first.')
     results = []
     with ThreadPoolExecutor(max_workers=10) as executor:
         futures = {executor.submit(run_upgrade_precheck, d, target_version, image_name, server_ip): d for d in devices}
@@ -2266,6 +2273,8 @@ def action_upgrade_start():
         error_json('devices, target_version, image_name and server_ip are required')
     if not re.match(r'^[A-Za-z0-9_.-]+\.(bin|img|iso)$', image_name):
         error_json('Invalid image filename')
+    if not is_valid_server_ref(server_ip):
+        error_json('Invalid image server. Set a real ZTP IMAGE SERVER IP first.')
     if not os.path.exists(os.path.join(WEB_ROOT, image_name)):
         error_json('Selected image not found on server')
     if not os.path.exists(os.path.join(WEB_ROOT, 'cumulus-upgrade-ztp.sh')):

@@ -3506,9 +3506,14 @@ let upgradeDevices = [];
 let upgradeImages = [];
 let upgradeJobId = null;
 let upgradePollTimer = null;
+let upgradeDetectedServerIP = '';
 
 function rowIdFromIp(ip) {
     return String(ip || '').replace(/[^a-zA-Z0-9_-]/g, '-');
+}
+
+function isUsableImageServer(value) {
+    return !!value && !value.includes('__') && !value.includes('_') && /^[A-Za-z0-9.-]+(:[0-9]{1,5})?$/.test(value);
 }
 
 function renderUpgradeImages() {
@@ -3540,10 +3545,11 @@ function syncUpgradeServerIPFromZTP() {
     const info = document.getElementById('upgradeServerInfo');
     if (!source || !target) return;
     const ztpServer = document.getElementById('ztpImageServer') ? document.getElementById('ztpImageServer').value.trim() : '';
-    target.value = ztpServer;
+    const selectedServer = isUsableImageServer(ztpServer) ? ztpServer : (isUsableImageServer(upgradeDetectedServerIP) ? upgradeDetectedServerIP : '');
+    target.value = selectedServer;
     if (info) {
-        info.innerHTML = ztpServer
-            ? `Using ZTP image server: <span style="color:#76b900;font-family:monospace;">${escHtml(ztpServer)}</span>`
+        info.innerHTML = selectedServer
+            ? `Using image server: <span style="color:#76b900;font-family:monospace;">${escHtml(selectedServer)}</span>${selectedServer !== ztpServer ? ' <span style="color:#888;">(auto-detected)</span>' : ''}`
             : '<span style="color:#ff9800;">Set IMAGE SERVER IP in the ZTP tab first.</span>';
     }
 }
@@ -3558,6 +3564,8 @@ async function loadUpgradeCandidates() {
         body.innerHTML = `<tr><td colspan="9" style="color:#f44336;text-align:center;padding:20px;">${escHtml(data.error || 'Failed to load')}</td></tr>`;
         return;
     }
+    upgradeDetectedServerIP = data.server_ip || upgradeDetectedServerIP;
+    syncUpgradeServerIPFromZTP();
     upgradeImages = data.images || [];
     upgradeDevices = data.devices || [];
     renderUpgradeImages();
@@ -3638,6 +3646,7 @@ function getUpgradePayload(devices) {
     if (!devices.length) { showToast('Select at least one upgrade candidate', 'error'); return null; }
     if (!imageName || !targetVersion) { showToast('Target image and version are required', 'error'); return null; }
     if (!serverIp) { showToast('Set IMAGE SERVER IP in the ZTP tab first', 'error'); return null; }
+    if (!isUsableImageServer(serverIp)) { showToast('Invalid image server. Replace __IMAGE_SERVER_IP__ with a real IP/hostname in the ZTP tab.', 'error'); return null; }
     return {
         devices,
         image_name: imageName,
