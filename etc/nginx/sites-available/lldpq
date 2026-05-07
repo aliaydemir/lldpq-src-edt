@@ -39,11 +39,6 @@ server {
             try_files /cumulus-ztp.sh =404;
         }
 
-        location = /cumulus-upgrade-ztp.sh {
-            default_type text/plain;
-            try_files /cumulus-upgrade-ztp.sh =404;
-        }
-
         # Do not expose CGI shell source files as static downloads.
         # Exact fcgiwrap locations below still take precedence.
         location ~ \.sh$ {

@@ -1117,10 +1117,6 @@ ZTPEOF
 fi
 sudo chown "$LLDPQ_USER:www-data" "$WEB_ROOT/cumulus-ztp.sh"
 sudo chmod 775 "$WEB_ROOT/cumulus-ztp.sh"
-if [[ -f "$WEB_ROOT/cumulus-upgrade-ztp.sh" ]]; then
-    sudo chown "$LLDPQ_USER:www-data" "$WEB_ROOT/cumulus-upgrade-ztp.sh"
-    sudo chmod 775 "$WEB_ROOT/cumulus-upgrade-ztp.sh"
-fi
 echo "  DHCP/Provision directories ready"
 
 # ============================================================================
