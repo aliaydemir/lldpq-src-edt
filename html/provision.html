@@ -3355,7 +3355,13 @@ function applyQuickSettings() {
         if (os) content = content.replace(/CUMULUS_TARGET_RELEASE=\S+/, `CUMULUS_TARGET_RELEASE=${os}`);
         if (pw) content = content.replace(/echo\s+'cumulus:.+?'\s*\|\s*chpasswd/, `echo 'cumulus:${pw}' | chpasswd`);
         if (ip) content = content.replace(/IMAGE_SERVER_HOSTNAME=\S+/, `IMAGE_SERVER_HOSTNAME=${ip}`);
-        if (key) content = content.replace(/KEY="ssh-\S+\s+\S+"/, `KEY="${key}"`);
+        if (key) {
+            if (/^KEY=.*$/m.test(content)) {
+                content = content.replace(/^KEY=.*$/m, `KEY="${key}"`);
+            } else {
+                content = content.replace(/(# Copy SSH keys\s*)/m, `$1\n    KEY="${key}"\n`);
+            }
+        }
     }
 
     // Show editor to see changes

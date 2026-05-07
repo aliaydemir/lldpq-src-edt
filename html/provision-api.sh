@@ -2283,7 +2283,7 @@ def action_upgrade_start():
         ztp_content = f.read()
     if '__IMAGE_SERVER_IP__' in ztp_content or '__TARGET_OS_VERSION__' in ztp_content:
         error_json('cumulus-ztp.sh still contains placeholders. Apply Quick Settings and save ZTP script before upgrade.')
-    if re.search(r'KEY=""|KEY=\s*$', ztp_content, re.MULTILINE):
+    if re.search(r'^KEY=["\']?["\']?\s*$', ztp_content, re.MULTILINE) or not re.search(r'^KEY=["\']ssh-', ztp_content, re.MULTILINE):
         error_json('cumulus-ztp.sh has no SSH key. Generate/import SSH key, Apply to Script, then Save before upgrade.')
     job = {
         'id': str(uuid.uuid4()),
