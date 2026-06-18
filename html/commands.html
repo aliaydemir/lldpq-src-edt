@@ -133,7 +133,7 @@
 // ---- command presets (mirror Device Details -> Command Runner, Cumulus Linux / NVUE) ----
 const CMD_GROUPS = [
     { title:'System & Hardware', color:'#76b900', cmds:['nv show system','nv show platform','nv show platform environment','nv show system memory','uptime','free -h','df -h','sudo sensors','sudo smonctl','sudo decode-syseeprom','sudo cl-resource-query'] },
-    { title:'Interfaces', color:'#4fc3f7', cmds:['nv show interface','nv show interface --view=brief','nv show interface status','nv show interface lldp','ip link show','ip -br addr show'] },
+    { title:'Interfaces', color:'#4fc3f7', cmds:['nvt','nv show interface','nv show interface --view=brief','nv show interface status','nv show interface lldp','ip link show','ip -br addr show'] },
     { title:'Layer 2 / Bridge / MLAG', color:'#ba68c8', cmds:['nv show bridge domain br_default','nv show bridge domain br_default mac-table','nv show bridge domain br_default vlan','sudo clagctl','/sbin/bridge fdb show','/sbin/bridge vlan show','sudo lldpctl','ip neigh show'] },
     { title:'BGP & Routing', color:'#ffb74d', cmds:['nv show router bgp',"sudo vtysh -c 'show bgp summary'","sudo vtysh -c 'show ip route'","sudo vtysh -c 'show bgp l2vpn evpn summary'"] },
     { title:'EVPN & VXLAN', color:'#4db6ac', cmds:['nv show evpn vni',"sudo vtysh -c 'show evpn vni'","sudo vtysh -c 'show evpn mac vni all'"] },
@@ -368,7 +368,7 @@ function renderResults(cmd, hosts, state, single) {
                 <span class="rescard-host">${esc(h)}</span>
                 <span class="rescard-arrow">&#9654;</span>
             </div>
-            <pre class="rescard-out">${esc(st.output)}</pre>
+            <pre class="rescard-out">${ansiToHtml(st.output)}</pre>
         </div>`;
     }).join('');
     res.innerHTML = html;
@@ -380,7 +380,7 @@ function updateCard(host, st, single) {
     if (!card) return;
     card.querySelector('.badge').className = 'badge badge-' + st.status;
     card.querySelector('.badge').textContent = st.status;
-    card.querySelector('.rescard-out').textContent = st.output;
+    card.querySelector('.rescard-out').innerHTML = ansiToHtml(st.output);
     // auto-expand failures (single-device runs are already open)
     if (!single && st.status === 'fail') card.classList.add('open');
 }
@@ -400,6 +400,43 @@ function updateSummary(hosts, state, cmd) {
 // ---------------- helpers ----------------
 function esc(s) {
     return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// Convert ANSI SGR color codes (e.g. from nvt) to safe HTML.
+// Text is HTML-escaped; only fixed-palette / numeric-rgb color spans are injected.
+function ansiToHtml(input) {
+    const BASIC = {
+        30:'#3b3b3b',31:'#ef5350',32:'#81c784',33:'#ffd54f',34:'#64b5f6',35:'#ba68c8',36:'#4dd0e1',37:'#e0e0e0',
+        90:'#777',91:'#ef9a9a',92:'#a5d6a7',93:'#fff59d',94:'#90caf9',95:'#ce93d8',96:'#80deea',97:'#ffffff'
+    };
+    const s = String(input ?? '').replace(/\r/g, '');
+    let out = '', open = false, fg = null, bold = false;
+    const close = () => { if (open) { out += '</span>'; open = false; } };
+    const apply = () => {
+        close();
+        let st = '';
+        if (fg) st += 'color:' + fg + ';';
+        if (bold) st += 'font-weight:bold;';
+        if (st) { out += '<span style="' + st + '">'; open = true; }
+    };
+    const parts = s.split(/\x1b\[([0-9;]*)m/);
+    for (let i = 0; i < parts.length; i++) {
+        if (i % 2 === 0) { out += esc(parts[i]); continue; }
+        const codes = parts[i].split(';').map(n => n === '' ? 0 : parseInt(n, 10));
+        for (let k = 0; k < codes.length; k++) {
+            const c = codes[k];
+            if (c === 0) { fg = null; bold = false; }
+            else if (c === 1) bold = true;
+            else if (c === 22) bold = false;
+            else if (c === 39) fg = null;
+            else if (c === 38 && codes[k + 1] === 2) { fg = `rgb(${codes[k + 2] || 0},${codes[k + 3] || 0},${codes[k + 4] || 0})`; k += 4; }
+            else if (c === 38 && codes[k + 1] === 5) { k += 2; }
+            else if (BASIC[c]) fg = BASIC[c];
+        }
+        apply();
+    }
+    close();
+    return out;
 }
 </script>
 </body>
