@@ -137,6 +137,7 @@ const CMD_GROUPS = [
     { title:'Layer 2 / Bridge / MLAG', color:'#ba68c8', cmds:['nv show bridge domain br_default','nv show bridge domain br_default mac-table','nv show bridge domain br_default vlan','sudo clagctl','/sbin/bridge fdb show','/sbin/bridge vlan show','sudo lldpctl','ip neigh show'] },
     { title:'BGP & Routing', color:'#ffb74d', cmds:['nv show router bgp',"sudo vtysh -c 'show bgp summary'","sudo vtysh -c 'show ip route'","sudo vtysh -c 'show bgp l2vpn evpn summary'"] },
     { title:'EVPN & VXLAN', color:'#4db6ac', cmds:['nv show evpn vni',"sudo vtysh -c 'show evpn vni'","sudo vtysh -c 'show evpn mac vni all'"] },
+    { title:'EVPN Multi-Homing', color:'#f06292', cmds:['nv show evpn multihoming','nv show interface bonds',"sudo vtysh -c 'show evpn es'","sudo vtysh -c 'show evpn es-evi'","sudo vtysh -c 'show evpn es detail'"] },
     { title:'Config', color:'#9cdcfe', cmds:['nv config show','nv config diff','nv config show -o commands'] },
     { title:'Logs', color:'#ef5350', cmds:['sudo journalctl -p err -n 100 --no-pager','sudo journalctl -n 100 --no-pager'] },
 ];
