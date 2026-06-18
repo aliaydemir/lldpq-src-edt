@@ -132,12 +132,12 @@
 <script>
 // ---- command presets (mirror Device Details -> Command Runner, Cumulus Linux / NVUE) ----
 const CMD_GROUPS = [
-    { title:'System & Hardware', color:'#76b900', cmds:['nv show system','nv show platform','nv show system memory','uptime','free -h','df -h','sudo decode-syseeprom','sudo cl-resource-query'] },
-    { title:'Interfaces', color:'#4fc3f7', cmds:['nv show interface','nv show interface --view=brief','ip link show','ip -br addr show'] },
-    { title:'Layer 2 / Bridge', color:'#ba68c8', cmds:['nv show bridge domain br_default','nv show bridge domain br_default mac-table','/sbin/bridge fdb show','/sbin/bridge vlan show','sudo lldpctl','ip neigh show'] },
+    { title:'System & Hardware', color:'#76b900', cmds:['nv show system','nv show platform','nv show platform environment','nv show system memory','uptime','free -h','df -h','sudo sensors','sudo smonctl','sudo decode-syseeprom','sudo cl-resource-query'] },
+    { title:'Interfaces', color:'#4fc3f7', cmds:['nv show interface','nv show interface --view=brief','nv show interface status','nv show interface lldp','ip link show','ip -br addr show'] },
+    { title:'Layer 2 / Bridge / MLAG', color:'#ba68c8', cmds:['nv show bridge domain br_default','nv show bridge domain br_default mac-table','nv show bridge domain br_default vlan','sudo clagctl','/sbin/bridge fdb show','/sbin/bridge vlan show','sudo lldpctl','ip neigh show'] },
     { title:'BGP & Routing', color:'#ffb74d', cmds:['nv show router bgp',"sudo vtysh -c 'show bgp summary'","sudo vtysh -c 'show ip route'","sudo vtysh -c 'show bgp l2vpn evpn summary'"] },
     { title:'EVPN & VXLAN', color:'#4db6ac', cmds:['nv show evpn vni',"sudo vtysh -c 'show evpn vni'","sudo vtysh -c 'show evpn mac vni all'"] },
-    { title:'Config', color:'#9cdcfe', cmds:['nv config show','nv config diff'] },
+    { title:'Config', color:'#9cdcfe', cmds:['nv config show','nv config diff','nv config show -o commands'] },
     { title:'Logs', color:'#ef5350', cmds:['sudo journalctl -p err -n 100 --no-pager','sudo journalctl -n 100 --no-pager'] },
 ];
 
