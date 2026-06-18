@@ -1126,6 +1126,35 @@ function highlightLinkType(type) {
     showNotification(`Highlighting ${typeLabels[type]} links. Click again to clear.`);
 }
 
+/**
+ * Download the current topology graph as a high-resolution PNG.
+ * Exports the full graph (not just the visible viewport). Scale is capped so the
+ * output never exceeds the browser canvas limit on very large fabrics.
+ */
+function downloadTopology() {
+    if (!cy) return;
+    try {
+        const CAP = 16000;            // safe max px per dimension
+        let scale = 3;                // 3x for high resolution
+        const bb = cy.elements().boundingBox();
+        if (bb && bb.w > 0 && bb.h > 0) {
+            scale = Math.max(1, Math.min(scale, CAP / bb.w, CAP / bb.h));
+        }
+        const png = cy.png({ full: true, scale: scale, bg: '#212121' });
+        const ts = new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-');
+        const a = document.createElement('a');
+        a.href = png;
+        a.download = `lldpq-topology-${ts}.png`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        if (typeof showNotification === 'function') showNotification('Topology image downloaded (high-res PNG).');
+    } catch (e) {
+        if (typeof showNotification === 'function') showNotification('Download failed: ' + e.message);
+        else alert('Download failed: ' + e.message);
+    }
+}
+
 function clearLinkHighlight() {
     if (!cy) return;
     highlightedLinkType = null;
