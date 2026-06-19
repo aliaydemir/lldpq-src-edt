@@ -199,6 +199,7 @@
                 <option value="openai">OpenAI</option>
                 <option value="claude">Claude (Anthropic)</option>
                 <option value="custom">Custom (OpenAI-compatible)</option>
+                <option value="nvidia">Nvidia (inference)</option>
             </select>
         </div>
         <div class="settings-field" id="cfgOllamaGroup">
@@ -419,6 +420,11 @@ function onProviderChange() {
         document.getElementById('cfgApiUrl').disabled = false;
         document.getElementById('cfgApiUrl').placeholder = 'https://your-server/v1';
         document.getElementById('cfgModelCloud').placeholder = 'model-name';
+    } else if (provider === 'nvidia') {
+        // NVIDIA Inference proxy (OpenAI-compatible / LiteLLM). URL is fixed; only the key is needed.
+        document.getElementById('cfgApiUrl').value = 'https://inference-api.nvidia.com';
+        document.getElementById('cfgApiUrl').disabled = true;
+        document.getElementById('cfgModelCloud').placeholder = 'e.g. bedrock-claude-opus-4-8 / openai/gpt-5.5';
     }
 }
 

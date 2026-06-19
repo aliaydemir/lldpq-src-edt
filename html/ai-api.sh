@@ -332,15 +332,72 @@ def build_device_detail(hostname, devices, device_health):
     return '\n'.join(detail) if detail else f"Device '{hostname}' found but no detailed data available."
 
 
+def read_collected_config(hostname, max_chars=15000):
+    """Full collected running config for one device (nv config show -o commands),
+    saved by get-configs.sh at WEB_ROOT/configs/<hostname>.txt."""
+    try:
+        path = os.path.join(WEB_ROOT, 'configs', f'{hostname}.txt')
+        if not os.path.isfile(path):
+            return ''
+        with open(path, 'r') as f:
+            cfg = f.read().strip()
+        if not cfg:
+            return ''
+        if len(cfg) > max_chars:
+            cfg = cfg[:max_chars] + f"\n... (truncated; {len(cfg)} chars total)"
+        return f"FULL RUNNING CONFIG -- {hostname} (nv config show -o commands):\n{cfg}"
+    except Exception:
+        return ''
+
+
+def build_all_collected_configs(devices, max_per_device=2500, max_total=120000):
+    """Every device's collected running config (truncated per device) for fabric-wide
+    config analysis / drift detection. Reads WEB_ROOT/configs/<hostname>.txt."""
+    config_dir = os.path.join(WEB_ROOT, 'configs')
+    if not os.path.isdir(config_dir):
+        return ''
+    out, total = [], 0
+    for ip, dev in sorted(devices.items(), key=lambda kv: kv[1].get('hostname', '')):
+        hn = dev.get('hostname', '')
+        path = os.path.join(config_dir, f'{hn}.txt')
+        if not hn or not os.path.isfile(path):
+            continue
+        try:
+            with open(path, 'r') as f:
+                cfg = f.read().strip()
+        except Exception:
+            continue
+        if not cfg:
+            continue
+        block = cfg[:max_per_device]
+        if len(cfg) > max_per_device:
+            block += f"\n... (truncated; {len(cfg)} total)"
+        entry = f"----- {hn} -----\n{block}"
+        if total + len(entry) > max_total:
+            out.append("... (remaining device configs omitted for length)")
+            break
+        out.append(entry)
+        total += len(entry)
+    if not out:
+        return ''
+    return ("FULL COLLECTED RUNNING CONFIGS (all devices, nv config show -o commands; "
+            "truncated per device):\n\n" + "\n\n".join(out))
+
+
 def build_context_for_question(question, devices, device_health):
     """Build targeted context based on the question content."""
     extra_context = []
     q_lower = question.lower()
+    mentioned_any = False
     
     # Detect specific device mentions
     for ip, dev in devices.items():
         if dev['hostname'].lower() in q_lower or ip in q_lower:
+            mentioned_any = True
             extra_context.append(build_device_detail(dev['hostname'], devices, device_health))
+            _cfg = read_collected_config(dev['hostname'])
+            if _cfg:
+                extra_context.append(_cfg)
     
     # Keyword-based enrichment
     if any(kw in q_lower for kw in ['flap', 'down', 'carrier', 'link down']):
@@ -385,6 +442,12 @@ def build_context_for_question(question, devices, device_health):
     # Config check: load Ansible host_vars + group_vars for config consistency analysis
     if any(kw in q_lower for kw in ['config', 'consistency', 'check', 'asn', 'mtu', 'mismatch', 'validate', 'audit', 'compare', 'bgp config', 'vlan config']):
         extra_context.append(build_config_context(devices))
+        # Fabric-wide config question (no specific device named) -> feed every device's
+        # actual running config so the model can do real drift/consistency analysis.
+        if not mentioned_any:
+            _allcfg = build_all_collected_configs(devices)
+            if _allcfg:
+                extra_context.append(_allcfg)
     
     return '\n\n'.join(extra_context)
 
@@ -913,6 +976,100 @@ def call_llm_sync(messages):
         return f"Error: {e}"
 
 
+# ======================== LIVE DEVICE TOOL (read-only) ========================
+
+TOOL_INSTRUCTIONS = """
+=== LIVE DEVICE TOOL (read-only) ===
+When the static fabric data above is not enough, you may pull LIVE read-only data
+from a device by writing a tool call on its own line, exactly:
+[RUN: <device> <command>]
+  - <device> = a hostname from the fabric (e.g. tan-leaf-01).
+  - <command> = a READ-ONLY show/diagnostic command. Examples:
+      nv show interface  |  nv show router bgp  |  nv show evpn vni  |
+      nv config show  |  nv config diff  |  sudo vtysh -c 'show bgp summary'  |
+      ip route show  |  nv show interface lldp  |  sudo clagctl
+    Write/config commands (nv set/unset, nv config apply/replace, reboot, ...) are
+    blocked by the backend and will be rejected.
+  - Emit at most 3 tool calls per turn. After you receive "TOOL RESULTS", continue;
+    request more only if truly needed.
+  - When you have enough, give your FINAL answer with NO [RUN: ...] / [RUNALL: ...] lines.
+  - Prefer the collected data above; use live tools only when current state is needed.
+
+For a fabric-wide check, fan ONE command out to many devices IN PARALLEL:
+[RUNALL: <target> <command>]
+  - <target> = "all" (every device) or a role/name substring (e.g. leaf, spine, border).
+  - Same read-only command rules as [RUN:]. Use this instead of many [RUN:] lines when
+    comparing the same thing across devices (e.g. BGP summary on all leaves).
+  - At most one fan-out per turn; results return per device.
+"""
+
+
+def run_device_tool(device, command, cookie):
+    """Run ONE read-only device command by invoking fabric-api.sh's run-device-command
+    as a subprocess. This reuses its exact read-only whitelist, admin auth (via the
+    forwarded session cookie) and ssh exec — nothing is duplicated. Never raises."""
+    import subprocess
+    try:
+        body = json.dumps({'device': device, 'command': command})
+        env = dict(os.environ)
+        env['REQUEST_METHOD'] = 'POST'
+        env['QUERY_STRING'] = 'action=run-device-command'
+        env['CONTENT_TYPE'] = 'application/json'
+        env['CONTENT_LENGTH'] = str(len(body.encode('utf-8')))
+        if cookie:
+            env['HTTP_COOKIE'] = cookie
+        proc = subprocess.run(
+            ['bash', os.path.join(WEB_ROOT, 'fabric-api.sh')],
+            input=body, env=env, capture_output=True, text=True, timeout=60
+        )
+        raw = proc.stdout or ''
+        for sep in ('\r\n\r\n', '\n\n'):
+            if sep in raw:
+                raw = raw.split(sep, 1)[1]
+                break
+        d = json.loads(raw.strip())
+        if d.get('success'):
+            return True, (d.get('output') or '(no output)')
+        return False, (d.get('error') or 'command rejected')
+    except subprocess.TimeoutExpired:
+        return False, 'tool timed out'
+    except Exception as e:
+        return False, f'tool error: {e}'
+
+
+def run_dispatch(target, command, devices, cookie, max_devices=60, pool=8, per_out=1200):
+    """Phase 3: run ONE read-only command on many devices in PARALLEL (fan-out).
+    target = 'all'/'*' or a role/hostname substring (e.g. 'leaf', 'spine', 'border').
+    Returns (hostnames, {hostname: (ok, output)}). Reuses run_device_tool per device."""
+    from concurrent.futures import ThreadPoolExecutor
+    t = (target or '').strip().lstrip('@').lower()
+    targets = []
+    for ip, dev in devices.items():
+        hn = dev.get('hostname', '')
+        role = (dev.get('role', '') or '').lower()
+        if not hn:
+            continue
+        if t in ('all', '*', '') or t in role or t in hn.lower():
+            targets.append(hn)
+    targets = sorted(set(targets))[:max_devices]
+    results = {}
+    if not targets:
+        return targets, results
+
+    def _one(h):
+        ok, out = run_device_tool(h, command, cookie)
+        return h, ok, (out or '')[:per_out]
+
+    try:
+        with ThreadPoolExecutor(max_workers=min(pool, len(targets))) as ex:
+            for h, ok, out in ex.map(_one, targets):
+                results[h] = (ok, out)
+    except Exception as e:
+        for h in targets:
+            results.setdefault(h, (False, f'dispatch error: {e}'))
+    return targets, results
+
+
 # ======================== ACTIONS ========================
 
 def action_chat():
@@ -937,7 +1094,7 @@ def action_chat():
         fabric_summary=fabric_summary,
         device_list=device_list,
         extra_context=extra_context
-    )
+    ) + "\n" + TOOL_INSTRUCTIONS
     
     # Build messages array
     messages = [{"role": "system", "content": system_prompt}]
@@ -948,10 +1105,75 @@ def action_chat():
     
     messages.append({"role": "user", "content": question})
     
-    # Synchronous LLM call
-    response = call_llm_sync(messages)
+    # Bounded read-only tool-calling loop. The model may emit [RUN: device command]
+    # to pull live data; each call is executed via fabric-api.sh run-device-command
+    # (its read-only whitelist + admin auth + ssh exec are reused, not duplicated).
+    cookie = os.environ.get('HTTP_COOKIE', '')
+    valid_hostnames = {d.get('hostname', '') for d in devices.values() if d.get('hostname')}
+    MAX_ROUNDS = 4
+    MAX_TOOLS_PER_ROUND = 3
+    MAX_TOTAL_TOOLS = 10
+    MAX_DISPATCHES = 2            # [RUNALL: ...] parallel fan-outs per question
+    DISPATCH_DEVICE_CAP = 120     # total devices across all dispatches
+    deadline = time.time() + 220  # keep whole request under nginx's 300s read timeout
+    total_tools = 0
+    dispatches_used = 0
+    dispatch_dev_total = 0
+    response = ''
+    tools_used = []
     
-    result_json({"success": True, "response": response})
+    for _round in range(MAX_ROUNDS):
+        response = call_llm_sync(messages)
+        runs = re.findall(r'\[RUN:\s*(\S+)\s+([^\]]+)\]', response or '')
+        runalls = re.findall(r'\[RUNALL:\s*(\S+)\s+([^\]]+)\]', response or '')
+        if (not runs and not runalls) or time.time() > deadline:
+            break
+        results = []
+        # Single-device read-only tools
+        for dev_name, cmd in runs[:MAX_TOOLS_PER_ROUND]:
+            if total_tools >= MAX_TOTAL_TOOLS or time.time() > deadline:
+                break
+            dev_name = dev_name.strip()
+            cmd = cmd.strip()
+            if dev_name not in valid_hostnames:
+                results.append(f"[{dev_name}] error: unknown device (not in fabric)")
+                continue
+            ok, out = run_device_tool(dev_name, cmd, cookie)
+            total_tools += 1
+            tools_used.append({'device': dev_name, 'command': cmd, 'ok': ok})
+            results.append(f"[RUN {dev_name}: {cmd}]\n{(out or '')[:6000]}")
+        # Parallel multi-device fan-out (Phase 3): at most one dispatch per round
+        for tgt, cmd in runalls[:1]:
+            if dispatches_used >= MAX_DISPATCHES or dispatch_dev_total >= DISPATCH_DEVICE_CAP or time.time() > deadline:
+                break
+            tgt = tgt.strip()
+            cmd = cmd.strip()
+            hosts, dres = run_dispatch(tgt, cmd, devices, cookie,
+                                       max_devices=min(60, DISPATCH_DEVICE_CAP - dispatch_dev_total))
+            dispatches_used += 1
+            dispatch_dev_total += len(hosts)
+            tools_used.append({'dispatch': tgt, 'command': cmd, 'devices': len(hosts)})
+            lines = [f"[RUNALL {tgt}: {cmd}]  ({len(hosts)} devices, parallel)"]
+            for h in hosts:
+                ok, out = dres.get(h, (False, ''))
+                lines.append(f"--- {h} [{'OK' if ok else 'FAIL'}] ---\n{out}")
+            results.append('\n'.join(lines))
+        messages.append({"role": "assistant", "content": response})
+        messages.append({"role": "user", "content":
+            "TOOL RESULTS:\n" + "\n\n".join(results) +
+            "\n\nContinue. Request more data only if needed; otherwise give the final answer with no [RUN: ...] / [RUNALL: ...] lines."})
+    
+    # If still requesting tools (hit the round cap), force one final answer.
+    if re.search(r'\[RUN(ALL)?:', response or '') and time.time() < deadline:
+        messages.append({"role": "assistant", "content": response})
+        messages.append({"role": "user", "content":
+            "Stop using tools. Give your final answer now from the tool results above; do not emit any [RUN: ...] or [RUNALL: ...] lines."})
+        response = call_llm_sync(messages)
+    
+    # Strip any leftover tool-call markers from the visible answer.
+    final = re.sub(r'\[RUN(?:ALL)?:[^\]]*\]', '', response or '').strip()
+    
+    result_json({"success": True, "response": final, "tools_used": tools_used})
 
 
 def action_get_context():
