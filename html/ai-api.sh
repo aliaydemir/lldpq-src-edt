@@ -1140,6 +1140,27 @@ For live streaming-telemetry metrics (only when telemetry is enabled), query Pro
     Example: [PROMQL: topk(10, rate(cumulus_nvswitch_interface_if_in_discards[5m]))]
   - Read-only; ideal for "last N minutes", rate, and top-N questions. If telemetry is
     off you'll get an error — fall back to the collected data above.
+
+For a metric TREND over time (only when telemetry is enabled):
+[PROMQLRANGE: <PromQL> | <range> | <step>]
+  - range/step like 15m, 1h, 24h / 30s, 60s. Returns first/min/max/last per series so
+    you can state whether something is rising/falling.
+    Example: [PROMQLRANGE: rate(cumulus_nvswitch_interface_if_in_discards[2m]) | 1h | 60s]
+
+To check reachability / trace the path between two endpoints (graph-based, read-only):
+[PATH: <source> <dest_ip>]
+  - <source> = a device hostname OR a source IP; <dest_ip> = the destination IP.
+  - Returns the hop-by-hop path (or where it breaks). Use for "how does A reach B",
+    blackhole, or asymmetric-routing questions.
+
+=== REMEDIATION SUGGESTIONS ===
+When you recommend a command the operator should RUN to fix something, put it on its own
+line exactly as:
+[FIX: <device-or-group> <command>]
+  - This is a SUGGESTION rendered as a one-click button — you do NOT execute it.
+  - Use a real device/group name and a concrete command (e.g.
+    [FIX: tan-leaf-01 nv set interface swp5 link state up] then nv config apply).
+  - Only suggest safe, intentional changes; never destructive commands.
 """
 
 
@@ -1249,6 +1270,94 @@ def run_promql(query, cookie, max_rows=60):
         return False, f'promql error: {e}'
 
 
+def run_tracepath(src, dst, cookie):
+    """Read-only graph-based path discovery via search-api.sh. src may be a device
+    hostname or an IP; dst is a destination IP. Returns (ok, compact_json_text)."""
+    import subprocess
+    import urllib.parse
+    try:
+        def is_ip(s):
+            s = s or ''
+            return bool(re.match(r'^\d{1,3}(\.\d{1,3}){3}$', s)) or ':' in s
+        if is_ip(src) and is_ip(dst):
+            qs = ('action=trace-path-ip'
+                  f'&source_ip={urllib.parse.quote(src)}'
+                  f'&dest_ip={urllib.parse.quote(dst)}&vrf=default')
+        else:
+            qs = ('action=trace-path'
+                  f'&source={urllib.parse.quote(src)}'
+                  f'&ip={urllib.parse.quote(dst)}&vrf=default')
+        env = dict(os.environ)
+        env['REQUEST_METHOD'] = 'GET'
+        env['QUERY_STRING'] = qs
+        if cookie:
+            env['HTTP_COOKIE'] = cookie
+        proc = subprocess.run(
+            ['bash', os.path.join(WEB_ROOT, 'search-api.sh')],
+            env=env, capture_output=True, text=True, timeout=60
+        )
+        raw = proc.stdout or ''
+        for sep in ('\r\n\r\n', '\n\n'):
+            if sep in raw:
+                raw = raw.split(sep, 1)[1]
+                break
+        d = json.loads(raw.strip())
+        if isinstance(d, dict) and d.get('success') is False and d.get('error'):
+            return False, str(d.get('error'))
+        return True, json.dumps(d)[:4000]
+    except subprocess.TimeoutExpired:
+        return False, 'tracepath timed out'
+    except Exception as e:
+        return False, f'tracepath error: {e}'
+
+
+def run_promql_range(query, rng, step, cookie, max_series=30):
+    """Live telemetry range query via fabric-api.sh prometheus-query-range (read-only).
+    Summarizes each series as first/min/max/last + trend arrow over the window."""
+    import subprocess
+    try:
+        body = json.dumps({'query': query, 'range': rng or '15m', 'step': step or '60s'})
+        env = dict(os.environ)
+        env['REQUEST_METHOD'] = 'POST'
+        env['QUERY_STRING'] = 'action=prometheus-query-range'
+        env['CONTENT_TYPE'] = 'application/json'
+        env['CONTENT_LENGTH'] = str(len(body.encode('utf-8')))
+        if cookie:
+            env['HTTP_COOKIE'] = cookie
+        proc = subprocess.run(
+            ['bash', os.path.join(WEB_ROOT, 'fabric-api.sh')],
+            input=body, env=env, capture_output=True, text=True, timeout=40
+        )
+        raw = proc.stdout or ''
+        for sep in ('\r\n\r\n', '\n\n'):
+            if sep in raw:
+                raw = raw.split(sep, 1)[1]
+                break
+        d = json.loads(raw.strip())
+        if not d.get('success'):
+            return False, (d.get('error') or 'range query failed')
+        res = ((d.get('data') or {}).get('result')) or []
+        rows = []
+        for r in res[:max_series]:
+            m = r.get('metric', {}) or {}
+            host = m.get('net_host_name') or m.get('instance') or ''
+            iface = m.get('swp') or m.get('interface') or ''
+            try:
+                vals = [float(v[1]) for v in (r.get('values') or []) if v and v[1] not in ('NaN', None)]
+            except Exception:
+                vals = []
+            if not vals:
+                continue
+            arrow = '^' if vals[-1] > vals[0] else ('v' if vals[-1] < vals[0] else '=')
+            rows.append(f"  {host} {iface}: first={vals[0]:.3g} min={min(vals):.3g} "
+                        f"max={max(vals):.3g} last={vals[-1]:.3g} {arrow}")
+        return True, ('\n'.join(rows) if rows else '(no series matched)')
+    except subprocess.TimeoutExpired:
+        return False, 'range query timed out'
+    except Exception as e:
+        return False, f'range query error: {e}'
+
+
 # ======================== ACTIONS ========================
 
 def action_chat():
@@ -1308,7 +1417,9 @@ def action_chat():
         runs = re.findall(r'\[RUN:\s*(\S+)\s+([^\]]+)\]', response or '')
         runalls = re.findall(r'\[RUNALL:\s*(\S+)\s+([^\]]+)\]', response or '')
         promqls = re.findall(r'\[PROMQL:\s*(.+)\]', response or '')  # greedy: PromQL may contain ] (e.g. [5m])
-        if (not runs and not runalls and not promqls) or time.time() > deadline:
+        promranges = re.findall(r'\[PROMQLRANGE:\s*(.+)\]', response or '')
+        paths = re.findall(r'\[PATH:\s*(\S+)\s+(\S+)\]', response or '')
+        if (not runs and not runalls and not promqls and not promranges and not paths) or time.time() > deadline:
             break
         results = []
         # Single-device read-only tools
@@ -1349,26 +1460,52 @@ def action_chat():
             promql_used += 1
             tools_used.append({'promql': q, 'ok': ok})
             results.append(f"[PROMQL: {q}]\n{out}")
+        # Live telemetry trend (PromQL range)
+        for spec in promranges[:2]:
+            if promql_used >= MAX_PROMQL or time.time() > deadline:
+                break
+            parts = [p.strip() for p in spec.split('|')]
+            q = parts[0] if parts else ''
+            rng = parts[1] if len(parts) > 1 else '15m'
+            step = parts[2] if len(parts) > 2 else '60s'
+            ok, out = run_promql_range(q, rng, step, cookie)
+            promql_used += 1
+            tools_used.append({'promqlrange': q, 'range': rng, 'ok': ok})
+            results.append(f"[PROMQLRANGE: {q} | {rng} | {step}]\n{out}")
+        # Path discovery (graph-based tracepath)
+        for src, dst in paths[:2]:
+            if total_tools >= MAX_TOTAL_TOOLS or time.time() > deadline:
+                break
+            src, dst = src.strip(), dst.strip()
+            ok, out = run_tracepath(src, dst, cookie)
+            total_tools += 1
+            tools_used.append({'path': f'{src} -> {dst}', 'ok': ok})
+            results.append(f"[PATH {src} -> {dst}]\n{out}")
         messages.append({"role": "assistant", "content": response})
         messages.append({"role": "user", "content":
             "TOOL RESULTS:\n" + "\n\n".join(results) +
-            "\n\nContinue. Request more data only if needed; otherwise give the final answer with no [RUN: ...] / [RUNALL: ...] / [PROMQL: ...] lines."})
+            "\n\nContinue. Request more data only if needed; otherwise give the final answer with no [RUN: ...] / [RUNALL: ...] / [PROMQL: ...] / [PROMQLRANGE: ...] / [PATH: ...] lines."})
     
     # If still requesting tools (hit the round cap), force one final answer.
-    if re.search(r'\[(?:RUN(?:ALL)?|PROMQL):', response or '') and time.time() < deadline:
+    if re.search(r'\[(?:RUN(?:ALL)?|PROMQLRANGE|PROMQL|PATH):', response or '') and time.time() < deadline:
         messages.append({"role": "assistant", "content": response})
         messages.append({"role": "user", "content":
-            "Stop using tools. Give your final answer now from the results above; do not emit any [RUN: ...], [RUNALL: ...] or [PROMQL: ...] lines."})
+            "Stop using tools. Give your final answer now from the results above; do not emit any data-tool lines ([RUN:]/[RUNALL:]/[PROMQL:]/[PROMQLRANGE:]/[PATH:]). You MAY include [FIX: ...] remediation suggestions."})
         response = call_llm_sync(messages)
     
-    # Strip leftover tool-call lines from the visible answer (line-based: robust even
-    # when a PromQL expression contains ']' like a [5m] range selector).
+    # Suggested remediation commands (NOT executed) -> returned as one-click buttons.
+    fixes = []
+    for dev, cmd in re.findall(r'\[FIX:\s*(\S+)\s+(.+?)\]', response or ''):
+        fixes.append({'device': dev.strip(), 'command': cmd.strip()})
+    
+    # Strip leftover tool-call / fix lines from the visible answer (line-based: robust
+    # even when a PromQL expression contains ']' like a [5m] range selector).
     final = '\n'.join(
         ln for ln in (response or '').splitlines()
-        if not re.search(r'\[(?:RUN(?:ALL)?|PROMQL):', ln)
+        if not re.search(r'\[(?:RUN(?:ALL)?|PROMQLRANGE|PROMQL|PATH|FIX):', ln)
     ).strip()
     
-    result_json({"success": True, "response": final, "tools_used": tools_used})
+    result_json({"success": True, "response": final, "tools_used": tools_used, "fixes": fixes})
 
 
 def action_get_context():
