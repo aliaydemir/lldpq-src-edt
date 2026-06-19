@@ -350,18 +350,16 @@ def read_collected_config(hostname, max_chars=15000):
         return ''
 
 
-def build_all_collected_configs(devices, max_per_device=2500, max_total=120000):
-    """Every device's collected running config (truncated per device) for fabric-wide
-    config analysis / drift detection. Reads WEB_ROOT/configs/<hostname>.txt."""
+def build_all_collected_configs(devices=None, max_per_device=2500, max_total=120000):
+    """Every collected running config on disk (truncated per device) for fabric-wide
+    config analysis / drift detection. Reads WEB_ROOT/configs/*.txt DIRECTLY so it works
+    even when devices.yaml hostnames differ from the collected config filenames."""
     config_dir = os.path.join(WEB_ROOT, 'configs')
     if not os.path.isdir(config_dir):
         return ''
     out, total = [], 0
-    for ip, dev in sorted(devices.items(), key=lambda kv: kv[1].get('hostname', '')):
-        hn = dev.get('hostname', '')
-        path = os.path.join(config_dir, f'{hn}.txt')
-        if not hn or not os.path.isfile(path):
-            continue
+    for path in sorted(glob.glob(os.path.join(config_dir, '*.txt'))):
+        hn = os.path.basename(path)[:-4]  # strip .txt
         try:
             with open(path, 'r') as f:
                 cfg = f.read().strip()
@@ -384,16 +382,113 @@ def build_all_collected_configs(devices, max_per_device=2500, max_total=120000):
             "truncated per device):\n\n" + "\n\n".join(out))
 
 
+def _mr_path(*parts):
+    """Resolve a monitor-results file, preferring LLDPQ_DIR then the synced WEB_ROOT copy."""
+    p1 = os.path.join(LLDPQ_DIR, 'monitor-results', *parts)
+    if os.path.exists(p1):
+        return p1
+    return os.path.join(WEB_ROOT, 'monitor-results', *parts)
+
+
+def _load_json_file(path):
+    try:
+        with open(path, 'r') as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def build_transceiver_context(hosts=None, max_chars=9000):
+    """Transceiver inventory: per-module vendor/part/serial/FW + status, plus summary."""
+    inv = _load_json_file(_mr_path('transceiver_inventory.json'))
+    if not inv or not inv.get('modules'):
+        return ''
+    mods = [m for m in inv['modules'] if (not hosts or m.get('device') in hosts)]
+    if not mods:
+        return ''
+    lines = ["TRANSCEIVER INVENTORY (device/port: vendor part sn fw [fw_status]):"]
+    for m in mods[:250]:
+        lines.append(f"  {m.get('device','?')}/{m.get('port','?')}: {m.get('vendor','')} "
+                     f"{m.get('part_number','')} sn={m.get('serial','')} fw={m.get('fw_version','')} "
+                     f"[{m.get('fw_status','')}]")
+    s = inv.get('summary') or {}
+    if s:
+        lines.append(f"  SUMMARY: {s.get('total_modules')} modules, {s.get('unique_models')} models, "
+                     f"mixed-fw={s.get('mixed_fw_models')}, status={s.get('status_counts')}")
+    return '\n'.join(lines)[:max_chars]
+
+
+def build_optical_context(hosts=None, max_chars=9000):
+    """Optical DOM per port: health, Rx/Tx power, temperature, voltage, bias, link margin."""
+    stats = (_load_json_file(_mr_path('optical_history.json')) or {}).get('current_optical_stats') or {}
+    if not stats:
+        return ''
+    lines = ["OPTICAL DOM (host:port: health rx_dBm tx_dBm temp_C volt bias_mA margin_dB):"]
+    for key in sorted(stats):
+        if hosts and key.split(':')[0] not in hosts:
+            continue
+        v = stats[key]
+        lines.append(f"  {key}: {v.get('health_status','')} rx={v.get('rx_power_dbm','')} "
+                     f"tx={v.get('tx_power_dbm','')} temp={v.get('temperature_c','')} "
+                     f"v={v.get('voltage_v','')} bias={v.get('bias_current_ma','')} "
+                     f"margin={v.get('link_margin_db','')}")
+    return '\n'.join(lines)[:max_chars] if len(lines) > 1 else ''
+
+
+def build_ber_context(hosts=None, max_chars=9000):
+    """Per-port BER / interface errors: ber value, grade, rx/tx errors, total packets, deltas."""
+    stats = (_load_json_file(_mr_path('ber_history.json')) or {}).get('current_ber_stats') or {}
+    if not stats:
+        return ''
+    lines = ["BER / INTERFACE ERRORS (host:port: ber grade rxErr txErr totalPkt dErr):"]
+    for key in sorted(stats):
+        if hosts and key.split(':')[0] not in hosts:
+            continue
+        v = stats[key]
+        lines.append(f"  {key}: ber={v.get('ber_value','')} grade={v.get('grade','')} "
+                     f"rxErr={v.get('rx_errors','')} txErr={v.get('tx_errors','')} "
+                     f"totalPkt={v.get('total_packets','')} dErr={v.get('delta_errors','')}")
+    return '\n'.join(lines)[:max_chars] if len(lines) > 1 else ''
+
+
+def build_hardware_context(hosts=None, max_chars=9000):
+    """Per-device hardware: sensors/thermal/PSU/fan/memory/load (raw collected text)."""
+    hw_dir = _mr_path('hardware-data')
+    if not os.path.isdir(hw_dir):
+        return ''
+    out, total = ["HARDWARE (per-device sensors/thermal/PSU/fan/mem/load):"], 0
+    for f in sorted(glob.glob(os.path.join(hw_dir, '*_hardware.txt'))):
+        host = os.path.basename(f).replace('_hardware.txt', '')
+        if hosts and host not in hosts:
+            continue
+        try:
+            with open(f, 'r') as fh:
+                content = fh.read().strip()
+        except Exception:
+            continue
+        if not content:
+            continue
+        block = f"--- {host} ---\n{content[:1400]}"
+        if total + len(block) > max_chars:
+            out.append("... (more devices omitted)")
+            break
+        out.append(block)
+        total += len(block)
+    return '\n\n'.join(out) if len(out) > 1 else ''
+
+
 def build_context_for_question(question, devices, device_health):
     """Build targeted context based on the question content."""
     extra_context = []
     q_lower = question.lower()
     mentioned_any = False
+    mentioned_hosts = []
     
     # Detect specific device mentions
     for ip, dev in devices.items():
         if dev['hostname'].lower() in q_lower or ip in q_lower:
             mentioned_any = True
+            mentioned_hosts.append(dev['hostname'])
             extra_context.append(build_device_detail(dev['hostname'], devices, device_health))
             _cfg = read_collected_config(dev['hostname'])
             if _cfg:
@@ -448,6 +543,22 @@ def build_context_for_question(question, devices, device_health):
             _allcfg = build_all_collected_configs(devices)
             if _allcfg:
                 extra_context.append(_allcfg)
+    
+    # Other collected data (transceiver / optical / BER / hardware). Filtered to the
+    # mentioned device(s) when named, otherwise fabric-wide.
+    _hf = mentioned_hosts or None
+    if any(kw in q_lower for kw in ['transceiver', 'optic', 'optical', 'sfp', 'qsfp', 'osfp', 'dom', 'module', 'firmware', 'fw version']):
+        for _b in (build_transceiver_context(_hf), build_optical_context(_hf)):
+            if _b:
+                extra_context.append(_b)
+    if any(kw in q_lower for kw in ['ber', 'fec', 'crc', 'symbol error', 'bit error', 'errored', 'rx error', 'tx error', 'corrupt']):
+        _b = build_ber_context(_hf)
+        if _b:
+            extra_context.append(_b)
+    if any(kw in q_lower for kw in ['hardware', 'sensor', 'temperature', 'temp', 'psu', 'power supply', 'fan', 'cpu', 'memory', 'thermal', 'health']):
+        _b = build_hardware_context(_hf)
+        if _b:
+            extra_context.append(_b)
     
     return '\n\n'.join(extra_context)
 
@@ -727,6 +838,26 @@ Format: [hostname] port = neighbor(port) Status
 ## log_summary.json
 - critical > 0 = URGENT. error > 0 = important. warning = often transient.
 
+## TRANSCEIVER INVENTORY (per device/port, when present)
+Optic/cable inventory: vendor, part_number (model), serial, fw (firmware), fw_status.
+- Mixed fw across the same optic model = firmware should be aligned. Watch fw_status.
+
+## OPTICAL DOM (per host:port, when present)
+rx_dBm / tx_dBm (light levels), temp_C, voltage, bias_mA, link margin, health.
+- Very low rx (near/below the optic's floor) = dirty/failing fiber or weak far-end Tx.
+- health WARN/CRITICAL and low margin = pre-failure; correlate with flaps and BER.
+
+## BER / INTERFACE ERRORS (per host:port, when present)
+ber (frame BER), grade, rxErr/txErr, totalPkt, dErr (delta errors since baseline).
+- Rising dErr / poor grade = bad optic/cable/connector. Cross-check OPTICAL + flap data.
+
+## HARDWARE (per device, when present)
+Raw sensors/thermal/PSU/fan/memory/load text. High temp, failed PSU/fan, or high mem/load = hardware risk.
+
+## Live telemetry (Prometheus, only when telemetry is enabled)
+Query cumulus_nvswitch_* metrics with the [PROMQL: <expr>] tool for rate / top-N over
+time (in/out discards, errors, AR congestion, rx-buffer, FEC corrections, traffic, flaps).
+
 # NVUE COMMAND REFERENCE
 
 Diagnostic:
@@ -1001,6 +1132,14 @@ For a fabric-wide check, fan ONE command out to many devices IN PARALLEL:
   - Same read-only command rules as [RUN:]. Use this instead of many [RUN:] lines when
     comparing the same thing across devices (e.g. BGP summary on all leaves).
   - At most one fan-out per turn; results return per device.
+
+For live streaming-telemetry metrics (only when telemetry is enabled), query Prometheus:
+[PROMQL: <PromQL expression>]
+  - Cumulus telemetry metrics are named cumulus_nvswitch_* (interface in/out errors,
+    in/out discards, AR congestion, rx-buffer, drops, traffic, FEC corrections, flaps).
+    Example: [PROMQL: topk(10, rate(cumulus_nvswitch_interface_if_in_discards[5m]))]
+  - Read-only; ideal for "last N minutes", rate, and top-N questions. If telemetry is
+    off you'll get an error — fall back to the collected data above.
 """
 
 
@@ -1070,6 +1209,46 @@ def run_dispatch(target, command, devices, cookie, max_devices=60, pool=8, per_o
     return targets, results
 
 
+def run_promql(query, cookie, max_rows=60):
+    """Live streaming-telemetry query via fabric-api.sh prometheus-query (read-only).
+    Returns (ok, text). Degrades gracefully when telemetry/Prometheus is unavailable."""
+    import subprocess
+    try:
+        body = json.dumps({'query': query})
+        env = dict(os.environ)
+        env['REQUEST_METHOD'] = 'POST'
+        env['QUERY_STRING'] = 'action=prometheus-query'
+        env['CONTENT_TYPE'] = 'application/json'
+        env['CONTENT_LENGTH'] = str(len(body.encode('utf-8')))
+        if cookie:
+            env['HTTP_COOKIE'] = cookie
+        proc = subprocess.run(
+            ['bash', os.path.join(WEB_ROOT, 'fabric-api.sh')],
+            input=body, env=env, capture_output=True, text=True, timeout=30
+        )
+        raw = proc.stdout or ''
+        for sep in ('\r\n\r\n', '\n\n'):
+            if sep in raw:
+                raw = raw.split(sep, 1)[1]
+                break
+        d = json.loads(raw.strip())
+        if not d.get('success'):
+            return False, (d.get('error') or 'query failed')
+        res = ((d.get('data') or {}).get('result')) or []
+        rows = []
+        for r in res[:max_rows]:
+            m = r.get('metric', {}) or {}
+            host = m.get('net_host_name') or m.get('instance') or ''
+            iface = m.get('swp') or m.get('interface') or ''
+            val = (r.get('value') or [None, ''])[1]
+            rows.append(f"  {host} {iface} = {val}")
+        return True, ('\n'.join(rows) if rows else '(no series matched)')
+    except subprocess.TimeoutExpired:
+        return False, 'promql timed out'
+    except Exception as e:
+        return False, f'promql error: {e}'
+
+
 # ======================== ACTIONS ========================
 
 def action_chat():
@@ -1115,10 +1294,12 @@ def action_chat():
     MAX_TOTAL_TOOLS = 10
     MAX_DISPATCHES = 2            # [RUNALL: ...] parallel fan-outs per question
     DISPATCH_DEVICE_CAP = 120     # total devices across all dispatches
+    MAX_PROMQL = 4                # [PROMQL: ...] live telemetry queries per question
     deadline = time.time() + 220  # keep whole request under nginx's 300s read timeout
     total_tools = 0
     dispatches_used = 0
     dispatch_dev_total = 0
+    promql_used = 0
     response = ''
     tools_used = []
     
@@ -1126,7 +1307,8 @@ def action_chat():
         response = call_llm_sync(messages)
         runs = re.findall(r'\[RUN:\s*(\S+)\s+([^\]]+)\]', response or '')
         runalls = re.findall(r'\[RUNALL:\s*(\S+)\s+([^\]]+)\]', response or '')
-        if (not runs and not runalls) or time.time() > deadline:
+        promqls = re.findall(r'\[PROMQL:\s*(.+)\]', response or '')  # greedy: PromQL may contain ] (e.g. [5m])
+        if (not runs and not runalls and not promqls) or time.time() > deadline:
             break
         results = []
         # Single-device read-only tools
@@ -1158,20 +1340,33 @@ def action_chat():
                 ok, out = dres.get(h, (False, ''))
                 lines.append(f"--- {h} [{'OK' if ok else 'FAIL'}] ---\n{out}")
             results.append('\n'.join(lines))
+        # Live telemetry (PromQL) queries
+        for q in promqls[:2]:
+            if promql_used >= MAX_PROMQL or time.time() > deadline:
+                break
+            q = q.strip()
+            ok, out = run_promql(q, cookie)
+            promql_used += 1
+            tools_used.append({'promql': q, 'ok': ok})
+            results.append(f"[PROMQL: {q}]\n{out}")
         messages.append({"role": "assistant", "content": response})
         messages.append({"role": "user", "content":
             "TOOL RESULTS:\n" + "\n\n".join(results) +
-            "\n\nContinue. Request more data only if needed; otherwise give the final answer with no [RUN: ...] / [RUNALL: ...] lines."})
+            "\n\nContinue. Request more data only if needed; otherwise give the final answer with no [RUN: ...] / [RUNALL: ...] / [PROMQL: ...] lines."})
     
     # If still requesting tools (hit the round cap), force one final answer.
-    if re.search(r'\[RUN(ALL)?:', response or '') and time.time() < deadline:
+    if re.search(r'\[(?:RUN(?:ALL)?|PROMQL):', response or '') and time.time() < deadline:
         messages.append({"role": "assistant", "content": response})
         messages.append({"role": "user", "content":
-            "Stop using tools. Give your final answer now from the tool results above; do not emit any [RUN: ...] or [RUNALL: ...] lines."})
+            "Stop using tools. Give your final answer now from the results above; do not emit any [RUN: ...], [RUNALL: ...] or [PROMQL: ...] lines."})
         response = call_llm_sync(messages)
     
-    # Strip any leftover tool-call markers from the visible answer.
-    final = re.sub(r'\[RUN(?:ALL)?:[^\]]*\]', '', response or '').strip()
+    # Strip leftover tool-call lines from the visible answer (line-based: robust even
+    # when a PromQL expression contains ']' like a [5m] range selector).
+    final = '\n'.join(
+        ln for ln in (response or '').splitlines()
+        if not re.search(r'\[(?:RUN(?:ALL)?|PROMQL):', ln)
+    ).strip()
     
     result_json({"success": True, "response": final, "tools_used": tools_used})
 
