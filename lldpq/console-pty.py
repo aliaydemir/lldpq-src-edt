@@ -3,16 +3,21 @@
 LLDPq Console — WebSocket ⇄ PTY bridge (stdlib only).
 
 Serves the admin-only web terminal (html/console.html via nginx /console-ws).
-Each WebSocket connection opens ONE interactive PTY session to a target:
+Each WebSocket connection attaches to ONE interactive PTY session to a target:
   - a fabric device  -> ssh -tt <user>@<ip>   (resolved server-side from devices.yaml)
   - the LLDPq host    -> bash -l               (target token __lldpq_host__)
 
+Session persistence: each session has a client-supplied id (sid). The PTY survives
+WebSocket disconnects (e.g. the user navigates away in the UI) — the master fd keeps
+draining into a capped output buffer. Reconnecting with the same sid REATTACHES and
+replays the buffer, so open terminals come back where you left them (until idle/max).
+
 Security model (mirrors the CGI split):
-  - This process runs as **www-data** so it can read the server-side session files
-    at /var/lib/lldpq/sessions/<token> (mode 700, owner www-data) and enforce the
-    SAME admin gate as auth-guard.sh. A connection with no valid *admin* session is
-    rejected with HTTP 403 before any PTY is spawned.
-  - The PTY itself is spawned as the LLDPq user via `sudo -u <LLDPQ_USER>` (same as
+  - Runs as **www-data** so it can read the server-side session files at
+    /var/lib/lldpq/sessions/<token> (mode 700) and enforce the SAME admin gate as
+    auth-guard.sh. No valid *admin* session -> HTTP 403, no PTY spawned. A session can
+    only be reattached by the same user that created it.
+  - The PTY is spawned as the LLDPq user via `sudo -u <LLDPQ_USER>` (same as
     run-device-command), so SSH keys / host shell run under that account, not www-data.
 
 No third-party packages: asyncio + a minimal RFC6455 implementation + pty/termios.
@@ -28,6 +33,7 @@ import os
 import pwd
 import re
 import struct
+import subprocess
 import sys
 import termios
 import time
@@ -37,11 +43,15 @@ LISTEN_HOST = os.environ.get("CONSOLE_PTY_HOST", "127.0.0.1")
 LISTEN_PORT = int(os.environ.get("CONSOLE_PTY_PORT", "8765"))
 SESSIONS_DIR = os.environ.get("LLDPQ_SESSIONS_DIR", "/var/lib/lldpq/sessions")
 LLDPQ_CONF = os.environ.get("LLDPQ_CONF", "/etc/lldpq.conf")
-IDLE_TIMEOUT = int(os.environ.get("CONSOLE_IDLE_TIMEOUT", "600"))   # seconds, no client input
-MAX_SESSION = int(os.environ.get("CONSOLE_MAX_SESSION", "28800"))    # hard cap, seconds
+IDLE_TIMEOUT = int(os.environ.get("CONSOLE_IDLE_TIMEOUT", "600"))   # seconds without input -> close
+MAX_SESSION = int(os.environ.get("CONSOLE_MAX_SESSION", "28800"))   # hard cap, seconds
+MAX_BUF = int(os.environ.get("CONSOLE_MAX_BUF", "262144"))          # replay buffer per session
 HOST_TARGET = "__lldpq_host__"
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 _TOKEN_RE = re.compile(r"^[A-Fa-f0-9]{64}$")
+_SID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+SESSIONS = {}   # sid -> session dict
 
 
 def _audit_path():
@@ -144,7 +154,6 @@ def _load_devices():
     for ip, val in (data.get("devices") or {}).items():
         hostname, user = None, default_user
         if isinstance(val, str):
-            # "Hostname @role" / "Hostname"
             hostname = val.split()[0] if val.split() else None
         elif isinstance(val, dict):
             hostname = val.get("hostname")
@@ -187,7 +196,7 @@ def ws_frame(opcode, data: bytes) -> bytes:
 
 
 async def ws_read(reader):
-    """Read one (de-fragmented) message: returns (opcode, payload) or (None, None) on EOF/close."""
+    """Read one (de-fragmented) message: returns (opcode, payload). Raises on EOF."""
     frags = []
     first_opcode = None
     while True:
@@ -205,7 +214,6 @@ async def ws_read(reader):
         payload = await reader.readexactly(ln) if ln else b""
         if masked and ln:
             payload = bytes(payload[i] ^ mask[i % 4] for i in range(ln))
-        # control frames (0x8 close, 0x9 ping, 0xA pong) are never fragmented
         if opcode in (0x8, 0x9, 0xA):
             return (opcode, payload)
         if opcode != 0x0:
@@ -215,7 +223,6 @@ async def ws_read(reader):
             return (first_opcode if first_opcode is not None else 0x1, b"".join(frags))
 
 
-# ----------------------------------------------------------------------------- session
 def _set_winsize(fd, rows, cols):
     try:
         fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
@@ -223,19 +230,84 @@ def _set_winsize(fd, rows, cols):
         pass
 
 
+# ----------------------------------------------------------------------------- session registry
+def _close_session(sess, notify=True):
+    if sess.get("closing"):
+        return
+    sess["closing"] = True
+    loop = asyncio.get_event_loop()
+    try:
+        loop.remove_reader(sess["master"])
+    except Exception:
+        pass
+    try:
+        if sess["proc"].poll() is None:
+            sess["proc"].terminate()
+    except Exception:
+        pass
+    try:
+        os.close(sess["master"])
+    except Exception:
+        pass
+    SESSIONS.pop(sess["sid"], None)
+    if notify and sess.get("writer"):
+        try:
+            sess["writer"].write(ws_frame(0x8, b""))
+        except Exception:
+            pass
+    audit("STOP user=%s target=%s dur=%ss sid=%s" %
+          (sess["user"], sess["label"], int(time.time() - sess["started"]), sess["sid"][:8]))
+
+
+def _make_feed(sess):
+    """PTY output pump — runs for the whole PTY lifetime, independent of WS attach state."""
+    def on_readable():
+        try:
+            data = os.read(sess["master"], 65536)
+        except (OSError, BlockingIOError):
+            return
+        if not data:
+            _close_session(sess)
+            return
+        buf = sess["buffer"]
+        buf.extend(data)
+        if len(buf) > MAX_BUF:
+            del buf[:len(buf) - MAX_BUF]
+        if sess.get("attached") and sess.get("writer"):
+            try:
+                sess["writer"].write(ws_frame(0x2, data))
+            except Exception:
+                pass
+    return on_readable
+
+
+async def _watchdog(sess):
+    while not sess.get("closing"):
+        await asyncio.sleep(15)
+        idle = time.time() - sess["last_input"]
+        if idle > IDLE_TIMEOUT or (time.time() - sess["started"]) > MAX_SESSION:
+            reason = "idle" if idle > IDLE_TIMEOUT else "max-session"
+            if sess.get("writer"):
+                try:
+                    sess["writer"].write(ws_frame(0x1, ("\r\n\x1b[33m• session closed (%s)\x1b[0m\r\n" % reason).encode()))
+                except Exception:
+                    pass
+            _close_session(sess)
+            return
+
+
+# ----------------------------------------------------------------------------- connection handler
 async def handle(reader, writer):
     peer = writer.get_extra_info("peername")
     peer_ip = peer[0] if peer else "?"
-    master = None
-    proc = None
     loop = asyncio.get_event_loop()
 
     def http_reject(code, text):
         writer.write(("HTTP/1.1 %s\r\nContent-Type: text/plain\r\nConnection: close\r\n"
                       "Content-Length: %d\r\n\r\n%s" % (code, len(text), text)).encode())
 
+    sess = None
     try:
-        # --- read HTTP upgrade handshake ---
         raw = b""
         while b"\r\n\r\n" not in raw:
             chunk = await reader.read(2048)
@@ -254,24 +326,19 @@ async def handle(reader, writer):
                 k, v = ln.split(":", 1)
                 headers[k.strip().lower()] = v.strip()
 
-        # --- query string -> target ---
-        target = ""
-        m = re.search(r"[?&]target=([^&\s]+)", request_line)
-        if m:
-            from urllib.parse import unquote
-            target = unquote(m.group(1))
+        from urllib.parse import unquote
+        def _qs(name):
+            m = re.search(r"[?&]%s=([^&\s]+)" % name, request_line)
+            return unquote(m.group(1)) if m else ""
+        target = _qs("target")
+        sid = _qs("sid")
+        if not _SID_RE.match(sid or ""):
+            sid = "eph-%d-%d" % (int(time.time() * 1000), os.getpid())
 
-        # --- AUTH GATE (admin only) ---
         ok, user, role = validate_admin(headers.get("cookie", ""))
         if not ok:
-            audit("DENY ip=%s target=%s role=%s (not admin / no session)" % (peer_ip, target, role or "-"))
+            audit("DENY ip=%s target=%s (not admin)" % (peer_ip, target))
             http_reject("403 Forbidden", "Admin session required")
-            return
-
-        label, argv = resolve_target(target)
-        if not argv:
-            audit("DENY ip=%s user=%s target=%s (unknown target)" % (peer_ip, user, target))
-            http_reject("404 Not Found", "Unknown target")
             return
 
         key = headers.get("sec-websocket-key", "")
@@ -280,135 +347,103 @@ async def handle(reader, writer):
             return
         accept = base64.b64encode(hashlib.sha1((key + WS_GUID).encode()).digest()).decode()
         writer.write(("HTTP/1.1 101 Switching Protocols\r\n"
-                      "Upgrade: websocket\r\n"
-                      "Connection: Upgrade\r\n"
+                      "Upgrade: websocket\r\nConnection: Upgrade\r\n"
                       "Sec-WebSocket-Accept: %s\r\n\r\n" % accept).encode())
         await writer.drain()
 
-        # --- spawn PTY ---
-        import subprocess
-        master, slave = os.openpty()
-        _set_winsize(master, 24, 80)
-        fcntl.fcntl(master, fcntl.F_SETFL, os.O_NONBLOCK)
-
-        def _preexec():
-            # Best-effort: give the child its own session + controlling tty so job
-            # control / signals / full-screen programs work. Never fatal if the
-            # platform restricts these (the PTY I/O still functions either way).
-            try:
-                os.setsid()
-            except Exception:
-                pass
-            try:
-                fcntl.ioctl(0, termios.TIOCSCTTY, 0)
-            except Exception:
-                pass
-
-        env = dict(os.environ)
-        env["TERM"] = "xterm-256color"
-        proc = subprocess.Popen(argv, stdin=slave, stdout=slave, stderr=slave,
-                                 preexec_fn=_preexec, close_fds=True, env=env)
-        os.close(slave)
-        audit("START ip=%s user=%s target=%s pid=%s" % (peer_ip, user, label, proc.pid))
-        started = time.time()
-        writer.write(ws_frame(0x1, ("\x1b[90m• connecting to %s …\x1b[0m\r\n" % label).encode()))
-
-        state = {"last_input": time.time(), "closing": False}
-
-        def cleanup():
-            if state["closing"]:
+        existing = SESSIONS.get(sid)
+        if existing and not existing.get("closing"):
+            if existing["user"] != user:
+                writer.write(ws_frame(0x1, b"\x1b[31m\xe2\x80\xa2 session belongs to another user\x1b[0m\r\n"))
+                writer.write(ws_frame(0x8, b""))
                 return
-            state["closing"] = True
-            try:
-                loop.remove_reader(master)
-            except Exception:
-                pass
-            for fn in (lambda: proc.terminate(), lambda: os.close(master), writer.close):
+            # ---- REATTACH ----
+            sess = existing
+            sess["writer"] = writer
+            sess["attached"] = True
+            if sess["buffer"]:
+                writer.write(ws_frame(0x2, bytes(sess["buffer"])))
+            writer.write(ws_frame(0x1, b"\r\n\x1b[90m\xe2\x80\xa2 reattached\x1b[0m\r\n"))
+            audit("REATTACH ip=%s user=%s target=%s sid=%s" % (peer_ip, user, sess["label"], sid[:8]))
+        else:
+            # ---- NEW SESSION ----
+            label, argv = resolve_target(target)
+            if not argv:
+                audit("DENY ip=%s user=%s target=%s (unknown target)" % (peer_ip, user, target))
+                http_reject("404 Not Found", "Unknown target")  # (post-upgrade; client sees close)
+                writer.write(ws_frame(0x1, b"\x1b[31m\xe2\x80\xa2 unknown target\x1b[0m\r\n"))
+                writer.write(ws_frame(0x8, b""))
+                return
+            master, slave = os.openpty()
+            _set_winsize(master, 24, 80)
+            fcntl.fcntl(master, fcntl.F_SETFL, os.O_NONBLOCK)
+
+            def _preexec():
                 try:
-                    fn()
+                    os.setsid()
                 except Exception:
                     pass
-            dur = int(time.time() - started)
-            audit("STOP  ip=%s user=%s target=%s dur=%ss" % (peer_ip, user, label, dur))
-
-        # PTY output -> WebSocket (binary frames)
-        def on_master_readable():
-            try:
-                data = os.read(master, 65536)
-            except (OSError, BlockingIOError):
-                return
-            if not data:
                 try:
-                    writer.write(ws_frame(0x8, b""))
+                    fcntl.ioctl(0, termios.TIOCSCTTY, 0)
                 except Exception:
                     pass
-                cleanup()
-                return
-            try:
-                writer.write(ws_frame(0x2, data))
-            except Exception:
-                cleanup()
 
-        loop.add_reader(master, on_master_readable)
+            env = dict(os.environ)
+            env["TERM"] = "xterm-256color"
+            proc = subprocess.Popen(argv, stdin=slave, stdout=slave, stderr=slave,
+                                    preexec_fn=_preexec, close_fds=True, env=env)
+            os.close(slave)
+            sess = {"sid": sid, "user": user, "label": label, "proc": proc, "master": master,
+                    "buffer": bytearray(), "writer": writer, "attached": True,
+                    "last_input": time.time(), "started": time.time(), "closing": False}
+            SESSIONS[sid] = sess
+            loop.add_reader(master, _make_feed(sess))
+            asyncio.ensure_future(_watchdog(sess))
+            audit("START ip=%s user=%s target=%s pid=%s sid=%s" % (peer_ip, user, label, proc.pid, sid[:8]))
+            writer.write(ws_frame(0x1, ("\x1b[90m• connecting to %s …\x1b[0m\r\n" % label).encode()))
 
-        # idle / max-session watchdog
-        async def watchdog():
-            while not state["closing"]:
-                await asyncio.sleep(15)
-                idle = time.time() - state["last_input"]
-                if idle > IDLE_TIMEOUT or (time.time() - started) > MAX_SESSION:
-                    reason = "idle" if idle > IDLE_TIMEOUT else "max-session"
-                    try:
-                        writer.write(ws_frame(0x1, ("\r\n\x1b[33m• session closed (%s)\x1b[0m\r\n" % reason).encode()))
-                        writer.write(ws_frame(0x8, b""))
-                    except Exception:
-                        pass
-                    cleanup()
-                    return
-        wd = asyncio.ensure_future(watchdog())
-
-        # WebSocket -> PTY
+        # ---- per-connection input loop ----
+        explicit_end = False
         try:
-            while not state["closing"]:
+            while not sess.get("closing"):
                 opcode, payload = await ws_read(reader)
-                if opcode is None or opcode == 0x8:        # close
+                if opcode is None or opcode == 0x8:
                     break
-                if opcode == 0x9:                          # ping -> pong
+                if opcode == 0x9:
                     writer.write(ws_frame(0xA, payload))
                     continue
-                if opcode == 0xA:                          # pong
+                if opcode == 0xA:
                     continue
-                state["last_input"] = time.time()
                 try:
                     msg = json.loads(payload.decode("utf-8", "replace"))
                 except Exception:
                     continue
                 t = msg.get("t")
                 if t == "i":
-                    os.write(master, msg.get("d", "").encode("utf-8"))
+                    sess["last_input"] = time.time()
+                    os.write(sess["master"], msg.get("d", "").encode("utf-8"))
                 elif t == "r":
-                    _set_winsize(master, int(msg.get("r", 24)), int(msg.get("c", 80)))
+                    _set_winsize(sess["master"], int(msg.get("r", 24)), int(msg.get("c", 80)))
+                elif t == "end":
+                    explicit_end = True
+                    break
         except (asyncio.IncompleteReadError, ConnectionResetError, BrokenPipeError):
             pass
-        finally:
-            wd.cancel()
-            cleanup()
+
+        # ---- detach (keep PTY alive) or explicit kill ----
+        if sess.get("writer") is writer:
+            sess["attached"] = False
+            sess["writer"] = None
+        if explicit_end:
+            _close_session(sess, notify=False)
 
     except (asyncio.IncompleteReadError, ConnectionResetError, BrokenPipeError):
-        pass
+        if sess and sess.get("writer") is writer:
+            sess["attached"] = False
+            sess["writer"] = None
     except Exception as e:
         audit("ERROR ip=%s: %r" % (peer_ip, e))
     finally:
-        try:
-            if master is not None:
-                loop.remove_reader(master)
-        except Exception:
-            pass
-        try:
-            if proc and proc.poll() is None:
-                proc.kill()
-        except Exception:
-            pass
         try:
             writer.close()
         except Exception:
@@ -417,7 +452,8 @@ async def handle(reader, writer):
 
 async def main():
     server = await asyncio.start_server(handle, LISTEN_HOST, LISTEN_PORT)
-    audit("LISTEN %s:%d as %s (idle=%ss)" % (LISTEN_HOST, LISTEN_PORT, _current_user(), IDLE_TIMEOUT))
+    audit("LISTEN %s:%d as %s (idle=%ss, persist via reattach)" %
+          (LISTEN_HOST, LISTEN_PORT, _current_user(), IDLE_TIMEOUT))
     async with server:
         await server.serve_forever()
 

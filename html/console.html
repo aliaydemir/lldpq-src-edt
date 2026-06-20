@@ -34,6 +34,16 @@
     .hdr .hbtn { display: inline-flex; align-items: center; gap: 6px; background: #2d2d2d; border: 1px solid #3c3c3c; color: #ccc; border-radius: 6px; padding: 6px 10px; font-size: 12px; cursor: pointer; }
     .hdr .hbtn:hover { border-color: #76b900; color: #76b900; }
     .hdr .hbtn svg { width: 14px; height: 14px; fill: currentColor; }
+    .hdr .hbtn.active { border-color: #76b900; color: #76b900; background: #1a2e00; }
+
+    /* broadcast bar (type once → all tabs) */
+    .bcast-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #1a2410; border-top: 1px solid #3a5212; flex: none; }
+    .bcast-bar[hidden] { display: none; }
+    .bcast-bar .bcast-label { font-size: 12px; font-weight: 700; color: #9ccc65; white-space: nowrap; }
+    .bcast-bar input { flex: 1; background: #0d0d0d; border: 1px solid #3a5212; color: #e0e0e0; border-radius: 6px; padding: 7px 10px; font-size: 13px; font-family: 'JetBrains Mono', Menlo, monospace; outline: none; }
+    .bcast-bar input:focus { border-color: #76b900; }
+    .bcast-bar button { background: #2d2d2d; border: 1px solid #3c3c3c; color: #ccc; border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+    .bcast-bar button:hover { border-color: #76b900; color: #76b900; }
 
     /* ---- layout ---- */
     .wrap { flex: 1; display: flex; min-height: 0; }
@@ -103,6 +113,7 @@
         <span class="sub" id="hdrSub">interactive SSH terminal</span>
         <span class="badge" title="Full interactive shell — every session is audited">FULL ACCESS · AUDITED</span>
         <div class="spacer"></div>
+        <button class="hbtn" id="bcastBtn" onclick="toggleBroadcast()" title="Broadcast — type once, send to ALL open tabs"><b>B</b></button>
         <button class="hbtn" onclick="fontStep(-1)" title="Smaller font">A−</button>
         <button class="hbtn" onclick="fontStep(1)" title="Larger font">A+</button>
         <button class="hbtn" onclick="openSearch()" title="Search (Ctrl+F)"><svg viewBox="0 0 24 24"><path d="M9.5,3A6.5,6.5 0 0,1 16,9.5C16,11.11 15.41,12.59 14.44,13.73L14.71,14H15.5L20.5,19L19,20.5L14,15.5V14.71L13.73,14.44C12.59,15.41 11.11,16 9.5,16A6.5,6.5 0 0,1 3,9.5A6.5,6.5 0 0,1 9.5,3M9.5,5C7,5 5,7 5,9.5C5,12 7,14 9.5,14C12,14 14,12 14,9.5C14,7 12,5 9.5,5Z"/></svg></button>
@@ -127,6 +138,11 @@
                     <button onclick="searchNext()" title="Next">↓</button>
                     <button onclick="closeSearch()" title="Close">✕</button>
                 </div>
+            </div>
+            <div class="bcast-bar" id="bcastBar" hidden>
+                <span class="bcast-label">Broadcast →</span>
+                <input id="bcastInput" autocomplete="off" placeholder="type a command, Enter sends to ALL open tabs…" onkeydown="if(event.key==='Enter'){broadcastSend()} if(event.key==='Escape'){closeBroadcast()}">
+                <button onclick="closeBroadcast()" title="Close broadcast">✕</button>
             </div>
         </main>
     </div>
@@ -166,7 +182,11 @@
                 return;
             }
         }
+        // Load the terminal webfont BEFORE opening any xterm so glyph metrics are correct
+        // (otherwise xterm measures a fallback font and rendering looks off).
+        try { await document.fonts.load("14px 'JetBrains Mono'"); await document.fonts.load("700 14px 'JetBrains Mono'"); } catch(e){}
         await loadDevices();
+        restoreTabs();   // reopen + reattach sessions that were open before navigating away
         window.addEventListener('resize', () => { const s = sessions[activeId]; if (s) try { s.fit.fit(); } catch(e){} });
         document.addEventListener('keydown', e => {
             if ((e.ctrlKey || e.metaKey) && e.key === 'f' && activeId) { e.preventDefault(); openSearch(); }
@@ -204,7 +224,10 @@
         groupOrder.forEach(group => {
             const names = (devicesByGroup[group] || []).filter(n => n.toLowerCase().includes(f));
             if (!names.length) return;
-            const isCol = collapsed[group] ? 'collapsed' : '';
+            // Collapsed by default; a group counts as open only if explicitly opened
+            // (collapsed[group] === false). While searching, matching groups auto-expand.
+            const open = f ? true : (collapsed[group] === false);
+            const isCol = open ? '' : 'collapsed';
             html += `<div class="group-header ${isCol}" onclick="toggleGroup('${esc(group)}')"><span class="arrow">▼</span>${esc(group)} (${names.length})</div>`;
             html += `<div class="group-devices ${isCol}" data-group="${esc(group)}">`;
             names.forEach(n => {
@@ -215,12 +238,16 @@
         document.getElementById('list').innerHTML = html;
     }
 
-    function toggleGroup(g) { collapsed[g] = !collapsed[g]; renderList(); }
+    function toggleGroup(g) { collapsed[g] = (collapsed[g] === false) ? true : false; renderList(); }
     function activeTarget() { return sessions[activeId] ? sessions[activeId].target : null; }
 
     // ---------------- sessions / tabs ----------------
-    function openTarget(target, label) {
-        for (const id in sessions) { if (sessions[id].target === target) { switchTo(id); return; } }
+    function openTarget(target, label, sid) {
+        if (!sid) {
+            // user click: focus an existing tab for this target instead of duplicating
+            for (const id in sessions) { if (sessions[id].target === target) { switchTo(id); return; } }
+            sid = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'cs' + Date.now() + Math.random().toString(16).slice(2);
+        }
         const id = 'cs' + (++seq);
         const pane = document.createElement('div');
         pane.className = 'term-pane';
@@ -239,7 +266,7 @@
         try { const u = new Unicode11Addon.Unicode11Addon(); term.loadAddon(u); term.unicode.activeVersion = '11'; } catch(e){}
         term.open(pane);
 
-        const sess = { id, target, label, term, fit, search, ws: null, paneEl: pane, tabEl: null, log: '', connected: false };
+        const sess = { id, sid, target, label, term, fit, search, ws: null, paneEl: pane, tabEl: null, log: '', connected: false };
         sessions[id] = sess;
 
         // copy-on-select (PuTTY/iTerm style)
@@ -264,6 +291,7 @@
         switchTo(id);
         connect(sess);
         renderList();
+        saveTabs();
     }
 
     function buildTab(sess) {
@@ -297,7 +325,7 @@
     function connect(sess) {
         clearReconnect(sess);
         const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-        const ws = new WebSocket(`${proto}://${location.host}/console-ws?target=${encodeURIComponent(sess.target)}`);
+        const ws = new WebSocket(`${proto}://${location.host}/console-ws?target=${encodeURIComponent(sess.target)}&sid=${encodeURIComponent(sess.sid)}`);
         ws.binaryType = 'arraybuffer';
         sess.ws = ws;
         const dec = new TextDecoder('utf-8', { fatal: false });
@@ -336,10 +364,14 @@
     function closeSession(id) {
         const s = sessions[id];
         if (!s) return;
+        // Explicit close → tell the bridge to kill the PTY (navigation-away does NOT send this,
+        // so those sessions stay alive for reattach).
+        try { if (s.ws && s.ws.readyState === 1) s.ws.send(JSON.stringify({ t: 'end' })); } catch(e){}
         try { if (s.ws) s.ws.close(); } catch(e){}
         try { s.term.dispose(); } catch(e){}
         s.paneEl.remove(); s.tabEl.remove();
         delete sessions[id];
+        saveTabs();
         if (activeId === id) {
             const rest = Object.keys(sessions);
             activeId = null;
@@ -383,6 +415,46 @@
     function closeSearch() { document.getElementById('searchbar').hidden = true; }
     function searchNext() { const s = sessions[activeId]; if (s) s.search.findNext(document.getElementById('searchInput').value); }
     function searchPrev() { const s = sessions[activeId]; if (s) s.search.findPrevious(document.getElementById('searchInput').value); }
+
+    // ---------------- persistence (sessions survive iframe reloads via server reattach) ----------------
+    function saveTabs() {
+        try {
+            const tabs = Object.keys(sessions).map(id => ({ sid: sessions[id].sid, target: sessions[id].target, label: sessions[id].label }));
+            sessionStorage.setItem('lldpq_console_tabs', JSON.stringify(tabs));
+        } catch (e) {}
+    }
+    function restoreTabs() {
+        let tabs = [];
+        try { tabs = JSON.parse(sessionStorage.getItem('lldpq_console_tabs') || '[]'); } catch (e) {}
+        tabs.forEach(t => { if (t && t.sid && t.target) openTarget(t.target, t.label || t.target, t.sid); });
+    }
+
+    // ---------------- broadcast (type once → all open tabs) ----------------
+    let broadcasting = false;
+    function toggleBroadcast() {
+        broadcasting = !broadcasting;
+        document.getElementById('bcastBtn').classList.toggle('active', broadcasting);
+        document.getElementById('bcastBar').hidden = !broadcasting;
+        if (broadcasting) document.getElementById('bcastInput').focus();
+    }
+    function closeBroadcast() {
+        broadcasting = false;
+        document.getElementById('bcastBtn').classList.remove('active');
+        document.getElementById('bcastBar').hidden = true;
+        const s = sessions[activeId]; if (s) s.term.focus();
+    }
+    function broadcastSend() {
+        const inp = document.getElementById('bcastInput');
+        const cmd = inp.value;
+        if (!cmd) return;
+        let n = 0;
+        for (const id in sessions) {
+            const s = sessions[id];
+            if (s.ws && s.ws.readyState === 1) { s.ws.send(JSON.stringify({ t: 'i', d: cmd + '\n' })); n++; }
+        }
+        inp.value = '';
+        inp.placeholder = `sent to ${n} tab${n === 1 ? '' : 's'} — type the next command…`;
+    }
 
     function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
     </script>
