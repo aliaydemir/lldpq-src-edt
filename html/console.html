@@ -10,12 +10,12 @@
     @font-face {
         font-family: 'JetBrains Mono';
         font-style: normal; font-weight: 400; font-display: swap;
-        src: url('/css/xterm/JetBrainsMono-400.woff2') format('woff2');
+        src: url('/css/xterm/JetBrainsMono-400.woff2?v=nf1') format('woff2');
     }
     @font-face {
         font-family: 'JetBrains Mono';
         font-style: normal; font-weight: 700; font-display: swap;
-        src: url('/css/xterm/JetBrainsMono-700.woff2') format('woff2');
+        src: url('/css/xterm/JetBrainsMono-700.woff2?v=nf1') format('woff2');
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; }
@@ -37,7 +37,7 @@
     .hdr .hbtn.active { border-color: #76b900; color: #76b900; background: #1a2e00; }
 
     /* broadcast bar (type once → all tabs) */
-    .bcast-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #1a2410; border-top: 1px solid #3a5212; flex: none; }
+    .bcast-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #1a2410; border-top: 1px solid #3a5212; flex: none; position: relative; z-index: 5; }
     .bcast-bar[hidden] { display: none; }
     .bcast-bar .bcast-label { font-size: 12px; font-weight: 700; color: #9ccc65; white-space: nowrap; }
     .bcast-bar input { flex: 1; background: #0d0d0d; border: 1px solid #3a5212; color: #e0e0e0; border-radius: 6px; padding: 7px 10px; font-size: 13px; font-family: 'JetBrains Mono', Menlo, monospace; outline: none; }
@@ -75,7 +75,7 @@
     .device-item { padding-left: 26px; }
 
     /* ---- terminal area ---- */
-    .term-main { flex: 1; display: flex; flex-direction: column; min-width: 0; background: #0d0d0d; }
+    .term-main { flex: 1; display: flex; flex-direction: column; min-width: 0; background: #282828; }
     .tabs { display: flex; align-items: stretch; gap: 2px; background: #1a1a1a; border-bottom: 1px solid #333; min-height: 36px; overflow-x: auto; flex: none; }
     .tab { display: flex; align-items: center; gap: 8px; padding: 0 12px; font-size: 12px; color: #aaa; background: #232323; cursor: pointer; white-space: nowrap; border-right: 1px solid #2a2a2a; border-top: 2px solid transparent; }
     .tab:hover { background: #2a2a2a; }
@@ -141,7 +141,7 @@
             </div>
             <div class="bcast-bar" id="bcastBar" hidden>
                 <span class="bcast-label">Broadcast →</span>
-                <input id="bcastInput" autocomplete="off" placeholder="type a command, Enter sends to ALL open tabs…" onkeydown="if(event.key==='Enter'){broadcastSend()} if(event.key==='Escape'){closeBroadcast()}">
+                <input id="bcastInput" autocomplete="off" placeholder="send commands to all tabs" onkeydown="if(event.key==='Enter'){broadcastSend()} if(event.key==='Escape'){closeBroadcast()}">
                 <button onclick="closeBroadcast()" title="Close broadcast">✕</button>
             </div>
         </main>
@@ -154,14 +154,15 @@
     <script src="/css/xterm/addon-unicode11.js"></script>
     <script>
     const HOST_TARGET = '__lldpq_host__';
+    // Imported 1:1 from the user's iTerm2 "Default" profile (mine.itermcolors).
     const XTERM_THEME = {
-        background: '#0d0d0d', foreground: '#e0e0e0',
-        cursor: '#76b900', cursorAccent: '#0d0d0d',
-        selectionBackground: 'rgba(118,185,0,0.35)',
-        black:'#2e2e2e', red:'#ff5f56', green:'#76b900', yellow:'#e0b400',
-        blue:'#4fc3f7', magenta:'#c792ea', cyan:'#26c6da', white:'#d0d0d0',
-        brightBlack:'#6a6a6a', brightRed:'#ff7b72', brightGreen:'#9ccc65', brightYellow:'#ffd54f',
-        brightBlue:'#80d8ff', brightMagenta:'#e1bee7', brightCyan:'#4dd0e1', brightWhite:'#ffffff'
+        background: '#282828', foreground: '#e8dcb7',
+        cursor: '#e8dcb7', cursorAccent: '#282828',
+        selectionBackground: '#645c55', selectionForeground: '#e8dcb7',
+        black: '#282828', red: '#bb362a', green: '#989736', yellow: '#ce9c3e',
+        blue: '#558387', magenta: '#a66685', cyan: '#749c6f', white: '#a59a86',
+        brightBlack: '#8f8476', brightRed: '#e85841', brightGreen: '#b9bb46', brightYellow: '#f1bf4f',
+        brightBlue: '#8aa499', brightMagenta: '#c8899b', brightCyan: '#98bf83', brightWhite: '#e8dcb7'
     };
     let fontSize = parseInt(localStorage.getItem('lldpq_console_font') || '14', 10);
 
@@ -188,6 +189,15 @@
         await loadDevices();
         restoreTabs();   // reopen + reattach sessions that were open before navigating away
         window.addEventListener('resize', () => { const s = sessions[activeId]; if (s) try { s.fit.fit(); } catch(e){} });
+        // Re-measure terminals once the webfont is fully active (in case any opened early).
+        if (document.fonts && document.fonts.ready) {
+            document.fonts.ready.then(() => {
+                for (const id in sessions) {
+                    const t = sessions[id];
+                    try { t.term.options.fontSize = t.term.options.fontSize; t.fit.fit(); } catch(e){}
+                }
+            });
+        }
         document.addEventListener('keydown', e => {
             if ((e.ctrlKey || e.metaKey) && e.key === 'f' && activeId) { e.preventDefault(); openSearch(); }
         });
@@ -431,29 +441,30 @@
 
     // ---------------- broadcast (type once → all open tabs) ----------------
     let broadcasting = false;
+    function refitActive() { const s = sessions[activeId]; if (s) setTimeout(() => { try { s.fit.fit(); } catch(e){} }, 0); }
     function toggleBroadcast() {
         broadcasting = !broadcasting;
         document.getElementById('bcastBtn').classList.toggle('active', broadcasting);
         document.getElementById('bcastBar').hidden = !broadcasting;
+        refitActive();   // reflow so the bar shows immediately (and the terminal resizes around it)
         if (broadcasting) document.getElementById('bcastInput').focus();
     }
     function closeBroadcast() {
         broadcasting = false;
         document.getElementById('bcastBtn').classList.remove('active');
         document.getElementById('bcastBar').hidden = true;
+        refitActive();
         const s = sessions[activeId]; if (s) s.term.focus();
     }
     function broadcastSend() {
         const inp = document.getElementById('bcastInput');
         const cmd = inp.value;
         if (!cmd) return;
-        let n = 0;
         for (const id in sessions) {
             const s = sessions[id];
-            if (s.ws && s.ws.readyState === 1) { s.ws.send(JSON.stringify({ t: 'i', d: cmd + '\n' })); n++; }
+            if (s.ws && s.ws.readyState === 1) s.ws.send(JSON.stringify({ t: 'i', d: cmd + '\n' }));
         }
-        inp.value = '';
-        inp.placeholder = `sent to ${n} tab${n === 1 ? '' : 's'} — type the next command…`;
+        inp.value = '';   // placeholder stays "send commands to all tabs"
     }
 
     function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
