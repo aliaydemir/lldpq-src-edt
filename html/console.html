@@ -279,17 +279,15 @@
         const sess = { id, sid, target, label, term, fit, search, ws: null, paneEl: pane, tabEl: null, log: '', connected: false };
         sessions[id] = sess;
 
-        // copy-on-select (PuTTY/iTerm style)
-        term.onSelectionChange(() => {
-            const sel = term.getSelection();
-            if (sel && navigator.clipboard) navigator.clipboard.writeText(sel).catch(() => {});
-        });
+        // copy-on-select (PuTTY/iTerm style) — bound to mouseup so the clipboard write
+        // happens inside a real user gesture (browsers block it from onSelectionChange).
+        pane.addEventListener('mouseup', () => { const sel = term.getSelection(); if (sel) copyText(sel); });
         // Ctrl+Shift+V / Ctrl+Shift+C ; leave Ctrl+C as SIGINT
         term.attachCustomKeyEventHandler(ev => {
             if (ev.type !== 'keydown') return true;
             if ((ev.ctrlKey || ev.metaKey) && ev.shiftKey && (ev.key === 'V' || ev.key === 'v')) { doPaste(sess); return false; }
             if ((ev.ctrlKey || ev.metaKey) && ev.shiftKey && (ev.key === 'C' || ev.key === 'c')) {
-                const s = term.getSelection(); if (s && navigator.clipboard) navigator.clipboard.writeText(s); return false;
+                copyText(term.getSelection()); return false;
             }
             return true;
         });
@@ -398,6 +396,28 @@
         } catch (e) {}
     }
 
+    // Robust copy: async clipboard when allowed, execCommand fallback (http / blocked).
+    function copyText(text) {
+        if (!text) return;
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).catch(() => execCopy(text));
+        } else {
+            execCopy(text);
+        }
+    }
+    function execCopy(text) {
+        try {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;top:0;left:-9999px;opacity:0;';
+            document.body.appendChild(ta);
+            ta.focus(); ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+        } catch (e) {}
+        const s = sessions[activeId]; if (s) s.term.focus();   // execCommand steals focus → restore
+    }
+
     // ---------------- header actions ----------------
     function fontStep(d) {
         fontSize = Math.max(9, Math.min(24, fontSize + d));
@@ -407,8 +427,7 @@
     function copyAll() {
         const s = sessions[activeId]; if (!s) return;
         s.term.selectAll();
-        const sel = s.term.getSelection();
-        if (navigator.clipboard) navigator.clipboard.writeText(sel);
+        copyText(s.term.getSelection());
         s.term.clearSelection();
     }
     function downloadLog() {
