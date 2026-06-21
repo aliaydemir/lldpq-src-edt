@@ -612,15 +612,22 @@ def build_context_for_question(question, devices, device_health):
     # Other collected data (transceiver / optical / BER / hardware). Filtered to the
     # mentioned device(s) when named, otherwise fabric-wide.
     _hf = mentioned_hosts or None
-    if any(kw in q_lower for kw in ['transceiver', 'optic', 'optical', 'sfp', 'qsfp', 'osfp', 'dom', 'module', 'firmware', 'fw version']):
+    if any(kw in q_lower for kw in ['transceiver', 'optic', 'optical', 'optik', 'sfp', 'qsfp', 'osfp',
+                                    'dom', 'module', 'modul', 'firmware', 'fw version', 'fiber', 'fibre',
+                                    'pluggable', 'gbic', 'dbm', 'margin', 'rx power', 'tx power', 'light',
+                                    'isik', 'ışık', 'optigi', 'optiği']):
         for _b in (build_transceiver_context(_hf), build_optical_context(_hf)):
             if _b:
                 extra_context.append(_b)
-    if any(kw in q_lower for kw in ['ber', 'fec', 'crc', 'symbol error', 'bit error', 'errored', 'rx error', 'tx error', 'corrupt']):
+    if any(kw in q_lower for kw in ['ber', 'fec', 'crc', 'fcs', 'symbol', 'bit error', 'errored', 'rx error',
+                                    'tx error', 'corrupt', 'error', 'hata', 'discard', 'drop', 'dropped',
+                                    'paket', 'packet']):
         _b = build_ber_context(_hf)
         if _b:
             extra_context.append(_b)
-    if any(kw in q_lower for kw in ['hardware', 'sensor', 'temperature', 'temp', 'psu', 'power supply', 'fan', 'cpu', 'memory', 'thermal', 'health']):
+    if any(kw in q_lower for kw in ['hardware', 'donanim', 'donanım', 'sensor', 'sensör', 'temperature',
+                                    'temp', 'sicaklik', 'sıcaklık', 'thermal', 'psu', 'power supply', 'fan',
+                                    'cpu', 'memory', 'bellek', 'voltage', 'voltaj', 'health', 'saglik', 'sağlık']):
         _b = build_hardware_context(_hf)
         if _b:
             extra_context.append(_b)
