@@ -285,11 +285,13 @@ def _make_feed(sess):
 async def _watchdog(sess):
     while not sess.get("closing"):
         await asyncio.sleep(15)
-        # Keepalive ping — keeps the WS alive through Cloudflare (~100s inactivity) and
-        # nginx idle timeouts even when the terminal is silent; the browser auto-pongs.
+        # Keepalive — keeps the WS alive through Cloudflare (~100s) / nginx idle timeouts
+        # when the terminal is silent. A NUL byte as a binary DATA frame is used (not a
+        # ping) because some proxies only reset their idle timer on data frames; xterm.js
+        # discards NUL so there is no visual effect.
         if sess.get("attached") and sess.get("writer"):
             try:
-                sess["writer"].write(ws_frame(0x9, b""))
+                sess["writer"].write(ws_frame(0x2, b"\x00"))
             except Exception:
                 pass
         idle = time.time() - sess["last_activity"]
