@@ -99,7 +99,11 @@
     .searchbar input:focus { border-color: #76b900; }
     .searchbar button { background: #2d2d2d; border: 1px solid #3c3c3c; color: #ccc; border-radius: 5px; padding: 4px 8px; cursor: pointer; font-size: 12px; }
     .searchbar button:hover { border-color: #76b900; color: #76b900; }
-    .xterm { height: 100%; }
+    /* xterm.css defaults .xterm / .xterm-viewport to background:#000, so the area below the
+       last rendered row shows as a black strip (e.g. above the broadcast bar). Paint these
+       with the terminal background so any sub-row remainder blends in. */
+    .xterm { height: 100%; background-color: #282828; }
+    .xterm .xterm-viewport { background-color: #282828 !important; }
     .xterm-viewport::-webkit-scrollbar { width: 10px; }
     .xterm-viewport::-webkit-scrollbar-thumb { background: #3a3a3a; border-radius: 5px; }
 </style>
