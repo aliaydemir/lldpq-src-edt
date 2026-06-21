@@ -269,6 +269,7 @@ def _make_feed(sess):
         if not data:
             _close_session(sess)
             return
+        sess["last_activity"] = time.time()
         buf = sess["buffer"]
         buf.extend(data)
         if len(buf) > MAX_BUF:
@@ -284,7 +285,14 @@ def _make_feed(sess):
 async def _watchdog(sess):
     while not sess.get("closing"):
         await asyncio.sleep(15)
-        idle = time.time() - sess["last_input"]
+        # Keepalive ping — keeps the WS alive through Cloudflare (~100s inactivity) and
+        # nginx idle timeouts even when the terminal is silent; the browser auto-pongs.
+        if sess.get("attached") and sess.get("writer"):
+            try:
+                sess["writer"].write(ws_frame(0x9, b""))
+            except Exception:
+                pass
+        idle = time.time() - sess["last_activity"]
         if idle > IDLE_TIMEOUT or (time.time() - sess["started"]) > MAX_SESSION:
             reason = "idle" if idle > IDLE_TIMEOUT else "max-session"
             if sess.get("writer"):
@@ -395,7 +403,7 @@ async def handle(reader, writer):
             os.close(slave)
             sess = {"sid": sid, "user": user, "label": label, "proc": proc, "master": master,
                     "buffer": bytearray(), "writer": writer, "attached": True,
-                    "last_input": time.time(), "started": time.time(), "closing": False}
+                    "last_activity": time.time(), "started": time.time(), "closing": False}
             SESSIONS[sid] = sess
             loop.add_reader(master, _make_feed(sess))
             asyncio.ensure_future(_watchdog(sess))
@@ -420,7 +428,7 @@ async def handle(reader, writer):
                     continue
                 t = msg.get("t")
                 if t == "i":
-                    sess["last_input"] = time.time()
+                    sess["last_activity"] = time.time()
                     os.write(sess["master"], msg.get("d", "").encode("utf-8"))
                 elif t == "r":
                     _set_winsize(sess["master"], int(msg.get("r", 24)), int(msg.get("c", 80)))
