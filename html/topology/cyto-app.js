@@ -148,7 +148,7 @@ function calculateHierarchicalPositions(direction) {
             const nodeWidth = (containerWidth - padding * 2) / nodes.length * 1.3;
             
             // Sort nodes by name for consistent ordering
-            nodes.sort((a, b) => a.data('label').localeCompare(b.data('label')));
+            nodes.sort((a, b) => a.data('label').localeCompare(b.data('label'), undefined, { numeric: true, sensitivity: 'base' }));
             
             nodes.forEach((node, nodeIndex) => {
                 positions[node.id()] = {
@@ -168,7 +168,7 @@ function calculateHierarchicalPositions(direction) {
             const nodeHeight = (containerHeight - padding * 2) / nodes.length * 1.8;
             
             // Sort nodes by name for consistent ordering
-            nodes.sort((a, b) => a.data('label').localeCompare(b.data('label')));
+            nodes.sort((a, b) => a.data('label').localeCompare(b.data('label'), undefined, { numeric: true, sensitivity: 'base' }));
             
             nodes.forEach((node, nodeIndex) => {
                 positions[node.id()] = {

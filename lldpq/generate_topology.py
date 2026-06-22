@@ -630,7 +630,8 @@ def generate_topology_file(output_filename, directory, assets_file_path, devices
 
     topology_data["nodes"] = [node for node in topology_data["nodes"] if node["name"] in final_nodes_set]
 
-    topology_data["nodes"].sort(key=lambda x: x["name"])
+    # Natural sort so "...-1-2" comes before "...-1-10" (numeric-aware ordering)
+    topology_data["nodes"].sort(key=lambda x: [int(t) if t.isdigit() else t.lower() for t in re.split(r'(\d+)', x["name"])])
 
     id_map = {node["id"]: new_id for new_id, node in enumerate(topology_data["nodes"])}
 
