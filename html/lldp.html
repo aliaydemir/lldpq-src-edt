@@ -306,7 +306,8 @@
             gap: 8px;
         }
         
-        .device-search-container .select2-container { min-width: 600px; }
+        /* Start ~Filter-Device width, grow with selected tags up to ~5 wide, then wrap */
+        .device-search-container .select2-container { width: fit-content !important; min-width: 220px; max-width: 720px; }
         .device-search-container .select2-container--default .select2-selection--single {
             height: 34px;
             border: 1px solid #555;
@@ -352,7 +353,7 @@
         /* multi-select tags (dark theme, green accent) */
         .device-search-container .select2-container--default .select2-selection--multiple {
             background: #3c3c3c; border: 1px solid #555; min-height: 34px;
-            max-height: 72px; overflow-y: auto;   /* ~5 tags per row; 6-10 wrap to a 2nd row, scroll beyond */
+            max-height: 72px; overflow-y: auto; overflow-x: hidden;   /* ~5 tags/row; 6-10 wrap to 2nd row; no horizontal scrollbar */
         }
         .device-search-container .select2-container--default .select2-selection--multiple .select2-selection__choice {
             background: #2c3a12; border: 1px solid #76b900; color: #d4d4d4; border-radius: 3px; padding: 1px 6px;
@@ -1352,8 +1353,8 @@
             // Multi-select with search; pick several devices at once
             $('#deviceSearch').select2({
                 placeholder: 'Search devices…',
-                allowClear: true,
-                width: '600px',
+                allowClear: false,      // no built-in (black) clear-x; the red ✕ button handles clear-all
+                width: 'auto',          // grow with content (CSS clamps min/max width)
                 dropdownAutoWidth: true,
                 closeOnSelect: false,   // keep dropdown open so 2-3-4 devices can be added in a row
                 matcher: function(params, data) {
