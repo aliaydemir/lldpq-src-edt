@@ -129,8 +129,8 @@ function convertToCytoscapeFormat(topologyData) {
  * level layout and only overrides tagged nodes.
  */
 function applyStagger(positions, padding, containerWidth) {
-    const NODE_VGAP = 32;          // vertical pitch between devices in a rack column
-    const MIN_RACK_PITCH = 280;    // horizontal gap between rack columns (spread + label room)
+    const NODE_VGAP = 26;          // vertical pitch between devices in a rack column
+    const MIN_RACK_PITCH = 300;    // horizontal gap between rack columns (spread + label room)
     const groups = {};
     cy.nodes().forEach(n => {
         const sr = n.data('staggerRow');
@@ -159,9 +159,14 @@ function applyStagger(positions, padding, containerWidth) {
         const sizes = racks.map(r => r.length).slice().sort((a, b) => a - b);
         const medianRack = sizes[Math.floor(sizes.length / 2)] || 1;
         const drop = medianRack * NODE_VGAP * 0.5;                    // even-rack brick offset
-        const pitchX = Math.max((containerWidth - padding * 2) / racks.length, MIN_RACK_PITCH);
+        const avail = containerWidth - padding * 2;
+        const pitchX = Math.max(avail / racks.length, MIN_RACK_PITCH);
+        const bandWidth = racks.length * pitchX;
+        // Center the band on the same axis as the other levels (they overspread by 1.3x,
+        // so their center is padding + 0.65*avail). Without this the wide band drifts right.
+        const startX = (padding + avail * 0.65) - bandWidth / 2;
         racks.forEach((rack, r) => {
-            const colX = padding + r * pitchX + pitchX / 2;
+            const colX = startX + (r + 0.5) * pitchX;
             const colTopY = baseY + (rack[0].data('staggerRow') === 1 ? drop : 0);
             rack.forEach((n, k) => {
                 positions[n.id()] = { x: colX, y: colTopY + k * NODE_VGAP };
