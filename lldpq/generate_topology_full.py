@@ -70,12 +70,21 @@ def categorize_device(device_name, config):
             if re.search(rule["pattern"], device_name, re.IGNORECASE):
                 if rule.get("type") == "even_odd_suffix":
                     try:
-                        device_number = int(device_name.split("-")[-1])
+                        number_regex = rule.get("number_regex")
+                        if number_regex:
+                            # Pull the even/odd number from a capture group anywhere in the
+                            # name (e.g. the rack field) — not just the trailing "-" segment.
+                            m = re.search(number_regex, device_name, re.IGNORECASE)
+                            if not m:
+                                break  # no match -> fall through to regular patterns
+                            device_number = int(m.group(1))
+                        else:
+                            device_number = int(device_name.split("-")[-1])
                         if device_number % 2 == 0:
                             return rule["even_layer"], rule["icon"]
                         else:
                             return rule["odd_layer"], rule["icon"]
-                    except (ValueError, IndexError):
+                    except (ValueError, IndexError, re.error):
                         # If parsing fails, continue to regular patterns
                         break
         except re.error:
