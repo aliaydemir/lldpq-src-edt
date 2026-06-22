@@ -68,6 +68,12 @@ def categorize_device(device_name, config):
     for rule in config.get("special_rules", []):
         try:
             if re.search(rule["pattern"], device_name, re.IGNORECASE):
+                if rule.get("type") == "stagger":
+                    # Single band; the brick/zigzag (even -> lower sub-row) is drawn
+                    # client-side by cyto-app.js using the staggerRow tag (see
+                    # stagger_row_for). Honor the rule's layer/icon here.
+                    default_layer = config.get("default", {}).get("layer", 9)
+                    return rule.get("layer", default_layer), rule.get("icon", "server")
                 if rule.get("type") == "even_odd_suffix":
                     try:
                         number_regex = rule.get("number_regex")
@@ -105,6 +111,33 @@ def categorize_device(device_name, config):
     # Return default if no pattern matches
     default = config.get("default", {"layer": 9, "icon": "server"})
     return default["layer"], default["icon"]
+
+def stagger_row_for(device_name, config):
+    """Return the brick sub-row for a 'stagger' special rule:
+      0 -> odd number  (upper sub-row)
+      1 -> even number (lower sub-row)
+      None -> device is not part of any stagger rule.
+    The number comes from number_regex group 1 (e.g. the rack field); if absent,
+    falls back to the trailing "-" segment. Generic: works for any naming scheme.
+    """
+    for rule in config.get("special_rules", []):
+        if rule.get("type") != "stagger":
+            continue
+        try:
+            if not re.search(rule["pattern"], device_name, re.IGNORECASE):
+                continue
+            number_regex = rule.get("number_regex")
+            if number_regex:
+                m = re.search(number_regex, device_name, re.IGNORECASE)
+                if not m:
+                    continue
+                num = int(m.group(1))
+            else:
+                num = int(device_name.split("-")[-1])
+            return 1 if num % 2 == 0 else 0
+        except (ValueError, IndexError, re.error):
+            continue
+    return None
 
 def append_creation_time_to_html(html_file_path):
     timestamp = datetime.now().strftime("Created on %Y-%m-%d %H-%M")
@@ -360,6 +393,9 @@ def parse_lldp_results(directory, device_info, hosts_only_devices):
             "version": info.get("version", "N/A"),
             "dcimDeviceLink": f"/device.html?device={device_name}"
         }
+        _srow = stagger_row_for(device_name, topology_config)
+        if _srow is not None:
+            device_node["staggerRow"] = _srow
         topology_data["nodes"].append(device_node)
         device_nodes[device_name] = device_id
         device_id += 1
@@ -379,6 +415,9 @@ def parse_lldp_results(directory, device_info, hosts_only_devices):
                 "version": "N/A",
                 "dcimDeviceLink": f"/device.html?device={host_device}"
             }
+            _srow = stagger_row_for(host_device, topology_config)
+            if _srow is not None:
+                device_node["staggerRow"] = _srow
             topology_data["nodes"].append(device_node)
             device_nodes[host_device] = device_id
             device_id += 1

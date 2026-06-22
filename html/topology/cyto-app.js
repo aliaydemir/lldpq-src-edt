@@ -72,6 +72,7 @@ function convertToCytoscapeFormat(topologyData) {
                 id: 'n' + node.id,
                 label: node.name,
                 level: node.layerSortPreference || 5,
+                staggerRow: node.staggerRow,
                 icon: iconType,
                 iconChar: iconChar,
                 iconBgChar: bgChar,
@@ -114,41 +115,38 @@ function convertToCytoscapeFormat(topologyData) {
 }
 
 /**
- * Get layout options
- */
-// Endpoint groups that should use a brick/stagger layout: ordered left-to-right by
-// rack, with EVEN racks dropped to the lower sub-row so they sit between the odd-rack
-// blocks (rack1 | rack2↓ | rack3 | rack4↓ ...). rackRe's group 1 = the rack number.
-const STAGGER_GROUPS = [
-    { match: /gb300/i, rackRe: /gb300-\d+-(\d+)/i }
-];
-
-/**
- * Re-position large endpoint groups (e.g. gb300 racks) as an interleaved brick:
- * global left-to-right order by rack, even racks dropped to the lower sub-row.
- * Runs after the normal level layout (TB) and only overrides matched nodes.
+ * Re-position staggered endpoint groups as an interleaved brick/zigzag:
+ * global left-to-right order, with nodes tagged staggerRow=1 (even number) dropped
+ * to a lower sub-row so they sit between the staggerRow=0 (odd) blocks.
+ *
+ * Fully config-driven: nodes are tagged by the generator from a `type: stagger`
+ * rule in topology_config.yaml (no device names are hardcoded here). Members are
+ * grouped by level so multiple independent stagger groups stay separate.
+ * Runs after the normal level layout (TB) and only overrides tagged nodes.
  */
 function applyStagger(positions, padding, containerWidth) {
-    STAGGER_GROUPS.forEach(g => {
-        const members = cy.nodes().toArray().filter(n => g.match.test(n.data('label') || ''));
+    const groups = {};
+    cy.nodes().forEach(n => {
+        const sr = n.data('staggerRow');
+        if (sr === 0 || sr === 1) {
+            const lvl = n.data('level');
+            (groups[lvl] = groups[lvl] || []).push(n);
+        }
+    });
+    Object.keys(groups).forEach(lvl => {
+        const members = groups[lvl];
         if (members.length < 2) return;
-        const entries = members.map(n => {
-            const m = (n.data('label') || '').match(g.rackRe);
-            return { node: n, rack: m ? parseInt(m[1], 10) : 0 };
-        });
-        // Keep the familiar left-to-right order (natural by label: pod -> rack -> compute);
-        // the rack number is only used below to pick the sub-row (parity).
-        entries.sort((a, b) =>
-            a.node.data('label').localeCompare(b.node.data('label'), undefined, { numeric: true, sensitivity: 'base' }));
-        // Two sub-rows: reuse the existing Y of these nodes (odd-rack layer = top, even = bottom).
-        const ys = [...new Set(entries.map(e => (positions[e.node.id()] || {}).y).filter(v => v != null))].sort((a, b) => a - b);
-        const topY = ys.length ? ys[0] : padding;
-        const bottomY = ys.length > 1 ? ys[ys.length - 1] : topY + 90;
-        const dx = (containerWidth - padding * 2) / entries.length * 1.3;
-        entries.forEach((e, i) => {
-            positions[e.node.id()] = {
+        // Keep the familiar left-to-right order (natural by label).
+        members.sort((a, b) =>
+            a.data('label').localeCompare(b.data('label'), undefined, { numeric: true, sensitivity: 'base' }));
+        // All members share one level => one base Y; drop the even sub-row below it.
+        const baseY = (positions[members[0].id()] || {}).y != null ? positions[members[0].id()].y : padding;
+        const dropY = baseY + 90;
+        const dx = (containerWidth - padding * 2) / members.length * 1.3;
+        members.forEach((n, i) => {
+            positions[n.id()] = {
                 x: padding + dx * i + dx / 2,
-                y: (e.rack % 2 === 0) ? bottomY : topY
+                y: n.data('staggerRow') === 1 ? dropY : baseY
             };
         });
     });
