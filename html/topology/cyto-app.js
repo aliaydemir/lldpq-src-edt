@@ -130,7 +130,8 @@ function convertToCytoscapeFormat(topologyData) {
  */
 function applyStagger(positions, padding, containerWidth) {
     const NODE_VGAP = 26;          // vertical pitch between devices in a rack column
-    const MIN_RACK_PITCH = 300;    // horizontal gap between rack columns (spread + label room)
+    const MIN_RACK_PITCH = 340;    // horizontal gap between rack columns (spread + label room)
+    const SUBCOL_GAP = 50;         // horizontal gap between a rack's two sub-columns
     const groups = {};
     cy.nodes().forEach(n => {
         const sr = n.data('staggerRow');
@@ -154,11 +155,11 @@ function applyStagger(positions, padding, containerWidth) {
             racks[racks.length - 1].push(n);
         });
         const baseY = (positions[members[0].id()] || {}).y != null ? positions[members[0].id()].y : padding;
-        // Median rack size for the brick offset, so one oversized rack (e.g. extra
-        // unexpected LLDP nodes) doesn't blow up the zigzag.
+        // Median rack size for the brick offset. Each rack renders as TWO sub-columns,
+        // so the visible height is ~half; offset by half of that.
         const sizes = racks.map(r => r.length).slice().sort((a, b) => a - b);
         const medianRack = sizes[Math.floor(sizes.length / 2)] || 1;
-        const drop = medianRack * NODE_VGAP * 0.5;                    // even-rack brick offset
+        const drop = Math.ceil(medianRack / 2) * NODE_VGAP * 0.5;     // even-rack brick offset
         const avail = containerWidth - padding * 2;
         const pitchX = Math.max(avail / racks.length, MIN_RACK_PITCH);
         const bandWidth = racks.length * pitchX;
@@ -168,8 +169,17 @@ function applyStagger(positions, padding, containerWidth) {
         racks.forEach((rack, r) => {
             const colX = startX + (r + 0.5) * pitchX;
             const colTopY = baseY + (rack[0].data('staggerRow') === 1 ? drop : 0);
+            // Split each rack into two sub-columns (first half left, second half right)
+            // so the leaf->rack links fan into two streams instead of one overlapping bar.
+            const half = Math.ceil(rack.length / 2);
             rack.forEach((n, k) => {
-                positions[n.id()] = { x: colX, y: colTopY + k * NODE_VGAP };
+                const left = k < half;
+                n.data('subCol', left ? 'L' : 'R');   // drives label side (style below)
+                const row = left ? k : k - half;
+                positions[n.id()] = {
+                    x: colX + (left ? -SUBCOL_GAP / 2 : SUBCOL_GAP / 2),
+                    y: colTopY + row * NODE_VGAP
+                };
             });
         });
     });
@@ -1423,6 +1433,15 @@ function initCytoscape() {
                     'font-size': '8px'
                 }
             },
+            // Left sub-column of a rack: label on the LEFT so the two sub-columns' labels
+            // don't collide (right sub-column keeps the default right-aligned label above).
+            {
+                selector: "node[subCol = 'L']",
+                style: {
+                    'text-halign': 'left',
+                    'text-margin-x': -6
+                }
+            },
             // Highlighted node
             {
                 selector: 'node:selected',
@@ -1453,11 +1472,12 @@ function initCytoscape() {
                     'text-background-padding': '2px'
                 }
             },
-            // Missing/fail links are the bulk of the clutter (often false-positives from a
+            // Missing links (red) are the bulk of the clutter (often false-positives from a
             // stale topology.dot). Render them faint + thin so they don't form solid bars;
             // hover a node to bring its own links back to full strength (.highlighted below).
+            // NOTE: only 'yes' (red/missing) — leave 'fail' (yellow/unexpected) fully visible.
             {
-                selector: "edge[is_missing = 'yes'], edge[is_missing = 'fail']",
+                selector: "edge[is_missing = 'yes']",
                 style: {
                     'opacity': 0.28,
                     'width': 0.6
