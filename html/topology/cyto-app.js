@@ -129,8 +129,8 @@ function convertToCytoscapeFormat(topologyData) {
  * level layout and only overrides tagged nodes.
  */
 function applyStagger(positions, padding, containerWidth) {
-    const NODE_VGAP = 20;          // vertical pitch between devices in a rack column
-    const MIN_RACK_PITCH = 150;    // minimum horizontal gap between rack columns
+    const NODE_VGAP = 46;          // vertical pitch between devices (fits 40px node)
+    const MIN_RACK_PITCH = 210;    // horizontal gap between rack columns (room for side labels)
     const groups = {};
     cy.nodes().forEach(n => {
         const sr = n.data('staggerRow');
@@ -1401,6 +1401,18 @@ function initCytoscape() {
                     'height': 40,
                     'shape': 'ellipse',
                     'border-width': 0
+                }
+            },
+            // Staggered endpoint nodes (rack columns): label to the RIGHT so each
+            // device reads as its own row in the vertical column without overlap.
+            {
+                selector: 'node[staggerRow >= 0]',
+                style: {
+                    'text-halign': 'right',
+                    'text-valign': 'center',
+                    'text-margin-x': 6,
+                    'text-margin-y': 0,
+                    'font-size': '8px'
                 }
             },
             // Highlighted node
