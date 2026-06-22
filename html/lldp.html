@@ -422,11 +422,11 @@
                 </svg>
                 <span id="p2p-toggle-text">P2P: On</span>
             </button>
-            <button id="port-alias-btn" onclick="openPortAliasModal()" class="btn btn-gray" style="display: none;" title="Edit OS interface name -> P2P/field label mappings (admin)">
+            <button id="port-alias-btn" onclick="openPortAliasModal()" class="btn btn-gray" style="display: none;" title="Edit device + port display aliases (real name -> P2P/field label) (admin)">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M5.5,7A1.5,1.5 0 0,1 4,5.5A1.5,1.5 0 0,1 5.5,4A1.5,1.5 0 0,1 7,5.5A1.5,1.5 0 0,1 5.5,7M21.41,11.58L12.41,2.58C12.05,2.22 11.55,2 11,2H4C2.89,2 2,2.89 2,4V11C2,11.55 2.22,12.05 2.59,12.41L11.58,21.41C11.95,21.78 12.45,22 13,22C13.55,22 14.05,21.78 14.41,21.41L21.41,14.41C21.78,14.05 22,13.55 22,13C22,12.44 21.77,11.94 21.41,11.58Z"/>
                 </svg>
-                Port Aliases
+                Edit Aliases
             </button>
             <button id="download-csv" onclick="downloadCSV()" class="btn btn-primary">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
@@ -621,6 +621,24 @@
                 if (k && v) map[k] = v;
             });
             return map;
+        }
+        // Bulk import: each line "P2P-name <tab/space/comma> real-name" (P2P first, as in
+        // the customer P2P table). Replaces the section's rows.
+        function importAliasRows(containerId, textareaId) {
+            const txt = document.getElementById(textareaId).value || '';
+            const lines = txt.split('\n').map(l => l.trim()).filter(Boolean);
+            const box = document.getElementById(containerId);
+            box.innerHTML = '';
+            let added = 0;
+            lines.forEach(line => {
+                const parts = line.split(/[\s,]+/).filter(Boolean);
+                if (parts.length >= 2) {
+                    addAliasRow(containerId, parts[1], parts[0], '', ''); // key=real, label=P2P
+                    added++;
+                }
+            });
+            if (added === 0) addAliasRow(containerId, '', '', '', '');
+            document.getElementById(textareaId).value = '';
         }
         function savePortAliases() {
             const devices = collectAliasRows('deviceAliasRows');
@@ -1809,12 +1827,20 @@
                 <div style="color:#76b900; font-weight:bold; font-size:13px; margin:10px 0 6px;">Device names
                     <span style="color:#777; font-weight:normal;">&nbsp;e.g. tan-spine-01 &rarr; SPINE-01</span></div>
                 <div id="deviceAliasRows"></div>
-                <button onclick="addAliasRow('deviceAliasRows','','','tan-spine-01','SPINE-01')" class="btn btn-gray" type="button" style="margin-top:2px;">+ Add device</button>
+                <div style="display:flex; gap:8px; align-items:flex-start; margin-top:6px;">
+                    <button onclick="addAliasRow('deviceAliasRows','','','tan-spine-01','SPINE-01')" class="btn btn-gray" type="button">+ Add device</button>
+                    <textarea id="deviceBulk" rows="2" placeholder="Bulk paste: P2P-name &lt;tab&gt; real-name  (one per line) — replaces rows" style="flex:1; background:#2d2d2d; color:#d4d4d4; border:1px solid #555; border-radius:4px; padding:6px 8px; font-size:12px; resize:vertical; outline:none;"></textarea>
+                    <button onclick="importAliasRows('deviceAliasRows','deviceBulk')" class="btn btn-gray" type="button">Import</button>
+                </div>
 
                 <div style="color:#76b900; font-weight:bold; font-size:13px; margin:18px 0 6px;">Port names
                     <span style="color:#777; font-weight:normal;">&nbsp;e.g. enP22p3s0f0np0 &rarr; M1</span></div>
                 <div id="portAliasRows"></div>
-                <button onclick="addAliasRow('portAliasRows','','','enP22p3s0f0np0','M1')" class="btn btn-gray" type="button" style="margin:2px 0 12px;">+ Add port</button>
+                <div style="display:flex; gap:8px; align-items:flex-start; margin:6px 0 12px;">
+                    <button onclick="addAliasRow('portAliasRows','','','enP22p3s0f0np0','M1')" class="btn btn-gray" type="button">+ Add port</button>
+                    <textarea id="portBulk" rows="2" placeholder="Bulk paste: P2P-name &lt;tab&gt; real-name  (one per line) — replaces rows" style="flex:1; background:#2d2d2d; color:#d4d4d4; border:1px solid #555; border-radius:4px; padding:6px 8px; font-size:12px; resize:vertical; outline:none;"></textarea>
+                    <button onclick="importAliasRows('portAliasRows','portBulk')" class="btn btn-gray" type="button">Import</button>
+                </div>
             </div>
             <div style="display:flex; justify-content:flex-end; gap:8px; padding:12px 18px; border-top:1px solid #333;">
                 <span id="aliasStatus" style="color:#888; font-size:12px; align-self:center; margin-right:auto;"></span>
