@@ -115,16 +115,22 @@ function convertToCytoscapeFormat(topologyData) {
 }
 
 /**
- * Re-position staggered endpoint groups as an interleaved brick/zigzag:
- * global left-to-right order, with nodes tagged staggerRow=1 (even number) dropped
- * to a lower sub-row so they sit between the staggerRow=0 (odd) blocks.
+ * Re-position staggered endpoint groups (nodes tagged with staggerRow by the
+ * generator's `type: stagger` rule) as RACK COLUMNS so individual devices stay
+ * legible:
+ *   - members are split into racks wherever the sub-row parity flips (rack N and
+ *     N+1 always differ in parity, so this delineates racks without parsing names),
+ *   - each rack becomes its own vertical column (devices listed top-to-bottom, one
+ *     per row, so labels don't overlap),
+ *   - even racks are dropped half a column to keep the brick/zigzag offset.
  *
- * Fully config-driven: nodes are tagged by the generator from a `type: stagger`
- * rule in topology_config.yaml (no device names are hardcoded here). Members are
- * grouped by level so multiple independent stagger groups stay separate.
- * Runs after the normal level layout (TB) and only overrides tagged nodes.
+ * Fully config-driven: no device names are hardcoded here. Grouped by level so
+ * multiple independent stagger groups stay separate. Runs after the normal TB
+ * level layout and only overrides tagged nodes.
  */
 function applyStagger(positions, padding, containerWidth) {
+    const NODE_VGAP = 20;          // vertical pitch between devices in a rack column
+    const MIN_RACK_PITCH = 150;    // minimum horizontal gap between rack columns
     const groups = {};
     cy.nodes().forEach(n => {
         const sr = n.data('staggerRow');
@@ -136,18 +142,27 @@ function applyStagger(positions, padding, containerWidth) {
     Object.keys(groups).forEach(lvl => {
         const members = groups[lvl];
         if (members.length < 2) return;
-        // Keep the familiar left-to-right order (natural by label).
+        // Natural order by label: pod -> rack -> compute slot.
         members.sort((a, b) =>
             a.data('label').localeCompare(b.data('label'), undefined, { numeric: true, sensitivity: 'base' }));
-        // All members share one level => one base Y; drop the even sub-row below it.
+        // Split into racks: a new rack begins wherever the sub-row parity flips.
+        const racks = [];
+        let prev = null;
+        members.forEach(n => {
+            const row = n.data('staggerRow');
+            if (row !== prev) { racks.push([]); prev = row; }
+            racks[racks.length - 1].push(n);
+        });
         const baseY = (positions[members[0].id()] || {}).y != null ? positions[members[0].id()].y : padding;
-        const dropY = baseY + 90;
-        const dx = (containerWidth - padding * 2) / members.length * 1.3;
-        members.forEach((n, i) => {
-            positions[n.id()] = {
-                x: padding + dx * i + dx / 2,
-                y: n.data('staggerRow') === 1 ? dropY : baseY
-            };
+        const maxRack = Math.max.apply(null, racks.map(r => r.length));
+        const drop = maxRack * NODE_VGAP * 0.5;                       // even-rack brick offset
+        const pitchX = Math.max((containerWidth - padding * 2) / racks.length, MIN_RACK_PITCH);
+        racks.forEach((rack, r) => {
+            const colX = padding + r * pitchX + pitchX / 2;
+            const colTopY = baseY + (rack[0].data('staggerRow') === 1 ? drop : 0);
+            rack.forEach((n, k) => {
+                positions[n.id()] = { x: colX, y: colTopY + k * NODE_VGAP };
+            });
         });
     });
 }
