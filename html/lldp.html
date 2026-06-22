@@ -296,6 +296,7 @@
             display: flex;
             gap: 10px;
             align-items: center;
+            flex-wrap: wrap;
         }
         
         /* Device Search - Dark Theme */
@@ -305,7 +306,7 @@
             gap: 8px;
         }
         
-        .device-search-container .select2-container { min-width: 220px; }
+        .device-search-container .select2-container { min-width: 600px; }
         .device-search-container .select2-container--default .select2-selection--single {
             height: 34px;
             border: 1px solid #555;
@@ -351,6 +352,7 @@
         /* multi-select tags (dark theme, green accent) */
         .device-search-container .select2-container--default .select2-selection--multiple {
             background: #3c3c3c; border: 1px solid #555; min-height: 34px;
+            max-height: 72px; overflow-y: auto;   /* ~5 tags per row; 6-10 wrap to a 2nd row, scroll beyond */
         }
         .device-search-container .select2-container--default .select2-selection--multiple .select2-selection__choice {
             background: #2c3a12; border: 1px solid #76b900; color: #d4d4d4; border-radius: 3px; padding: 1px 6px;
@@ -642,7 +644,7 @@
             
             if (deviceSearchActive && selectedDevices.length) {
                 const _set = new Set(selectedDevices);
-                base = base.filter(conn => _set.has(conn.localDevice) || _set.has(conn.expectedDevice) || _set.has(conn.actualDevice));
+                base = base.filter(conn => _set.has(conn.localDevice));
                 baseLabel = selectedDevices.join(', ');
             }
             
@@ -1351,7 +1353,7 @@
             $('#deviceSearch').select2({
                 placeholder: 'Search devices…',
                 allowClear: true,
-                width: '260px',
+                width: '600px',
                 dropdownAutoWidth: true,
                 closeOnSelect: false,   // keep dropdown open so 2-3-4 devices can be added in a row
                 matcher: function(params, data) {
@@ -1427,10 +1429,9 @@
             currentFilter = 'ALL';
             document.querySelectorAll('.summary-card').forEach(card => card.classList.remove('active'));
             
-            // Connections where ANY selected device appears in any column
+            // Connections whose LOCAL DEVICE is one of the selected devices (local column only)
             const set = new Set(devices);
-            const filteredConnections = allConnections.filter(conn =>
-                set.has(conn.localDevice) || set.has(conn.expectedDevice) || set.has(conn.actualDevice));
+            const filteredConnections = allConnections.filter(conn => set.has(conn.localDevice));
             
             document.getElementById('filter-info').style.display = 'block';
             document.getElementById('filter-text').textContent =
