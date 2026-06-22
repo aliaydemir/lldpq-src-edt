@@ -129,8 +129,8 @@ function convertToCytoscapeFormat(topologyData) {
  * level layout and only overrides tagged nodes.
  */
 function applyStagger(positions, padding, containerWidth) {
-    const NODE_VGAP = 46;          // vertical pitch between devices (fits 40px node)
-    const MIN_RACK_PITCH = 210;    // horizontal gap between rack columns (room for side labels)
+    const NODE_VGAP = 32;          // vertical pitch between devices in a rack column
+    const MIN_RACK_PITCH = 280;    // horizontal gap between rack columns (spread + label room)
     const groups = {};
     cy.nodes().forEach(n => {
         const sr = n.data('staggerRow');
@@ -154,8 +154,11 @@ function applyStagger(positions, padding, containerWidth) {
             racks[racks.length - 1].push(n);
         });
         const baseY = (positions[members[0].id()] || {}).y != null ? positions[members[0].id()].y : padding;
-        const maxRack = Math.max.apply(null, racks.map(r => r.length));
-        const drop = maxRack * NODE_VGAP * 0.5;                       // even-rack brick offset
+        // Median rack size for the brick offset, so one oversized rack (e.g. extra
+        // unexpected LLDP nodes) doesn't blow up the zigzag.
+        const sizes = racks.map(r => r.length).slice().sort((a, b) => a - b);
+        const medianRack = sizes[Math.floor(sizes.length / 2)] || 1;
+        const drop = medianRack * NODE_VGAP * 0.5;                    // even-rack brick offset
         const pitchX = Math.max((containerWidth - padding * 2) / racks.length, MIN_RACK_PITCH);
         racks.forEach((rack, r) => {
             const colX = padding + r * pitchX + pitchX / 2;
