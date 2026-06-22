@@ -1472,17 +1472,6 @@ function initCytoscape() {
                     'text-background-padding': '2px'
                 }
             },
-            // Missing links (red) are the bulk of the clutter (often false-positives from a
-            // stale topology.dot). Render them faint + thin so they don't form solid bars;
-            // hover a node to bring its own links back to full strength (.highlighted below).
-            // NOTE: only 'yes' (red/missing) — leave 'fail' (yellow/unexpected) fully visible.
-            {
-                selector: "edge[is_missing = 'yes']",
-                style: {
-                    'opacity': 0.28,
-                    'width': 0.6
-                }
-            },
             // Highlighted edge
             {
                 selector: 'edge:selected',
