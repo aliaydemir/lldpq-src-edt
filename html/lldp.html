@@ -543,27 +543,33 @@
         let currentFilter = 'ALL';
         let allConnections = [];
 
-        // ===== Port alias (P2P / field names) — display-only =====
-        // Map OS interface name (e.g. enP22p3s0f0np0) -> field label (e.g. M1), loaded
-        // from interface-aliases.json. Toggle swaps the displayed port names; the
-        // underlying data/validation is untouched.
+        // ===== Display aliases (P2P / field names) — display-only =====
+        // Map real names -> field labels, loaded from display-aliases.json:
+        //   interfaces: enP22p3s0f0np0 -> M1   (port columns)
+        //   devices:    tan-spine-01   -> SPINE-01 (device columns)
+        // The toggle swaps the displayed names; underlying data/validation is untouched.
         let portAliasMap = {};
+        let deviceAliasMap = {};
         let p2pNamesOn = localStorage.getItem('lldpq_port_alias_on') !== 'false'; // default ON
 
-        function portLabel(p) {
-            if (p2pNamesOn && p && portAliasMap[p]) return portAliasMap[p];
-            return p;
+        function aliasedLabel(v, map) {
+            if (p2pNamesOn && v && map[v]) return map[v];
+            return v;
         }
-        function setPortCell(cell, raw) {
+        function setAliasedCell(cell, raw, map) {
             const v = (raw === undefined || raw === null || raw === '') ? 'N/A' : raw;
-            cell.textContent = portLabel(v);
-            if (p2pNamesOn && portAliasMap[v]) cell.title = v; else cell.removeAttribute('title');
+            cell.textContent = aliasedLabel(v, map);
+            if (p2pNamesOn && map[v]) cell.title = v; else cell.removeAttribute('title');
         }
-        function loadPortAliases() {
-            return fetch('interface-aliases.json', { cache: 'no-store' })
+        function loadDisplayAliases() {
+            return fetch('display-aliases.json', { cache: 'no-store' })
                 .then(r => r.ok ? r.json() : {})
-                .then(m => { portAliasMap = (m && typeof m === 'object') ? m : {}; })
-                .catch(() => { portAliasMap = {}; });
+                .then(d => {
+                    d = (d && typeof d === 'object') ? d : {};
+                    portAliasMap = (d.interfaces && typeof d.interfaces === 'object') ? d.interfaces : {};
+                    deviceAliasMap = (d.devices && typeof d.devices === 'object') ? d.devices : {};
+                })
+                .catch(() => { portAliasMap = {}; deviceAliasMap = {}; });
         }
         function updateP2pToggleUI() {
             const t = document.getElementById('p2p-toggle-text');
@@ -578,50 +584,60 @@
             filterTable(); // re-render current view with new labels
         }
 
-        // ----- Port alias editor modal (admin) -----
+        // ----- Display alias editor modal (admin) — devices + ports -----
         function openPortAliasModal() {
-            const box = document.getElementById('aliasRows');
-            box.innerHTML = '';
-            const entries = Object.entries(portAliasMap);
-            if (entries.length === 0) { addAliasRow('', ''); }
-            else entries.forEach(([k, v]) => addAliasRow(k, v));
+            fillAliasRows('deviceAliasRows', deviceAliasMap, 'tan-spine-01', 'SPINE-01');
+            fillAliasRows('portAliasRows', portAliasMap, 'enP22p3s0f0np0', 'M1');
             document.getElementById('aliasStatus').textContent = '';
             document.getElementById('portAliasModal').style.display = 'flex';
         }
         function closePortAliasModal() {
             document.getElementById('portAliasModal').style.display = 'none';
         }
-        function addAliasRow(os, label) {
+        function fillAliasRows(containerId, map, kph, vph) {
+            const box = document.getElementById(containerId);
+            box.innerHTML = '';
+            const entries = Object.entries(map || {});
+            if (entries.length === 0) { addAliasRow(containerId, '', '', kph, vph); }
+            else entries.forEach(([k, v]) => addAliasRow(containerId, k, v, kph, vph));
+        }
+        function addAliasRow(containerId, key, label, kph, vph) {
             const esc = s => (s || '').replace(/"/g, '&quot;');
             const row = document.createElement('div');
             row.className = 'alias-row';
             row.style.cssText = 'display:flex; gap:8px; align-items:center; margin-bottom:8px;';
             row.innerHTML =
-                '<input type="text" class="alias-os" placeholder="enP22p3s0f0np0" value="' + esc(os) + '" autocomplete="off" style="flex:1; height:32px; padding:0 8px; background:#2d2d2d; color:#d4d4d4; border:1px solid #555; border-radius:4px; outline:none;">' +
+                '<input type="text" class="alias-os" placeholder="' + esc(kph) + '" value="' + esc(key) + '" autocomplete="off" style="flex:1; height:32px; padding:0 8px; background:#2d2d2d; color:#d4d4d4; border:1px solid #555; border-radius:4px; outline:none;">' +
                 '<span style="color:#76b900;">&rarr;</span>' +
-                '<input type="text" class="alias-label" placeholder="M1" value="' + esc(label) + '" autocomplete="off" style="width:120px; height:32px; padding:0 8px; background:#2d2d2d; color:#d4d4d4; border:1px solid #555; border-radius:4px; outline:none;">' +
+                '<input type="text" class="alias-label" placeholder="' + esc(vph) + '" value="' + esc(label) + '" autocomplete="off" style="width:140px; height:32px; padding:0 8px; background:#2d2d2d; color:#d4d4d4; border:1px solid #555; border-radius:4px; outline:none;">' +
                 '<button type="button" title="Remove" onclick="this.closest(\'.alias-row\').remove()" style="background:#555; color:#fff; border:none; width:30px; height:30px; border-radius:4px; cursor:pointer; font-size:16px; line-height:1;">&times;</button>';
-            document.getElementById('aliasRows').appendChild(row);
+            document.getElementById(containerId).appendChild(row);
+        }
+        function collectAliasRows(containerId) {
+            const map = {};
+            document.querySelectorAll('#' + containerId + ' .alias-row').forEach(r => {
+                const k = r.querySelector('.alias-os').value.trim();
+                const v = r.querySelector('.alias-label').value.trim();
+                if (k && v) map[k] = v;
+            });
+            return map;
         }
         function savePortAliases() {
-            const map = {};
-            document.querySelectorAll('#aliasRows .alias-row').forEach(r => {
-                const os = r.querySelector('.alias-os').value.trim();
-                const label = r.querySelector('.alias-label').value.trim();
-                if (os && label) map[os] = label;
-            });
+            const devices = collectAliasRows('deviceAliasRows');
+            const interfaces = collectAliasRows('portAliasRows');
             const status = document.getElementById('aliasStatus');
             status.style.color = '#888';
             status.textContent = 'Saving...';
-            fetch('/fabric-api.sh?action=save-port-aliases', {
+            fetch('/fabric-api.sh?action=save-display-aliases', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ aliases: map })
+                body: JSON.stringify({ interfaces: interfaces, devices: devices })
             })
             .then(r => r.json())
             .then(d => {
                 if (d.success) {
-                    portAliasMap = map;
+                    portAliasMap = interfaces;
+                    deviceAliasMap = devices;
                     status.style.color = '#76b900';
                     status.textContent = 'Saved';
                     updateP2pToggleUI();
@@ -876,8 +892,8 @@
                 const row = tbody.insertRow();
                 row.className = status.healthClass;
                 
-                row.insertCell(0).textContent = connection.localDevice;
-                setPortCell(row.insertCell(1), connection.localPort);
+                setAliasedCell(row.insertCell(0), connection.localDevice, deviceAliasMap);
+                setAliasedCell(row.insertCell(1), connection.localPort, portAliasMap);
                 
                 // Port Status cell with badge
                 const portStatusCell = row.insertCell(2);
@@ -890,10 +906,10 @@
                 }
                 portStatusCell.innerHTML = `<span class="${portBadgeClass}">${portStatus}</span>`;
                 
-                row.insertCell(3).textContent = connection.expectedDevice || 'N/A';
-                setPortCell(row.insertCell(4), connection.expectedPort);
-                row.insertCell(5).textContent = connection.actualDevice || 'N/A';
-                setPortCell(row.insertCell(6), connection.actualPort);
+                setAliasedCell(row.insertCell(3), connection.expectedDevice, deviceAliasMap);
+                setAliasedCell(row.insertCell(4), connection.expectedPort, portAliasMap);
+                setAliasedCell(row.insertCell(5), connection.actualDevice, deviceAliasMap);
+                setAliasedCell(row.insertCell(6), connection.actualPort, portAliasMap);
                 
                 // Status cell with badge
                 const statusCell = row.insertCell(7);
@@ -1567,7 +1583,7 @@
         // Load data when page loads
         window.addEventListener('load', function() {
             updateP2pToggleUI();
-            loadPortAliases().then(loadLLDPData);
+            loadDisplayAliases().then(loadLLDPData);
             initTableSorting();
         });
 
@@ -1779,20 +1795,26 @@
         </div>
     </div>
     
-    <!-- Port Alias Modal (admin) -->
+    <!-- Display Alias Modal (admin) — device + port P2P/field names -->
     <div id="portAliasModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:1000; align-items:center; justify-content:center;">
-        <div style="background:#1e1e1e; border:1px solid #444; border-radius:8px; width:580px; max-width:92vw; max-height:85vh; display:flex; flex-direction:column;">
+        <div style="background:#1e1e1e; border:1px solid #444; border-radius:8px; width:620px; max-width:92vw; max-height:88vh; display:flex; flex-direction:column;">
             <div style="display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-bottom:1px solid #333;">
-                <div style="color:#fff; font-weight:bold;">Port Aliases (P2P / field names)</div>
+                <div style="color:#fff; font-weight:bold;">Display Aliases (P2P / field names)</div>
                 <button onclick="closePortAliasModal()" style="background:none; border:none; color:#888; font-size:24px; cursor:pointer; line-height:1;">&times;</button>
             </div>
-            <div style="padding:14px 18px 6px; color:#aaa; font-size:13px;">
-                Map an OS interface name to the P2P/field label shown on this page (display only — validation is unaffected).
-                Example: <code style="color:#76b900;">enP22p3s0f0np0</code> &rarr; <code style="color:#76b900;">M1</code>.
+            <div style="padding:12px 18px 4px; color:#aaa; font-size:13px;">
+                Map real names to P2P/field labels shown on this page (display only — validation is unaffected).
             </div>
-            <div id="aliasRows" style="padding:8px 18px; overflow:auto; flex:1;"></div>
-            <div style="padding:4px 18px 12px;">
-                <button onclick="addAliasRow('','')" class="btn btn-gray" type="button">+ Add mapping</button>
+            <div style="overflow:auto; flex:1; padding:0 18px;">
+                <div style="color:#76b900; font-weight:bold; font-size:13px; margin:10px 0 6px;">Device names
+                    <span style="color:#777; font-weight:normal;">&nbsp;e.g. tan-spine-01 &rarr; SPINE-01</span></div>
+                <div id="deviceAliasRows"></div>
+                <button onclick="addAliasRow('deviceAliasRows','','','tan-spine-01','SPINE-01')" class="btn btn-gray" type="button" style="margin-top:2px;">+ Add device</button>
+
+                <div style="color:#76b900; font-weight:bold; font-size:13px; margin:18px 0 6px;">Port names
+                    <span style="color:#777; font-weight:normal;">&nbsp;e.g. enP22p3s0f0np0 &rarr; M1</span></div>
+                <div id="portAliasRows"></div>
+                <button onclick="addAliasRow('portAliasRows','','','enP22p3s0f0np0','M1')" class="btn btn-gray" type="button" style="margin:2px 0 12px;">+ Add port</button>
             </div>
             <div style="display:flex; justify-content:flex-end; gap:8px; padding:12px 18px; border-top:1px solid #333;">
                 <span id="aliasStatus" style="color:#888; font-size:12px; align-self:center; margin-right:auto;"></span>
