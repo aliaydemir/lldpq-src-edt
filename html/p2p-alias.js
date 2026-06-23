@@ -121,7 +121,13 @@
         var slot = document.querySelector('.page-header .action-buttons') ||
                    document.querySelector('.action-buttons');
         if (slot) {
-            slot.insertBefore(btn, slot.firstChild);
+            // Place the toggle right AFTER the device search box (nicer than far-left).
+            var search = slot.querySelector('.device-search-container, .device-search');
+            if (search && search.parentNode === slot) {
+                search.insertAdjacentElement('afterend', btn);
+            } else {
+                slot.insertBefore(btn, slot.firstChild);
+            }
         } else {
             btn.style.position = 'fixed';
             btn.style.top = '10px';
