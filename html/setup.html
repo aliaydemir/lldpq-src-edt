@@ -73,6 +73,13 @@
         .key-input input:focus { outline:none; border-color:#76b900; }
         .note { background:#2a2a1a; border:1px solid #4a4424; border-radius:6px; padding:10px 14px; color:#d6ca8a; font-size:12.5px; line-height:1.55; margin-bottom:14px; }
 
+        .key-card { background:#202020; border:1px solid #333; border-radius:8px; padding:14px 16px; margin-bottom:16px; }
+        .key-row { display:flex; justify-content:space-between; align-items:center; padding:4px 0; font-size:13px; }
+        .key-row .k { color:#9a9a9a; }
+        .key-lbl { display:block; color:#9a9a9a; font-size:12px; margin:10px 0 6px; }
+        .key-pub { min-height:64px !important; color:#9cdcfe; }
+        .mono { font-family:'Cascadia Code',Consolas,monospace; font-size:12px; color:#cfcfcf; }
+
         table.res { width:100%; border-collapse:collapse; margin-top:14px; font-size:12.5px; display:none; }
         table.res th { text-align:left; color:#9a9a9a; font-weight:600; padding:8px 12px; border-bottom:1px solid #333; }
         table.res td { padding:8px 12px; border-bottom:1px solid #2a2a2a; }
@@ -119,16 +126,35 @@
                 <!-- Step 2: SSH keys -->
                 <div class="su-panel" data-step="1">
                     <h2>2. SSH Keys</h2>
-                    <p class="p-desc">Authorize the collector's SSH key on every device in <code>devices.yaml</code> and enable passwordless <code>sudo</code> for the login user. This is what lets LLDPq log in and collect data.</p>
-                    <div class="note">Enter the switch admin password once. It is used transiently to push the key (<code>ssh-copy-id</code>) and is <strong>never stored</strong>. Devices that already trust the key are detected and skipped. Make sure Step&nbsp;1 is saved first.</div>
+                    <p class="p-desc">Authorize the collector's SSH key on every device in <code>devices.yaml</code> and enable passwordless <code>sudo</code> for the login user. This is the <strong>same single key pair</strong> used by Provision/ZTP.</p>
+
+                    <div class="key-card">
+                        <div class="key-row"><span class="k">Collector key</span><span id="key-state" class="badge gray">checking&hellip;</span></div>
+                        <div class="key-row"><span class="k">Key file</span><span id="key-file" class="mono">&mdash;</span></div>
+                        <label class="key-lbl">Public key &mdash; safe to share; paste into a switch's <code>authorized-key</code> / ZTP if you prefer manual setup:</label>
+                        <textarea id="key-pub" class="su-ta key-pub" readonly spellcheck="false" placeholder="(no key yet — Generate or Import below)"></textarea>
+                        <div class="p-toolbar">
+                            <button class="btn secondary" onclick="copyKey()">Copy</button>
+                            <button class="btn secondary" id="gen-btn" onclick="generateKey()">Generate</button>
+                            <button class="btn secondary" onclick="toggleImport()">Import&hellip;</button>
+                            <button class="btn secondary" onclick="loadSSHKeyInfo()">Refresh</button>
+                        </div>
+                        <div id="key-import" style="display:none; margin-top:8px;">
+                            <textarea id="key-import-text" class="su-ta" style="min-height:110px; color:#4fc3f7;" spellcheck="false" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"></textarea>
+                            <div class="p-toolbar"><button class="btn primary" onclick="importKey()">Save imported key</button><span class="status info" id="key-import-msg"></span></div>
+                        </div>
+                    </div>
+
+                    <div class="note">If you have already distributed the key, just click <strong>Verify</strong> &mdash; no password needed. To push the key to devices that don't trust it yet, enter the switch admin password once: it is used transiently (<code>ssh-copy-id</code>) and is <strong>never stored</strong>. Already-trusting devices are skipped. Make sure Step&nbsp;1 is saved first.</div>
                     <div class="key-input">
-                        <input type="password" id="key-pw" placeholder="switch admin password" autocomplete="new-password">
-                        <button class="btn primary" id="key-btn" onclick="distributeKeys()"><svg viewBox="0 0 24 24"><path d="M7,14A2,2 0 0,1 5,12A2,2 0 0,1 7,10A2,2 0 0,1 9,12A2,2 0 0,1 7,14M12.65,10C11.83,7.67 9.61,6 7,6A6,6 0 0,0 1,12A6,6 0 0,0 7,18C9.61,18 11.83,16.33 12.65,14H17V18H21V14H23V10H12.65Z"/></svg>Distribute key to all devices</button>
+                        <input type="password" id="key-pw" placeholder="switch admin password (only needed to push the key)" autocomplete="new-password">
+                        <button class="btn secondary" id="verify-btn" onclick="verifyKeys()"><svg viewBox="0 0 24 24"><path d="M9,20.42L2.79,14.21L5.62,11.38L9,14.77L18.88,4.88L21.71,7.71L9,20.42Z"/></svg>Verify (no password)</button>
+                        <button class="btn primary" id="key-btn" onclick="distributeKeys()"><svg viewBox="0 0 24 24"><path d="M7,14A2,2 0 0,1 5,12A2,2 0 0,1 7,10A2,2 0 0,1 9,12A2,2 0 0,1 7,14M12.65,10C11.83,7.67 9.61,6 7,6A6,6 0 0,0 1,12A6,6 0 0,0 7,18C9.61,18 11.83,16.33 12.65,14H17V18H21V14H23V10H12.65Z"/></svg>Distribute to all</button>
                     </div>
                     <div class="status info" id="key-progress"></div>
                     <div class="summary" id="key-summary"></div>
                     <table class="res" id="key-results">
-                        <thead><tr><th>Device</th><th>IP</th><th>SSH Key</th><th>Sudo</th></tr></thead>
+                        <thead id="key-results-head"></thead>
                         <tbody id="key-results-body"></tbody>
                     </table>
                 </div>
@@ -185,6 +211,9 @@ const FILES = {
 };
 let current = 0;
 const done = {};   // stepKey -> true
+let keyInfoLoaded = false;   // SSH key panel loaded once
+let keyExists = false;       // a collector key currently exists
+let genArmed = false;        // two-click guard before replacing an existing key
 
 document.addEventListener('DOMContentLoaded', async () => {
     // Admin-only: hidden from operators in the menu, and refused here too.
@@ -220,6 +249,7 @@ function goStep(i) {
     // Lazy-load file editors the first time their step is shown.
     const key = STEPS[i].key;
     if (FILES[key] && !FILES[key].loaded) loadFile(key, false);
+    if (key === 'keys' && !keyInfoLoaded) { keyInfoLoaded = true; loadSSHKeyInfo(); }
 }
 
 function markDone(stepKey, isDone) {
@@ -299,6 +329,120 @@ function downloadFile(key) {
     setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 100);
 }
 
+/* ---- Step 2: SSH key info / generate / import / verify ---- */
+async function loadSSHKeyInfo() {
+    const st = document.getElementById('key-state');
+    try {
+        const r = await fetch('/provision-api.sh?action=get-ssh-key', { cache: 'no-store' });
+        const d = await r.json().catch(() => ({}));
+        if (d.success && d.public_key) {
+            keyExists = true;
+            document.getElementById('key-pub').value = d.public_key;
+            document.getElementById('key-file').textContent = d.key_file || '\u2014';
+            st.textContent = 'present'; st.className = 'badge green';
+        } else {
+            keyExists = false;
+            document.getElementById('key-pub').value = '';
+            document.getElementById('key-file').textContent = '\u2014';
+            st.textContent = 'none'; st.className = 'badge gray';
+        }
+    } catch (e) {
+        st.textContent = 'error'; st.className = 'badge gray';
+    }
+}
+
+function copyKey() {
+    const t = document.getElementById('key-pub').value;
+    if (!t) { setStatus('key-progress', 'No key to copy yet.', 'err'); return; }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(t).then(() => setStatus('key-progress', 'Public key copied \u2713', 'ok')).catch(() => fallbackCopyKey(t));
+    } else { fallbackCopyKey(t); }
+}
+function fallbackCopyKey(text) {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px;';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); setStatus('key-progress', 'Public key copied \u2713', 'ok'); }
+    catch (e) { setStatus('key-progress', 'Copy failed \u2014 select the key and copy manually.', 'err'); }
+    ta.remove();
+}
+
+async function generateKey() {
+    const btn = document.getElementById('gen-btn');
+    if (keyExists && !genArmed) {
+        genArmed = true;
+        btn.textContent = 'Confirm replace';
+        setStatus('key-progress', 'A key already exists. Generating a new one REPLACES it \u2014 devices trusting the old key must be re-distributed. Click "Confirm replace" to proceed.', 'err');
+        setTimeout(() => { genArmed = false; btn.textContent = 'Generate'; }, 5000);
+        return;
+    }
+    genArmed = false; btn.textContent = 'Generate';
+    setStatus('key-progress', 'Generating key\u2026', 'info');
+    try {
+        const r = await fetch('/provision-api.sh?action=generate-ssh-key', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        const d = await r.json().catch(() => ({}));
+        if (d.success) { await loadSSHKeyInfo(); setStatus('key-progress', 'New key generated \u2014 distribute it to the devices below.', 'ok'); }
+        else setStatus('key-progress', d.error || 'Key generation failed', 'err');
+    } catch (e) { setStatus('key-progress', 'Generate failed: ' + e.message, 'err'); }
+}
+
+function toggleImport() {
+    const a = document.getElementById('key-import');
+    a.style.display = (a.style.display === 'none' || !a.style.display) ? 'block' : 'none';
+    if (a.style.display === 'block') document.getElementById('key-import-text').focus();
+}
+async function importKey() {
+    const key = document.getElementById('key-import-text').value.trim();
+    if (!key || key.indexOf('PRIVATE KEY') < 0) { setStatus('key-import-msg', 'Paste a valid private key.', 'err'); return; }
+    setStatus('key-import-msg', 'Saving\u2026', 'info');
+    try {
+        const r = await fetch('/provision-api.sh?action=import-ssh-key', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ private_key: key }) });
+        const d = await r.json().catch(() => ({}));
+        if (d.success) { setStatus('key-import-msg', 'Key imported \u2713', 'ok'); document.getElementById('key-import-text').value = ''; toggleImport(); loadSSHKeyInfo(); }
+        else setStatus('key-import-msg', d.error || 'Import failed', 'err');
+    } catch (e) { setStatus('key-import-msg', 'Import failed: ' + e.message, 'err'); }
+}
+
+async function verifyKeys() {
+    const btn = document.getElementById('verify-btn');
+    btn.disabled = true;
+    setStatus('key-progress', 'Checking which devices already trust the key (no password)\u2026', 'info');
+    document.getElementById('key-results').style.display = 'none';
+    document.getElementById('key-summary').style.display = 'none';
+    try {
+        const r = await fetch('/setup-api.sh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'verify' }) });
+        const data = await r.json().catch(() => ({}));
+        if (!data.success) { setStatus('key-progress', data.error || 'Verify failed', 'err'); btn.disabled = false; return; }
+        if (data.public_key && !document.getElementById('key-pub').value) {
+            document.getElementById('key-pub').value = data.public_key;
+            const st = document.getElementById('key-state'); st.textContent = 'present'; st.className = 'badge green'; keyExists = true;
+        }
+        document.getElementById('key-results-head').innerHTML = '<tr><th>Device</th><th>IP</th><th>Key trusted</th></tr>';
+        const body = document.getElementById('key-results-body'); body.innerHTML = '';
+        (data.results || []).forEach(x => {
+            const tr = document.createElement('tr');
+            if (!x.trusted) tr.style.background = 'rgba(244,67,54,.08)';
+            tr.innerHTML =
+                `<td style="color:#ddd;">${x.hostname || ''}</td>` +
+                `<td style="color:#999;font-family:monospace;">${x.ip || ''}</td>` +
+                (x.trusted
+                    ? '<td><span style="color:#76b900;">\u2714 trusted</span></td>'
+                    : `<td><span style="color:#f44336;">\u2716 ${x.msg || 'not trusted'}</span></td>`);
+            body.appendChild(tr);
+        });
+        document.getElementById('key-results').style.display = 'table';
+        const sum = document.getElementById('key-summary'); sum.style.display = 'block';
+        sum.innerHTML = `<strong>${data.trusted || 0}/${data.total || 0}</strong> devices already trust the collector key.`;
+        const allOk = (data.trusted || 0) === (data.total || 0) && (data.total || 0) > 0;
+        setStatus('key-progress', allOk ? 'All devices already trust the key \u2014 no password needed \u2713' : 'Some devices don\u2019t trust the key yet \u2014 use Distribute (with password) for those.', allOk ? 'ok' : 'info');
+        markDone('keys', (data.trusted || 0) > 0);
+    } catch (e) {
+        setStatus('key-progress', 'Verify failed: ' + e.message, 'err');
+    } finally {
+        btn.disabled = false;
+    }
+}
+
 /* ---- Step 2: SSH key distribution (reuses /setup-api.sh) ---- */
 function keyIcon(s) {
     if (s === 'ok' || s === 'already') return '<span style="color:#76b900;">\u2714</span>';
@@ -332,6 +476,7 @@ async function distributeKeys() {
             return;
         }
         document.getElementById('key-pw').value = '';
+        document.getElementById('key-results-head').innerHTML = '<tr><th>Device</th><th>IP</th><th>SSH Key</th><th>Sudo</th></tr>';
         const body = document.getElementById('key-results-body');
         body.innerHTML = '';
         (data.results || []).sort((a, b) => (a.hostname || '').localeCompare(b.hostname || '')).forEach(x => {

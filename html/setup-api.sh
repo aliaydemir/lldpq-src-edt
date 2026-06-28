@@ -309,6 +309,69 @@ if action == 'save-key':
     
     sys.exit(0)
 
+# ─── Action: Verify which devices already trust the collector key (no password) ───
+if action == 'verify':
+    all_devices, load_error = load_devices(devices_yaml)
+    if load_error:
+        print(json.dumps({'success': False, 'error': load_error}))
+        sys.exit(0)
+
+    PING_CMD = detect_ping_cmd(lldpq_user)
+
+    def verify_device(device):
+        ip = device['ip']
+        username = device['username']
+        res = {'hostname': device['hostname'], 'ip': ip, 'username': username, 'trusted': False, 'msg': ''}
+        if not ping_check(ip, PING_CMD):
+            res['msg'] = 'Unreachable (ping failed)'
+            return res
+        try:
+            chk = subprocess.run(
+                ['sudo', '-u', lldpq_user, 'ssh',
+                 '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', '-o', 'StrictHostKeyChecking=no',
+                 '-q', f'{username}@{ip}', 'exit'],
+                capture_output=True, text=True, timeout=10
+            )
+            if chk.returncode == 0:
+                res['trusted'] = True
+                res['msg'] = 'Key trusted'
+            else:
+                res['msg'] = 'Key not accepted (needs distribution)'
+        except subprocess.TimeoutExpired:
+            res['msg'] = 'Timeout (10s)'
+        except Exception as e:
+            res['msg'] = str(e)[:120]
+        return res
+
+    results = []
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        futures = {executor.submit(verify_device, d): d for d in all_devices}
+        for future in as_completed(futures):
+            try:
+                results.append(future.result())
+            except Exception as e:
+                d = futures[future]
+                results.append({'hostname': d['hostname'], 'ip': d['ip'], 'username': d['username'],
+                                'trusted': False, 'msg': str(e)[:120]})
+    results.sort(key=lambda r: r['hostname'])
+
+    # Include the current public key so the page can show it without a separate call.
+    public_key = ''
+    for key_name in ('id_ed25519', 'id_rsa'):
+        pub_path = os.path.expanduser(f'~{lldpq_user}/.ssh/{key_name}.pub')
+        if os.path.isfile(pub_path):
+            try:
+                with open(pub_path) as fh:
+                    public_key = fh.read().strip()
+            except Exception:
+                pass
+            break
+
+    trusted = sum(1 for r in results if r['trusted'])
+    print(json.dumps({'success': True, 'total': len(results), 'trusted': trusted,
+                      'public_key': public_key, 'results': results}))
+    sys.exit(0)
+
 # ─── Action: Generate new key + distribute with password ───
 password = post_data.get('password', '')
 retry_devices = post_data.get('retry_devices', [])  # List of IPs for retry
