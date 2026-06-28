@@ -430,11 +430,15 @@ if action == 'run-log':
 if action == 'update':
     backup = bool(post_data.get('backup'))
     url = 'https://github.com/aliaydemir/lldpq-src.git'
-    # Stage the runner + log in the user's HOME root, NOT inside lldpq_dir: install.sh
-    # wipes/replaces the lldpq dir during an update (that's why it preserves data), which
-    # would delete the log mid-run. The home root is untouched by the install.
+    # Stage the runner + log in ~/.lldpq-state, NOT inside lldpq_dir: install.sh wipes/
+    # replaces the lldpq dir during an update (that's why it preserves data), which would
+    # delete the log mid-run. A dedicated hidden dir in HOME survives the install and keeps
+    # the home directory tidy.
     home_dir = os.path.expanduser('~' + lldpq_user)
-    script_path = os.path.join(home_dir, '.lldpq-update-run.sh')
+    state_dir = os.path.join(home_dir, '.lldpq-state')
+    subprocess.run(['sudo', '-u', lldpq_user, 'mkdir', '-p', state_dir],
+                   capture_output=True, text=True, timeout=10)
+    script_path = os.path.join(state_dir, 'update-run.sh')
     SCRIPT = '''#!/usr/bin/env bash
 source /etc/lldpq.conf 2>/dev/null
 SRC="${LLDPQ_SRC:-}"
@@ -461,7 +465,7 @@ LOG="__LOG__"
 } >> "$LOG" 2>&1
 echo __LLDPQ_DONE__ >> "$LOG"
 '''
-    log_path = os.path.join(home_dir, '.lldpq-update.log')
+    log_path = os.path.join(state_dir, 'update.log')
     script = (SCRIPT.replace('__URL__', url)
               .replace('__BACKUP__', '--backup' if backup else '')
               .replace('__LOG__', log_path))
@@ -491,7 +495,7 @@ echo __LLDPQ_DONE__ >> "$LOG"
 
 # ─── Action: Tail the update log started by action=update ───
 if action == 'update-log':
-    log_path = os.path.join(os.path.expanduser('~' + lldpq_user), '.lldpq-update.log')
+    log_path = os.path.join(os.path.expanduser('~' + lldpq_user), '.lldpq-state', 'update.log')
     content = ''
     try:
         r = subprocess.run(['sudo', '-u', lldpq_user, 'cat', log_path],
