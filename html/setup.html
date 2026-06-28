@@ -752,14 +752,12 @@ async function showUpdateLog() {
         if (d.success && d.log) {
             const out = document.getElementById('update-output');
             out.textContent = d.log; out.scrollTop = out.scrollHeight;
-            if (!d.done) {
-                updateActive = true;
-                document.getElementById('update-btn').disabled = true;
-                setStatus('update-status', 'An update is in progress\u2026', 'info');
-                pollUpdateLog();
-            } else {
-                setStatus('update-status', 'Last update finished.', 'info');
-            }
+            // Show the previous run's log for reference, but NEVER lock the button on a
+            // stale/incomplete log (an interrupted run leaves no DONE marker). The user can
+            // always start a fresh update; updateLLDPq() truncates the log first.
+            setStatus('update-status', d.done
+                ? 'Last update finished \u2713'
+                : 'Showing the last run log (may be incomplete) \u2014 click Update LLDPq to run again.', 'info');
         }
     } catch (e) { /* ignore */ }
 }

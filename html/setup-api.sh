@@ -471,8 +471,17 @@ echo __LLDPQ_DONE__ >> "$LOG"
         if w.returncode != 0:
             print(json.dumps({'success': False, 'error': 'Could not stage update script'}))
             sys.exit(0)
-        subprocess.Popen(['sudo', '-u', lldpq_user, 'bash', '-c',
-                          'nohup setsid bash ' + shlex.quote(script_path) + ' >/dev/null 2>&1 &'],
+        # Run the update in its OWN systemd transient unit (separate cgroup). install.sh
+        # restarts fcgiwrap, and systemd kills the fcgiwrap.service cgroup on restart — a
+        # plain nohup/setsid child stays in that cgroup (setsid changes the session, not the
+        # cgroup) and gets killed mid-update. A transient unit is cgroup-independent and
+        # survives. Fall back to nohup/setsid if systemd-run is unavailable.
+        launch = ('if sudo systemd-run --no-block --collect '
+                  '--uid=' + shlex.quote(lldpq_user) + ' '
+                  '--setenv=HOME=' + shlex.quote(home_dir) + ' '
+                  '/bin/bash ' + shlex.quote(script_path) + ' 2>/dev/null; then :; '
+                  'else nohup setsid /bin/bash ' + shlex.quote(script_path) + ' >/dev/null 2>&1 & fi')
+        subprocess.Popen(['sudo', '-u', lldpq_user, 'bash', '-c', launch],
                          start_new_session=True, stdin=subprocess.DEVNULL,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         print(json.dumps({'success': True, 'message': 'Update started'}))
