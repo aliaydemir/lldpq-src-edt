@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="shortcut icon" href="/png/favicon.ico">
+    <title>..::LLDPQ:: Setup</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <script src="/css/auth.js"></script>
+    <style>
+        * { box-sizing: border-box; }
+        html, body { height: 100%; margin: 0; }
+        body { background:#1e1e1e; color:#d4d4d4; font-family:'Segoe UI',Roboto,sans-serif; font-size:14px; }
+
+        /* keep dark theme through browser autofill */
+        input:-webkit-autofill,
+        input:-webkit-autofill:hover,
+        input:-webkit-autofill:focus {
+            -webkit-box-shadow: 0 0 0 1000px #1a1a1a inset !important;
+            -webkit-text-fill-color: #fff !important;
+            caret-color: #fff !important;
+        }
+
+        .su-header { padding:18px 24px; border-bottom:1px solid #333; background:#252526; }
+        .su-title { font-size:20px; font-weight:600; color:#fff; display:flex; align-items:center; gap:10px; }
+        .su-title svg { width:22px; height:22px; fill:#76b900; }
+        .su-sub { color:#9a9a9a; font-size:13px; margin-top:4px; }
+
+        .su-wrap { display:flex; gap:0; height:calc(100vh - 75px); }
+
+        /* ---- left: steps rail ---- */
+        .su-steps { width:280px; min-width:280px; background:#252526; border-right:1px solid #333; padding:18px 12px; overflow-y:auto; }
+        .su-step { display:flex; align-items:flex-start; gap:12px; padding:14px 14px; border-radius:8px; cursor:pointer; margin-bottom:6px; border:1px solid transparent; }
+        .su-step:hover { background:#2d2d2d; }
+        .su-step.active { background:#2c3a12; border-color:#76b900; }
+        .su-step .num { width:26px; height:26px; min-width:26px; border-radius:50%; background:#3c3c3c; color:#cfcfcf; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:13px; }
+        .su-step.active .num { background:#76b900; color:#1a1a1a; }
+        .su-step.done .num { background:#76b900; color:#1a1a1a; }
+        .su-step .lbl { color:#e0e0e0; font-weight:600; font-size:14px; }
+        .su-step .desc { color:#8f8f8f; font-size:11.5px; margin-top:2px; line-height:1.4; }
+        .su-step.active .lbl { color:#fff; }
+
+        /* ---- right: active panel ---- */
+        .su-main { flex:1; display:flex; flex-direction:column; overflow:hidden; }
+        .su-panels { flex:1; overflow:auto; padding:22px 26px; }
+        .su-panel { display:none; }
+        .su-panel.active { display:block; }
+        .su-panel h2 { margin:0 0 4px; font-size:17px; color:#fff; }
+        .su-panel .p-desc { color:#9a9a9a; font-size:13px; line-height:1.6; margin:0 0 16px; max-width:760px; }
+        .su-panel code { background:#111; color:#dcdcaa; padding:1px 6px; border-radius:4px; font-size:12px; }
+
+        .p-toolbar { display:flex; gap:8px; align-items:center; margin-bottom:10px; flex-wrap:wrap; }
+        .p-toolbar .spacer { flex:1; }
+        .p-file { color:#76b900; font-family:'Cascadia Code',Consolas,monospace; font-size:12px; }
+
+        textarea.su-ta { width:100%; min-height:360px; background:#111; color:#d4d4d4; border:1px solid #333; border-radius:6px;
+            padding:14px; font-family:'Cascadia Code',Consolas,monospace; font-size:12.5px; line-height:1.55; resize:vertical; }
+        textarea.su-ta:focus { outline:none; border-color:#76b900; }
+
+        .btn { border:0; border-radius:5px; padding:9px 14px; cursor:pointer; font-size:13px; font-weight:600; display:inline-flex; align-items:center; gap:7px; }
+        .btn svg { width:14px; height:14px; fill:currentColor; }
+        .btn.primary { background:#76b900; color:#1a1a1a; }
+        .btn.primary:hover { background:#8ad400; }
+        .btn.secondary { background:#3c3c3c; color:#e0e0e0; }
+        .btn.secondary:hover { background:#4a4a4a; }
+        .btn:disabled { opacity:.5; cursor:not-allowed; }
+
+        .status { font-size:12.5px; margin-top:10px; min-height:18px; }
+        .status.ok { color:#76b900; }
+        .status.err { color:#f44336; }
+        .status.info { color:#9a9a9a; }
+
+        .key-input { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:6px 0 4px; }
+        .key-input input { flex:1; min-width:220px; padding:10px 12px; background:#1a1a1a; color:#d4d4d4; border:1px solid #404040; border-radius:6px; font-size:14px; }
+        .key-input input:focus { outline:none; border-color:#76b900; }
+        .note { background:#2a2a1a; border:1px solid #4a4424; border-radius:6px; padding:10px 14px; color:#d6ca8a; font-size:12.5px; line-height:1.55; margin-bottom:14px; }
+
+        table.res { width:100%; border-collapse:collapse; margin-top:14px; font-size:12.5px; display:none; }
+        table.res th { text-align:left; color:#9a9a9a; font-weight:600; padding:8px 12px; border-bottom:1px solid #333; }
+        table.res td { padding:8px 12px; border-bottom:1px solid #2a2a2a; }
+        .summary { margin-top:10px; font-size:13px; color:#cfcfcf; display:none; }
+
+        /* footer nav */
+        .su-nav { display:flex; align-items:center; gap:12px; padding:14px 26px; border-top:1px solid #333; background:#252526; }
+        .su-nav .ind { color:#9a9a9a; font-size:13px; }
+        .su-nav .spacer { flex:1; }
+
+        .badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:700; }
+        .badge.green { background:rgba(118,185,0,.2); color:#76b900; }
+        .badge.gray { background:rgba(255,255,255,.1); color:#999; }
+    </style>
+</head>
+<body>
+    <div class="su-header">
+        <div class="su-title">
+            <svg viewBox="0 0 24 24"><path d="M12,15.5A3.5,3.5 0 0,1 8.5,12A3.5,3.5 0 0,1 12,8.5A3.5,3.5 0 0,1 15.5,12A3.5,3.5 0 0,1 12,15.5M19.43,12.97C19.47,12.65 19.5,12.33 19.5,12C19.5,11.67 19.47,11.34 19.43,11L21.54,9.37C21.73,9.22 21.78,8.95 21.66,8.73L19.66,5.27C19.54,5.05 19.27,4.96 19.05,5.05L16.56,6.05C16.04,5.66 15.5,5.32 14.87,5.07L14.5,2.42C14.46,2.18 14.25,2 14,2H10C9.75,2 9.54,2.18 9.5,2.42L9.13,5.07C8.5,5.32 7.96,5.66 7.44,6.05L4.95,5.05C4.73,4.96 4.46,5.05 4.34,5.27L2.34,8.73C2.21,8.95 2.27,9.22 2.46,9.37L4.57,11C4.53,11.34 4.5,11.67 4.5,12C4.5,12.33 4.53,12.65 4.57,12.97L2.46,14.63C2.27,14.78 2.21,15.05 2.34,15.27L4.34,18.73C4.46,18.95 4.73,19.03 4.95,18.95L7.44,17.94C7.96,18.34 8.5,18.68 9.13,18.93L9.5,21.58C9.54,21.82 9.75,22 10,22H14C14.25,22 14.46,21.82 14.5,21.58L14.87,18.93C15.5,18.67 16.04,18.34 16.56,17.94L19.05,18.95C19.27,19.03 19.54,18.95 19.66,18.73L21.66,15.27C21.78,15.05 21.73,14.78 21.54,14.63L19.43,12.97Z"/></svg>
+            Setup
+        </div>
+        <div class="su-sub">First-run wizard &mdash; prepare inventory, distribute SSH keys and define the topology. You can also come back here anytime to edit and download these files.</div>
+    </div>
+
+    <div class="su-wrap">
+        <div class="su-steps" id="steps"></div>
+
+        <div class="su-main">
+            <div class="su-panels">
+                <!-- Step 1: devices.yaml -->
+                <div class="su-panel" data-step="0">
+                    <h2>1. Inventory <span class="p-file">devices.yaml</span></h2>
+                    <p class="p-desc">Define every switch LLDPq should reach: management IPs (or hostnames), the default login username, and optional roles/groups. This is the source for collection, assets, key distribution and analysis.</p>
+                    <div class="p-toolbar">
+                        <button class="btn secondary" onclick="loadFile('devices', true)"><svg viewBox="0 0 24 24"><path d="M17.65,6.35C16.2,4.9 14.21,4 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20C15.73,20 18.84,17.45 19.73,14H17.65C16.83,16.33 14.61,18 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6C13.66,6 15.14,6.69 16.22,7.78L13,11H20V4L17.65,6.35Z"/></svg>Reload</button>
+                        <button class="btn secondary" onclick="downloadFile('devices')"><svg viewBox="0 0 24 24"><path d="M5,20H19V18H5M19,9H15V3H9V9H5L12,16L19,9Z"/></svg>Download</button>
+                        <div class="spacer"></div>
+                        <button class="btn primary" onclick="saveFile('devices')"><svg viewBox="0 0 24 24"><path d="M15,9H5V5H15M12,19A3,3 0 0,1 9,16A3,3 0 0,1 12,13A3,3 0 0,1 15,16A3,3 0 0,1 12,19M17,3H5C3.89,3 3,3.9 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V7L17,3Z"/></svg>Save devices.yaml</button>
+                    </div>
+                    <textarea class="su-ta" id="ta-devices" spellcheck="false" placeholder="Loading devices.yaml..."></textarea>
+                    <div class="status info" id="st-devices"></div>
+                </div>
+
+                <!-- Step 2: SSH keys -->
+                <div class="su-panel" data-step="1">
+                    <h2>2. SSH Keys</h2>
+                    <p class="p-desc">Authorize the collector's SSH key on every device in <code>devices.yaml</code> and enable passwordless <code>sudo</code> for the login user. This is what lets LLDPq log in and collect data.</p>
+                    <div class="note">Enter the switch admin password once. It is used transiently to push the key (<code>ssh-copy-id</code>) and is <strong>never stored</strong>. Devices that already trust the key are detected and skipped. Make sure Step&nbsp;1 is saved first.</div>
+                    <div class="key-input">
+                        <input type="password" id="key-pw" placeholder="switch admin password" autocomplete="new-password">
+                        <button class="btn primary" id="key-btn" onclick="distributeKeys()"><svg viewBox="0 0 24 24"><path d="M7,14A2,2 0 0,1 5,12A2,2 0 0,1 7,10A2,2 0 0,1 9,12A2,2 0 0,1 7,14M12.65,10C11.83,7.67 9.61,6 7,6A6,6 0 0,0 1,12A6,6 0 0,0 7,18C9.61,18 11.83,16.33 12.65,14H17V18H21V14H23V10H12.65Z"/></svg>Distribute key to all devices</button>
+                    </div>
+                    <div class="status info" id="key-progress"></div>
+                    <div class="summary" id="key-summary"></div>
+                    <table class="res" id="key-results">
+                        <thead><tr><th>Device</th><th>IP</th><th>SSH Key</th><th>Sudo</th></tr></thead>
+                        <tbody id="key-results-body"></tbody>
+                    </table>
+                </div>
+
+                <!-- Step 3: topology.dot -->
+                <div class="su-panel" data-step="2">
+                    <h2>3. Topology <span class="p-file">topology.dot</span></h2>
+                    <p class="p-desc">Describe the expected cabling as a Graphviz <code>.dot</code> graph (<code>"deviceA":"port" -- "deviceB":"port"</code>). LLDP results are validated against this expected wiring.</p>
+                    <div class="p-toolbar">
+                        <button class="btn secondary" onclick="loadFile('topology', true)"><svg viewBox="0 0 24 24"><path d="M17.65,6.35C16.2,4.9 14.21,4 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20C15.73,20 18.84,17.45 19.73,14H17.65C16.83,16.33 14.61,18 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6C13.66,6 15.14,6.69 16.22,7.78L13,11H20V4L17.65,6.35Z"/></svg>Reload</button>
+                        <button class="btn secondary" onclick="downloadFile('topology')"><svg viewBox="0 0 24 24"><path d="M5,20H19V18H5M19,9H15V3H9V9H5L12,16L19,9Z"/></svg>Download</button>
+                        <div class="spacer"></div>
+                        <button class="btn primary" onclick="saveFile('topology')"><svg viewBox="0 0 24 24"><path d="M15,9H5V5H15M12,19A3,3 0 0,1 9,16A3,3 0 0,1 12,13A3,3 0 0,1 15,16A3,3 0 0,1 12,19M17,3H5C3.89,3 3,3.9 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V7L17,3Z"/></svg>Save topology.dot</button>
+                    </div>
+                    <textarea class="su-ta" id="ta-topology" spellcheck="false" placeholder="Loading topology.dot..."></textarea>
+                    <div class="status info" id="st-topology"></div>
+                </div>
+
+                <!-- Step 4: topology_config.yaml -->
+                <div class="su-panel" data-step="3">
+                    <h2>4. Topology Config <span class="p-file">topology_config.yaml</span></h2>
+                    <p class="p-desc">Tune how the topology is rendered &mdash; tier ordering, which names are endpoint hosts, and special layout rules (e.g. staggered compute racks). Optional, but improves the Topology view.</p>
+                    <div class="p-toolbar">
+                        <button class="btn secondary" onclick="loadFile('config', true)"><svg viewBox="0 0 24 24"><path d="M17.65,6.35C16.2,4.9 14.21,4 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20C15.73,20 18.84,17.45 19.73,14H17.65C16.83,16.33 14.61,18 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6C13.66,6 15.14,6.69 16.22,7.78L13,11H20V4L17.65,6.35Z"/></svg>Reload</button>
+                        <button class="btn secondary" onclick="downloadFile('config')"><svg viewBox="0 0 24 24"><path d="M5,20H19V18H5M19,9H15V3H9V9H5L12,16L19,9Z"/></svg>Download</button>
+                        <div class="spacer"></div>
+                        <button class="btn primary" onclick="saveFile('config')"><svg viewBox="0 0 24 24"><path d="M15,9H5V5H15M12,19A3,3 0 0,1 9,16A3,3 0 0,1 12,13A3,3 0 0,1 15,16A3,3 0 0,1 12,19M17,3H5C3.89,3 3,3.9 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V7L17,3Z"/></svg>Save topology_config.yaml</button>
+                    </div>
+                    <textarea class="su-ta" id="ta-config" spellcheck="false" placeholder="Loading topology_config.yaml..."></textarea>
+                    <div class="status info" id="st-config"></div>
+                </div>
+            </div>
+
+            <div class="su-nav">
+                <button class="btn secondary" id="nav-back" onclick="goStep(current-1)"><svg viewBox="0 0 24 24"><path d="M15.41,16.58L10.83,12L15.41,7.41L14,6L8,12L14,18L15.41,16.58Z"/></svg>Back</button>
+                <span class="ind" id="nav-ind">Step 1 of 4</span>
+                <div class="spacer"></div>
+                <button class="btn primary" id="nav-next" onclick="goStep(current+1)">Next<svg viewBox="0 0 24 24"><path d="M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z"/></svg></button>
+            </div>
+        </div>
+    </div>
+
+<script>
+const STEPS = [
+    { key:'devices',  label:'Inventory',        desc:'devices.yaml — switches & credentials' },
+    { key:'keys',     label:'SSH Keys',         desc:'Authorize collector key + sudo' },
+    { key:'topology', label:'Topology',         desc:'topology.dot — expected cabling' },
+    { key:'config',   label:'Topology Config',  desc:'topology_config.yaml — layout rules' },
+];
+const FILES = {
+    devices:  { url:'/edit-devices',  file:'devices.yaml',          ta:'ta-devices',  st:'st-devices',  loaded:false },
+    topology: { url:'/edit-topology', file:'topology.dot',          ta:'ta-topology', st:'st-topology', loaded:false },
+    config:   { url:'/edit-config',   file:'topology_config.yaml',  ta:'ta-config',   st:'st-config',   loaded:false },
+};
+let current = 0;
+const done = {};   // stepKey -> true
+
+document.addEventListener('DOMContentLoaded', async () => {
+    // Admin-only: hidden from operators in the menu, and refused here too.
+    if (window.LLDPqAuth) {
+        const ok = await LLDPqAuth.check();
+        if (!ok) return;
+        if (!LLDPqAuth.isAdmin()) {
+            document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#888;font-family:sans-serif;">Access denied. Setup is admin only.</div>';
+            return;
+        }
+    }
+    renderSteps();
+    goStep(0);
+});
+
+function renderSteps() {
+    const c = document.getElementById('steps');
+    c.innerHTML = STEPS.map((s, i) =>
+        `<div class="su-step" id="step-${i}" onclick="goStep(${i})">
+            <div class="num" id="num-${i}">${i + 1}</div>
+            <div><div class="lbl">${s.label}</div><div class="desc">${s.desc}</div></div>
+        </div>`).join('');
+}
+
+function goStep(i) {
+    if (i < 0 || i >= STEPS.length) return;
+    current = i;
+    document.querySelectorAll('.su-step').forEach((el, idx) => el.classList.toggle('active', idx === i));
+    document.querySelectorAll('.su-panel').forEach(el => el.classList.toggle('active', +el.dataset.step === i));
+    document.getElementById('nav-ind').textContent = `Step ${i + 1} of ${STEPS.length}`;
+    document.getElementById('nav-back').disabled = (i === 0);
+    document.getElementById('nav-next').style.visibility = (i === STEPS.length - 1) ? 'hidden' : 'visible';
+    // Lazy-load file editors the first time their step is shown.
+    const key = STEPS[i].key;
+    if (FILES[key] && !FILES[key].loaded) loadFile(key, false);
+}
+
+function markDone(stepKey, isDone) {
+    const idx = STEPS.findIndex(s => s.key === stepKey);
+    if (idx < 0) return;
+    done[stepKey] = isDone;
+    const el = document.getElementById('step-' + idx);
+    const num = document.getElementById('num-' + idx);
+    if (el) el.classList.toggle('done', !!isDone);
+    if (num) num.innerHTML = isDone ? '&#10003;' : (idx + 1);
+}
+
+function setStatus(id, msg, cls) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.className = 'status ' + (cls || 'info');
+    el.textContent = msg || '';
+}
+
+async function loadFile(key, force) {
+    const cfg = FILES[key];
+    if (!cfg) return;
+    const ta = document.getElementById(cfg.ta);
+    if (cfg.loaded && !force) return;
+    setStatus(cfg.st, 'Loading…', 'info');
+    try {
+        const r = await fetch(cfg.url, { cache: 'no-store' });
+        const data = await r.json();
+        if (data.success) {
+            ta.value = data.content || '';
+            cfg.loaded = true;
+            setStatus(cfg.st, ta.value.trim() ? ('Loaded ' + cfg.file) : (cfg.file + ' is empty — fill it in below.'), 'info');
+            markDone(key, !!ta.value.trim());
+        } else {
+            ta.value = '';
+            cfg.loaded = true;   // file may not exist yet; let the admin create it
+            setStatus(cfg.st, (data.error || 'Not found') + ' — you can create it here and Save.', 'info');
+            markDone(key, false);
+        }
+    } catch (e) {
+        setStatus(cfg.st, 'Load failed: ' + e.message, 'err');
+    }
+}
+
+async function saveFile(key) {
+    const cfg = FILES[key];
+    if (!cfg) return;
+    const ta = document.getElementById(cfg.ta);
+    setStatus(cfg.st, 'Saving…', 'info');
+    try {
+        const r = await fetch(cfg.url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content: ta.value })
+        });
+        const data = await r.json().catch(() => ({}));
+        if (data.success) {
+            setStatus(cfg.st, (data.message || 'Saved ' + cfg.file) + ' \u2713', 'ok');
+            markDone(key, !!ta.value.trim());
+        } else {
+            setStatus(cfg.st, data.error || 'Save failed', 'err');
+        }
+    } catch (e) {
+        setStatus(cfg.st, 'Save failed: ' + e.message, 'err');
+    }
+}
+
+function downloadFile(key) {
+    const cfg = FILES[key];
+    if (!cfg) return;
+    const text = document.getElementById(cfg.ta).value;
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = cfg.file;
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 100);
+}
+
+/* ---- Step 2: SSH key distribution (reuses /setup-api.sh) ---- */
+function keyIcon(s) {
+    if (s === 'ok' || s === 'already') return '<span style="color:#76b900;">\u2714</span>';
+    if (s === 'fail') return '<span style="color:#f44336;">\u2716</span>';
+    return '<span style="color:#999;">\u2014</span>';
+}
+function keyColor(s) {
+    if (s === 'ok' || s === 'already') return '#76b900';
+    if (s === 'fail') return '#f44336';
+    return '#999';
+}
+
+async function distributeKeys() {
+    const pw = document.getElementById('key-pw').value;
+    const btn = document.getElementById('key-btn');
+    if (!pw) { setStatus('key-progress', 'Enter the switch admin password first.', 'err'); return; }
+    btn.disabled = true;
+    setStatus('key-progress', 'Distributing key & enabling sudo (this can take a while for large fabrics)…', 'info');
+    document.getElementById('key-results').style.display = 'none';
+    document.getElementById('key-summary').style.display = 'none';
+    try {
+        const r = await fetch('/setup-api.sh', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: pw })
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!data.success) {
+            setStatus('key-progress', data.error || 'Distribution failed', 'err');
+            btn.disabled = false;
+            return;
+        }
+        document.getElementById('key-pw').value = '';
+        const body = document.getElementById('key-results-body');
+        body.innerHTML = '';
+        (data.results || []).sort((a, b) => (a.hostname || '').localeCompare(b.hostname || '')).forEach(x => {
+            const tr = document.createElement('tr');
+            const failed = x.send_key === 'fail' || x.sudo_fix === 'fail';
+            if (failed) tr.style.background = 'rgba(244,67,54,.08)';
+            tr.innerHTML =
+                `<td style="color:#ddd;">${x.hostname || ''}</td>` +
+                `<td style="color:#999;font-family:monospace;">${x.ip || ''}</td>` +
+                `<td title="${(x.send_key_msg || '').replace(/"/g, '&quot;')}">${keyIcon(x.send_key)} <span style="color:${keyColor(x.send_key)};">${x.send_key_msg || x.send_key}</span></td>` +
+                `<td title="${(x.sudo_fix_msg || '').replace(/"/g, '&quot;')}">${keyIcon(x.sudo_fix)} <span style="color:${keyColor(x.sudo_fix)};">${x.sudo_fix_msg || x.sudo_fix}</span></td>`;
+            body.appendChild(tr);
+        });
+        document.getElementById('key-results').style.display = 'table';
+        const sum = document.getElementById('key-summary');
+        sum.style.display = 'block';
+        sum.innerHTML = `<strong>${data.send_key_ok || 0}/${data.total || 0}</strong> devices have the key, ` +
+                        `<strong>${data.sudo_fix_ok || 0}/${data.total || 0}</strong> have passwordless sudo.`;
+        const allOk = (data.send_key_ok || 0) === (data.total || 0) && (data.total || 0) > 0;
+        setStatus('key-progress', allOk ? 'All devices reachable with the collector key \u2713' : 'Done — check failed rows below.', allOk ? 'ok' : 'info');
+        markDone('keys', (data.send_key_ok || 0) > 0);
+    } catch (e) {
+        setStatus('key-progress', 'Distribution failed: ' + e.message, 'err');
+    } finally {
+        btn.disabled = false;
+    }
+}
+</script>
+</body>
+</html>
