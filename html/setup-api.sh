@@ -309,6 +309,27 @@ if action == 'save-key':
     
     sys.exit(0)
 
+# ─── Action: Export the collector PRIVATE key (back up / migrate LLDPq to another host) ───
+if action == 'get-private-key':
+    private_key = ''
+    key_file = ''
+    for key_name in ('id_ed25519', 'id_rsa'):
+        p = os.path.expanduser(f'~{lldpq_user}/.ssh/{key_name}')
+        try:
+            r = subprocess.run(['sudo', '-u', lldpq_user, 'cat', p],
+                               capture_output=True, text=True, timeout=5)
+            if r.returncode == 0 and 'PRIVATE KEY' in r.stdout:
+                private_key = r.stdout
+                key_file = p
+                break
+        except Exception:
+            pass
+    if private_key:
+        print(json.dumps({'success': True, 'private_key': private_key, 'key_file': key_file}))
+    else:
+        print(json.dumps({'success': False, 'error': f'No private key found for {lldpq_user}'}))
+    sys.exit(0)
+
 # ─── Action: Verify which devices already trust the collector key (no password) ───
 if action == 'verify':
     all_devices, load_error = load_devices(devices_yaml)

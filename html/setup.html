@@ -114,6 +114,8 @@
                     <h2>1. Inventory <span class="p-file">devices.yaml</span></h2>
                     <p class="p-desc">Define every switch LLDPq should reach: management IPs (or hostnames), the default login username, and optional roles/groups. This is the source for collection, assets, key distribution and analysis.</p>
                     <div class="p-toolbar">
+                        <button class="btn secondary" onclick="document.getElementById('up-devices').click()" title="Upload from your computer"><svg viewBox="0 0 24 24"><path d="M9,16V10H5L12,3L19,10H15V16H9M5,20V18H19V20H5Z"/></svg>Upload</button>
+                        <input type="file" id="up-devices" style="display:none" onchange="uploadFile('devices', this)">
                         <button class="btn secondary" onclick="loadFile('devices', true)"><svg viewBox="0 0 24 24"><path d="M17.65,6.35C16.2,4.9 14.21,4 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20C15.73,20 18.84,17.45 19.73,14H17.65C16.83,16.33 14.61,18 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6C13.66,6 15.14,6.69 16.22,7.78L13,11H20V4L17.65,6.35Z"/></svg>Reload</button>
                         <button class="btn secondary" onclick="downloadFile('devices')"><svg viewBox="0 0 24 24"><path d="M5,20H19V18H5M19,9H15V3H9V9H5L12,16L19,9Z"/></svg>Download</button>
                         <div class="spacer"></div>
@@ -135,6 +137,9 @@
                         <textarea id="key-pub" class="su-ta key-pub" readonly spellcheck="false" placeholder="(no key yet — Generate or Import below)"></textarea>
                         <div class="p-toolbar">
                             <button class="btn secondary" onclick="copyKey()">Copy</button>
+                            <button class="btn secondary" onclick="downloadKey()" title="Download the PRIVATE key to back up / migrate LLDPq to another host">Backup key</button>
+                            <button class="btn secondary" onclick="document.getElementById('up-key').click()" title="Upload a private key file (e.g. from a previous LLDPq install)">Upload key&hellip;</button>
+                            <input type="file" id="up-key" style="display:none" onchange="uploadKey(this)">
                             <button class="btn secondary" id="gen-btn" onclick="generateKey()">Generate</button>
                             <button class="btn secondary" onclick="toggleImport()">Import&hellip;</button>
                             <button class="btn secondary" onclick="loadSSHKeyInfo()">Refresh</button>
@@ -164,6 +169,8 @@
                     <h2>3. Topology <span class="p-file">topology.dot</span></h2>
                     <p class="p-desc">Describe the expected cabling as a Graphviz <code>.dot</code> graph (<code>"deviceA":"port" -- "deviceB":"port"</code>). LLDP results are validated against this expected wiring.</p>
                     <div class="p-toolbar">
+                        <button class="btn secondary" onclick="document.getElementById('up-topology').click()" title="Upload from your computer"><svg viewBox="0 0 24 24"><path d="M9,16V10H5L12,3L19,10H15V16H9M5,20V18H19V20H5Z"/></svg>Upload</button>
+                        <input type="file" id="up-topology" style="display:none" onchange="uploadFile('topology', this)">
                         <button class="btn secondary" onclick="loadFile('topology', true)"><svg viewBox="0 0 24 24"><path d="M17.65,6.35C16.2,4.9 14.21,4 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20C15.73,20 18.84,17.45 19.73,14H17.65C16.83,16.33 14.61,18 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6C13.66,6 15.14,6.69 16.22,7.78L13,11H20V4L17.65,6.35Z"/></svg>Reload</button>
                         <button class="btn secondary" onclick="downloadFile('topology')"><svg viewBox="0 0 24 24"><path d="M5,20H19V18H5M19,9H15V3H9V9H5L12,16L19,9Z"/></svg>Download</button>
                         <div class="spacer"></div>
@@ -178,6 +185,8 @@
                     <h2>4. Topology Config <span class="p-file">topology_config.yaml</span></h2>
                     <p class="p-desc">Tune how the topology is rendered &mdash; tier ordering, which names are endpoint hosts, and special layout rules (e.g. staggered compute racks). Optional, but improves the Topology view.</p>
                     <div class="p-toolbar">
+                        <button class="btn secondary" onclick="document.getElementById('up-config').click()" title="Upload from your computer"><svg viewBox="0 0 24 24"><path d="M9,16V10H5L12,3L19,10H15V16H9M5,20V18H19V20H5Z"/></svg>Upload</button>
+                        <input type="file" id="up-config" style="display:none" onchange="uploadFile('config', this)">
                         <button class="btn secondary" onclick="loadFile('config', true)"><svg viewBox="0 0 24 24"><path d="M17.65,6.35C16.2,4.9 14.21,4 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20C15.73,20 18.84,17.45 19.73,14H17.65C16.83,16.33 14.61,18 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6C13.66,6 15.14,6.69 16.22,7.78L13,11H20V4L17.65,6.35Z"/></svg>Reload</button>
                         <button class="btn secondary" onclick="downloadFile('config')"><svg viewBox="0 0 24 24"><path d="M5,20H19V18H5M19,9H15V3H9V9H5L12,16L19,9Z"/></svg>Download</button>
                         <div class="spacer"></div>
@@ -329,6 +338,21 @@ function downloadFile(key) {
     setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 100);
 }
 
+function uploadFile(key, input) {
+    const cfg = FILES[key];
+    const f = input.files && input.files[0];
+    if (!cfg || !f) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+        document.getElementById(cfg.ta).value = e.target.result || '';
+        cfg.loaded = true;
+        setStatus(cfg.st, 'Loaded "' + f.name + '" into the editor \u2014 review and click Save to apply.', 'info');
+    };
+    reader.onerror = () => setStatus(cfg.st, 'Could not read the selected file.', 'err');
+    reader.readAsText(f);
+    input.value = '';   // allow re-selecting the same file
+}
+
 /* ---- Step 2: SSH key info / generate / import / verify ---- */
 async function loadSSHKeyInfo() {
     const st = document.getElementById('key-state');
@@ -401,6 +425,43 @@ async function importKey() {
         if (d.success) { setStatus('key-import-msg', 'Key imported \u2713', 'ok'); document.getElementById('key-import-text').value = ''; toggleImport(); loadSSHKeyInfo(); }
         else setStatus('key-import-msg', d.error || 'Import failed', 'err');
     } catch (e) { setStatus('key-import-msg', 'Import failed: ' + e.message, 'err'); }
+}
+
+function uploadKey(input) {
+    const f = input.files && input.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = async e => {
+        const key = (e.target.result || '').trim();
+        if (!key || key.indexOf('PRIVATE KEY') < 0) { setStatus('key-progress', 'That file is not a valid OpenSSH private key.', 'err'); return; }
+        setStatus('key-progress', 'Installing uploaded key\u2026', 'info');
+        try {
+            const r = await fetch('/provision-api.sh?action=import-ssh-key', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ private_key: key }) });
+            const d = await r.json().catch(() => ({}));
+            if (d.success) { await loadSSHKeyInfo(); setStatus('key-progress', 'Key uploaded & installed \u2713 \u2014 now Verify (or Distribute for new devices).', 'ok'); }
+            else setStatus('key-progress', d.error || 'Import failed', 'err');
+        } catch (err) { setStatus('key-progress', 'Upload failed: ' + err.message, 'err'); }
+    };
+    reader.onerror = () => setStatus('key-progress', 'Could not read the selected file.', 'err');
+    reader.readAsText(f);
+    input.value = '';
+}
+
+async function downloadKey() {
+    setStatus('key-progress', 'Preparing private key download\u2026', 'info');
+    try {
+        const r = await fetch('/setup-api.sh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'get-private-key' }) });
+        const d = await r.json().catch(() => ({}));
+        if (!d.success || !d.private_key) { setStatus('key-progress', d.error || 'No private key available to download.', 'err'); return; }
+        const name = (d.key_file || 'id_ed25519').split('/').pop();
+        const blob = new Blob([d.private_key], { type: 'application/octet-stream' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = name;
+        document.body.appendChild(a); a.click();
+        setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 100);
+        setStatus('key-progress', 'Downloaded ' + name + ' (PRIVATE key). Keep it safe \u2014 anyone with it can log into your devices. Use \u201cUpload key\u201d on a new install to restore.', 'ok');
+    } catch (e) { setStatus('key-progress', 'Download failed: ' + e.message, 'err'); }
 }
 
 async function verifyKeys() {
