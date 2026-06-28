@@ -402,7 +402,9 @@ if action == 'run':
         f'echo __LLDPQ_DONE__ >> .run.log" >/dev/null 2>&1 &'
     )
     try:
-        subprocess.Popen(['sudo', '-u', lldpq_user, 'bash', '-c', cmd])
+        subprocess.Popen(['sudo', '-u', lldpq_user, 'bash', '-c', cmd],
+                         start_new_session=True, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         print(json.dumps({'success': True, 'message': 'LLDPq run started'}))
     except Exception as e:
         print(json.dumps({'success': False, 'error': str(e)}))
@@ -434,7 +436,7 @@ source /etc/lldpq.conf 2>/dev/null
 SRC="${LLDPQ_SRC:-}"
 HOMESRC="$HOME/lldpq-src"
 URL="__URL__"
-LOG="${LLDPQ_DIR:-$HOME/lldpq}/.update.log"
+LOG="__LOG__"
 : > "$LOG"
 {
   echo "=== LLDPq Update $(date) ==="
@@ -455,7 +457,10 @@ LOG="${LLDPQ_DIR:-$HOME/lldpq}/.update.log"
 } >> "$LOG" 2>&1
 echo __LLDPQ_DONE__ >> "$LOG"
 '''
-    script = SCRIPT.replace('__URL__', url).replace('__BACKUP__', '--backup' if backup else '')
+    log_path = os.path.join(lldpq_dir, '.update.log')
+    script = (SCRIPT.replace('__URL__', url)
+              .replace('__BACKUP__', '--backup' if backup else '')
+              .replace('__LOG__', log_path))
     try:
         w = subprocess.run(['sudo', '-u', lldpq_user, 'tee', script_path],
                            input=script, capture_output=True, text=True, timeout=10)
@@ -463,7 +468,9 @@ echo __LLDPQ_DONE__ >> "$LOG"
             print(json.dumps({'success': False, 'error': 'Could not stage update script'}))
             sys.exit(0)
         subprocess.Popen(['sudo', '-u', lldpq_user, 'bash', '-c',
-                          'nohup setsid bash ' + shlex.quote(script_path) + ' >/dev/null 2>&1 &'])
+                          'nohup setsid bash ' + shlex.quote(script_path) + ' >/dev/null 2>&1 &'],
+                         start_new_session=True, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         print(json.dumps({'success': True, 'message': 'Update started'}))
     except Exception as e:
         print(json.dumps({'success': False, 'error': str(e)}))
