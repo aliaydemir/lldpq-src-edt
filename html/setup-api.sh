@@ -426,8 +426,19 @@ if action == 'run-log':
     print(json.dumps({'success': True, 'done': done, 'log': display}))
     sys.exit(0)
 
+# ─── Action: environment info (is this running inside Docker?) ───
+if action == 'env':
+    print(json.dumps({'success': True, 'docker': os.path.exists('/.dockerenv')}))
+    sys.exit(0)
+
 # ─── Action: Update LLDPq (git pull + ./install.sh -y [--backup]) into a tailable log ───
 if action == 'update':
+    # Docker: a container can't replace its own image. Update is a host operation
+    # (docker load + docker compose up); refuse here and let the UI show the host command.
+    if os.path.exists('/.dockerenv'):
+        print(json.dumps({'success': False, 'docker': True,
+                          'error': 'Docker deployment: update on the host (docker load + docker compose up). See the instructions on this page.'}))
+        sys.exit(0)
     backup = bool(post_data.get('backup'))
     url = 'https://github.com/aliaydemir/lldpq-src.git'
     # Stage the runner + log in ~/.lldpq-state, NOT inside lldpq_dir: install.sh wipes/

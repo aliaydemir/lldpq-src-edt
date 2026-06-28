@@ -242,8 +242,20 @@
                 <!-- Step 6: Update LLDPq -->
                 <div class="su-panel" data-step="5">
                     <h2>6. Update LLDPq</h2>
-                    <p class="p-desc">Pull the latest LLDPq from the source repo and reinstall (<code>git pull</code> &rarr; <code>./install.sh -y</code>). Configs, keys and monitoring data are preserved across the update.</p>
-                    <div class="note">Heads up: the update reinstalls and <strong>restarts nginx &amp; fcgiwrap</strong>, so this page briefly disconnects and reconnects &mdash; the update keeps running in the background and the log resumes. Requires the LLDPq service account to have passwordless <code>sudo</code> (always the case for the Docker image).</div>
+                    <p class="p-desc">Pull the latest LLDPq and reinstall. Configs, keys and monitoring data are preserved across the update.</p>
+
+                    <!-- Docker deployments: a container can't replace its own image — update on the host. -->
+                    <div id="update-docker" style="display:none;">
+                        <div class="note">This is a <strong>Docker</strong> deployment. A container can't replace its own image, so run the update on the <strong>host</strong> that runs the container:</div>
+                        <pre id="docker-cmd" class="run-output" style="height:auto; min-height:0; padding:14px;">curl -fsSL https://aliaydemir.com/lldpq.tar.gz | gunzip | docker load &amp;&amp; docker compose up -d</pre>
+                        <div class="p-toolbar">
+                            <button class="btn secondary" onclick="copyDockerCmd(this)"><svg viewBox="0 0 24 24"><path d="M19,21H8V7H19M19,5H8A2,2 0 0,0 6,7V21A2,2 0 0,0 8,23H19A2,2 0 0,0 21,21V7A2,2 0 0,0 19,5M16,1H4A2,2 0 0,0 2,3V17H4V3H16V1Z"/></svg>Copy command</button>
+                        </div>
+                        <p class="p-desc">Loads the new image and recreates the container; named volumes (config &amp; monitoring data) persist. Run it from the directory containing your <code>docker-compose.yml</code>.</p>
+                    </div>
+
+                    <div id="update-bare">
+                    <div class="note">Heads up: the update reinstalls and <strong>restarts nginx &amp; fcgiwrap</strong>, so this page briefly disconnects and reconnects &mdash; the update keeps running in the background and the log resumes. Requires the LLDPq service account to have passwordless <code>sudo</code>.</div>
                     <label style="display:flex; align-items:center; gap:8px; margin:6px 0 10px; color:#d4d4d4; font-size:13px; cursor:pointer;">
                         <input type="checkbox" id="update-backup" style="width:16px; height:16px; accent-color:#76b900;">
                         Take a full backup (configs / keys / data) before updating
@@ -254,6 +266,7 @@
                     </div>
                     <div class="status info" id="update-status"></div>
                     <pre id="update-output" class="run-output">Click "Update LLDPq" to git pull + reinstall and stream the output here&hellip;</pre>
+                    </div>
                 </div>
             </div>
 
@@ -330,7 +343,10 @@ function goStep(i) {
     if (key === 'keys' && !keyInfoLoaded) { keyInfoLoaded = true; loadSSHKeyInfo(); }
     if (key === 'run' && !runLogShown) { runLogShown = true; showRunLog(); }
     if (key === 'run' && !schedLoaded) { schedLoaded = true; loadSchedules(); }
-    if (key === 'update' && !updateLogShown) { updateLogShown = true; showUpdateLog(); }
+    if (key === 'update') {
+        checkDockerForUpdate();
+        if (!updateLogShown) { updateLogShown = true; showUpdateLog(); }
+    }
 }
 
 function markDone(stepKey, isDone) {
@@ -786,6 +802,33 @@ async function saveSchedules() {
         if (d.success) setStatus('sched-status', 'Saved \u2713  (lldpq: ' + d.lldpq_cron + ', get-conf: ' + d.getconf_cron + ')', 'ok');
         else setStatus('sched-status', d.error || 'Save failed', 'err');
     } catch (e) { setStatus('sched-status', 'Save failed: ' + e.message, 'err'); }
+}
+
+/* ---- Docker detection for the Update step (a container can't replace its own image) ---- */
+async function checkDockerForUpdate() {
+    let docker = false;
+    try {
+        const r = await fetch('/setup-api.sh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'env' }) });
+        const d = await r.json().catch(() => ({}));
+        docker = !!(d && d.docker);
+    } catch (e) { /* default to bare-metal view */ }
+    const dk = document.getElementById('update-docker');
+    const bare = document.getElementById('update-bare');
+    if (dk) dk.style.display = docker ? 'block' : 'none';
+    if (bare) bare.style.display = docker ? 'none' : 'block';
+}
+function copyDockerCmd(btn) {
+    const t = (document.getElementById('docker-cmd').textContent || '').trim();
+    function ok() { if (btn) { const o = btn.innerHTML; btn.innerHTML = 'Copied \u2713'; setTimeout(function () { btn.innerHTML = o; }, 1500); } }
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(ok).catch(function () { dkFallbackCopy(t, ok); });
+    else dkFallbackCopy(t, ok);
+}
+function dkFallbackCopy(text, cb) {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px;';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); if (cb) cb(); } catch (e) {}
+    ta.remove();
 }
 </script>
 </body>
