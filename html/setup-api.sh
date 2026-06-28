@@ -448,9 +448,10 @@ LOG="${LLDPQ_DIR:-$HOME/lldpq}/.update.log"
     git clone "$URL" "$HOMESRC" && cd "$HOMESRC" || { echo "clone failed"; echo __LLDPQ_DONE__ >> "$LOG"; exit 1; }
   fi
   echo "--- git pull (in $(pwd)) ---"
-  git pull
+  GIT_TERMINAL_PROMPT=0 timeout 120 git pull 2>&1 || echo "(git pull skipped/failed -- continuing with the current checkout)"
   echo "--- ./install.sh -y __BACKUP__ ---"
-  ./install.sh -y __BACKUP__
+  ./install.sh -y __BACKUP__ 2>&1
+  echo "--- install finished (exit $?) ---"
 } >> "$LOG" 2>&1
 echo __LLDPQ_DONE__ >> "$LOG"
 '''

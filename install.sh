@@ -517,6 +517,22 @@ if [[ "$INSTALL_MODE" == "update" ]]; then
         [[ -e "$LLDPQ_INSTALL_DIR/$_d" ]] && sudo mv "$LLDPQ_INSTALL_DIR/$_d" "$_DATA_PRESERVE/" 2>/dev/null || true
     done
 
+    # Safety net: if the install is interrupted (e.g. triggered from the web Update
+    # button), move runtime data back and remove the preserve dir on ANY exit so it
+    # never lingers or strands data. The normal restore below handles the success path;
+    # by then the preserve dir is empty and this trap just removes it.
+    _lldpq_restore_preserve() {
+        local _d
+        [[ -n "$_DATA_PRESERVE" ]] && [[ -d "$_DATA_PRESERVE" ]] || return 0
+        for _d in monitor-results lldp-results alert-states; do
+            if [[ -e "$_DATA_PRESERVE/$_d" ]] && [[ ! -e "$LLDPQ_INSTALL_DIR/$_d" ]]; then
+                sudo mv "$_DATA_PRESERVE/$_d" "$LLDPQ_INSTALL_DIR/" 2>/dev/null || true
+            fi
+        done
+        rmdir "$_DATA_PRESERVE" 2>/dev/null || sudo rm -rf "$_DATA_PRESERVE" 2>/dev/null || true
+    }
+    trap _lldpq_restore_preserve EXIT
+
     # Remove old lldpq directory (sudo fallback: may contain root-owned files)
     echo "  Removing old lldpq directory..."
     rm -rf "$LLDPQ_INSTALL_DIR" 2>/dev/null || sudo rm -rf "$LLDPQ_INSTALL_DIR"
