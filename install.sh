@@ -86,14 +86,19 @@ step() { STEP=$((STEP + 1)); printf "\n[%02d] %s\n" "$STEP" "$1"; }
 AUTO_YES=false
 ENABLE_TELEMETRY=false
 DISABLE_TELEMETRY=false
+FORCE_BACKUP=false
+# Remember where we were installed FROM (the source repo) so the web "Update"
+# button can later git pull + reinstall from here (stored as LLDPQ_SRC in lldpq.conf).
+LLDPQ_SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 for arg in "$@"; do
     case $arg in
         -y) AUTO_YES=true ;;
+        --backup) FORCE_BACKUP=true ;;
         --enable-telemetry) ENABLE_TELEMETRY=true ;;
         --disable-telemetry) DISABLE_TELEMETRY=true ;;
         -h|--help)
-            echo "Usage: ./install.sh [-y] [--enable-telemetry] [--disable-telemetry]"
+            echo "Usage: ./install.sh [-y] [--backup] [--enable-telemetry] [--disable-telemetry]"
             echo ""
             echo "Automatically detects existing installation:"
             echo "  No existing install → Fresh install (packages, configs, everything)"
@@ -101,6 +106,7 @@ for arg in "$@"; do
             echo ""
             echo "Options:"
             echo "  -y                  Auto-yes to all prompts"
+            echo "  --backup            (update mode) take a full backup before updating"
             echo "  --enable-telemetry  Enable streaming telemetry (requires Docker)"
             echo "  --disable-telemetry Disable streaming telemetry"
             exit 0
@@ -422,7 +428,9 @@ if [[ "$INSTALL_MODE" == "update" ]]; then
     # copy of configs, keys and a data snapshot.
     BACKUP_DIR=""
     _do_backup=false
-    if [[ "$AUTO_YES" != "true" ]]; then
+    if [[ "$FORCE_BACKUP" == "true" ]]; then
+        _do_backup=true
+    elif [[ "$AUTO_YES" != "true" ]]; then
         read -p "  Take a full backup (configs/keys/data) before updating? [y/N]: " _bk_response
         [[ "$_bk_response" =~ ^[Yy]$ ]] && _do_backup=true
     fi
@@ -858,6 +866,7 @@ step "Writing /etc/lldpq.conf..."
 echo "# LLDPq Configuration" | sudo tee /etc/lldpq.conf > /dev/null
 echo "LLDPQ_DIR=$LLDPQ_INSTALL_DIR" | sudo tee -a /etc/lldpq.conf > /dev/null
 echo "LLDPQ_USER=$LLDPQ_USER" | sudo tee -a /etc/lldpq.conf > /dev/null
+echo "LLDPQ_SRC=$LLDPQ_SRC_DIR" | sudo tee -a /etc/lldpq.conf > /dev/null
 echo "WEB_ROOT=$WEB_ROOT" | sudo tee -a /etc/lldpq.conf > /dev/null
 echo "ANSIBLE_DIR=$ANSIBLE_DIR" | sudo tee -a /etc/lldpq.conf > /dev/null
 echo "EDITOR_ROOT=${EDITOR_ROOT:-$ANSIBLE_DIR}" | sudo tee -a /etc/lldpq.conf > /dev/null

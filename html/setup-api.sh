@@ -424,6 +424,66 @@ if action == 'run-log':
     print(json.dumps({'success': True, 'done': done, 'log': display}))
     sys.exit(0)
 
+# ─── Action: Update LLDPq (git pull + ./install.sh -y [--backup]) into a tailable log ───
+if action == 'update':
+    backup = bool(post_data.get('backup'))
+    url = 'https://github.com/aliaydemir/lldpq-src.git'
+    script_path = os.path.join(lldpq_dir, '.update-run.sh')
+    SCRIPT = '''#!/usr/bin/env bash
+source /etc/lldpq.conf 2>/dev/null
+SRC="${LLDPQ_SRC:-}"
+HOMESRC="$HOME/lldpq-src"
+URL="__URL__"
+LOG="${LLDPQ_DIR:-$HOME/lldpq}/.update.log"
+: > "$LOG"
+{
+  echo "=== LLDPq Update $(date) ==="
+  if [ -n "$SRC" ] && [ -d "$SRC/.git" ]; then
+    cd "$SRC" || exit 1
+  elif [ -d "$HOMESRC/.git" ]; then
+    cd "$HOMESRC" || exit 1
+  else
+    echo "Source repo not found (LLDPQ_SRC=$SRC); cloning $URL -> $HOMESRC"
+    rm -rf "$HOMESRC"
+    git clone "$URL" "$HOMESRC" && cd "$HOMESRC" || { echo "clone failed"; echo __LLDPQ_DONE__ >> "$LOG"; exit 1; }
+  fi
+  echo "--- git pull (in $(pwd)) ---"
+  git pull
+  echo "--- ./install.sh -y __BACKUP__ ---"
+  ./install.sh -y __BACKUP__
+} >> "$LOG" 2>&1
+echo __LLDPQ_DONE__ >> "$LOG"
+'''
+    script = SCRIPT.replace('__URL__', url).replace('__BACKUP__', '--backup' if backup else '')
+    try:
+        w = subprocess.run(['sudo', '-u', lldpq_user, 'tee', script_path],
+                           input=script, capture_output=True, text=True, timeout=10)
+        if w.returncode != 0:
+            print(json.dumps({'success': False, 'error': 'Could not stage update script'}))
+            sys.exit(0)
+        subprocess.Popen(['sudo', '-u', lldpq_user, 'bash', '-c',
+                          'nohup setsid bash ' + shlex.quote(script_path) + ' >/dev/null 2>&1 &'])
+        print(json.dumps({'success': True, 'message': 'Update started'}))
+    except Exception as e:
+        print(json.dumps({'success': False, 'error': str(e)}))
+    sys.exit(0)
+
+# ─── Action: Tail the update log started by action=update ───
+if action == 'update-log':
+    log_path = os.path.join(lldpq_dir, '.update.log')
+    content = ''
+    try:
+        r = subprocess.run(['sudo', '-u', lldpq_user, 'cat', log_path],
+                           capture_output=True, text=True, timeout=10)
+        if r.returncode == 0:
+            content = r.stdout
+    except Exception:
+        content = ''
+    done = '__LLDPQ_DONE__' in content
+    display = content.replace('__LLDPQ_DONE__', '').rstrip()
+    print(json.dumps({'success': True, 'done': done, 'log': display}))
+    sys.exit(0)
+
 # ─── Action: Generate new key + distribute with password ───
 password = post_data.get('password', '')
 retry_devices = post_data.get('retry_devices', [])  # List of IPs for retry

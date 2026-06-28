@@ -209,6 +209,23 @@
                     <div class="status info" id="run-status"></div>
                     <pre id="run-output" class="run-output">Click "Run LLDPq" to start a collection and stream the output here&hellip;</pre>
                 </div>
+
+                <!-- Step 6: Update LLDPq -->
+                <div class="su-panel" data-step="5">
+                    <h2>6. Update LLDPq</h2>
+                    <p class="p-desc">Pull the latest LLDPq from the source repo and reinstall (<code>git pull</code> &rarr; <code>./install.sh -y</code>). Configs, keys and monitoring data are preserved across the update.</p>
+                    <div class="note">Heads up: the update reinstalls and <strong>restarts nginx &amp; fcgiwrap</strong>, so this page briefly disconnects and reconnects &mdash; the update keeps running in the background and the log resumes. Requires the LLDPq service account to have passwordless <code>sudo</code> (always the case for the Docker image).</div>
+                    <label style="display:flex; align-items:center; gap:8px; margin:6px 0 10px; color:#d4d4d4; font-size:13px; cursor:pointer;">
+                        <input type="checkbox" id="update-backup" style="width:16px; height:16px; accent-color:#76b900;">
+                        Take a full backup (configs / keys / data) before updating
+                    </label>
+                    <div class="p-toolbar">
+                        <button class="btn primary" id="update-btn" onclick="updateLLDPq()"><svg viewBox="0 0 24 24"><path d="M12,4V1L8,5L12,9V6A6,6 0 0,1 18,12C18,13.57 17.4,15 16.42,16.06L17.84,17.48C19.17,16.07 20,14.13 20,12A8,8 0 0,0 12,4M6.16,7.94L4.74,6.52C3.41,7.93 2.58,9.87 2.58,12A8,8 0 0,0 10.58,20V23L14.58,19L10.58,15V18A6,6 0 0,1 4.58,12C4.58,10.43 5.18,9 6.16,7.94Z"/></svg>Update LLDPq</button>
+                        <div class="spacer"></div>
+                    </div>
+                    <div class="status info" id="update-status"></div>
+                    <pre id="update-output" class="run-output">Click "Update LLDPq" to git pull + reinstall and stream the output here&hellip;</pre>
+                </div>
             </div>
 
             <div class="su-nav">
@@ -227,6 +244,7 @@ const STEPS = [
     { key:'topology', label:'Topology',         desc:'topology.dot — expected cabling' },
     { key:'config',   label:'Topology Config',  desc:'topology_config.yaml — layout rules' },
     { key:'run',      label:'Run LLDPq',        desc:'Collect data & validate (live output)' },
+    { key:'update',   label:'Update LLDPq',     desc:'git pull + reinstall (live output)' },
 ];
 const FILES = {
     devices:  { url:'/edit-devices',  file:'devices.yaml',          ta:'ta-devices',  st:'st-devices',  loaded:false },
@@ -241,6 +259,9 @@ let genArmed = false;        // two-click guard before replacing an existing key
 let runActive = false;       // an lldpq run is in progress (drives polling)
 let runLogShown = false;     // run log fetched once on entering the step
 let runPollTimer = null;
+let updateActive = false;    // an update is in progress (drives polling)
+let updateLogShown = false;  // update log fetched once on entering the step
+let updatePollTimer = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
     // Admin-only: hidden from operators in the menu, and refused here too.
@@ -278,6 +299,7 @@ function goStep(i) {
     if (FILES[key] && !FILES[key].loaded) loadFile(key, false);
     if (key === 'keys' && !keyInfoLoaded) { keyInfoLoaded = true; loadSSHKeyInfo(); }
     if (key === 'run' && !runLogShown) { runLogShown = true; showRunLog(); }
+    if (key === 'update' && !updateLogShown) { updateLogShown = true; showUpdateLog(); }
 }
 
 function markDone(stepKey, isDone) {
@@ -641,6 +663,67 @@ async function showRunLog() {
             } else {
                 setStatus('run-status', 'Last run finished.', 'info');
                 markDone('run', true);
+            }
+        }
+    } catch (e) { /* ignore */ }
+}
+
+/* ---- Step 6: Update LLDPq (git pull + ./install.sh) with live output ---- */
+async function updateLLDPq() {
+    const btn = document.getElementById('update-btn');
+    const backup = document.getElementById('update-backup').checked;
+    btn.disabled = true;
+    updateActive = true;
+    setStatus('update-status', 'Starting update' + (backup ? ' (with backup)' : '') + '\u2026', 'info');
+    document.getElementById('update-output').textContent = 'Starting\u2026\n';
+    try {
+        const r = await fetch('/setup-api.sh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'update', backup: backup }) });
+        const d = await r.json().catch(() => ({}));
+        if (!d.success) { setStatus('update-status', d.error || 'Failed to start', 'err'); btn.disabled = false; updateActive = false; return; }
+        setStatus('update-status', 'Updating\u2026 (the UI may blink while services restart)', 'info');
+        pollUpdateLog();
+    } catch (e) {
+        setStatus('update-status', 'Failed to start: ' + e.message, 'err');
+        btn.disabled = false; updateActive = false;
+    }
+}
+
+async function pollUpdateLog() {
+    if (updatePollTimer) { clearTimeout(updatePollTimer); updatePollTimer = null; }
+    try {
+        const r = await fetch('/setup-api.sh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'update-log' }) });
+        const d = await r.json().catch(() => ({}));
+        const out = document.getElementById('update-output');
+        if (d.success) {
+            const atBottom = out.scrollHeight - out.scrollTop - out.clientHeight < 50;
+            out.textContent = d.log || '(no output yet)';
+            if (atBottom) out.scrollTop = out.scrollHeight;
+            if (d.done) {
+                updateActive = false;
+                document.getElementById('update-btn').disabled = false;
+                setStatus('update-status', 'Update finished \u2713 \u2014 reload the app if the UI looks stale.', 'ok');
+                markDone('update', true);
+                return;
+            }
+        }
+    } catch (e) { /* services may be restarting — keep polling */ }
+    if (updateActive) updatePollTimer = setTimeout(pollUpdateLog, 2500);
+}
+
+async function showUpdateLog() {
+    try {
+        const r = await fetch('/setup-api.sh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'update-log' }) });
+        const d = await r.json().catch(() => ({}));
+        if (d.success && d.log) {
+            const out = document.getElementById('update-output');
+            out.textContent = d.log; out.scrollTop = out.scrollHeight;
+            if (!d.done) {
+                updateActive = true;
+                document.getElementById('update-btn').disabled = true;
+                setStatus('update-status', 'An update is in progress\u2026', 'info');
+                pollUpdateLog();
+            } else {
+                setStatus('update-status', 'Last update finished.', 'info');
             }
         }
     } catch (e) { /* ignore */ }
