@@ -737,7 +737,11 @@ async function pollUpdateLog() {
                 return;
             }
         }
-    } catch (e) { /* services may be restarting — keep polling */ }
+    } catch (e) {
+        // install.sh restarts nginx/fcgiwrap — the page's own server blinks here.
+        // Keep polling; the detached update continues and the log (in $HOME) survives.
+        setStatus('update-status', 'Reconnecting\u2026 (services restarting; the update is still running in the background)', 'info');
+    }
     if (updateActive) updatePollTimer = setTimeout(pollUpdateLog, 2500);
 }
 
