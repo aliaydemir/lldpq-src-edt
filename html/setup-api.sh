@@ -41,6 +41,7 @@ import sys
 import os
 import subprocess
 import re
+import shlex
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 def load_devices(devices_yaml):
@@ -391,6 +392,36 @@ if action == 'verify':
     trusted = sum(1 for r in results if r['trusted'])
     print(json.dumps({'success': True, 'total': len(results), 'trusted': trusted,
                       'public_key': public_key, 'results': results}))
+    sys.exit(0)
+
+# ─── Action: Run the full LLDPq pipeline verbosely (lldpq -) into a log we can tail ───
+if action == 'run':
+    cmd = (
+        f'cd {shlex.quote(lldpq_dir)} && : > .run.log && '
+        f'nohup setsid bash -c "/usr/local/bin/lldpq - >> .run.log 2>&1; '
+        f'echo __LLDPQ_DONE__ >> .run.log" >/dev/null 2>&1 &'
+    )
+    try:
+        subprocess.Popen(['sudo', '-u', lldpq_user, 'bash', '-c', cmd])
+        print(json.dumps({'success': True, 'message': 'LLDPq run started'}))
+    except Exception as e:
+        print(json.dumps({'success': False, 'error': str(e)}))
+    sys.exit(0)
+
+# ─── Action: Tail the run log started by action=run ───
+if action == 'run-log':
+    log_path = os.path.join(lldpq_dir, '.run.log')
+    content = ''
+    try:
+        r = subprocess.run(['sudo', '-u', lldpq_user, 'cat', log_path],
+                           capture_output=True, text=True, timeout=10)
+        if r.returncode == 0:
+            content = r.stdout
+    except Exception:
+        content = ''
+    done = '__LLDPQ_DONE__' in content
+    display = content.replace('__LLDPQ_DONE__', '').rstrip()
+    print(json.dumps({'success': True, 'done': done, 'log': display}))
     sys.exit(0)
 
 # ─── Action: Generate new key + distribute with password ───

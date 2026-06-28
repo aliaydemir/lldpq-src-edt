@@ -54,6 +54,7 @@
         textarea.su-ta { width:100%; min-height:360px; background:#111; color:#d4d4d4; border:1px solid #333; border-radius:6px;
             padding:14px; font-family:'Cascadia Code',Consolas,monospace; font-size:12.5px; line-height:1.55; resize:vertical; }
         textarea.su-ta:focus { outline:none; border-color:#76b900; }
+        .run-output { background:#0d0d0d; color:#cfe9a0; border:1px solid #333; border-radius:6px; padding:14px; height:380px; overflow:auto; margin:10px 0 0; font-family:'Cascadia Code',Consolas,monospace; font-size:12px; line-height:1.5; white-space:pre-wrap; word-break:break-word; }
 
         .btn { border:0; border-radius:5px; padding:9px 14px; cursor:pointer; font-size:13px; font-weight:600; display:inline-flex; align-items:center; gap:7px; }
         .btn svg { width:14px; height:14px; fill:currentColor; }
@@ -195,6 +196,19 @@
                     <textarea class="su-ta" id="ta-config" spellcheck="false" placeholder="Loading topology_config.yaml..."></textarea>
                     <div class="status info" id="st-config"></div>
                 </div>
+
+                <!-- Step 5: Run LLDPq -->
+                <div class="su-panel" data-step="4">
+                    <h2>5. Run LLDPq</h2>
+                    <p class="p-desc">Run the full collection pipeline now (<code>lldpq -</code>: assets &rarr; LLDP check &rarr; monitor &rarr; fabric scan &rarr; alerts) and watch the live output. When it finishes, the Fabric, LLDP and Analysis pages are populated. It also runs automatically every 10 minutes.</p>
+                    <div class="p-toolbar">
+                        <button class="btn primary" id="run-btn" onclick="runLLDPq()"><svg viewBox="0 0 24 24"><path d="M8,5.14V19.14L19,12.14L8,5.14Z"/></svg>Run LLDPq</button>
+                        <div class="spacer"></div>
+                        <button class="btn secondary" onclick="location.href='start.html'">Open Fabric</button>
+                    </div>
+                    <div class="status info" id="run-status"></div>
+                    <pre id="run-output" class="run-output">Click "Run LLDPq" to start a collection and stream the output here&hellip;</pre>
+                </div>
             </div>
 
             <div class="su-nav">
@@ -212,6 +226,7 @@ const STEPS = [
     { key:'keys',     label:'SSH Keys',         desc:'Authorize collector key + sudo' },
     { key:'topology', label:'Topology',         desc:'topology.dot — expected cabling' },
     { key:'config',   label:'Topology Config',  desc:'topology_config.yaml — layout rules' },
+    { key:'run',      label:'Run LLDPq',        desc:'Collect data & validate (live output)' },
 ];
 const FILES = {
     devices:  { url:'/edit-devices',  file:'devices.yaml',          ta:'ta-devices',  st:'st-devices',  loaded:false },
@@ -223,6 +238,9 @@ const done = {};   // stepKey -> true
 let keyInfoLoaded = false;   // SSH key panel loaded once
 let keyExists = false;       // a collector key currently exists
 let genArmed = false;        // two-click guard before replacing an existing key
+let runActive = false;       // an lldpq run is in progress (drives polling)
+let runLogShown = false;     // run log fetched once on entering the step
+let runPollTimer = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
     // Admin-only: hidden from operators in the menu, and refused here too.
@@ -259,6 +277,7 @@ function goStep(i) {
     const key = STEPS[i].key;
     if (FILES[key] && !FILES[key].loaded) loadFile(key, false);
     if (key === 'keys' && !keyInfoLoaded) { keyInfoLoaded = true; loadSSHKeyInfo(); }
+    if (key === 'run' && !runLogShown) { runLogShown = true; showRunLog(); }
 }
 
 function markDone(stepKey, isDone) {
@@ -564,6 +583,67 @@ async function distributeKeys() {
     } finally {
         btn.disabled = false;
     }
+}
+
+/* ---- Step 5: Run LLDPq (lldpq -) with live output ---- */
+async function runLLDPq() {
+    const btn = document.getElementById('run-btn');
+    btn.disabled = true;
+    runActive = true;
+    setStatus('run-status', 'Starting LLDPq\u2026', 'info');
+    document.getElementById('run-output').textContent = 'Starting\u2026\n';
+    try {
+        const r = await fetch('/setup-api.sh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'run' }) });
+        const d = await r.json().catch(() => ({}));
+        if (!d.success) { setStatus('run-status', d.error || 'Failed to start', 'err'); btn.disabled = false; runActive = false; return; }
+        setStatus('run-status', 'Running\u2026 (this can take a while on large fabrics)', 'info');
+        pollRunLog();
+    } catch (e) {
+        setStatus('run-status', 'Failed to start: ' + e.message, 'err');
+        btn.disabled = false; runActive = false;
+    }
+}
+
+async function pollRunLog() {
+    if (runPollTimer) { clearTimeout(runPollTimer); runPollTimer = null; }
+    try {
+        const r = await fetch('/setup-api.sh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'run-log' }) });
+        const d = await r.json().catch(() => ({}));
+        const out = document.getElementById('run-output');
+        if (d.success) {
+            const atBottom = out.scrollHeight - out.scrollTop - out.clientHeight < 50;
+            out.textContent = d.log || '(no output yet)';
+            if (atBottom) out.scrollTop = out.scrollHeight;
+            if (d.done) {
+                runActive = false;
+                document.getElementById('run-btn').disabled = false;
+                setStatus('run-status', 'Done \u2713 \u2014 Fabric / LLDP / Analysis pages are now up to date.', 'ok');
+                markDone('run', true);
+                return;
+            }
+        }
+    } catch (e) { /* transient — keep polling */ }
+    if (runActive) runPollTimer = setTimeout(pollRunLog, 2000);
+}
+
+async function showRunLog() {
+    try {
+        const r = await fetch('/setup-api.sh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'run-log' }) });
+        const d = await r.json().catch(() => ({}));
+        if (d.success && d.log) {
+            const out = document.getElementById('run-output');
+            out.textContent = d.log; out.scrollTop = out.scrollHeight;
+            if (!d.done) {
+                runActive = true;
+                document.getElementById('run-btn').disabled = true;
+                setStatus('run-status', 'A run is in progress\u2026', 'info');
+                pollRunLog();
+            } else {
+                setStatus('run-status', 'Last run finished.', 'info');
+                markDone('run', true);
+            }
+        }
+    } catch (e) { /* ignore */ }
 }
 </script>
 </body>
