@@ -55,6 +55,9 @@
             padding:14px; font-family:'Cascadia Code',Consolas,monospace; font-size:12.5px; line-height:1.55; resize:vertical; }
         textarea.su-ta:focus { outline:none; border-color:#76b900; }
         .run-output { background:#0d0d0d; color:#cfe9a0; border:1px solid #333; border-radius:6px; padding:14px; height:380px; overflow:auto; margin:10px 0 0; font-family:'Cascadia Code',Consolas,monospace; font-size:12px; line-height:1.5; white-space:pre-wrap; word-break:break-word; }
+        .sched-card { background:#202020; border:1px solid #333; border-radius:8px; padding:12px 16px; margin-bottom:16px; }
+        .sched-sel { background:#1a1a1a; color:#d4d4d4; border:1px solid #404040; border-radius:5px; padding:6px 10px; font-size:13px; min-width:170px; }
+        .sched-sel:focus { outline:none; border-color:#76b900; }
 
         .btn { border:0; border-radius:5px; padding:9px 14px; cursor:pointer; font-size:13px; font-weight:600; display:inline-flex; align-items:center; gap:7px; }
         .btn svg { width:14px; height:14px; fill:currentColor; }
@@ -200,7 +203,33 @@
                 <!-- Step 5: Run LLDPq -->
                 <div class="su-panel" data-step="4">
                     <h2>5. Run LLDPq</h2>
-                    <p class="p-desc">Run the full collection pipeline now (<code>lldpq -</code>: assets &rarr; LLDP check &rarr; monitor &rarr; fabric scan &rarr; alerts) and watch the live output. When it finishes, the Fabric, LLDP and Analysis pages are populated. It also runs automatically every 10 minutes.</p>
+                    <p class="p-desc">Run the full collection pipeline now (<code>lldpq -</code>: assets &rarr; LLDP check &rarr; monitor &rarr; fabric scan &rarr; alerts) and watch the live output. When it finishes, the Fabric, LLDP and Analysis pages are populated. It also runs automatically on the schedule below.</p>
+
+                    <div class="sched-card">
+                        <div class="key-row">
+                            <span class="k">Auto-run LLDPq (collection)</span>
+                            <select id="sched-lldpq" class="sched-sel">
+                                <option value="5">every 5 minutes</option>
+                                <option value="10">every 10 minutes</option>
+                                <option value="15">every 15 minutes</option>
+                                <option value="20">every 20 minutes</option>
+                                <option value="30">every 30 minutes</option>
+                            </select>
+                        </div>
+                        <div class="key-row">
+                            <span class="k">Collect device configs (get-conf)</span>
+                            <select id="sched-getconf" class="sched-sel">
+                                <option value="6">every 6 hours</option>
+                                <option value="12">every 12 hours</option>
+                                <option value="24">every 24 hours</option>
+                            </select>
+                        </div>
+                        <div class="p-toolbar" style="margin-top:8px;">
+                            <button class="btn secondary" onclick="saveSchedules()"><svg viewBox="0 0 24 24"><path d="M15,9H5V5H15M12,19A3,3 0 0,1 9,16A3,3 0 0,1 12,13A3,3 0 0,1 15,16A3,3 0 0,1 12,19M17,3H5C3.89,3 3,3.9 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V7L17,3Z"/></svg>Save schedules</button>
+                            <span class="status info" id="sched-status" style="margin-top:0;"></span>
+                        </div>
+                    </div>
+
                     <div class="p-toolbar">
                         <button class="btn primary" id="run-btn" onclick="runLLDPq()"><svg viewBox="0 0 24 24"><path d="M8,5.14V19.14L19,12.14L8,5.14Z"/></svg>Run LLDPq</button>
                         <div class="spacer"></div>
@@ -259,6 +288,7 @@ let genArmed = false;        // two-click guard before replacing an existing key
 let runActive = false;       // an lldpq run is in progress (drives polling)
 let runLogShown = false;     // run log fetched once on entering the step
 let runPollTimer = null;
+let schedLoaded = false;     // cron schedules fetched once on entering the run step
 let updateActive = false;    // an update is in progress (drives polling)
 let updateLogShown = false;  // update log fetched once on entering the step
 let updatePollTimer = null;
@@ -299,6 +329,7 @@ function goStep(i) {
     if (FILES[key] && !FILES[key].loaded) loadFile(key, false);
     if (key === 'keys' && !keyInfoLoaded) { keyInfoLoaded = true; loadSSHKeyInfo(); }
     if (key === 'run' && !runLogShown) { runLogShown = true; showRunLog(); }
+    if (key === 'run' && !schedLoaded) { schedLoaded = true; loadSchedules(); }
     if (key === 'update' && !updateLogShown) { updateLogShown = true; showUpdateLog(); }
 }
 
@@ -727,6 +758,32 @@ async function showUpdateLog() {
             }
         }
     } catch (e) { /* ignore */ }
+}
+
+/* ---- Schedules (cron) for the Run step ---- */
+async function loadSchedules() {
+    try {
+        const r = await fetch('/setup-api.sh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'get-schedules' }) });
+        const d = await r.json().catch(() => ({}));
+        if (d.success) {
+            const sl = document.getElementById('sched-lldpq');
+            const sg = document.getElementById('sched-getconf');
+            if (d.lldpq_minutes && sl && [...sl.options].some(o => +o.value === d.lldpq_minutes)) sl.value = String(d.lldpq_minutes);
+            if (d.getconf_hours && sg && [...sg.options].some(o => +o.value === d.getconf_hours)) sg.value = String(d.getconf_hours);
+        }
+    } catch (e) { /* ignore */ }
+}
+
+async function saveSchedules() {
+    const mins = parseInt(document.getElementById('sched-lldpq').value, 10);
+    const hours = parseInt(document.getElementById('sched-getconf').value, 10);
+    setStatus('sched-status', 'Saving\u2026', 'info');
+    try {
+        const r = await fetch('/setup-api.sh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'set-schedules', lldpq_minutes: mins, getconf_hours: hours }) });
+        const d = await r.json().catch(() => ({}));
+        if (d.success) setStatus('sched-status', 'Saved \u2713  (lldpq: ' + d.lldpq_cron + ', get-conf: ' + d.getconf_cron + ')', 'ok');
+        else setStatus('sched-status', d.error || 'Save failed', 'err');
+    } catch (e) { setStatus('sched-status', 'Save failed: ' + e.message, 'err'); }
 }
 </script>
 </body>

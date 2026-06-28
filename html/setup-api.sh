@@ -484,6 +484,96 @@ if action == 'update-log':
     print(json.dumps({'success': True, 'done': done, 'log': display}))
     sys.exit(0)
 
+# ─── Action: Read cron schedules for lldpq (auto-run) and get-conf (config collection) ───
+if action == 'get-schedules':
+    cron_file = '/etc/cron.d/lldpq' if os.path.exists('/etc/cron.d/lldpq') else '/etc/crontab'
+    lldpq_expr = ''
+    getconf_expr = ''
+    try:
+        with open(cron_file) as f:
+            for line in f:
+                if line.lstrip().startswith('#'):
+                    continue
+                parts = line.split()
+                if len(parts) >= 7 and parts[6] == '/usr/local/bin/lldpq':
+                    lldpq_expr = ' '.join(parts[:5])
+                elif len(parts) >= 7 and parts[6] == '/usr/local/bin/get-conf':
+                    getconf_expr = ' '.join(parts[:5])
+    except Exception:
+        pass
+
+    def _mins(e):
+        m = re.match(r'^\*/(\d+) \* \* \* \*$', e)
+        return int(m.group(1)) if m else None
+
+    def _hours(e):
+        m = re.match(r'^0 \*/(\d+) \* \* \*$', e)
+        if m:
+            return int(m.group(1))
+        return 24 if e == '0 0 * * *' else None
+
+    print(json.dumps({'success': True, 'cron_file': cron_file,
+                      'lldpq_minutes': _mins(lldpq_expr), 'lldpq_cron': lldpq_expr,
+                      'getconf_hours': _hours(getconf_expr), 'getconf_cron': getconf_expr}))
+    sys.exit(0)
+
+# ─── Action: Change cron schedules (presets only) + persist to lldpq.conf ───
+if action == 'set-schedules':
+    LLDPQ_PRESETS = {5: '*/5 * * * *', 10: '*/10 * * * *', 15: '*/15 * * * *', 20: '*/20 * * * *', 30: '*/30 * * * *'}
+    GETCONF_PRESETS = {6: '0 */6 * * *', 12: '0 */12 * * *', 24: '0 0 * * *'}
+    try:
+        mins = int(post_data.get('lldpq_minutes'))
+        hours = int(post_data.get('getconf_hours'))
+    except Exception:
+        print(json.dumps({'success': False, 'error': 'Invalid interval'}))
+        sys.exit(0)
+    if mins not in LLDPQ_PRESETS or hours not in GETCONF_PRESETS:
+        print(json.dumps({'success': False, 'error': 'Unsupported interval'}))
+        sys.exit(0)
+    lldpq_cron = LLDPQ_PRESETS[mins]
+    getconf_cron = GETCONF_PRESETS[hours]
+    cron_file = '/etc/cron.d/lldpq' if os.path.exists('/etc/cron.d/lldpq') else '/etc/crontab'
+    try:
+        with open(cron_file) as f:
+            orig = f.readlines()
+    except Exception as e:
+        print(json.dumps({'success': False, 'error': 'Cannot read ' + cron_file + ': ' + str(e)}))
+        sys.exit(0)
+    # Rebuild only the lldpq + get-conf lines (preserve every other line byte-for-byte).
+    out = []
+    for line in orig:
+        parts = line.split()
+        if (not line.lstrip().startswith('#')) and len(parts) >= 7 and parts[6] == '/usr/local/bin/lldpq':
+            out.append(lldpq_cron + ' ' + ' '.join(parts[5:]) + '\n')
+        elif (not line.lstrip().startswith('#')) and len(parts) >= 7 and parts[6] == '/usr/local/bin/get-conf':
+            out.append(getconf_cron + ' ' + ' '.join(parts[5:]) + '\n')
+        else:
+            out.append(line)
+    new_content = ''.join(out)
+    tmp = os.path.join(lldpq_dir, '.cron.tmp')
+    try:
+        w = subprocess.run(['sudo', '-u', lldpq_user, 'tee', tmp], input=new_content,
+                           capture_output=True, text=True, timeout=10)
+        if w.returncode != 0:
+            print(json.dumps({'success': False, 'error': 'Could not stage cron file'}))
+            sys.exit(0)
+        apply_cmd = (
+            'sudo cp ' + shlex.quote(tmp) + ' ' + shlex.quote(cron_file) + ' && '
+            'sudo chmod 644 ' + shlex.quote(cron_file) + ' && rm -f ' + shlex.quote(tmp) + ' && '
+            "sudo sed -i '/^LLDPQ_CRON=/d;/^GETCONF_CRON=/d' /etc/lldpq.conf 2>/dev/null; "
+            'echo ' + shlex.quote('LLDPQ_CRON="' + lldpq_cron + '"') + ' | sudo tee -a /etc/lldpq.conf >/dev/null; '
+            'echo ' + shlex.quote('GETCONF_CRON="' + getconf_cron + '"') + ' | sudo tee -a /etc/lldpq.conf >/dev/null'
+        )
+        a = subprocess.run(['sudo', '-u', lldpq_user, 'bash', '-c', apply_cmd],
+                           capture_output=True, text=True, timeout=20)
+        if a.returncode != 0:
+            print(json.dumps({'success': False, 'error': (a.stderr or 'apply failed').strip()[:200]}))
+            sys.exit(0)
+        print(json.dumps({'success': True, 'lldpq_cron': lldpq_cron, 'getconf_cron': getconf_cron}))
+    except Exception as e:
+        print(json.dumps({'success': False, 'error': str(e)}))
+    sys.exit(0)
+
 # ─── Action: Generate new key + distribute with password ───
 password = post_data.get('password', '')
 retry_devices = post_data.get('retry_devices', [])  # List of IPs for retry
