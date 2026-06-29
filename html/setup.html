@@ -354,7 +354,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
     renderSteps();
-    goStep(0);
+    // Allow deep-linking to a step, e.g. setup.html?step=update (used by the index "Update Available" popup).
+    var startIdx = 0;
+    try {
+        var sp = new URLSearchParams(location.search).get('step') || (location.hash || '').replace('#', '');
+        if (sp) { var si = STEPS.findIndex(function (s) { return s.key === sp; }); if (si >= 0) startIdx = si; }
+    } catch (e) {}
+    goStep(startIdx);
 });
 
 function renderSteps() {

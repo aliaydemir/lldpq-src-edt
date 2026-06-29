@@ -144,7 +144,7 @@ RUN printf '%s\n' \
     'DHCP_LEASES_FILE=/var/lib/dhcp/dhcpd.leases' \
     'ZTP_SCRIPT_FILE=/var/www/html/cumulus-ztp.sh' \
     'BASE_CONFIG_DIR=/home/lldpq/lldpq/sw-base' \
-    'ANSIBLE_DIR=/home/lldpq/ansible' \
+    'ANSIBLE_DIR=NoNe' \
     'EDITOR_ROOT=/home/lldpq' \
     'SKIP_L1=false' \
     'MONITOR_MAX_PARALLEL=100' \
