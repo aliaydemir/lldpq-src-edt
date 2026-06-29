@@ -610,6 +610,77 @@ echo __LLDPQ_DONE__ >> "$LOG"
         print(json.dumps({'success': False, 'error': str(e)}))
     sys.exit(0)
 
+# ─── Action: Offline Update (apply a source tarball already on the host; no network/GitHub) ───
+if action == 'update-offline':
+    # Docker: a container can't replace its own image — update is a host operation.
+    if os.path.exists('/.dockerenv'):
+        print(json.dumps({'success': False, 'docker': True,
+                          'error': 'Docker deployment: update on the host (docker load + docker compose up). See the instructions on this page.'}))
+        sys.exit(0)
+    backup = bool(post_data.get('backup'))
+    tarball = (post_data.get('path') or '/tmp/lldpq-src.tar.gz').strip()
+    # Strict path: absolute, no traversal, no shell metacharacters (it is substituted into the
+    # runner script below, so this also prevents shell injection).
+    if not re.match(r'^/[A-Za-z0-9._/-]+$', tarball) or '..' in tarball:
+        print(json.dumps({'success': False, 'error': 'Enter a simple absolute path like /tmp/lldpq-src.tar.gz (letters, digits, . _ - / only).'}))
+        sys.exit(0)
+    home_dir = os.path.expanduser('~' + lldpq_user)
+    state_dir = os.path.join(home_dir, '.lldpq-state')
+    subprocess.run(['sudo', '-u', lldpq_user, 'mkdir', '-p', state_dir],
+                   capture_output=True, text=True, timeout=10)
+    script_path = os.path.join(state_dir, 'update-run.sh')
+    log_path = os.path.join(state_dir, 'update.log')
+    # Same log + systemd-run isolation as action=update, so the existing update-log polling
+    # and the UI live view work unchanged. The only difference is the source: extract a local
+    # tarball instead of git pull/clone, then run install.sh -y (update mode = offline-safe:
+    # it skips apt/pip/Monaco which only run on a fresh install).
+    SCRIPT = '''#!/usr/bin/env bash
+TARBALL="__TARBALL__"
+DEST="$HOME/lldpq-src"
+LOG="__LOG__"
+: > "$LOG"
+{
+  echo "=== LLDPq Offline Update $(date) ==="
+  echo "--- tarball: $TARBALL ---"
+  if [ ! -f "$TARBALL" ]; then echo "ERROR: tarball not found (or not readable by $(whoami)): $TARBALL"; echo __LLDPQ_DONE__ >> "$LOG"; exit 1; fi
+  TMP="$(mktemp -d)"
+  echo "--- extracting ---"
+  if ! tar -xzf "$TARBALL" -C "$TMP" 2>&1; then echo "ERROR: extract failed (is this a valid .tar.gz?)"; rm -rf "$TMP"; echo __LLDPQ_DONE__ >> "$LOG"; exit 1; fi
+  INSTALLER="$(find "$TMP" -maxdepth 2 -name install.sh -type f 2>/dev/null | head -1)"
+  if [ -z "$INSTALLER" ]; then echo "ERROR: install.sh not found inside the tarball"; rm -rf "$TMP"; echo __LLDPQ_DONE__ >> "$LOG"; exit 1; fi
+  SRCDIR="$(dirname "$INSTALLER")"
+  echo "--- source: $SRCDIR ---"
+  if rm -rf "$DEST" && mkdir -p "$DEST" && cp -a "$SRCDIR/." "$DEST/"; then cd "$DEST" || cd "$SRCDIR"; else echo "(staging to $DEST failed; running from the extract dir)"; cd "$SRCDIR" || { echo __LLDPQ_DONE__ >> "$LOG"; exit 1; }; fi
+  chmod +x ./install.sh 2>/dev/null
+  echo "--- ./install.sh -y __BACKUP__ (offline) ---"
+  ./install.sh -y __BACKUP__ 2>&1
+  echo "--- install finished (exit $?) ---"
+  rm -rf "$TMP"
+} >> "$LOG" 2>&1
+echo __LLDPQ_DONE__ >> "$LOG"
+'''
+    script = (SCRIPT.replace('__TARBALL__', tarball)
+              .replace('__BACKUP__', '--backup' if backup else '')
+              .replace('__LOG__', log_path))
+    try:
+        w = subprocess.run(['sudo', '-u', lldpq_user, 'tee', script_path],
+                           input=script, capture_output=True, text=True, timeout=10)
+        if w.returncode != 0:
+            print(json.dumps({'success': False, 'error': 'Could not stage update script'}))
+            sys.exit(0)
+        launch = ('if sudo systemd-run --no-block --collect '
+                  '--uid=' + shlex.quote(lldpq_user) + ' '
+                  '--setenv=HOME=' + shlex.quote(home_dir) + ' '
+                  '/bin/bash ' + shlex.quote(script_path) + ' 2>/dev/null; then :; '
+                  'else nohup setsid /bin/bash ' + shlex.quote(script_path) + ' >/dev/null 2>&1 & fi')
+        subprocess.Popen(['sudo', '-u', lldpq_user, 'bash', '-c', launch],
+                         start_new_session=True, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print(json.dumps({'success': True, 'message': 'Offline update started'}))
+    except Exception as e:
+        print(json.dumps({'success': False, 'error': str(e)}))
+    sys.exit(0)
+
 # ─── Action: Tail the update log started by action=update ───
 if action == 'update-log':
     log_path = os.path.join(os.path.expanduser('~' + lldpq_user), '.lldpq-state', 'update.log')

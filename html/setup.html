@@ -289,6 +289,7 @@
                     </div>
 
                     <div id="update-bare">
+                    <div class="note">This online update needs <strong>internet access to <code>github.com</code></strong> &mdash; it runs <code>git pull</code> / <code>git clone</code> against the public LLDPq repository. On an air-gapped host (no internet / no GitHub access) this button won&rsquo;t work; use an offline update instead.</div>
                     <div class="note">Heads up: the update reinstalls and <strong>restarts nginx &amp; fcgiwrap</strong>, so this page briefly disconnects and reconnects &mdash; the update keeps running in the background and the log resumes. Requires the LLDPq service account to have passwordless <code>sudo</code>.</div>
                     <label style="display:flex; align-items:center; gap:8px; margin:6px 0 10px; color:#d4d4d4; font-size:13px; cursor:pointer;">
                         <input type="checkbox" id="update-backup" style="width:16px; height:16px; accent-color:#76b900;">
@@ -300,6 +301,30 @@
                     </div>
                     <div class="status info" id="update-status"></div>
                     <pre id="update-output" class="run-output">Click "Update LLDPq" to git pull + reinstall and stream the output here&hellip;</pre>
+
+                    <details style="margin-top:16px; border-top:1px solid #333; padding-top:12px;">
+                        <summary style="cursor:pointer; color:#76b900; font-size:13px; font-weight:600;">No internet on this host? Offline update &raquo;</summary>
+                        <div style="margin-top:12px;">
+                            <div class="note">Update without GitHub access using the source tarball &mdash; no network needed on this host:
+                                <ol style="margin:8px 0 0 18px; padding:0;">
+                                    <li>On a machine <strong>with</strong> internet, download <a href="https://aliaydemir.com/lldpq-src.tar.gz" target="_blank" rel="noopener" style="color:#76b900;">lldpq-src.tar.gz</a>.</li>
+                                    <li>Copy it to this host, e.g. <code>scp lldpq-src.tar.gz &lt;host&gt;:/tmp/</code> (make sure it&rsquo;s readable by the LLDPq service account).</li>
+                                    <li>Enter the path below and click <strong>Update from tarball</strong>. It runs <code>install.sh</code> in update mode (no apt/pip/GitHub).</li>
+                                </ol>
+                            </div>
+                            <div class="key-input">
+                                <input type="text" id="offline-path" value="/tmp/lldpq-src.tar.gz" placeholder="/tmp/lldpq-src.tar.gz" autocomplete="off" spellcheck="false">
+                            </div>
+                            <label style="display:flex; align-items:center; gap:8px; margin:6px 0 10px; color:#d4d4d4; font-size:13px; cursor:pointer;">
+                                <input type="checkbox" id="offline-backup" style="width:16px; height:16px; accent-color:#76b900;">
+                                Take a full backup (configs / keys / data) before updating
+                            </label>
+                            <div class="p-toolbar">
+                                <button class="btn primary" id="offline-btn" onclick="updateLLDPqOffline()"><svg viewBox="0 0 24 24"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20M13,13V18H10V13H7L12,8L17,13H13Z"/></svg>Update from tarball</button>
+                                <div class="spacer"></div>
+                            </div>
+                        </div>
+                    </details>
                     </div>
                 </div>
             </div>
@@ -761,22 +786,45 @@ async function showRunLog() {
 }
 
 /* ---- Step 6: Update LLDPq (git pull + ./install.sh) with live output ---- */
+function setUpdateButtons(disabled) {
+    ['update-btn', 'offline-btn'].forEach(function (id) { const b = document.getElementById(id); if (b) b.disabled = disabled; });
+}
+
 async function updateLLDPq() {
-    const btn = document.getElementById('update-btn');
     const backup = document.getElementById('update-backup').checked;
-    btn.disabled = true;
+    setUpdateButtons(true);
     updateActive = true;
     setStatus('update-status', 'Starting update' + (backup ? ' (with backup)' : '') + '\u2026', 'info');
     document.getElementById('update-output').textContent = 'Starting\u2026\n';
     try {
         const r = await fetch('/setup-api.sh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'update', backup: backup }) });
         const d = await r.json().catch(() => ({}));
-        if (!d.success) { setStatus('update-status', d.error || 'Failed to start', 'err'); btn.disabled = false; updateActive = false; return; }
+        if (!d.success) { setStatus('update-status', d.error || 'Failed to start', 'err'); setUpdateButtons(false); updateActive = false; return; }
         setStatus('update-status', 'Updating\u2026 (the UI may blink while services restart)', 'info');
         pollUpdateLog();
     } catch (e) {
         setStatus('update-status', 'Failed to start: ' + e.message, 'err');
-        btn.disabled = false; updateActive = false;
+        setUpdateButtons(false); updateActive = false;
+    }
+}
+
+async function updateLLDPqOffline() {
+    const path = (document.getElementById('offline-path').value || '').trim();
+    if (!path) { setStatus('update-status', 'Enter the tarball path (e.g. /tmp/lldpq-src.tar.gz).', 'err'); return; }
+    const backup = document.getElementById('offline-backup').checked;
+    setUpdateButtons(true);
+    updateActive = true;
+    setStatus('update-status', 'Starting offline update from ' + path + (backup ? ' (with backup)' : '') + '\u2026', 'info');
+    document.getElementById('update-output').textContent = 'Starting\u2026\n';
+    try {
+        const r = await fetch('/setup-api.sh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'update-offline', path: path, backup: backup }) });
+        const d = await r.json().catch(() => ({}));
+        if (!d.success) { setStatus('update-status', d.error || 'Failed to start', 'err'); setUpdateButtons(false); updateActive = false; return; }
+        setStatus('update-status', 'Updating\u2026 (the UI may blink while services restart)', 'info');
+        pollUpdateLog();
+    } catch (e) {
+        setStatus('update-status', 'Failed to start: ' + e.message, 'err');
+        setUpdateButtons(false); updateActive = false;
     }
 }
 
@@ -792,7 +840,7 @@ async function pollUpdateLog() {
             if (atBottom) out.scrollTop = out.scrollHeight;
             if (d.done) {
                 updateActive = false;
-                document.getElementById('update-btn').disabled = false;
+                setUpdateButtons(false);
                 setStatus('update-status', 'Update finished \u2713 \u2014 reload the app if the UI looks stale.', 'ok');
                 markDone('update', true);
                 return;
