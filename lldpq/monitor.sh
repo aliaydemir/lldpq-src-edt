@@ -251,6 +251,14 @@ EOF
         sudo vtysh -c "show evpn mac vni all duplicate" 2>/dev/null
         echo "=== DUP LOG ==="
         sudo grep -i "detected as duplicate" /var/log/frr/frr.log 2>/dev/null | tail -300
+        # MAC / IP mobility: entries whose EVPN sequence number is >= 10 (a 2+ digit local or
+        # remote seq). Works even where dup-address-detection is OFF (EVPN-MH), because the
+        # mobility sequence is ALWAYS tracked. Stable MACs (0/0) and normal failovers (<10)
+        # are filtered out on-device to keep this small.
+        echo "=== DUP MACMOB ==="
+        sudo vtysh -c "show evpn mac vni all" 2>/dev/null | grep -E "^VNI |[0-9][0-9]+/[0-9]+$|/[0-9][0-9]+$" | head -800
+        echo "=== DUP ARPMOB ==="
+        sudo vtysh -c "show evpn arp-cache vni all" 2>/dev/null | grep -E "^VNI |[0-9][0-9]+/[0-9]+$|/[0-9][0-9]+$" | head -800
         echo "===DUP_DATA_END==="
         
         echo "===FDB_DATA_START==="
