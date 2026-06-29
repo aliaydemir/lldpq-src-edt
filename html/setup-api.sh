@@ -233,6 +233,37 @@ lldpq_dir = os.environ.get('LLDPQ_DIR', '/home/lldpq/lldpq')
 devices_yaml = os.path.join(lldpq_dir, 'devices.yaml')
 action = post_data.get('action', 'setup')
 
+def read_conf():
+    """Read /etc/lldpq.conf into a dict (group-readable by www-data)."""
+    conf = {}
+    try:
+        with open('/etc/lldpq.conf') as fh:
+            for line in fh:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    k, v = line.split('=', 1)
+                    conf[k.strip()] = v.strip().strip('"').strip("'")
+    except Exception:
+        pass
+    return conf
+
+def write_conf(pairs):
+    """Update key=value pairs in /etc/lldpq.conf as the lldpq user (root-owned file)."""
+    if not pairs:
+        return True
+    keys_re = '|'.join(re.escape(k) for k in pairs)
+    parts = ["sudo sed -i -E '/^(" + keys_re + ")=/d' /etc/lldpq.conf 2>/dev/null || true"]
+    for k, v in pairs.items():
+        parts.append('echo ' + shlex.quote(k + '=' + str(v)) + ' | sudo tee -a /etc/lldpq.conf >/dev/null')
+    parts.append('sudo chown root:www-data /etc/lldpq.conf 2>/dev/null || true')
+    parts.append('sudo chmod 664 /etc/lldpq.conf 2>/dev/null || true')
+    try:
+        r = subprocess.run(['sudo', '-u', lldpq_user, 'bash', '-c', ' && '.join(parts)],
+                           capture_output=True, text=True, timeout=15)
+        return r.returncode == 0
+    except Exception:
+        return False
+
 # ─── Action: Save existing private key ───
 if action == 'save-key':
     private_key = post_data.get('private_key', '').strip()
@@ -424,6 +455,81 @@ if action == 'run-log':
     done = '__LLDPQ_DONE__' in content
     display = content.replace('__LLDPQ_DONE__', '').rstrip()
     print(json.dumps({'success': True, 'done': done, 'log': display}))
+    sys.exit(0)
+
+# ─── Action: Ansible integration status (current dir, enabled?, auto-detected candidates) ───
+if action == 'get-ansible':
+    conf = read_conf()
+    raw = conf.get('ANSIBLE_DIR', '')
+    disabled = (raw == '' or raw == 'NoNe')
+    path = '' if disabled else raw
+    exists = bool(path) and os.path.isdir(path) and os.path.isdir(os.path.join(path, 'inventory'))
+    home = os.path.expanduser('~' + lldpq_user)
+    candidates = []
+    try:
+        for name in sorted(os.listdir(home)):
+            d = os.path.join(home, name)
+            if os.path.isdir(os.path.join(d, 'inventory')) and os.path.isdir(os.path.join(d, 'playbooks')):
+                candidates.append(d)
+    except Exception:
+        pass
+    print(json.dumps({'success': True, 'disabled': disabled, 'path': path,
+                      'exists': exists, 'candidates': candidates}))
+    sys.exit(0)
+
+# ─── Action: enable/point/disable Ansible integration (writes ANSIBLE_DIR, NoNe = off) ───
+if action == 'set-ansible':
+    disable = bool(post_data.get('disable'))
+    val = (post_data.get('ansible_dir') or '').strip()
+    if disable or not val:
+        new_val = 'NoNe'
+    else:
+        if not (os.path.isdir(val) and os.path.isdir(os.path.join(val, 'inventory'))):
+            print(json.dumps({'success': False, 'error': 'Directory not found or missing an inventory/ folder: ' + val}))
+            sys.exit(0)
+        new_val = val
+    if write_conf({'ANSIBLE_DIR': new_val}):
+        print(json.dumps({'success': True, 'disabled': new_val == 'NoNe',
+                          'path': '' if new_val == 'NoNe' else new_val}))
+    else:
+        print(json.dumps({'success': False, 'error': 'Failed to write config'}))
+    sys.exit(0)
+
+# ─── Action: read collection parallelism ───
+if action == 'get-parallel':
+    conf = read_conf()
+    def _pint(key, default):
+        try:
+            return int(conf.get(key, default))
+        except Exception:
+            return default
+    print(json.dumps({'success': True,
+                      'monitor': _pint('MONITOR_MAX_PARALLEL', 100),
+                      'lldp': _pint('LLDP_MAX_PARALLEL', 100),
+                      'assets': _pint('ASSETS_MAX_PARALLEL', 100),
+                      'getconfigs': _pint('GET_CONFIGS_MAX_PARALLEL', 100)}))
+    sys.exit(0)
+
+# ─── Action: set collection parallelism (presets only) ───
+if action == 'set-parallel':
+    ALLOWED = {50, 100, 150, 200, 250, 300, 500}
+    keymap = {'monitor': 'MONITOR_MAX_PARALLEL', 'lldp': 'LLDP_MAX_PARALLEL',
+              'assets': 'ASSETS_MAX_PARALLEL', 'getconfigs': 'GET_CONFIGS_MAX_PARALLEL'}
+    pairs = {}
+    for fk, ck in keymap.items():
+        try:
+            v = int(post_data.get(fk))
+        except Exception:
+            print(json.dumps({'success': False, 'error': 'Invalid value for ' + fk}))
+            sys.exit(0)
+        if v not in ALLOWED:
+            print(json.dumps({'success': False, 'error': 'Unsupported value for ' + fk}))
+            sys.exit(0)
+        pairs[ck] = v
+    if write_conf(pairs):
+        print(json.dumps({'success': True}))
+    else:
+        print(json.dumps({'success': False, 'error': 'Failed to write config'}))
     sys.exit(0)
 
 # ─── Action: environment info (is this running inside Docker?) ───
