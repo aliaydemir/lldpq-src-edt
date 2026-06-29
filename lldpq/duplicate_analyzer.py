@@ -439,6 +439,7 @@ class DuplicateAnalyzer:
         s = self.summary()
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         sev_rank = {"CRITICAL": 0, "WARNING": 1, "OK": 2}
+        all_devices = set()
 
         # ---- IP duplicate rows
         ip_rows = sorted(self.ip_dups.values(),
@@ -450,10 +451,12 @@ class DuplicateAnalyzer:
                     ("<br>".join(html.escape(h) for h in sorted(r["local_hosts"])) or "&mdash;")
             vteps = ", ".join(html.escape(v) for v in sorted(r["vteps"])) or "&mdash;"
             vlanvni = "vlan %s<br><span class='dim'>VNI %s</span>" % (html.escape(r["vlan"]), html.escape(r["vni"]))
+            devs = set(r["local_hosts"]) | set(p.split(":")[0] for p in r["ports"])
+            all_devices |= devs
             ip_html.append(
-                "<tr data-sev='%d'><td>%s</td><td>%s</td><td class='mono'>%s</td><td class='mono'>%s</td>"
+                "<tr data-sev='%d' data-devices='%s'><td>%s</td><td>%s</td><td class='mono'>%s</td><td class='mono'>%s</td>"
                 "<td class='mono'>%s</td><td class='mono'>%s</td><td class='mono'>%s</td><td>%s</td><td>%s</td></tr>" % (
-                    sev_rank.get(r["severity"], 3), self._sev_badge(r["severity"]), vlanvni,
+                    sev_rank.get(r["severity"], 3), html.escape(" ".join(sorted(devs))), self._sev_badge(r["severity"]), vlanvni,
                     html.escape(r["ip"]), macs, owner, vteps,
                     self._seq_cell(r["seq"], r["delta"]), self._ago(r["recency"]), r["events"] or "&mdash;"))
         if not ip_html:
@@ -468,10 +471,12 @@ class DuplicateAnalyzer:
             vteps = ", ".join(html.escape(v) for v in sorted(r["vteps"])) or "&mdash;"
             vlanvni = "vlan %s<br><span class='dim'>VNI %s</span>" % (html.escape(r["vlan"]), html.escape(r["vni"]))
             note = "LOCAL on %d switches" % len(r["local"]) if r.get("fdb_multi") else ("EVPN flagged" if r.get("flagged") else "")
+            devs = set(r["local"].keys())
+            all_devices |= devs
             mac_html.append(
-                "<tr data-sev='%d'><td>%s</td><td>%s</td><td class='mono'>%s</td><td class='mono'>%s</td>"
+                "<tr data-sev='%d' data-devices='%s'><td>%s</td><td>%s</td><td class='mono'>%s</td><td class='mono'>%s</td>"
                 "<td class='mono'>%s</td><td class='mono'>%s</td><td>%s</td></tr>" % (
-                    sev_rank.get(r["severity"], 3), self._sev_badge(r["severity"]), vlanvni,
+                    sev_rank.get(r["severity"], 3), html.escape(" ".join(sorted(devs))), self._sev_badge(r["severity"]), vlanvni,
                     html.escape(r["mac"]), local, vteps,
                     self._seq_cell(r["seq"], r.get("delta")), html.escape(note)))
         if not mac_html:
@@ -488,8 +493,9 @@ class DuplicateAnalyzer:
         apipa_rows.sort()
         apipa_html = []
         for _, sev, host, vlan, cnt in apipa_rows:
-            apipa_html.append("<tr><td>%s</td><td class='mono'>%s</td><td>vlan %s</td><td class='mono'>%d</td></tr>" % (
-                self._sev_badge(sev), html.escape(host), html.escape(vlan), cnt))
+            all_devices.add(host)
+            apipa_html.append("<tr data-devices='%s'><td>%s</td><td class='mono'>%s</td><td>vlan %s</td><td class='mono'>%d</td></tr>" % (
+                html.escape(host), self._sev_badge(sev), html.escape(host), html.escape(vlan), cnt))
         if not apipa_html:
             apipa_html.append("<tr><td colspan='4' class='empty'>No APIPA (169.254/16) addresses &#10003;</td></tr>")
 
@@ -506,16 +512,19 @@ class DuplicateAnalyzer:
                 break
 
         cards = [
-            ("card-critical", s["ip_active"], "ACTIVE IP DUPLICATES"),
-            ("card-warning", s["ip_quiesced"], "QUIESCED IP DUPLICATES"),
-            ("card-critical" if s["mac_total"] else "card-excellent", s["mac_total"], "MAC DUPLICATES"),
-            ("card-warning" if s["apipa_total"] else "card-excellent", s["apipa_total"], "APIPA (DHCP FAILED)"),
-            ("card-info", s["vlans"], "VLANS AFFECTED"),
-            ("card-warning" if s["disabled"] else "card-excellent", len(s["disabled"]), "DUP-DETECT DISABLED"),
+            ("card-critical", s["ip_active"], "ACTIVE IP DUPLICATES", "active"),
+            ("card-warning", s["ip_quiesced"], "QUIESCED IP DUPLICATES", "quiesced"),
+            ("card-critical" if s["mac_total"] else "card-excellent", s["mac_total"], "MAC DUPLICATES", "mac"),
+            ("card-warning" if s["apipa_total"] else "card-excellent", s["apipa_total"], "APIPA (DHCP FAILED)", "apipa"),
+            ("card-info", s["vlans"], "VLANS AFFECTED", ""),
+            ("card-warning" if s["disabled"] else "card-excellent", len(s["disabled"]), "DUP-DETECT DISABLED", "disabled"),
         ]
         cards_html = "".join(
-            "<div class='summary-card %s'><div class='metric'>%s</div><div class='metric-label'>%s</div></div>" % (c, v, l)
-            for c, v, l in cards)
+            "<div class='summary-card %s%s'%s><div class='metric'>%s</div><div class='metric-label'>%s</div></div>" % (
+                c, ("" if act else " noclick"),
+                (" onclick=\"cardFilter('%s', this)\"" % act) if act else "",
+                v, l)
+            for c, v, l, act in cards)
 
         html_doc = _PAGE_TEMPLATE
         html_doc = html_doc.replace("__NOW__", html.escape(now))
@@ -526,6 +535,7 @@ class DuplicateAnalyzer:
         html_doc = html_doc.replace("__IP_ROWS__", "\n".join(ip_html))
         html_doc = html_doc.replace("__MAC_ROWS__", "\n".join(mac_html))
         html_doc = html_doc.replace("__APIPA_ROWS__", "\n".join(apipa_html))
+        html_doc = html_doc.replace("__DEVICES__", json.dumps(sorted(all_devices)))
         with open(output_file, "w") as f:
             f.write(html_doc)
 
@@ -537,6 +547,7 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Duplicate IP / MAC Analysis</title>
 <link rel="shortcut icon" href="/png/favicon.ico">
+<link rel="stylesheet" type="text/css" href="/css/select2.min.css">
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
 body { font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif; background:#1e1e1e; color:#d4d4d4; padding:20px; min-height:100vh; }
@@ -582,17 +593,56 @@ table.dup-table { width:100%; border-collapse:collapse; font-size:13px; }
 .modal-body { padding:18px; font-size:13px; line-height:1.6; }
 .modal-body h4 { color:#76b900; margin:12px 0 4px; font-size:13px; }
 .modal-body code { background:#1e1e1e; padding:1px 5px; border-radius:3px; color:#e0c64a; }
+.action-buttons { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.btn { padding:8px 14px; border:none; border-radius:4px; font-size:13px; font-weight:500; cursor:pointer; display:flex; align-items:center; gap:6px; }
+.btn-primary { background:linear-gradient(0deg,#76b900 0%,#5a8c00 100%); color:#fff; }
+.btn-primary:hover { background:linear-gradient(0deg,#8bd400 0%,#6ba000 100%); }
+.btn-secondary { background:linear-gradient(0deg,#4fc3f7 0%,#0288d1 100%); color:#fff; }
+.btn-secondary:hover { background:linear-gradient(0deg,#81d4fa 0%,#039be5 100%); }
+.device-search-container { display:flex; align-items:center; gap:8px; }
+.device-search-container .select2-container { min-width:180px; }
+.device-search-container .select2-container--default .select2-selection--single { height:34px; border:1px solid #555; border-radius:4px; background:#3c3c3c; display:flex; align-items:center; }
+.device-search-container .select2-container--default .select2-selection--single .select2-selection__rendered { line-height:34px; color:#d4d4d4; padding-left:10px; font-size:13px; }
+.device-search-container .select2-container--default .select2-selection--single .select2-selection__arrow { height:34px; }
+.select2-dropdown { background:#2d2d2d; border:1px solid #555; }
+.select2-container--default .select2-results__option { color:#d4d4d4; padding:8px 12px; }
+.select2-container--default .select2-results__option--highlighted[aria-selected] { background:#76b900; color:#000; }
+.select2-container--default .select2-search--dropdown .select2-search__field { background:#3c3c3c; border:1px solid #555; color:#d4d4d4; }
+.clear-search-btn { background:#f44336; color:#fff; border:none; padding:6px 10px; border-radius:4px; cursor:pointer; font-size:12px; display:none; }
+.summary-card { cursor:pointer; transition:all 0.15s; }
+.summary-card:hover { background:#2d2d2d; transform:translateY(-1px); }
+.summary-card.active { background:#333; border-left-width:6px; }
+.summary-card.noclick { cursor:default; }
+.summary-card.noclick:hover { background:#252526; transform:none; }
+.filter-info { display:none; text-align:center; padding:9px 14px; margin-bottom:16px; background:rgba(118,185,0,0.1); border:1px solid rgba(118,185,0,0.3); border-radius:6px; color:#76b900; font-size:13px; }
+.filter-info button { margin-left:10px; padding:4px 10px; background:#76b900; color:#000; border:none; border-radius:4px; cursor:pointer; }
+@keyframes spin { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
 </style>
 </head>
 <body>
 <div class="page-header">
-  <div class="page-title">&#128270; Duplicate IP / MAC Analysis</div>
-  <div class="header-right">
-    <button class="btn" onclick="document.getElementById('thr').classList.add('show')">Thresholds</button>
-    <span class="last-updated">Last updated: __NOW__</span>
+  <div>
+    <div class="page-title">Duplicate IP / MAC Analysis</div>
+    <div class="last-updated">Last Updated: __NOW__</div>
+  </div>
+  <div class="action-buttons">
+    <div class="device-search-container">
+      <select id="deviceSearch" style="width:200px;"><option value="">Search Device...</option></select>
+      <button id="clearSearchBtn" class="clear-search-btn" onclick="clearDeviceSearch()">&#10005;</button>
+    </div>
+    <button class="btn btn-secondary" onclick="document.getElementById('thr').classList.add('show')" title="Thresholds &amp; sources">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M3,17V19H9V17H3M3,5V7H13V5H3M13,21V19H21V17H13V15H11V21H13M7,9V11H3V13H7V15H9V9H7M21,13V11H11V13H21M15,9H17V7H21V5H17V3H15V9Z"/></svg>
+      Thresholds</button>
+    <button id="run-analysis" class="btn btn-secondary" onclick="runAnalysis()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4Z"/></svg>
+      Run Analysis</button>
+    <button class="btn btn-primary" onclick="downloadCSV()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/></svg>
+      Download CSV</button>
   </div>
 </div>
 __BANNER__
+<div class="filter-info" id="filterInfo">Filtered &mdash; <span id="filterLabel"></span> <button onclick="showAllDup()">Show All</button></div>
 <div class="dashboard-section">
   <div class="section-header">Summary</div>
   <div class="section-content"><div class="summary-grid">__CARDS__</div></div>
@@ -651,7 +701,10 @@ __BANNER__
   </div>
 </div>
 
+<script src="/css/jquery-3.5.1.min.js"></script>
+<script src="/css/select2.min.js"></script>
 <script>
+var DUP_DEVICES = __DEVICES__;
 function sortTable(tid, col, numeric) {
   var t = document.getElementById(tid), tb = t.tBodies[0];
   var rows = Array.prototype.slice.call(tb.rows).filter(function(r){return !r.querySelector('.empty');});
@@ -673,7 +726,81 @@ function sortTable(tid, col, numeric) {
   });
 });
 document.getElementById('thr').addEventListener('click', function(e){ if(e.target===this) this.classList.remove('show'); });
+
+function allDupRows(){ return [].concat(
+  Array.prototype.slice.call(document.querySelectorAll('#ipt tbody tr')),
+  Array.prototype.slice.call(document.querySelectorAll('#mact tbody tr')),
+  Array.prototype.slice.call(document.querySelectorAll('#apt tbody tr'))); }
+function setFilterInfo(label){ var fi=document.getElementById('filterInfo'); if(fi){ document.getElementById('filterLabel').textContent=label; fi.style.display='block'; } }
+function showAllDup(){
+  allDupRows().forEach(function(r){ r.style.display=''; });
+  document.querySelectorAll('.summary-card').forEach(function(c){ c.classList.remove('active'); });
+  var fi=document.getElementById('filterInfo'); if(fi) fi.style.display='none';
+  var cs=document.getElementById('clearSearchBtn'); if(cs) cs.style.display='none';
+  if(window.jQuery && jQuery('#deviceSearch').data('select2')) jQuery('#deviceSearch').val('').trigger('change.select2');
+}
+function cardFilter(kind, card){
+  document.querySelectorAll('.summary-card').forEach(function(c){ c.classList.remove('active'); });
+  if(kind==='active'||kind==='quiesced'){
+    if(card) card.classList.add('active');
+    var sev = (kind==='active') ? '0' : '1';
+    Array.prototype.slice.call(document.querySelectorAll('#ipt tbody tr')).forEach(function(r){
+      if(r.querySelector('.empty')) return;
+      r.style.display = (r.getAttribute('data-sev')===sev) ? '' : 'none';
+    });
+    document.getElementById('ipt').scrollIntoView({behavior:'smooth', block:'start'});
+    setFilterInfo((kind==='active'?'Active':'Quiesced')+' IP duplicates');
+  } else if(kind==='mac'){
+    document.getElementById('mact').scrollIntoView({behavior:'smooth', block:'start'});
+  } else if(kind==='apipa'){
+    document.getElementById('apt').scrollIntoView({behavior:'smooth', block:'start'});
+  }
+}
+function filterByDevice(dev){
+  if(!dev) return;
+  dev = String(dev).toLowerCase();
+  document.querySelectorAll('.summary-card').forEach(function(c){ c.classList.remove('active'); });
+  allDupRows().forEach(function(r){
+    if(r.querySelector('.empty')) return;
+    var d=(r.getAttribute('data-devices')||'').toLowerCase().split(' ');
+    r.style.display = (d.indexOf(dev)>-1) ? '' : 'none';
+  });
+  var cs=document.getElementById('clearSearchBtn'); if(cs) cs.style.display='inline-block';
+  setFilterInfo('Device: '+dev);
+}
+function clearDeviceSearch(){ showAllDup(); }
+function runAnalysis(){
+  var b=document.getElementById('run-analysis'); var o=b.innerHTML;
+  b.disabled=true; b.innerHTML='<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="animation:spin 1s linear infinite"><path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4Z"/></svg> Running...';
+  fetch('/trigger-monitor',{method:'POST',headers:{'Content-Type':'application/json'}})
+    .then(function(r){return r.json();})
+    .then(function(d){ if(d && d.status==='success'){ setTimeout(function(){ location.reload(); }, 35000); } else { b.disabled=false; b.innerHTML=o; alert('Failed to trigger analysis.'); } })
+    .catch(function(){ b.disabled=false; b.innerHTML=o; alert('Error triggering analysis.'); });
+}
+function csvEsc(v){ v=(v==null?'':String(v)); return '"'+v.replace(/"/g,'""')+'"'; }
+function downloadCSV(){
+  var out=[['Severity','VLAN/VNI','IP','MAC(s)','Owner','Conflict VTEP(s)','EVPN Seq','Last Dup Event','Events']];
+  Array.prototype.slice.call(document.querySelectorAll('#ipt tbody tr')).forEach(function(r){
+    if(r.style.display==='none' || r.querySelector('.empty')) return;
+    out.push(Array.prototype.slice.call(r.cells).map(function(c){ return (c.innerText||'').trim().replace(/\\s+/g,' '); }));
+  });
+  var csv=out.map(function(r){ return r.map(csvEsc).join(','); }).join('\\n');
+  var ts=new Date().toISOString().slice(0,16).replace('T','_').replace(/:/g,'-');
+  var blob=new Blob([csv],{type:'text/csv;charset=utf-8;'}); var a=document.createElement('a');
+  a.href=URL.createObjectURL(blob); a.download='Duplicate_Analysis_'+ts+'.csv'; document.body.appendChild(a); a.click(); a.remove();
+}
+document.addEventListener('DOMContentLoaded', function(){
+  if(window.jQuery){
+    var $s=jQuery('#deviceSearch'); var opts='<option value=""></option>';
+    DUP_DEVICES.forEach(function(dv){ opts+='<option value="'+dv+'">'+dv+'</option>'; });
+    $s.html(opts);
+    $s.select2({placeholder:'Search Device...', allowClear:true, width:'200px', dropdownAutoWidth:true});
+    $s.on('select2:select', function(e){ filterByDevice(e.params.data.id); });
+    $s.on('select2:clear', function(){ clearDeviceSearch(); });
+  }
+});
 </script>
+<script src="/p2p-alias.js"></script>
 </body>
 </html>"""
 
