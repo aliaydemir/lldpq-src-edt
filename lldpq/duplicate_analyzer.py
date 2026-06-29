@@ -362,11 +362,18 @@ class DuplicateAnalyzer:
             rec["delta"] = self._seq_delta("mac", "%s|%s" % (rec["vni"], mac), rec["seq"])
             rec["severity"] = self._mac_sev(rec)
 
-        # FDB-only MAC duplicates (same MAC LOCAL on >=2 switches, EVPN didn't flag)
+        # FDB-only MAC duplicates: same MAC LOCAL on >=2 switches via PHYSICAL (swp) ports.
+        # Bonds are intentionally excluded: a bond is a LAG / EVPN-MH Ethernet Segment, so a
+        # dual-homed host's MAC is LOCAL on BOTH pair members BY DESIGN (FRR marks it
+        # peer-active "P", seq 0/0) -- that is NOT a duplicate. Real bond/ES-level conflicts
+        # are caught by FRR's own "show evpn mac vni all duplicate".
         for (vlan, mac), hosts in self.fdb_local.items():
-            if len(hosts) >= 2 and (vlan, mac) not in self.mac_dups:
+            if (vlan, mac) in self.mac_dups:
+                continue
+            phys = {h: p for h, p in hosts.items() if p.startswith("swp")}
+            if len(phys) >= 2:
                 rec = self._blank_mac(vlan, vlan, mac)
-                rec["local"] = dict(hosts)
+                rec["local"] = dict(phys)
                 rec["fdb_multi"] = True
                 rec["severity"] = "CRITICAL"
                 self.mac_dups[(vlan, mac)] = rec
