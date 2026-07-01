@@ -24,6 +24,7 @@ import os
 import re
 import json
 import html
+import time
 from datetime import datetime, timezone
 
 try:
@@ -89,6 +90,11 @@ class DuplicateAnalyzer:
         self.global_now = None         # max log timestamp seen (clock-safe "now")
         self.prev_state = self._load_state()
         self.new_state = {}
+        # Cross-cycle memory of each duplicate IP's owner ports + MACs (fast flappers rarely have
+        # BOTH ends captured in one snapshot). Keyed "vlan|ip" -> {ports:{host:port}, macs:[], ts}.
+        self.ip_state_file = os.path.join(self.dup_dir, "dup_ip_state.json")
+        self.prev_ip_state = self._load_ip_state()
+        self.new_ip_state = {}
 
     # ------------------------------------------------------------------ state
     def _load_state(self):
@@ -98,10 +104,22 @@ class DuplicateAnalyzer:
         except Exception:
             return {}
 
+    def _load_ip_state(self):
+        try:
+            with open(self.ip_state_file) as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
     def _save_state(self):
         try:
             with open(self.state_file, "w") as f:
                 json.dump(self.new_state, f)
+        except Exception:
+            pass
+        try:
+            with open(self.ip_state_file, "w") as f:
+                json.dump(self.new_ip_state, f)
         except Exception:
             pass
 
@@ -538,6 +556,29 @@ class DuplicateAnalyzer:
                 rec["recency"] = self._recency(evm["latest"])
                 rec["flagged"] = True
             rec["severity"] = self._mac_sev(rec)
+
+        # Cross-cycle port/MAC memory for duplicate IPs: extreme flappers rarely have BOTH devices
+        # captured in one snapshot, so remember each duplicate IP's owner ports + MACs and merge
+        # with recent prior runs. This lets the Conflict column resolve the other end's port even
+        # when this run only caught one side.
+        now_ts = time.time()
+        for (vlan, ip), rec in self.ip_dups.items():
+            key = "%s|%s" % (vlan, ip)
+            ports = {}
+            for p in rec["ports"]:
+                if ":" in p:
+                    h, pt = p.split(":", 1)
+                    ports[h] = pt
+            prev = self.prev_ip_state.get(key, {})
+            if prev.get("ts", 0) >= now_ts - 21600:   # remember for up to 6h
+                for h, pt in (prev.get("ports") or {}).items():
+                    if h not in ports:
+                        ports[h] = pt
+                        rec["ports"].add("%s:%s" % (h, pt))
+                for m in (prev.get("macs") or []):
+                    rec["macs"].add(m)
+            self.new_ip_state[key] = {"ports": ports, "macs": sorted(rec["macs"]), "ts": now_ts}
+            rec["severity"] = self._ip_sev(rec)
 
         # Classify each MAC duplicate: "duplicate" device (a duplicated IP rides on this MAC,
         # e.g. two power shelves sharing MAC+IP) vs "loop" (many MACs flapping between the SAME
