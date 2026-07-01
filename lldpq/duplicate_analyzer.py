@@ -705,12 +705,26 @@ class DuplicateAnalyzer:
             ip_html.append("<tr><td colspan='10' class='empty'>No duplicate IPs detected &#10003;</td></tr>")
 
         # ---- MAC duplicate rows
+        # Port map from related duplicate IPs: for a duplicate MAC the "other end" is often a
+        # DIFFERENT MAC on the same IP, so pull that device's port from the IP-dup record -> the
+        # Conflict column can then show switch:port (not just switch).
+        mac_ip_ports = {}
+        for (ivlan, iip), irec in self.ip_dups.items():
+            ports = {}
+            for p in irec["ports"]:
+                if ":" in p:
+                    h, pt = p.split(":", 1)
+                    ports[h] = pt
+            for m in irec["macs"]:
+                mac_ip_ports.setdefault((ivlan, m), {}).update(ports)
         mac_rows = sorted(self.mac_dups.values(),
                           key=lambda r: (sev_rank.get(r["severity"], 3), -(r["seq"])))
         mac_html = []
         for r in mac_rows:
             local = "<br>".join("%s:%s" % (html.escape(h), html.escape(p)) for h, p in sorted(r["local"].items())) or "&mdash;"
-            vteps = self._vtep_cell(r["vteps"], set(r["local"].keys()), self.fdb_local.get((r["vlan"], r["mac"]), {}))
+            cport = dict(self.fdb_local.get((r["vlan"], r["mac"]), {}))
+            cport.update(mac_ip_ports.get((r["vlan"], r["mac"]), {}))
+            vteps = self._vtep_cell(r["vteps"], set(r["local"].keys()), cport)
             vlanvni = "vlan %s<br><span class='dim'>VNI %s</span>" % (html.escape(r["vlan"]), html.escape(r["vni"]))
             if r.get("classification") == "duplicate":
                 note = "Duplicate device"
