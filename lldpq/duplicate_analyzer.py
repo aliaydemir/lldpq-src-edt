@@ -540,12 +540,22 @@ class DuplicateAnalyzer:
         for (vlan, ip), rec in self.ip_dups.items():
             evm = self.log_events.get((rec["vni"], ip)) or self.log_events.get((vlan, ip))
             if evm:
+                # The zebra log carries the OTHER contender MAC(s) for this IP. Merge them so a
+                # mobility/arp-detected IP dup (which only knows the currently-winning MAC) still
+                # links to the conflicting device -> its port resolves below.
+                rec["macs"].update(evm["macs"])
                 rec["vteps"].update(evm["vteps"])
                 if not rec["events"]:
                     rec["events"] = evm["count"]
                 if rec["latest"] is None:
                     rec["latest"] = evm["latest"]
                     rec["recency"] = self._recency(evm["latest"])
+            # Resolve owner ports from FDB for ALL macs now assembled. Mobility/log-detected IP dups
+            # are added AFTER the early port pass, so without this they carry no port at all.
+            for mac in rec["macs"]:
+                for h, port in self.fdb_local.get((vlan, mac), {}).items():
+                    rec["local_hosts"].add(h)
+                    rec["ports"].add("%s:%s" % (h, port))
             rec["severity"] = self._ip_sev(rec)
         for (vlan, mac), rec in self.mac_dups.items():
             evm = self.log_events_mac.get((rec["vni"], mac))
