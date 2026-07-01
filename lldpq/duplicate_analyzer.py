@@ -643,16 +643,16 @@ class DuplicateAnalyzer:
         self._save_state()
 
     def _ip_sev(self, rec):
-        # CRITICAL = a real, present conflict: two distinct MACs claim the same IP (two devices are
-        # up and fighting over it right now -> confirmed IP conflict), OR it is actively moving now
-        # (a duplicate event in the last hour, or a climbing sequence).
-        if len(rec["macs"]) >= 2 or \
-           (rec["recency"] is not None and rec["recency"] <= ACTIVE_WINDOW_SEC) or \
-           (rec["delta"] is not None and rec["delta"] > 0):
+        # "Active now" = a duplicate/mobility event within the last hour, or a sequence that climbed
+        # THIS collection cycle. Only an actively-moving duplicate is an urgent (CRITICAL) fire.
+        active = (rec["recency"] is not None and rec["recency"] <= ACTIVE_WINDOW_SEC) or \
+                 (rec["delta"] is not None and rec["delta"] > 0)
+        if active:
             return "CRITICAL"
-        # WARNING = a confirmed-but-settled (EVPN-flagged, single owner now) or a suspected-historical
-        # duplicate (one owner now, extreme past sequence).
-        if rec["flagged"] or rec["seq"] >= SEQ_WARN:
+        # Settled: a confirmed conflict (2+ MACs) or an EVPN-flagged / high-seq entry that is NOT
+        # moving right now is a QUIESCED duplicate -- real, but no longer flapping (e.g. storage VIP
+        # pools that have rebalanced and settled). Worth listing, not an active fire.
+        if len(rec["macs"]) >= 2 or rec["flagged"] or rec["seq"] >= SEQ_WARN:
             return "WARNING"
         return "OK"
 
@@ -769,6 +769,8 @@ class DuplicateAnalyzer:
             all_devices |= devs
             if len(r["macs"]) >= 2:
                 note = "Confirmed &mdash; IP conflict"
+                if r["severity"] != "CRITICAL":
+                    note += " <span class='dim'>(quiesced)</span>"
             elif r["flagged"]:
                 note = "Confirmed &mdash; EVPN/log"
             elif r.get("mobility"):
