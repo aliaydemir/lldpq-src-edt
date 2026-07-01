@@ -51,6 +51,8 @@ SEQ_WARN = 10                  # EVPN mobility seq >= this = the entry has moved
 # stays in the hundreds. This keeps genuine settled duplicates while dropping MH mobility noise.
 SEQ_STORM = 10000
 LOOP_MIN_MACS = 10             # >= this many MACs flapping between the SAME endpoint pair (no dup IP) = likely L2 loop
+STALE_AGE_SEC = 7 * 86400      # a quiesced dup whose EVPN sequence has not moved for this long = aged/stale
+                               # (collapsed out of the main list; still available via the "aged" toggle)
 
 
 def _parse_ts(s):
@@ -453,11 +455,23 @@ class DuplicateAnalyzer:
 
     def _seq_delta(self, kind, key, seq):
         skey = "%s:%s" % (kind, key)
-        self.new_state[skey] = {"seq": seq}
-        prev = self.prev_state.get(skey, {}).get("seq")
-        if prev is None or seq < prev:   # reset/boot -> no meaningful delta
+        prev = self.prev_state.get(skey, {})
+        prev_seq = prev.get("seq")
+        now = time.time()
+        # "ts" = wall-clock of the last time this entry's sequence CHANGED (moved). If unchanged we
+        # keep the old timestamp, so we can tell how long a duplicate has been quiet (for aging out
+        # settled entries). Missing on old-format state -> start the clock now (conservative).
+        ts = now if (prev_seq is None or seq != prev_seq) else prev.get("ts", now)
+        self.new_state[skey] = {"seq": seq, "ts": ts}
+        if prev_seq is None or seq < prev_seq:   # reset/boot -> no meaningful delta
             return None
-        return seq - prev
+        return seq - prev_seq
+
+    def _quiet_age(self, kind, key):
+        """Seconds since this entry's EVPN sequence last changed (moved), from persisted state.
+        None if unknown."""
+        ts = self.new_state.get("%s:%s" % (kind, key), {}).get("ts")
+        return (time.time() - ts) if ts else None
 
     def _finalize(self):
         for host, ips in self.self_vteps.items():
@@ -640,6 +654,22 @@ class DuplicateAnalyzer:
                 rec["classification"] = "loop"
                 rec["loop_count"] = pair_count[ep]
 
+        # Age-out: a quiesced (WARNING) duplicate whose EVPN sequence has not moved for a long time
+        # AND has no recent log event is "stale" -- still real, just historical (e.g. storage VIPs
+        # that rebalanced long ago). The UI collapses these out of the main list by default so it
+        # stays focused on active + recently-settled duplicates. Needs to observe the entry for
+        # STALE_AGE_SEC first (the quiet clock starts when we first see it).
+        def _mark_stale(rec, kind, key):
+            qa = self._quiet_age(kind, "%s|%s" % (rec["vni"], key))
+            rec["quiet_age"] = qa
+            rec["stale"] = bool(rec.get("severity") == "WARNING" and qa is not None
+                                and qa >= STALE_AGE_SEC
+                                and (rec.get("recency") is None or rec["recency"] >= STALE_AGE_SEC))
+        for (vlan, ip), rec in self.ip_dups.items():
+            _mark_stale(rec, "ip", ip)
+        for (vlan, mac), rec in self.mac_dups.items():
+            _mark_stale(rec, "mac", mac)
+
         self._save_state()
 
     def _ip_sev(self, rec):
@@ -779,10 +809,13 @@ class DuplicateAnalyzer:
                         else "Suspected &mdash; historical mobility")
             else:
                 note = "&mdash;"
+            if r.get("stale"):
+                note += " <span class='dim'>(aged %dd)</span>" % int((r.get("quiet_age") or 0) // 86400)
+            rowcls = " class='stale-row'" if r.get("stale") else ""
             ip_html.append(
-                "<tr data-sev='%d' data-devices='%s'><td>%s</td><td>%s</td><td class='mono'>%s</td><td class='mono'>%s</td>"
+                "<tr data-sev='%d' data-devices='%s'%s><td>%s</td><td>%s</td><td class='mono'>%s</td><td class='mono'>%s</td>"
                 "<td class='mono'>%s</td><td class='mono'>%s</td><td class='mono'>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>" % (
-                    sev_rank.get(r["severity"], 3), html.escape(" ".join(sorted(devs))), self._sev_badge(r["severity"]), vlanvni,
+                    sev_rank.get(r["severity"], 3), html.escape(" ".join(sorted(devs))), rowcls, self._sev_badge(r["severity"]), vlanvni,
                     html.escape(r["ip"]), macs, owner, vteps,
                     self._seq_cell(r["seq"], r["delta"]), self._ago(r["recency"]), r["events"] or "&mdash;", note))
         if not ip_html:
@@ -822,14 +855,18 @@ class DuplicateAnalyzer:
                 note = "high mobility seq"
             else:
                 note = ""
+            note_html = html.escape(note)
+            if r.get("stale"):
+                note_html += " <span class='dim'>(aged %dd)</span>" % int((r.get("quiet_age") or 0) // 86400)
+            rowcls = " class='stale-row'" if r.get("stale") else ""
             devs = set(r["local"].keys())
             all_devices |= devs
             mac_html.append(
-                "<tr data-sev='%d' data-devices='%s'><td>%s</td><td>%s</td><td class='mono'>%s</td><td class='mono'>%s</td>"
+                "<tr data-sev='%d' data-devices='%s'%s><td>%s</td><td>%s</td><td class='mono'>%s</td><td class='mono'>%s</td>"
                 "<td class='mono'>%s</td><td class='mono'>%s</td><td>%s</td></tr>" % (
-                    sev_rank.get(r["severity"], 3), html.escape(" ".join(sorted(devs))), self._sev_badge(r["severity"]), vlanvni,
+                    sev_rank.get(r["severity"], 3), html.escape(" ".join(sorted(devs))), rowcls, self._sev_badge(r["severity"]), vlanvni,
                     html.escape(r["mac"]), local, vteps,
-                    self._seq_cell(r["seq"], r.get("delta")), html.escape(note)))
+                    self._seq_cell(r["seq"], r.get("delta")), note_html))
         if not mac_html:
             mac_html.append("<tr><td colspan='7' class='empty'>No duplicate MACs detected &#10003;</td></tr>")
 
@@ -876,8 +913,18 @@ class DuplicateAnalyzer:
                 v, l)
             for c, v, l, act in cards)
 
+        stale_count = sum(1 for r in self.ip_dups.values() if r.get("stale")) + \
+                      sum(1 for r in self.mac_dups.values() if r.get("stale"))
+        aged_btn = ("" if not stale_count else
+                    "<button id='agedBtn' class='btn btn-secondary' onclick='toggleAged()' "
+                    "title='Quiesced duplicates with no EVPN movement for &ge;%dd'>Show aged (%d)</button>"
+                    % (STALE_AGE_SEC // 86400, stale_count))
+
         html_doc = _PAGE_TEMPLATE
         html_doc = html_doc.replace("__NOW__", html.escape(now))
+        html_doc = html_doc.replace("__AGED_BTN__", aged_btn)
+        html_doc = html_doc.replace("__STALE_COUNT__", str(stale_count))
+        html_doc = html_doc.replace("__STALE_DAYS__", str(STALE_AGE_SEC // 86400))
         html_doc = html_doc.replace("__CFG__", html.escape(cfg_txt))
         html_doc = html_doc.replace("__APIPA_CRIT__", str(APIPA_CRITICAL))
         html_doc = html_doc.replace("__DAD_NOTE__", dad_note)
@@ -930,6 +977,8 @@ table.dup-table { width:100%; border-collapse:collapse; font-size:13px; }
 .mono { font-family:'Consolas','Courier New',monospace; font-size:12px; }
 .dim { color:#888; font-size:11px; }
 .pdesc { display:block; color:#c8964a; font-size:10px; font-style:italic; margin-top:1px; white-space:nowrap; }
+tr.stale-row { opacity:0.55; }
+body:not(.show-aged) tr.stale-row { display:none !important; }
 .empty { text-align:center; color:#76b900; padding:18px; }
 .delta-up { color:#ff6b6b; font-weight:bold; }
 .badge { display:inline-block; padding:3px 9px; border-radius:4px; font-size:11px; font-weight:600; text-transform:uppercase; }
@@ -989,6 +1038,7 @@ table.dup-table { width:100%; border-collapse:collapse; font-size:13px; }
     <button id="run-analysis" class="btn btn-secondary" onclick="runAnalysis()">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4Z"/></svg>
       Run Analysis</button>
+    __AGED_BTN__
     <button class="btn btn-primary" onclick="downloadCSV()">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/></svg>
       Download CSV</button>
@@ -1044,6 +1094,9 @@ table.dup-table { width:100%; border-collapse:collapse; font-size:13px; }
       sequence <b>increased since the previous cycle</b> (climbing &#916;).<br>
       <b>WARNING (quiesced)</b> &mdash; a real duplicate that is currently settled: EVPN-flagged, 2+ MACs
       on one IP, or a high but flat sequence. A flat high sequence is NOT "active".<br>
+      <b>Aged</b> &mdash; a quiesced duplicate whose sequence has not moved for &ge;__STALE_DAYS__ days is
+      collapsed out of the list (use <i>Show aged</i> to reveal). These persist in FRR until the address is
+      removed / re-learned or <code>clear evpn dup-addr</code> is run &mdash; the tool only mirrors that state.<br>
       APIPA &mdash; CRITICAL when &ge; __APIPA_CRIT__ APIPA addresses on one switch+VLAN, else WARNING.
       <h4>EVPN duplicate-address-detection (DAD) &amp; multihoming</h4>
       Configured threshold: <code>__CFG__</code> (max-moves / window). FRR <b>automatically disables DAD on
@@ -1072,6 +1125,8 @@ table.dup-table { width:100%; border-collapse:collapse; font-size:13px; }
 <script src="/css/select2.min.js"></script>
 <script>
 var DUP_DEVICES = __DEVICES__;
+var AGED_COUNT = __STALE_COUNT__;
+function toggleAged(){ var on=document.body.classList.toggle('show-aged'); var b=document.getElementById('agedBtn'); if(b){ b.textContent = on ? 'Hide aged' : ('Show aged ('+AGED_COUNT+')'); } }
 function sortTable(tid, col, numeric) {
   var t = document.getElementById(tid), tb = t.tBodies[0];
   var rows = Array.prototype.slice.call(tb.rows).filter(function(r){return !r.querySelector('.empty');});
@@ -1149,6 +1204,7 @@ function downloadCSV(){
   var out=[['Severity','VLAN/VNI','IP','MAC(s)','Owner','Conflict VTEP(s)','EVPN Seq','Last Dup Event','Events','Note']];
   Array.prototype.slice.call(document.querySelectorAll('#ipt tbody tr')).forEach(function(r){
     if(r.style.display==='none' || r.querySelector('.empty')) return;
+    if(r.classList.contains('stale-row') && !document.body.classList.contains('show-aged')) return;
     out.push(Array.prototype.slice.call(r.cells).map(function(c){ return (c.innerText||'').trim().replace(/\\s+/g,' '); }));
   });
   var csv=out.map(function(r){ return r.map(csvEsc).join(','); }).join('\\n');
