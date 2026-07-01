@@ -578,13 +578,16 @@ class DuplicateAnalyzer:
         self._save_state()
 
     def _ip_sev(self, rec):
-        # ACTIVE (CRITICAL) only when it is moving *now*: a duplicate event in the last hour or a
-        # climbing sequence. A high but flat sequence = a real duplicate that is currently settled
-        # (quiesced) -> WARNING, not "active".
-        if (rec["recency"] is not None and rec["recency"] <= ACTIVE_WINDOW_SEC) or \
+        # CRITICAL = a real, present conflict: two distinct MACs claim the same IP (two devices are
+        # up and fighting over it right now -> confirmed IP conflict), OR it is actively moving now
+        # (a duplicate event in the last hour, or a climbing sequence).
+        if len(rec["macs"]) >= 2 or \
+           (rec["recency"] is not None and rec["recency"] <= ACTIVE_WINDOW_SEC) or \
            (rec["delta"] is not None and rec["delta"] > 0):
             return "CRITICAL"
-        if rec["flagged"] or len(rec["macs"]) >= 2 or rec["seq"] >= SEQ_WARN:
+        # WARNING = a confirmed-but-settled (EVPN-flagged, single owner now) or a suspected-historical
+        # duplicate (one owner now, extreme past sequence).
+        if rec["flagged"] or rec["seq"] >= SEQ_WARN:
             return "WARNING"
         return "OK"
 
