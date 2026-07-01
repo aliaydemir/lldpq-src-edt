@@ -646,15 +646,19 @@ class DuplicateAnalyzer:
             out += ' <span class="delta-up">(+%s)</span>' % "{:,}".format(delta)
         return out
 
-    def _vtep_cell(self, vteps, owner_hosts):
+    def _vtep_cell(self, vteps, owner_hosts, port_map=None):
         """Render the conflicting VTEPs as switch names (resolved via vtep2host), dropping the
-        owner's own VTEP so the column shows the OTHER end of the flap (the contender)."""
+        owner's own VTEP so the column shows the OTHER end of the flap (the contender). When the
+        conflicting MAC/IP was also captured LOCAL on that switch (port_map), show switch:port."""
         seen = []
         for v in sorted(vteps):
             h = self.vtep2host.get(v)
             if h and h in owner_hosts:
                 continue
-            label = h if h else v
+            if h:
+                label = "%s:%s" % (h, port_map[h]) if (port_map and port_map.get(h)) else h
+            else:
+                label = v
             if label not in seen:
                 seen.append(label)
         return ", ".join(html.escape(x) for x in seen) or "&mdash;"
@@ -673,7 +677,11 @@ class DuplicateAnalyzer:
             macs = "<br>".join(html.escape(m) for m in sorted(r["macs"])) or "&mdash;"
             owner = "<br>".join(html.escape(p) for p in sorted(r["ports"])) or \
                     ("<br>".join(html.escape(h) for h in sorted(r["local_hosts"])) or "&mdash;")
-            vteps = self._vtep_cell(r["vteps"], r["local_hosts"])
+            ip_ports = {}
+            for _m in r["macs"]:
+                for _h, _p in self.fdb_local.get((r["vlan"], _m), {}).items():
+                    ip_ports[_h] = _p
+            vteps = self._vtep_cell(r["vteps"], r["local_hosts"], ip_ports)
             vlanvni = "vlan %s<br><span class='dim'>VNI %s</span>" % (html.escape(r["vlan"]), html.escape(r["vni"]))
             devs = set(r["local_hosts"]) | set(p.split(":")[0] for p in r["ports"])
             all_devices |= devs
@@ -682,7 +690,9 @@ class DuplicateAnalyzer:
             elif r["flagged"]:
                 note = "Confirmed &mdash; EVPN/log"
             elif r.get("mobility"):
-                note = "Suspected &mdash; historical mobility"
+                note = ("Suspected &mdash; active mobility"
+                        if (r.get("delta") is not None and r["delta"] > 0)
+                        else "Suspected &mdash; historical mobility")
             else:
                 note = "&mdash;"
             ip_html.append(
@@ -700,7 +710,7 @@ class DuplicateAnalyzer:
         mac_html = []
         for r in mac_rows:
             local = "<br>".join("%s:%s" % (html.escape(h), html.escape(p)) for h, p in sorted(r["local"].items())) or "&mdash;"
-            vteps = self._vtep_cell(r["vteps"], set(r["local"].keys()))
+            vteps = self._vtep_cell(r["vteps"], set(r["local"].keys()), self.fdb_local.get((r["vlan"], r["mac"]), {}))
             vlanvni = "vlan %s<br><span class='dim'>VNI %s</span>" % (html.escape(r["vlan"]), html.escape(r["vni"]))
             if r.get("classification") == "duplicate":
                 note = "Duplicate device"
@@ -948,8 +958,9 @@ table.dup-table { width:100%; border-collapse:collapse; font-size:13px; }
       To avoid false positives from ordinary EVPN-MH failover churn, a single-owner entry (one MAC, one
       location, not climbing) is only reported when its sequence is extreme (&ge; __SEQ_STORM__).
       <h4>Note column &mdash; confirmed vs suspected (IP table)</h4>
-      <b>Confirmed</b> &mdash; 2+ MACs claim the IP, or EVPN/zebra flagged it. <b>Suspected &mdash; historical
-      mobility</b> &mdash; only one owner seen now, but an extreme past sequence (a duplicate that has since settled).
+      <b>Confirmed</b> &mdash; 2+ MACs claim the IP, or EVPN/zebra flagged it. <b>Suspected &mdash; active
+      mobility</b> &mdash; one owner seen but the sequence is climbing now. <b>Suspected &mdash; historical
+      mobility</b> &mdash; one owner now, with an extreme past sequence (a duplicate that has since settled).
       <h4>Note column &mdash; duplicate vs loop</h4>
       <b>Duplicate device</b> &mdash; the same MAC also owns a duplicated IP (two devices sharing MAC+IP,
       e.g. power shelves). <b>Possible loop</b> &mdash; &ge; __LOOP_MIN__ MACs flapping between the same
