@@ -80,6 +80,7 @@ class DuplicateAnalyzer:
         self.mac_dups = {}             # (vlan, mac) -> record
         self.apipa = {}                # host -> {'total': int, 'per_vlan': {vlan: count}}
         self.fdb_local = {}            # (vlan, mac) -> {host -> port}
+        self.if_desc = {}              # (host, port) -> interface description (ifalias)
         self.arp_pairs = {}            # (vlan, ip) -> {mac -> set(hosts)}
         self.mac_mob = {}              # (vlan, mac) -> {seq, hosts, vteps, ports, vni}  (EVPN mobility seq>=WARN)
         self.ip_mob = {}               # (vlan, ip)  -> {seq, macs, vteps, vni}
@@ -161,7 +162,7 @@ class DuplicateAnalyzer:
         cur = None
         buf = []
         for line in text.splitlines():
-            m = re.match(r'^===\s*DUP (VNI MAP|CONFIG|SELF|ARP|MAC|LOG|MACMOB|ARPMOB)\s*===\s*$', line)
+            m = re.match(r'^===\s*DUP (VNI MAP|CONFIG|SELF|ARP|MAC|LOG|MACMOB|ARPMOB|IFALIAS)\s*===\s*$', line)
             if m:
                 if cur is not None:
                     sections[cur] = buf
@@ -184,6 +185,7 @@ class DuplicateAnalyzer:
         self._parse_log(sec.get("LOG", []))
         self._parse_mac_mobility(host, sec.get("MACMOB", []))
         self._parse_ip_mobility(host, sec.get("ARPMOB", []))
+        self._parse_ifalias(host, sec.get("IFALIAS", []))
 
     def _parse_vni_map(self, lines):
         for line in lines:
@@ -208,6 +210,18 @@ class DuplicateAnalyzer:
         for line in lines:
             for ip in IPV4_RE.findall(line):
                 self.self_vteps.setdefault(host, set()).add(ip)
+
+    def _parse_ifalias(self, host, lines):
+        """Interface descriptions ('nv set interface swpX description ...' = kernel ifalias),
+        collected as 'port|description' lines. Lets each switch:port cell name the attached
+        device -> which physical box is duplicating."""
+        for line in lines:
+            if "|" not in line:
+                continue
+            port, desc = line.split("|", 1)
+            port, desc = port.strip(), desc.strip()
+            if port and desc:
+                self.if_desc[(host, port)] = desc
 
     def _vlan_of(self, vni):
         return self.vni_to_vlan.get(str(vni), str(vni))
@@ -697,22 +711,32 @@ class DuplicateAnalyzer:
             out += ' <span class="delta-up">(+%s)</span>' % "{:,}".format(delta)
         return out
 
+    def _port_label(self, host, port):
+        """'host:port' with the interface description (ifalias) dimmed on a line below, so each
+        cell names the physically attached device (which box is duplicating)."""
+        base = "%s:%s" % (html.escape(host), html.escape(port))
+        desc = self.if_desc.get((host, port))
+        if desc:
+            base += "<span class='pdesc'>%s</span>" % html.escape(desc)
+        return base
+
     def _vtep_cell(self, vteps, owner_hosts, port_map=None):
         """Render the conflicting VTEPs as switch names (resolved via vtep2host), dropping the
         owner's own VTEP so the column shows the OTHER end of the flap (the contender). When the
-        conflicting MAC/IP was also captured LOCAL on that switch (port_map), show switch:port."""
+        conflicting MAC/IP was also captured LOCAL on that switch (port_map), show switch:port
+        plus that port's interface description."""
         seen = []
         for v in sorted(vteps):
             h = self.vtep2host.get(v)
             if h and h in owner_hosts:
                 continue
             if h:
-                label = "%s:%s" % (h, port_map[h]) if (port_map and port_map.get(h)) else h
+                label = self._port_label(h, port_map[h]) if (port_map and port_map.get(h)) else html.escape(h)
             else:
-                label = v
+                label = html.escape(v)
             if label not in seen:
                 seen.append(label)
-        return ", ".join(html.escape(x) for x in seen) or "&mdash;"
+        return "<br>".join(seen) or "&mdash;"
 
     def export_html(self, output_file):
         s = self.summary()
@@ -726,7 +750,14 @@ class DuplicateAnalyzer:
         ip_html = []
         for r in ip_rows:
             macs = "<br>".join(html.escape(m) for m in sorted(r["macs"])) or "&mdash;"
-            owner = "<br>".join(html.escape(p) for p in sorted(r["ports"])) or \
+            owner_parts = []
+            for p in sorted(r["ports"]):
+                if ":" in p:
+                    _h, _pt = p.split(":", 1)
+                    owner_parts.append(self._port_label(_h, _pt))
+                else:
+                    owner_parts.append(html.escape(p))
+            owner = "<br>".join(owner_parts) or \
                     ("<br>".join(html.escape(h) for h in sorted(r["local_hosts"])) or "&mdash;")
             ip_ports = {}
             for _m in r["macs"]:
@@ -772,7 +803,7 @@ class DuplicateAnalyzer:
                           key=lambda r: (sev_rank.get(r["severity"], 3), -(r["seq"])))
         mac_html = []
         for r in mac_rows:
-            local = "<br>".join("%s:%s" % (html.escape(h), html.escape(p)) for h, p in sorted(r["local"].items())) or "&mdash;"
+            local = "<br>".join(self._port_label(h, p) for h, p in sorted(r["local"].items())) or "&mdash;"
             cport = dict(self.fdb_local.get((r["vlan"], r["mac"]), {}))
             cport.update(mac_ip_ports.get((r["vlan"], r["mac"]), {}))
             vteps = self._vtep_cell(r["vteps"], set(r["local"].keys()), cport)
@@ -896,6 +927,7 @@ table.dup-table { width:100%; border-collapse:collapse; font-size:13px; }
 .dup-table tbody tr:hover { background:#2d2d2d; }
 .mono { font-family:'Consolas','Courier New',monospace; font-size:12px; }
 .dim { color:#888; font-size:11px; }
+.pdesc { display:block; color:#c8964a; font-size:10px; font-style:italic; margin-top:1px; white-space:nowrap; }
 .empty { text-align:center; color:#76b900; padding:18px; }
 .delta-up { color:#ff6b6b; font-weight:bold; }
 .badge { display:inline-block; padding:3px 9px; border-radius:4px; font-size:11px; font-weight:600; text-transform:uppercase; }
