@@ -1061,7 +1061,10 @@ if action == 'get-maintenance':
         except Exception:
             return ''
     mr = os.path.join(lldpq_dir, 'monitor-results')
-    mon = _run(['sudo', '-u', lldpq_user, 'du', '-sm', mr]) if os.path.isdir(mr) else ''
+    # monitor-results is group-readable by www-data ($USER:www-data, 775/664), so du runs directly
+    # as the CGI user. (Going through `sudo -u LLDPQ_USER du` fails: du is not in the sudoers
+    # whitelist, which only allows bash/ssh/tee/etc.)
+    mon = _run(['du', '-sm', mr]) if os.path.isdir(mr) else ''
     mon_mb = int(mon.split()[0]) if mon and mon.split() and mon.split()[0].isdigit() else 0
     info = _run(['sudo', '-u', lldpq_user, 'bash', '-c',
                  'shopt -s nullglob; f=(~/lldpq-backup-*); echo -n "${#f[@]} "; '
