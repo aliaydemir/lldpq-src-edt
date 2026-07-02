@@ -14,6 +14,7 @@ fi
 
 LLDPQ_DIR="${LLDPQ_DIR:-/home/lldpq/lldpq}"
 LLDPQ_USER="${LLDPQ_USER:-lldpq}"
+WEB_ROOT="${WEB_ROOT:-/var/www/html}"
 
 # ─── Fast path: raw tarball upload (Setup → Update → Offline). The request body IS the file
 # (application/octet-stream), so stream stdin straight to disk in big chunks. The generic
@@ -62,7 +63,7 @@ if [ "$REQUEST_METHOD" != "POST" ]; then
 fi
 
 # Export for Python
-export LLDPQ_DIR LLDPQ_USER POST_DATA
+export LLDPQ_DIR LLDPQ_USER WEB_ROOT POST_DATA
 
 python3 << 'PYTHON'
 import json
@@ -259,6 +260,7 @@ except:
 
 lldpq_user = os.environ.get('LLDPQ_USER', 'lldpq')
 lldpq_dir = os.environ.get('LLDPQ_DIR', '/home/lldpq/lldpq')
+web_root = os.environ.get('WEB_ROOT', '/var/www/html')
 devices_yaml = os.path.join(lldpq_dir, 'devices.yaml')
 action = post_data.get('action', 'setup')
 
@@ -990,13 +992,15 @@ if action == 'test-alert':
 # ─── Action: Export config bundle (devices/topology/topology_config/notifications) ───
 if action == 'backup-export':
     import base64, io, tarfile, time as _t
-    wanted = ['devices.yaml', 'topology.dot', 'topology_config.yaml', 'notifications.yaml']
+    wanted = [('devices.yaml', lldpq_dir), ('topology.dot', lldpq_dir),
+              ('topology_config.yaml', lldpq_dir), ('notifications.yaml', lldpq_dir),
+              ('display-aliases.json', web_root)]
     buf = io.BytesIO()
     added = []
     try:
         with tarfile.open(fileobj=buf, mode='w:gz') as tar:
-            for fn in wanted:
-                p = os.path.join(lldpq_dir, fn)
+            for fn, base_dir in wanted:
+                p = os.path.join(base_dir, fn)
                 if os.path.isfile(p):
                     tar.add(p, arcname=fn)
                     added.append(fn)
@@ -1023,7 +1027,9 @@ if action == 'backup-import':
     except Exception:
         print(json.dumps({'success': False, 'error': 'Invalid file (not base64)'}))
         sys.exit(0)
-    allowed = {'devices.yaml', 'topology.dot', 'topology_config.yaml', 'notifications.yaml'}
+    allowed = {'devices.yaml': lldpq_dir, 'topology.dot': lldpq_dir,
+               'topology_config.yaml': lldpq_dir, 'notifications.yaml': lldpq_dir,
+               'display-aliases.json': web_root}
     restored = []
     try:
         with tarfile.open(fileobj=io.BytesIO(raw), mode='r:gz') as tar:
@@ -1032,7 +1038,7 @@ if action == 'backup-import':
                 if not m.isfile() or base not in allowed:
                     continue
                 content = tar.extractfile(m).read()
-                dest = os.path.join(lldpq_dir, base)
+                dest = os.path.join(allowed[base], base)
                 w = subprocess.run(['sudo', '-u', lldpq_user, 'tee', dest],
                                    input=content, capture_output=True, timeout=15)
                 if w.returncode == 0:

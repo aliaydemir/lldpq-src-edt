@@ -221,8 +221,8 @@
                 </div>
 
                 <!-- Step 6: Run LLDPq -->
-                <div class="su-panel" data-step="5">
-                    <h2>6. Run LLDPq</h2>
+                <div class="su-panel" data-step="6">
+                    <h2>7. Run LLDPq</h2>
                     <p class="p-desc">Run the full collection pipeline now (<code>lldpq -</code>: assets &rarr; LLDP check &rarr; monitor &rarr; fabric scan &rarr; alerts) and watch the live output. When it finishes, the Fabric, LLDP and Analysis pages are populated. It also runs automatically on the schedule below.</p>
 
                     <div class="sched-card">
@@ -274,8 +274,8 @@
                 </div>
 
                 <!-- Step 7: Update LLDPq -->
-                <div class="su-panel" data-step="6">
-                    <h2>7. Update LLDPq</h2>
+                <div class="su-panel" data-step="9">
+                    <h2>10. Update LLDPq</h2>
                     <p class="p-desc">Pull the latest LLDPq and reinstall. Configs, keys and monitoring data are preserved across the update.</p>
 
                     <!-- Docker deployments: a container can't replace its own image — update on the host. -->
@@ -323,8 +323,8 @@
                 </div>
 
                 <!-- Step 8: Notifications & Alerting -->
-                <div class="su-panel" data-step="7">
-                    <h2>8. Notifications <span class="p-file">notifications.yaml</span></h2>
+                <div class="su-panel" data-step="5">
+                    <h2>6. Notifications <span class="p-file">notifications.yaml</span></h2>
                     <p class="p-desc">Configure Slack alerting for the pipeline's alert stage &mdash; master on/off, the Slack webhook, which categories fire and key thresholds. Use <strong>Send test alert</strong> to confirm the webhook works. (Runs every cycle after the collection stage.)</p>
 
                     <div class="sched-card">
@@ -381,9 +381,9 @@
                 </div>
 
                 <!-- Step 9: Backup & Restore -->
-                <div class="su-panel" data-step="8">
-                    <h2>9. Backup &amp; Restore <span class="p-file">config bundle</span></h2>
-                    <p class="p-desc">Export all LLDPq config &mdash; <code>devices.yaml</code>, <code>topology.dot</code>, <code>topology_config.yaml</code>, <code>notifications.yaml</code> &mdash; as one <code>.tar.gz</code> to migrate to another host or keep as a restore point. Restore uploads a bundle and overwrites those files.</p>
+                <div class="su-panel" data-step="7">
+                    <h2>8. Backup &amp; Restore <span class="p-file">config bundle</span></h2>
+                    <p class="p-desc">Export all LLDPq config &mdash; <code>devices.yaml</code>, <code>topology.dot</code>, <code>topology_config.yaml</code>, <code>notifications.yaml</code>, <code>display-aliases.json</code> &mdash; as one <code>.tar.gz</code> to migrate to another host or keep as a restore point. Restore uploads a bundle and overwrites those files. <strong>The SSH key is intentionally excluded</strong> (security) &mdash; back it up in Step&nbsp;2.</p>
                     <div class="sched-card">
                         <div class="p-toolbar">
                             <button class="btn primary" onclick="backupExport()"><svg viewBox="0 0 24 24"><path d="M5,20H19V18H5M19,9H15V3H9V9H5L12,16L19,9Z"/></svg>Download config bundle</button>
@@ -402,8 +402,8 @@
                 </div>
 
                 <!-- Step 10: Maintenance -->
-                <div class="su-panel" data-step="9">
-                    <h2>10. Maintenance <span class="p-file">disk &amp; cleanup</span></h2>
+                <div class="su-panel" data-step="8">
+                    <h2>9. Maintenance <span class="p-file">disk &amp; cleanup</span></h2>
                     <p class="p-desc">Disk usage and safe cleanup. Update backups (<code>~/lldpq-backup-*</code>) are created by the online/offline update and can pile up over time.</p>
                     <div class="sched-card">
                         <div class="key-row"><span class="k">Disk</span><span id="mt-disk" class="mono">&mdash;</span></div>
@@ -435,11 +435,11 @@ const STEPS = [
     { key:'topology', label:'Topology',         desc:'topology.dot — expected cabling' },
     { key:'config',   label:'Topology Config',  desc:'topology_config.yaml — layout rules' },
     { key:'ansible',  label:'Integrate Ansible', desc:'Optional — VLAN/VRF/Fabric reports' },
-    { key:'run',      label:'Run LLDPq',        desc:'Collect data & validate (live output)' },
-    { key:'update',   label:'Update LLDPq',     desc:'git pull + reinstall (live output)' },
     { key:'notifications', label:'Notifications', desc:'Slack alerts — webhook, types, thresholds' },
+    { key:'run',      label:'Run LLDPq',        desc:'Collect data & validate (live output)' },
     { key:'backup',      label:'Backup & Restore', desc:'Export / import config bundle' },
     { key:'maintenance', label:'Maintenance',      desc:'Disk usage & safe cleanup' },
+    { key:'update',   label:'Update LLDPq',     desc:'git pull + reinstall (live output)' },
 ];
 const FILES = {
     devices:  { url:'/edit-devices',  file:'devices.yaml',          ta:'ta-devices',  st:'st-devices',  loaded:false },
