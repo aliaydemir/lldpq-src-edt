@@ -804,9 +804,12 @@ class DuplicateAnalyzer:
             elif r["flagged"]:
                 note = "Confirmed &mdash; EVPN/log"
             elif r.get("mobility"):
-                note = ("Suspected &mdash; active mobility"
+                # One MAC, one owner at this instant, but a very high EVPN mobility sequence: the
+                # SAME MAC/IP is rapidly re-registering between locations (a flapping endpoint), not
+                # two devices sharing an address. Label it distinctly so it is not read as a conflict.
+                note = ("Flapping endpoint &mdash; active (EVPN mobility)"
                         if (r.get("delta") is not None and r["delta"] > 0)
-                        else "Suspected &mdash; historical mobility")
+                        else "Flapping endpoint &mdash; settled (EVPN mobility)")
             else:
                 note = "&mdash;"
             if r.get("stale"):
@@ -1109,10 +1112,12 @@ body:not(.show-aged) tr.stale-row { display:none !important; }
       the increase since the previous run &mdash; a positive &#916; means it is moving <b>right now</b>.
       To avoid false positives from ordinary EVPN-MH failover churn, a single-owner entry (one MAC, one
       location, not climbing) is only reported when its sequence is extreme (&ge; __SEQ_STORM__).
-      <h4>Note column &mdash; confirmed vs suspected (IP table)</h4>
-      <b>Confirmed</b> &mdash; 2+ MACs claim the IP, or EVPN/zebra flagged it. <b>Suspected &mdash; active
-      mobility</b> &mdash; one owner seen but the sequence is climbing now. <b>Suspected &mdash; historical
-      mobility</b> &mdash; one owner now, with an extreme past sequence (a duplicate that has since settled).
+      <h4>Note column &mdash; conflict vs flapping (IP table)</h4>
+      <b>Confirmed &mdash; IP conflict</b> &mdash; 2+ distinct MACs claim the same IP (two devices), or
+      EVPN/zebra flagged it. <b>Flapping endpoint (EVPN mobility)</b> &mdash; a <i>single</i> MAC/IP whose
+      mobility sequence is very high: the same endpoint is rapidly re-registering between locations (e.g. a
+      BMC dual-pathed / not bonded), NOT two devices sharing an address. "active" = climbing now, "settled" =
+      high but flat. A flapping endpoint often also shows an APIPA (169.254) address because the churn breaks DHCP.
       <h4>Note column &mdash; duplicate vs loop</h4>
       <b>Duplicate device</b> &mdash; the same MAC also owns a duplicated IP (two devices sharing MAC+IP,
       e.g. power shelves). <b>Possible loop</b> &mdash; &ge; __LOOP_MIN__ MACs flapping between the same
