@@ -1085,7 +1085,10 @@ __COVERAGE__
 var GENERATED_EPOCH=Number('__GENERATED_EPOCH__');
 var EXPORT_ROWS=JSON.parse(document.getElementById('duplicateExportData').textContent||'[]');
 var DEVICES=__DEVICE_JSON__;
-var filterState={category:'',activity:'',device:'',showHistorical:false};
+// Default view is focused on real IP conflicts (two devices claiming one IP).
+// Mobility / DAD-only / IPv4LL / suspected records stay one click away via
+// "Show all" or the summary cards, so the page opens on the actionable signal.
+var filterState={category:'confirmed_ip',activity:'',device:'',showHistorical:false};
 var lastDialogTrigger=null;
 
 function rows(){return Array.prototype.slice.call(document.querySelectorAll('tr[data-record-id]'));}
