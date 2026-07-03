@@ -786,20 +786,87 @@ EOF
 }
 
 render_lldpq_recovery_path() {
-    local output="$1" manifest_path="$2" manifest_q
-    manifest_q=$(systemd_quote_value "$manifest_path")
+    local output="$1" manifest_path="$2" manifest_unit
+    # systemd path directives are not ExecStart argument lists.  Quoting the
+    # whole value makes the quote character part of the path on systemd 255,
+    # so the value no longer begins with '/' and the unit is rejected.  Keep
+    # this renderer separate from systemd_quote_value(), validate fail-closed,
+    # and only escape literal '%' against systemd specifier expansion.
+    if [[ -z "$manifest_path" || "$manifest_path" != /* || \
+          "$manifest_path" == *$'\n'* || "$manifest_path" == *$'\r'* ]]; then
+        echo "[!] Refusing unsafe recovery manifest path: '$manifest_path'" >&2
+        return 1
+    fi
+    manifest_unit="${manifest_path//\%/%%}"
     cat > "$output" <<EOF
 [Unit]
 Description=Watch for retained LLDPq backup-import recovery authority
 After=local-fs.target
 
 [Path]
-PathExists=$manifest_q
+PathExists=$manifest_unit
 Unit=lldpq-recovery.service
 
 [Install]
 WantedBy=multi-user.target
 EOF
+}
+
+resolve_lldpq_user_home() {
+    local user="$1" user_home
+    user_home=$(getent passwd "$user" | cut -d: -f6)
+    if [[ -z "$user_home" || "$user_home" != /* || \
+          "$user_home" == *$'\n'* || "$user_home" == *$'\r'* ]]; then
+        echo "[!] Could not resolve a safe home directory for $user" >&2
+        return 1
+    fi
+    printf '%s\n' "$user_home"
+}
+
+preflight_lldpq_recovery_path_unit() {
+    local user_home="$1" verify_dir path_file service_file verify_output
+    verify_dir=$(mktemp -d "${TMPDIR:-/tmp}/lldpq-recovery-preflight.XXXXXX") || return 1
+    path_file="$verify_dir/lldpq-recovery.path"
+    service_file="$verify_dir/lldpq-recovery.service"
+
+    if ! render_lldpq_recovery_path \
+        "$path_file" \
+        "$user_home/.lldpq-state/.backup-import-recovery/manifest.json"; then
+        rm -rf "$verify_dir"
+        return 1
+    fi
+    cat > "$service_file" <<'EOF'
+[Unit]
+Description=LLDPq recovery path preflight target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/true
+EOF
+
+    if ! command -v systemd-analyze >/dev/null 2>&1; then
+        echo "[!] systemd-analyze is required to validate recovery units" >&2
+        rm -rf "$verify_dir"
+        return 1
+    fi
+    if ! verify_output=$(systemd-analyze verify "$service_file" "$path_file" 2>&1); then
+        echo "[!] Retained-import recovery unit compatibility check failed" >&2
+        [[ -n "$verify_output" ]] && printf '%s\n' "$verify_output" >&2
+        rm -rf "$verify_dir"
+        return 1
+    fi
+    rm -rf "$verify_dir"
+}
+
+show_lldpq_recovery_diagnostics() {
+    echo "  Recovery unit diagnostics:" >&2
+    sudo systemd-analyze verify \
+        /etc/systemd/system/lldpq-recovery.service \
+        /etc/systemd/system/lldpq-recovery.path >&2 || true
+    sudo systemctl status lldpq-recovery.service lldpq-recovery.path \
+        --no-pager -l >&2 || true
+    sudo journalctl -b --no-pager \
+        -u lldpq-recovery.service -u lldpq-recovery.path -n 40 >&2 || true
 }
 
 prepare_update_rollback() {
@@ -948,9 +1015,16 @@ rollback_failed_update() {
         echo "[!] Automatic rollback was incomplete; recovery snapshot retained at: $UPDATE_ROLLBACK_DIR" >&2
         return 1
     fi
+    local restored_version=""
+    restored_version=$(root_run sed -n '1p' "$WEB_ROOT/VERSION" 2>/dev/null || true)
     root_run rm -rf "$UPDATE_ROLLBACK_DIR" 2>/dev/null || \
         echo "[!] Rollback succeeded, but its completed snapshot remains at: $UPDATE_ROLLBACK_DIR" >&2
     UPDATE_ROLLBACK_ACTIVE=false
+    if [[ -n "$restored_version" ]]; then
+        echo "[+] Automatic rollback complete; restored LLDPq runtime $restored_version" >&2
+    else
+        echo "[+] Automatic rollback complete; previous LLDPq runtime restored" >&2
+    fi
     return 0
 }
 
@@ -1353,6 +1427,17 @@ if [[ "$INSTALL_MODE" == "fresh" ]]; then
         echo "  [!] Some Python packages may need manual installation"
     echo "  Python packages installed (requests, ruamel.yaml)"
 fi
+
+# Validate the recovery path grammar before update mode stops processes or
+# mutates permissions/configuration.  Fresh installs reach this point only
+# after the systemd package set has been installed.
+echo "  Preflighting retained-import recovery units..."
+LLDPQ_USER_HOME=$(resolve_lldpq_user_home "$LLDPQ_USER") || exit 1
+if ! preflight_lldpq_recovery_path_unit "$LLDPQ_USER_HOME"; then
+    echo "[!] Recovery unit preflight failed; installation was not started" >&2
+    exit 1
+fi
+echo "  Recovery unit preflight passed"
 
 # ============================================================================
 # UPDATE-ONLY: Backup & prepare
@@ -2358,30 +2443,39 @@ fi
 # ============================================================================
 step "Configuring retained-import recovery..."
 
-LLDPQ_USER_HOME=$(getent passwd "$LLDPQ_USER" | cut -d: -f6)
-if [[ -z "$LLDPQ_USER_HOME" || "$LLDPQ_USER_HOME" != /* ]]; then
-    echo "  [!] Could not resolve a safe home directory for $LLDPQ_USER" >&2
+_recovery_unit_tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/lldpq-recovery-units.XXXXXX")
+_recovery_service_tmp="$_recovery_unit_tmp_dir/lldpq-recovery.service"
+_recovery_path_tmp="$_recovery_unit_tmp_dir/lldpq-recovery.path"
+if ! render_lldpq_recovery_service \
+        "$_recovery_service_tmp" "$LLDPQ_USER" "$LLDPQ_INSTALL_DIR" "$WEB_ROOT" || \
+   ! render_lldpq_recovery_path \
+        "$_recovery_path_tmp" \
+        "$LLDPQ_USER_HOME/.lldpq-state/.backup-import-recovery/manifest.json"; then
+    rm -rf "$_recovery_unit_tmp_dir"
+    echo "  [!] Could not render retained-import recovery units" >&2
     exit 1
 fi
-_recovery_service_tmp=$(mktemp "${TMPDIR:-/tmp}/lldpq-recovery.service.XXXXXX")
-_recovery_path_tmp=$(mktemp "${TMPDIR:-/tmp}/lldpq-recovery.path.XXXXXX")
-render_lldpq_recovery_service \
-    "$_recovery_service_tmp" "$LLDPQ_USER" "$LLDPQ_INSTALL_DIR" "$WEB_ROOT"
-render_lldpq_recovery_path \
-    "$_recovery_path_tmp" \
-    "$LLDPQ_USER_HOME/.lldpq-state/.backup-import-recovery/manifest.json"
+if ! _recovery_verify_output=$(systemd-analyze verify \
+        "$_recovery_service_tmp" "$_recovery_path_tmp" 2>&1); then
+    echo "  [!] Retained-import recovery unit verification failed" >&2
+    [[ -n "$_recovery_verify_output" ]] && \
+        printf '%s\n' "$_recovery_verify_output" >&2
+    rm -rf "$_recovery_unit_tmp_dir"
+    exit 1
+fi
 if ! sudo cp "$_recovery_service_tmp" /etc/systemd/system/lldpq-recovery.service || \
    ! sudo cp "$_recovery_path_tmp" /etc/systemd/system/lldpq-recovery.path || \
    ! sudo chmod 644 /etc/systemd/system/lldpq-recovery.service \
        /etc/systemd/system/lldpq-recovery.path; then
-    rm -f "$_recovery_service_tmp" "$_recovery_path_tmp"
+    rm -rf "$_recovery_unit_tmp_dir"
     echo "  [!] Could not install retained-import recovery units" >&2
     exit 1
 fi
-rm -f "$_recovery_service_tmp" "$_recovery_path_tmp"
+rm -rf "$_recovery_unit_tmp_dir"
 sudo systemctl daemon-reload
 if ! sudo systemctl enable lldpq-recovery.service lldpq-recovery.path >/dev/null 2>&1; then
     echo "  [!] Could not enable retained-import recovery units" >&2
+    show_lldpq_recovery_diagnostics
     exit 1
 fi
 # This blocking start consumes any authority before nginx/fcgiwrap are restarted.
@@ -2389,10 +2483,12 @@ fi
 # Setup import either commits (then recovery is a no-op) or dies (then rollback).
 if ! sudo systemctl start lldpq-recovery.service; then
     echo "  [!] Retained backup-import recovery failed; web services were not restarted" >&2
+    show_lldpq_recovery_diagnostics
     exit 1
 fi
 if ! sudo systemctl start lldpq-recovery.path; then
     echo "  [!] Could not start retained-import recovery watcher" >&2
+    show_lldpq_recovery_diagnostics
     exit 1
 fi
 echo "  retained-import recovery service + path watcher enabled"

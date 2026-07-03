@@ -1,0 +1,40 @@
+---
+- name: Verify rendered LLDPq recovery units without installing them
+  hosts: all
+  gather_facts: false
+  vars:
+    verify_dir: /tmp/lldpq-recovery-verify-27219dd
+  tasks:
+    - name: Verify units with guaranteed cleanup
+      block:
+        - name: Create private verification directory
+          ansible.builtin.file:
+            path: "{{ verify_dir }}"
+            state: directory
+            mode: "0700"
+
+        - name: Upload rendered recovery service
+          ansible.builtin.copy:
+            src: /private/tmp/lldpq-recovery-verify-27219dd/lldpq-recovery.service
+            dest: "{{ verify_dir }}/lldpq-recovery.service"
+            mode: "0600"
+
+        - name: Upload rendered recovery path
+          ansible.builtin.copy:
+            src: /private/tmp/lldpq-recovery-verify-27219dd/lldpq-recovery.path
+            dest: "{{ verify_dir }}/lldpq-recovery.path"
+            mode: "0600"
+
+        - name: Parse both rendered units
+          ansible.builtin.command:
+            argv:
+              - systemd-analyze
+              - verify
+              - "{{ verify_dir }}/lldpq-recovery.service"
+              - "{{ verify_dir }}/lldpq-recovery.path"
+          changed_when: false
+      always:
+        - name: Remove remote verification directory
+          ansible.builtin.file:
+            path: "{{ verify_dir }}"
+            state: absent
