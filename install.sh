@@ -624,6 +624,8 @@ prepare_default_dhcp_config() {
 UPDATE_ROLLBACK_DIR=""
 UPDATE_ROLLBACK_ACTIVE=false
 UPDATE_ROLLBACK_HAD_INSTALL=false
+UPDATE_ROLLBACK_CORE_RESTORED=false
+UPDATE_ROLLBACK_RESTORED_VERSION=""
 UPDATE_PROCESS_LOCK_FD=""
 
 acquire_update_process_lock() {
@@ -823,26 +825,21 @@ resolve_lldpq_user_home() {
     printf '%s\n' "$user_home"
 }
 
-preflight_lldpq_recovery_path_unit() {
-    local user_home="$1" verify_dir path_file service_file verify_output
+preflight_lldpq_recovery_units() {
+    local user_home="$1" user="$2" install_dir="$3" web_root="$4"
+    local verify_dir path_file service_file verify_output
     verify_dir=$(mktemp -d "${TMPDIR:-/tmp}/lldpq-recovery-preflight.XXXXXX") || return 1
     path_file="$verify_dir/lldpq-recovery.path"
     service_file="$verify_dir/lldpq-recovery.service"
 
-    if ! render_lldpq_recovery_path \
+    if ! render_lldpq_recovery_service \
+        "$service_file" "$user" "$install_dir" "$web_root" || \
+       ! render_lldpq_recovery_path \
         "$path_file" \
         "$user_home/.lldpq-state/.backup-import-recovery/manifest.json"; then
         rm -rf "$verify_dir"
         return 1
     fi
-    cat > "$service_file" <<'EOF'
-[Unit]
-Description=LLDPq recovery path preflight target
-
-[Service]
-Type=oneshot
-ExecStart=/bin/true
-EOF
 
     if ! command -v systemd-analyze >/dev/null 2>&1; then
         echo "[!] systemd-analyze is required to validate recovery units" >&2
@@ -860,6 +857,7 @@ EOF
 
 show_lldpq_recovery_diagnostics() {
     echo "  Recovery unit diagnostics:" >&2
+    sudo systemctl cat lldpq-recovery.service lldpq-recovery.path >&2 || true
     sudo systemd-analyze verify \
         /etc/systemd/system/lldpq-recovery.service \
         /etc/systemd/system/lldpq-recovery.path >&2 || true
@@ -922,6 +920,8 @@ prepare_update_rollback() {
 rollback_failed_update() {
     [[ "$UPDATE_ROLLBACK_ACTIVE" == "true" && -n "$UPDATE_ROLLBACK_DIR" ]] || return 0
     echo "[!] Update failed; restoring the previous LLDPq runtime and system configuration" >&2
+    UPDATE_ROLLBACK_CORE_RESTORED=false
+    UPDATE_ROLLBACK_RESTORED_VERSION=""
     local rollback_restore_failed=false
     local rollback_install_available=false
     local rollback_install_still_live=false
@@ -1015,16 +1015,13 @@ rollback_failed_update() {
         echo "[!] Automatic rollback was incomplete; recovery snapshot retained at: $UPDATE_ROLLBACK_DIR" >&2
         return 1
     fi
-    local restored_version=""
-    restored_version=$(root_run sed -n '1p' "$WEB_ROOT/VERSION" 2>/dev/null || true)
+    UPDATE_ROLLBACK_RESTORED_VERSION=$(
+        root_run sed -n '1p' "$WEB_ROOT/VERSION" 2>/dev/null || true
+    )
     root_run rm -rf "$UPDATE_ROLLBACK_DIR" 2>/dev/null || \
         echo "[!] Rollback succeeded, but its completed snapshot remains at: $UPDATE_ROLLBACK_DIR" >&2
     UPDATE_ROLLBACK_ACTIVE=false
-    if [[ -n "$restored_version" ]]; then
-        echo "[+] Automatic rollback complete; restored LLDPq runtime $restored_version" >&2
-    else
-        echo "[+] Automatic rollback complete; previous LLDPq runtime restored" >&2
-    fi
+    UPDATE_ROLLBACK_CORE_RESTORED=true
     return 0
 }
 
@@ -1037,15 +1034,48 @@ commit_update_rollback() {
         echo "  [!] Completed update rollback snapshot could not be removed: $completed_rollback_dir" >&2
 }
 
+restore_preserved_runtime_data() {
+    local preserve_dir="${_DATA_PRESERVE:-}"
+    local runtime_dir restore_failed=false
+    [[ -n "$preserve_dir" && -d "$preserve_dir" ]] || return 0
+
+    for runtime_dir in monitor-results lldp-results alert-states; do
+        if [[ -e "$preserve_dir/$runtime_dir" && \
+              ! -e "$LLDPQ_INSTALL_DIR/$runtime_dir" ]]; then
+            if ! root_run mv "$preserve_dir/$runtime_dir" \
+                "$LLDPQ_INSTALL_DIR/" 2>/dev/null; then
+                restore_failed=true
+                echo "[!] Preserved runtime data could not be restored: $preserve_dir/$runtime_dir" >&2
+            fi
+        fi
+    done
+    if [[ "$restore_failed" == "true" ]]; then
+        echo "[!] Preserved runtime data remains at $preserve_dir; it was not deleted" >&2
+        return 1
+    fi
+    if find "$preserve_dir" -mindepth 1 -print -quit 2>/dev/null | grep -q .; then
+        echo "[!] Preserved runtime data remains at $preserve_dir; it was not deleted" >&2
+        return 1
+    fi
+    if ! rmdir "$preserve_dir" 2>/dev/null; then
+        echo "[!] Empty runtime preserve directory could not be removed: $preserve_dir" >&2
+        return 1
+    fi
+    return 0
+}
+
 lldpq_install_exit_handler() {
     local status="$1"
+    local rollback_attempted=false
+    local rollback_core_ok=true
+    local runtime_restore_ok=true
     trap - EXIT
-    if (( status != 0 )); then
-        rollback_failed_update || true
+    if (( status != 0 )) && \
+       [[ "$UPDATE_ROLLBACK_ACTIVE" == "true" && -n "$UPDATE_ROLLBACK_DIR" ]]; then
+        rollback_attempted=true
+        rollback_failed_update || rollback_core_ok=false
     fi
-    if declare -F _lldpq_restore_preserve >/dev/null 2>&1; then
-        _lldpq_restore_preserve || true
-    fi
+    restore_preserved_runtime_data || runtime_restore_ok=false
     # Never let the recovery trigger inherit the process-wide monitor lock.
     # Keeping this descriptor open in a long-running child would block every
     # subsequent cron/web collection indefinitely.
@@ -1056,6 +1086,19 @@ lldpq_install_exit_handler() {
         # the lightweight web-trigger daemon back immediately after rollback.
         sudo -u "${LLDPQ_USER:-$(id -un)}" nohup /usr/local/bin/lldpq-trigger \
             >/dev/null 2>&1 &
+    fi
+    if [[ "$rollback_attempted" == "true" ]]; then
+        if [[ "$rollback_core_ok" == "true" && \
+              "$UPDATE_ROLLBACK_CORE_RESTORED" == "true" && \
+              "$runtime_restore_ok" == "true" ]]; then
+            if [[ -n "$UPDATE_ROLLBACK_RESTORED_VERSION" ]]; then
+                echo "[!] Update failed, but automatic rollback completed; active runtime remains $UPDATE_ROLLBACK_RESTORED_VERSION. The requested update was not installed." >&2
+            else
+                echo "[!] Update failed, but automatic rollback completed; the previous runtime remains active. The requested update was not installed." >&2
+            fi
+        else
+            echo "[!] Automatic rollback was incomplete; review the retained paths and errors above before retrying." >&2
+        fi
     fi
     exit "$status"
 }
@@ -1433,8 +1476,13 @@ fi
 # after the systemd package set has been installed.
 echo "  Preflighting retained-import recovery units..."
 LLDPQ_USER_HOME=$(resolve_lldpq_user_home "$LLDPQ_USER") || exit 1
-if ! preflight_lldpq_recovery_path_unit "$LLDPQ_USER_HOME"; then
-    echo "[!] Recovery unit preflight failed; installation was not started" >&2
+if ! preflight_lldpq_recovery_units \
+    "$LLDPQ_USER_HOME" "$LLDPQ_USER" "$LLDPQ_INSTALL_DIR" "$WEB_ROOT"; then
+    if [[ "$INSTALL_MODE" == "update" ]]; then
+        echo "[!] Recovery unit preflight failed; update was not started and the existing runtime remains active" >&2
+    else
+        echo "[!] Recovery unit preflight failed; LLDPq runtime files were not installed" >&2
+    fi
     exit 1
 fi
 echo "  Recovery unit preflight passed"
@@ -1602,24 +1650,6 @@ if [[ "$INSTALL_MODE" == "update" ]]; then
     # Install the EXIT safety net before the first rename. An interrupt during
     # the preserve loop must not strand only part of the runtime tree outside
     # the installation directory.
-    _lldpq_restore_preserve() {
-        local _d _restore_failed=false
-        [[ -n "$_DATA_PRESERVE" ]] && [[ -d "$_DATA_PRESERVE" ]] || return 0
-        for _d in monitor-results lldp-results alert-states; do
-            if [[ -e "$_DATA_PRESERVE/$_d" ]] && [[ ! -e "$LLDPQ_INSTALL_DIR/$_d" ]]; then
-                if ! root_run mv "$_DATA_PRESERVE/$_d" "$LLDPQ_INSTALL_DIR/" 2>/dev/null; then
-                    _restore_failed=true
-                    echo "[!] Preserved runtime data could not be restored: $_DATA_PRESERVE/$_d" >&2
-                fi
-            fi
-        done
-        if [[ "$_restore_failed" == "false" ]] && \
-           ! find "$_DATA_PRESERVE" -mindepth 1 -print -quit 2>/dev/null | grep -q .; then
-            rmdir "$_DATA_PRESERVE" 2>/dev/null || true
-        elif [[ -d "$_DATA_PRESERVE" ]]; then
-            echo "[!] Preserved runtime data remains at $_DATA_PRESERVE; it was not deleted" >&2
-        fi
-    }
     trap 'lldpq_install_exit_handler $?' EXIT
 
     # Stop mutable jobs only after every ordinary config copy and the runtime
@@ -2471,8 +2501,14 @@ if ! sudo cp "$_recovery_service_tmp" /etc/systemd/system/lldpq-recovery.service
     echo "  [!] Could not install retained-import recovery units" >&2
     exit 1
 fi
-rm -rf "$_recovery_unit_tmp_dir"
-sudo systemctl daemon-reload
+if ! rm -rf "$_recovery_unit_tmp_dir"; then
+    echo "  [!] Installed recovery units verified, but the local temporary directory remains: $_recovery_unit_tmp_dir" >&2
+fi
+if ! sudo systemctl daemon-reload; then
+    echo "  [!] Could not reload systemd after installing recovery units" >&2
+    show_lldpq_recovery_diagnostics
+    exit 1
+fi
 if ! sudo systemctl enable lldpq-recovery.service lldpq-recovery.path >/dev/null 2>&1; then
     echo "  [!] Could not enable retained-import recovery units" >&2
     show_lldpq_recovery_diagnostics
