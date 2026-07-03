@@ -306,7 +306,9 @@ class BERAnalyzer:
     def calculate_delta_ber(self, hostname: str, interface: str, current_stats: Dict[str, int]) -> tuple:
         """Calculate delta-based BER using only new errors since last measurement.
         
-        Returns: (ber_value, is_baseline_run, delta_errors, delta_bytes)
+        Returns: (ber_value, is_baseline_run, delta_errors, delta_bytes,
+        delta_packets). Samples below min_packets_for_analysis remain
+        accumulated against the prior baseline instead of being discarded.
         """
         port_key = f"{hostname}:{interface}"
         current_time = time.time()
@@ -335,22 +337,50 @@ class BERAnalyzer:
                 'timestamp': current_time
             }
             # Note: save_baseline_data() called once after all interfaces processed
-            return 0.0, True, 0, 0  # Baseline run, no BER calculation
+            return 0.0, True, 0, 0, 0  # Baseline run, no BER calculation
         
         # Calculate deltas
         baseline = self.baseline_data[hostname][interface]
-        delta_rx_errors = max(0, current_rx_errors - baseline['rx_errors'])
-        delta_tx_errors = max(0, current_tx_errors - baseline['tx_errors'])
-        delta_rx_bytes = max(0, current_rx_bytes - baseline['rx_bytes'])
-        delta_tx_bytes = max(0, current_tx_bytes - baseline['tx_bytes'])
-        delta_rx_packets = max(0, current_rx_packets - baseline['rx_packets'])
-        delta_tx_packets = max(0, current_tx_packets - baseline['tx_packets'])
+        current_counters = (
+            current_rx_errors, current_tx_errors, current_rx_bytes,
+            current_tx_bytes, current_rx_packets, current_tx_packets,
+        )
+        baseline_counters = (
+            baseline['rx_errors'], baseline['tx_errors'], baseline['rx_bytes'],
+            baseline['tx_bytes'], baseline['rx_packets'], baseline['tx_packets'],
+        )
+        if any(current < previous for current, previous in
+               zip(current_counters, baseline_counters)):
+            # Interface/counter reset: establish a fresh baseline and avoid a
+            # misleading zero/excellent sample for this run.
+            self.baseline_data[hostname][interface] = {
+                'rx_errors': current_rx_errors,
+                'tx_errors': current_tx_errors,
+                'rx_bytes': current_rx_bytes,
+                'tx_bytes': current_tx_bytes,
+                'rx_packets': current_rx_packets,
+                'tx_packets': current_tx_packets,
+                'timestamp': current_time,
+            }
+            return 0.0, True, 0, 0, 0
+
+        delta_rx_errors = current_rx_errors - baseline['rx_errors']
+        delta_tx_errors = current_tx_errors - baseline['tx_errors']
+        delta_rx_bytes = current_rx_bytes - baseline['rx_bytes']
+        delta_tx_bytes = current_tx_bytes - baseline['tx_bytes']
+        delta_rx_packets = current_rx_packets - baseline['rx_packets']
+        delta_tx_packets = current_tx_packets - baseline['tx_packets']
         
         total_delta_errors = delta_rx_errors + delta_tx_errors
         total_delta_bytes = delta_rx_bytes + delta_tx_bytes
         total_delta_packets = delta_rx_packets + delta_tx_packets
         
-        # Update baseline for next run
+        if total_delta_packets < self.config["min_packets_for_analysis"]:
+            # Retain the prior baseline so several low-traffic intervals can
+            # accumulate into one statistically useful sample.
+            return 0.0, False, total_delta_errors, total_delta_bytes, total_delta_packets
+
+        # Update baseline only after a complete sample (or counter reset).
         self.baseline_data[hostname][interface] = {
             'rx_errors': current_rx_errors,
             'tx_errors': current_tx_errors,
@@ -364,10 +394,7 @@ class BERAnalyzer:
         
         # Calculate BER from deltas
         if total_delta_errors == 0:
-            return 0.0, False, 0, total_delta_bytes
-        
-        if total_delta_packets < self.config["min_packets_for_analysis"]:
-            return 0.0, False, total_delta_errors, total_delta_bytes
+            return 0.0, False, 0, total_delta_bytes, total_delta_packets
         
         # Prefer byte-based calculation
         if total_delta_bytes > 0:
@@ -379,7 +406,7 @@ class BERAnalyzer:
             total_delta_bits = total_delta_packets * avg_bits_per_packet
             ber = total_delta_errors / total_delta_bits if total_delta_bits > 0 else 0.0
         
-        return ber, False, total_delta_errors, total_delta_bytes
+        return ber, False, total_delta_errors, total_delta_bytes, total_delta_packets
 
     def calculate_ber(self, rx_packets: int, tx_packets: int, rx_errors: int, tx_errors: int, rx_bytes: int, tx_bytes: int) -> float:
         """Legacy BER calculation - kept for compatibility.
@@ -779,6 +806,10 @@ class BERAnalyzer:
                     <div class="metric" id="critical-ports">{len(summary['critical_ports'])}</div>
                     <div class="metric-label">Critical</div>
                 </div>
+                <div class="summary-card card-info" id="unknown-card">
+                    <div class="metric" id="unknown-ports">{len(summary['unknown_ports'])}</div>
+                    <div class="metric-label">Awaiting Sample</div>
+                </div>
             </div>
         </div>
     </div>
@@ -840,8 +871,9 @@ class BERAnalyzer:
 """
         
         # Add all ports to table (sorted by health - problems first, then good ones)
-        all_ports = (summary['excellent_ports'] + summary['good_ports'] + 
-                    summary['warning_ports'] + summary['critical_ports'])
+        all_ports = (summary['excellent_ports'] + summary['good_ports'] +
+                    summary['warning_ports'] + summary['critical_ports'] +
+                    summary['unknown_ports'])
         
         # Sort ports by BER status priority (critical/warning first)
         def get_ber_priority(port_info):

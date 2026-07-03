@@ -7,14 +7,17 @@ This script analyzes monitoring data and sends alerts based on configured thresh
 Called every 10 minutes by the lldpq cron job.
 """
 
+import hashlib
 import json
 import yaml
 import requests
 import os
 import sys
 import glob
+import math
 import time
 import datetime
+import fcntl
 import re
 from pathlib import Path
 
@@ -24,6 +27,10 @@ class LLDPqAlerts:
         self.config_file = self.script_dir / "notifications.yaml"
         self.state_dir = self.script_dir / "alert-states"
         self.monitor_results = self.script_dir / "monitor-results"
+        self.config_error = False
+        self.notifications_disabled = False
+        self.had_error = False
+        self.run_manifest = None
         
         # Create state directory if it doesn't exist (like `mkdir -p`)
         self.state_dir.mkdir(parents=True, exist_ok=True)
@@ -36,19 +43,140 @@ class LLDPqAlerts:
         try:
             if not self.config_file.exists():
                 print(f"❌ Configuration file not found: {self.config_file}")
+                self.config_error = True
                 return None
                 
             with open(self.config_file, 'r') as f:
                 config = yaml.safe_load(f)
                 
+            if not isinstance(config, dict):
+                raise ValueError("configuration root must be a mapping")
+
             if not config.get('notifications', {}).get('enabled', False):
                 print("Notifications disabled in config")
+                self.notifications_disabled = True
                 return None
                 
             return config
         except Exception as e:
             print(f"❌ Error loading config: {e}")
+            self.config_error = True
             return None
+
+    def monitor_is_stale(self):
+        """Return True when the most recent monitor run was not publishable."""
+        marker = self.monitor_results / ".lldpq-stale"
+        if not marker.exists():
+            return False
+        try:
+            reason = marker.read_text(encoding="utf-8", errors="replace").strip()
+        except OSError as exc:
+            reason = f"could not read stale marker: {exc}"
+        print(f"❌ Monitoring results are stale; alerts were not evaluated ({reason})")
+        self.had_error = True
+        return True
+
+    def load_run_manifest(self):
+        """Load and validate the manifest for the completed analysis bundle."""
+        manifest_file = self.monitor_results / ".lldpq-current.json"
+        if not manifest_file.exists():
+            print(f"❌ Current-run manifest is missing: {manifest_file}")
+            self.had_error = True
+            return False
+
+        try:
+            manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+            if not isinstance(manifest, dict) or manifest.get("status") != "current":
+                raise ValueError("manifest status is not current")
+
+            analyses = manifest.get("analyses")
+            skipped = manifest.get("skipped", [])
+            device_count = manifest.get("device_count")
+            if (not isinstance(analyses, list) or
+                    any(not isinstance(item, str) or not item for item in analyses)):
+                raise ValueError("manifest analyses must be a list of names")
+            if (not isinstance(skipped, list) or
+                    any(not isinstance(item, str) or not item for item in skipped)):
+                raise ValueError("manifest skipped must be a list of names")
+            if (isinstance(device_count, bool) or
+                    not isinstance(device_count, int) or device_count < 0):
+                raise ValueError("manifest device_count must be a non-negative integer")
+
+            skipped_set = set(skipped)
+            required_analyses = {"bgp", "flap", "ber", "hardware", "log", "duplicate"}
+            if "optical" not in skipped_set:
+                required_analyses.add("optical")
+            missing_analyses = sorted(required_analyses.difference(analyses))
+            if missing_analyses:
+                raise ValueError(
+                    "manifest is missing completed analyses: "
+                    + ", ".join(missing_analyses)
+                )
+
+            completed_at = manifest.get("completed_at")
+            if not isinstance(completed_at, str) or not completed_at.strip():
+                raise ValueError("manifest completed_at is missing")
+            normalized_time = completed_at.strip()
+            if normalized_time.endswith("Z"):
+                normalized_time = normalized_time[:-1] + "+00:00"
+            completed = datetime.datetime.fromisoformat(normalized_time)
+            if completed.tzinfo is None:
+                completed = completed.astimezone()
+
+            age_seconds = time.time() - completed.timestamp()
+            if age_seconds < -300:
+                raise ValueError("manifest completion time is in the future")
+            max_age_seconds = self.get_frequency_seconds("data_stale_minutes", 30)
+            if age_seconds > max_age_seconds:
+                raise ValueError(
+                    f"manifest is stale ({age_seconds / 60:.1f} minutes old)"
+                )
+            return manifest
+        except (OSError, OverflowError, ValueError, TypeError,
+                json.JSONDecodeError) as exc:
+            print(f"❌ Could not read current-run manifest: {exc}")
+            self.had_error = True
+            return False
+
+    def source_matches_run_manifest(self, source_name, path):
+        """Verify that a summary source is exactly the file monitor consumed."""
+        if not isinstance(self.run_manifest, dict):
+            return True
+        if not self.run_manifest.get("pipeline_complete"):
+            print("❌ Monitoring manifest is not from a complete assets/LLDP pipeline")
+            self.had_error = True
+            return False
+        identity = self.run_manifest.get("sources", {}).get(source_name)
+        if not isinstance(identity, dict):
+            print(f"❌ Monitoring manifest lacks {source_name} source identity")
+            self.had_error = True
+            return False
+        try:
+            before = path.stat()
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            after = path.stat()
+            stable_identity = (
+                before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns
+            ) == (
+                after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns
+            )
+            matches = (
+                path.is_file()
+                and stable_identity
+                and identity.get("sha256") == digest
+                and identity.get("size") == before.st_size
+                and identity.get("mtime_ns") == before.st_mtime_ns
+            )
+        except (OSError, TypeError, ValueError):
+            matches = False
+        if not matches:
+            print(
+                f"❌ {source_name} changed or does not belong to the current "
+                "monitoring pipeline"
+            )
+            self.had_error = True
+            return False
+        return True
     
     def get_alert_state(self, device, alert_type):
         """Get the last alert state for a device/alert combination"""
@@ -57,18 +185,38 @@ class LLDPqAlerts:
             try:
                 with open(state_file, 'r') as f:
                     return f.read().strip()
-            except:
-                pass
+            except OSError as exc:
+                print(f"❌ Error reading alert state: {exc}")
+                self.had_error = True
         return "UNKNOWN"
+
+    def _atomic_write_state(self, destination, value):
+        """Atomically write alert state so a failed write cannot truncate it."""
+        temporary = destination.with_name(
+            f".{destination.name}.tmp.{os.getpid()}.{time.time_ns()}"
+        )
+        try:
+            with temporary.open("w", encoding="utf-8") as handle:
+                handle.write(str(value))
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, destination)
+            return True
+        except OSError as exc:
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                pass
+            print(f"❌ Error saving alert state: {exc}")
+            self.had_error = True
+            return False
     
     def set_alert_state(self, device, alert_type, state):
         """Save the current alert state"""
         state_file = self.state_dir / f"{device}_{alert_type}.state"
-        try:
-            with open(state_file, 'w') as f:
-                f.write(state)
-        except Exception as e:
-            print(f"❌ Error saving state: {e}")
+        return self._atomic_write_state(state_file, state)
 
     def _alert_marker_file(self, device, alert_type, marker):
         """Return a state marker path for an alert."""
@@ -78,38 +226,48 @@ class LLDPqAlerts:
         marker_file = self._alert_marker_file(device, alert_type, marker)
         try:
             return float(marker_file.read_text().strip())
-        except (OSError, TypeError, ValueError):
+        except FileNotFoundError:
+            return None
+        except (OSError, TypeError, ValueError) as exc:
+            print(f"❌ Error reading alert {marker}: {exc}")
+            self.had_error = True
             return None
 
     def _write_marker_time(self, device, alert_type, marker):
         marker_file = self._alert_marker_file(device, alert_type, marker)
-        try:
-            marker_file.write_text(str(time.time()))
-        except OSError as e:
-            print(f"❌ Error saving alert {marker}: {e}")
+        return self._atomic_write_state(marker_file, time.time())
 
     def record_alert_attempt(self, device, alert_type):
         """Record a delivery attempt without claiming the alert was delivered."""
-        self._write_marker_time(device, alert_type, "attempt")
+        return self._write_marker_time(device, alert_type, "attempt")
 
     def record_alert_delivery(self, device, alert_type, current_state):
         """Persist state and rate-limit timestamp only after successful delivery."""
-        self.set_alert_state(device, alert_type, current_state)
-        self._write_marker_time(device, alert_type, "timestamp")
-        self._clear_alert_attempt(device, alert_type)
+        state_saved = self.set_alert_state(device, alert_type, current_state)
+        if not state_saved:
+            # Keep the attempt marker so retry backoff still applies, but never
+            # claim a delivery timestamp when the delivered state was not saved.
+            return False
+        timestamp_saved = self._write_marker_time(device, alert_type, "timestamp")
+        attempt_cleared = self._clear_alert_attempt(device, alert_type)
+        return timestamp_saved and attempt_cleared
 
     def _clear_alert_attempt(self, device, alert_type):
         try:
             self._alert_marker_file(device, alert_type, "attempt").unlink()
+            return True
         except FileNotFoundError:
-            pass
-        except OSError as e:
-            print(f"❌ Error clearing alert attempt marker: {e}")
+            return True
+        except OSError as exc:
+            print(f"❌ Error clearing alert attempt marker: {exc}")
+            self.had_error = True
+            return False
 
     def record_state_without_delivery(self, device, alert_type, current_state):
         """Advance an intentionally silent state transition (for disabled recovery)."""
-        self.set_alert_state(device, alert_type, current_state)
-        self._clear_alert_attempt(device, alert_type)
+        state_saved = self.set_alert_state(device, alert_type, current_state)
+        attempt_cleared = self._clear_alert_attempt(device, alert_type)
+        return state_saved and attempt_cleared
 
     def get_frequency_seconds(self, key, default_minutes):
         """Read a non-negative frequency setting while accepting YAML numbers/strings."""
@@ -117,7 +275,7 @@ class LLDPqAlerts:
             minutes = float(
                 self.config.get('frequency', {}).get(key, default_minutes)
             )
-        except (TypeError, ValueError):
+        except (AttributeError, TypeError, ValueError):
             minutes = default_minutes
         return max(minutes, 0) * 60
     
@@ -171,8 +329,14 @@ class LLDPqAlerts:
             return True
         if not slack_config.get('webhook'):
             print("❌ Slack notification enabled but webhook is empty")
+            self.had_error = True
             return False
-        return self.send_slack_message(title, message, color, device, timestamp, slack_config)
+        delivered = self.send_slack_message(
+            title, message, color, device, timestamp, slack_config
+        )
+        if not delivered:
+            self.had_error = True
+        return delivered
 
     def send_stateful_notification(self, title, message, severity, device,
                                    alert_type, current_state):
@@ -182,8 +346,11 @@ class LLDPqAlerts:
             title, message, severity, device, alert_type
         )
         if delivered:
-            self.record_alert_delivery(device, alert_type, current_state)
-        return delivered
+            persisted = self.record_alert_delivery(
+                device, alert_type, current_state
+            )
+            return delivered and persisted
+        return False
     
 
     def send_slack_message(self, title, message, color, device, timestamp, slack_config):
@@ -234,18 +401,28 @@ class LLDPqAlerts:
         try:
             with open(hardware_file, 'r') as f:
                 hardware_data = f.read()
-        except:
+        except OSError as exc:
+            print(f"    ❌ Could not read hardware data for {device}: {exc}")
+            self.had_error = True
             return
         
         thresholds = self.config.get('thresholds', {}).get('hardware', {})
         
-        # Check CPU temperature
-        cpu_temp_match = re.search(r'CPU ACPI temp:\s*\+?([0-9.]+)°C', hardware_data)
-        if not cpu_temp_match:
-            cpu_temp_match = re.search(r'Core \d+:\s*\+?([0-9.]+)°C', hardware_data)
-        
-        if cpu_temp_match:
-            cpu_temp = float(cpu_temp_match.group(1))
+        # Check CPU temperature. Cumulus hardware-management fallbacks are
+        # emitted without a degree suffix, while lm-sensors uses °C.
+        cpu_temperatures = []
+        for pattern in (
+            r'CPU ACPI temp:\s*\+?([0-9.]+)°C',
+            r'Core \d+:\s*\+?([0-9.]+)°C',
+            r'Package id \d+:\s*\+?([0-9.]+)°C',
+            r'HW_MGMT_CPU:\s*([0-9.]+)',
+        ):
+            cpu_temperatures.extend(
+                float(value) for value in re.findall(pattern, hardware_data)
+            )
+
+        if cpu_temperatures:
+            cpu_temp = max(cpu_temperatures)
             cpu_critical = thresholds.get('cpu_temp_critical', 85)
             cpu_warning = thresholds.get('cpu_temp_warning', 75)
             
@@ -279,10 +456,19 @@ class LLDPqAlerts:
                         "RECOVERED", device, "cpu_temp", current_state
                     )
         
-        # Check ASIC temperature
-        asic_temp_match = re.search(r'ASIC.*temp.*:\s*\+?([0-9.]+)°C', hardware_data)
-        if asic_temp_match:
-            asic_temp = float(asic_temp_match.group(1))
+        # Check ASIC temperature across sensors and Cumulus fallback labels.
+        asic_temperatures = []
+        for pattern in (
+            r'ASIC.*temp.*:\s*\+?([0-9.]+)°C',
+            r'(?:HW_MGMT_ASIC|THERMAL_ZONE_ASIC|HWMON_ASIC):\s*([0-9.]+)',
+        ):
+            asic_temperatures.extend(
+                float(value) for value in re.findall(
+                    pattern, hardware_data, re.IGNORECASE
+                )
+            )
+        if asic_temperatures:
+            asic_temp = max(asic_temperatures)
             asic_critical = thresholds.get('asic_temp_critical', 90)
             asic_warning = thresholds.get('asic_temp_warning', 80)
             
@@ -368,67 +554,53 @@ class LLDPqAlerts:
             return
             
         # Check BGP status
-        bgp_file = self.monitor_results / "bgp-data" / f"{device}_bgp.txt"
         processed_bgp_status = self.get_device_bgp_status(device)
         if processed_bgp_status in {"stale", "unknown"}:
             print(
                 f"    ⚠️ Skipping BGP neighbor state for {device}: "
                 f"collection is {processed_bgp_status}"
             )
-        elif bgp_file.exists():
-            try:
-                with open(bgp_file, 'r') as f:
-                    bgp_data = f.read()
-                
-                # Count BGP neighbors that are down
-                down_neighbors = re.findall(r'(\d+\.\d+\.\d+\.\d+).*?(Active|Idle|Connect)', bgp_data)
-                
-                if down_neighbors:
-                    current_state = "CRITICAL"
-                    neighbor_list = [f"{ip} ({state})" for ip, state in down_neighbors]
-                    
-                    if self.should_send_alert(device, "bgp_neighbors", current_state):
-                        self.send_stateful_notification(
-                            f"BGP Neighbors Down",
-                            f"BGP neighbors down: {', '.join(neighbor_list)}",
-                            "CRITICAL", device, "bgp_neighbors", current_state
-                        )
-                else:
-                    current_state = "OK"
-                    send_recovery = self.config.get('frequency', {}).get('send_recovery', True)
-                    if not send_recovery:
-                        self.record_state_without_delivery(device, "bgp_neighbors", current_state)
-                    elif self.should_send_alert(device, "bgp_neighbors", current_state):
-                        self.send_stateful_notification(
-                            f"BGP Neighbors Recovered",
-                            f"All BGP neighbors established",
-                            "RECOVERED", device, "bgp_neighbors", current_state
-                        )
-            except:
-                pass
+        elif processed_bgp_status == "down":
+            current_state = "CRITICAL"
+            if self.should_send_alert(device, "bgp_neighbors", current_state):
+                self.send_stateful_notification(
+                    "BGP Neighbors Down",
+                    "Processed BGP analysis reports one or more neighbors down",
+                    "CRITICAL", device, "bgp_neighbors", current_state
+                )
+        elif processed_bgp_status == "established":
+            current_state = "OK"
+            send_recovery = self.config.get('frequency', {}).get('send_recovery', True)
+            if not send_recovery:
+                self.record_state_without_delivery(device, "bgp_neighbors", current_state)
+            elif self.should_send_alert(device, "bgp_neighbors", current_state):
+                self.send_stateful_notification(
+                    "BGP Neighbors Recovered",
+                    "All BGP neighbors established",
+                    "RECOVERED", device, "bgp_neighbors", current_state
+                )
         
-        # Check link flaps
-        flap_files = glob.glob(str(self.monitor_results / "flap-data" / f"{device}_*_transitions.txt"))
-        if flap_files:
+        # carrier_changes is cumulative. Use the analyzer's timestamped deltas
+        # rather than counting lines in the raw snapshot.
+        flap_counts = self.get_device_flap_counts(device, window_seconds=3600)
+        if flap_counts is not None:
             high_flap_interfaces = []
             critical_flap_interfaces = []
             
             thresholds = self.config.get('thresholds', {}).get('network', {})
-            flap_warning = thresholds.get('link_flaps_per_hour', 10)
-            flap_critical = thresholds.get('link_flaps_critical', 20)
+            try:
+                flap_warning = float(thresholds.get('link_flaps_per_hour', 10))
+                flap_critical = float(thresholds.get('link_flaps_critical', 20))
+            except (TypeError, ValueError):
+                print("    ❌ Invalid link-flap thresholds; using 10/20")
+                self.had_error = True
+                flap_warning, flap_critical = 10, 20
             
-            for flap_file in flap_files:
-                try:
-                    interface = os.path.basename(flap_file).replace(f"{device}_", "").replace("_transitions.txt", "")
-                    with open(flap_file, 'r') as f:
-                        flap_count = len(f.readlines())
-                    
-                    if flap_count >= flap_critical:
-                        critical_flap_interfaces.append(f"{interface}: {flap_count}")
-                    elif flap_count >= flap_warning:
-                        high_flap_interfaces.append(f"{interface}: {flap_count}")
-                except:
-                    continue
+            for interface, flap_count in sorted(flap_counts.items()):
+                if flap_count >= flap_critical:
+                    critical_flap_interfaces.append(f"{interface}: {flap_count}")
+                elif flap_count >= flap_warning:
+                    high_flap_interfaces.append(f"{interface}: {flap_count}")
             
             if critical_flap_interfaces:
                 current_state = "CRITICAL"
@@ -459,6 +631,78 @@ class LLDPqAlerts:
                         f"All interfaces stable",
                         "RECOVERED", device, "link_flaps", current_state
                     )
+
+    def get_device_flap_counts(self, device, window_seconds=3600):
+        """Return per-interface flap deltas recorded inside the time window."""
+        asset_stats = self.get_asset_stats([device])
+        if not asset_stats:
+            return None
+        asset_status = asset_stats["statuses"].get(device, "unknown")
+        if asset_status == "unreachable":
+            print(f"    ⚠️ Skipping link flaps for unreachable device {device}")
+            return None
+        if asset_status != "successful":
+            print(
+                f"    ❌ Link-flap data is not current for {device}: "
+                f"asset status is {asset_status}"
+            )
+            self.had_error = True
+            return None
+
+        history_file = self.monitor_results / "flap_history.json"
+        if not history_file.exists():
+            print(f"    ❌ Link-flap history is missing for {device}")
+            self.had_error = True
+            return None
+
+        try:
+            payload = json.loads(history_file.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("link-flap history root must be an object")
+            histories = payload.get("flapping_hist")
+            if not isinstance(histories, dict):
+                raise ValueError("flapping_hist is missing")
+
+            last_update = payload.get("last_update")
+            if isinstance(last_update, bool) or not isinstance(
+                    last_update, (int, float)):
+                raise ValueError("last_update is missing or invalid")
+            if not math.isfinite(float(last_update)):
+                raise ValueError("last_update is not finite")
+            history_age = time.time() - float(last_update)
+            if history_age < -300:
+                raise ValueError("link-flap history timestamp is in the future")
+            max_age_seconds = self.get_frequency_seconds(
+                "data_stale_minutes", 30
+            )
+            if history_age > max_age_seconds:
+                raise ValueError(
+                    f"link-flap history is stale ({history_age / 60:.1f} minutes old)"
+                )
+
+            cutoff = time.time() - max(float(window_seconds), 0)
+            prefix = f"{device}:"
+            counts = {}
+            for port, entries in histories.items():
+                if not isinstance(port, str) or not port.startswith(prefix):
+                    continue
+                interface = port[len(prefix):]
+                total = 0
+                if not isinstance(entries, list):
+                    raise ValueError(f"invalid flap history for {port}")
+                for entry in entries:
+                    if not isinstance(entry, (list, tuple)) or len(entry) < 3:
+                        raise ValueError(f"invalid flap sample for {port}")
+                    timestamp = float(entry[0])
+                    flap_count = int(entry[2])
+                    if timestamp >= cutoff and flap_count > 0:
+                        total += flap_count
+                counts[interface] = total
+            return counts
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            print(f"    ❌ Could not evaluate link flaps for {device}: {exc}")
+            self.had_error = True
+            return None
 
     def check_log_alerts(self, device):
         """Check for critical system logs"""
@@ -506,8 +750,9 @@ class LLDPqAlerts:
                         f"No critical system issues detected",
                         "RECOVERED", device, "system_logs", current_state
                     )
-        except:
-            pass
+        except (OSError, ValueError, TypeError, re.error) as exc:
+            print(f"    ❌ Could not evaluate log data for {device}: {exc}")
+            self.had_error = True
 
     def get_inventory_devices(self):
         """Return every configured hostname from devices.yaml in inventory order."""
@@ -559,11 +804,19 @@ class LLDPqAlerts:
             "total": len(devices),
             "statuses": {},
         }
-        assets_file = self.script_dir / "assets.ini"
+        if (isinstance(self.run_manifest, dict) and
+                self.run_manifest.get("pipeline_complete")):
+            assets_file = (
+                self.monitor_results / ".pipeline-inputs" / "assets.ini"
+            )
+        else:
+            assets_file = self.script_dir / "assets.ini"
         if not assets_file.exists():
-            stats["unknown"] = len(devices)
-            stats["statuses"] = {device: "unknown" for device in devices}
-            return stats
+            print("❌ assets.ini is missing")
+            self.had_error = True
+            return {}
+        if not self.source_matches_run_manifest("assets", assets_file):
+            return {}
 
         try:
             stale_minutes = float(
@@ -573,49 +826,50 @@ class LLDPqAlerts:
             stale_minutes = 30
 
         try:
-            snapshot_time = assets_file.stat().st_mtime
+            file_mtime = assets_file.stat().st_mtime
+            lines = assets_file.read_text(
+                encoding="utf-8", errors="replace"
+            ).splitlines()
+            nonempty = [line.strip() for line in lines if line.strip()]
+            expected_header = (
+                "DEVICE-NAME IP ETH0-MAC SERIAL MODEL RELEASE UPTIME "
+                "STATUS LAST-SEEN"
+            )
+            if len(nonempty) < 3 or nonempty[1] != expected_header:
+                raise ValueError("missing or invalid assets header")
+            created = datetime.datetime.strptime(
+                nonempty[0].removeprefix("Created on "),
+                "%Y-%m-%d %H-%M-%S",
+            )
+            snapshot_time = created.timestamp()
+            if abs(file_mtime - snapshot_time) > 120:
+                raise ValueError("assets Created time does not match file mtime")
+            age = time.time() - snapshot_time
+            if age < -300 or age > max(stale_minutes, 0) * 60:
+                raise ValueError("assets snapshot is stale or from the future")
+
             rows = {}
-            with open(assets_file, 'r') as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    if line.startswith('Created on '):
-                        try:
-                            created = datetime.datetime.strptime(
-                                line.removeprefix('Created on ').strip(),
-                                "%Y-%m-%d %H-%M-%S"
-                            )
-                            snapshot_time = created.timestamp()
-                        except ValueError:
-                            pass
-                        continue
-                    if line.startswith('DEVICE-NAME'):
-                        continue
-
-                    parts = line.split()
-                    if len(parts) < 2:
-                        continue
-                    status = next(
-                        (part.upper() for part in parts[1:]
-                         if part.upper() in {"OK", "UNREACHABLE", "SSH-FAILED", "NO-INFO"}),
-                        None
-                    )
-                    if status:
-                        rows[parts[0]] = status
-        except OSError as e:
+            allowed = {"OK", "UNREACHABLE", "SSH-FAILED", "NO-INFO"}
+            for line in nonempty[2:]:
+                parts = line.split()
+                if len(parts) < 9 or parts[7].upper() not in allowed:
+                    raise ValueError(f"invalid assets row: {line}")
+                if parts[0] in rows:
+                    raise ValueError(f"duplicate assets row: {parts[0]}")
+                rows[parts[0]] = parts[7].upper()
+            inventory_devices = self.get_inventory_devices()
+            expected_devices = set(inventory_devices or devices)
+            if set(rows) != expected_devices:
+                raise ValueError("assets device set does not match inventory")
+        except (OSError, UnicodeError, ValueError) as e:
             print(f"❌ Error reading assets status: {e}")
-            stats["unknown"] = len(devices)
-            stats["statuses"] = {device: "unknown" for device in devices}
-            return stats
+            self.had_error = True
+            return {}
 
-        snapshot_stale = time.time() - snapshot_time > max(stale_minutes, 0) * 60
         for device in devices:
             raw_status = rows.get(device)
             if raw_status is None:
                 status = "unknown"
-            elif snapshot_stale:
-                status = "stale"
             elif raw_status == "OK":
                 status = "successful"
             elif raw_status in {"UNREACHABLE", "SSH-FAILED"}:
@@ -637,11 +891,73 @@ class LLDPqAlerts:
 
         return stats
 
+    def check_fabric_availability(self):
+        """Alert on total fabric loss using assets, independent of monitor reports."""
+        devices = self.get_inventory_devices()
+        if not devices:
+            print("❌ No devices found for availability evaluation")
+            self.had_error = True
+            return False
+        stats = self.get_asset_stats(devices)
+        if not stats:
+            return False
+
+        available = stats["successful"]
+        current_state = "OUTAGE" if available == 0 else "OK"
+        last_state = self.get_alert_state("_fabric", "availability")
+        if current_state == "OK" and last_state == "UNKNOWN":
+            # Establish a baseline without sending a misleading first-run
+            # recovery notification.
+            return self.record_state_without_delivery(
+                "_fabric", "availability", current_state
+            )
+        if not self.should_send_alert(
+                "_fabric", "availability", current_state):
+            return True
+
+        if current_state == "OUTAGE":
+            unavailable = [
+                device for device, status in stats["statuses"].items()
+                if status != "successful"
+            ]
+            message = (
+                f"No inventory device is reachable ({len(unavailable)}/"
+                f"{len(devices)} unavailable). Devices: "
+                + ", ".join(unavailable[:25])
+            )
+            if len(unavailable) > 25:
+                message += f" … and {len(unavailable) - 25} more"
+            return self.send_stateful_notification(
+                "Fabric Availability Outage", message, "CRITICAL",
+                "_fabric", "availability", current_state,
+            )
+
+        send_recovery = self.config.get('frequency', {}).get(
+            'send_recovery', True
+        )
+        if not send_recovery:
+            return self.record_state_without_delivery(
+                "_fabric", "availability", current_state
+            )
+        return self.send_stateful_notification(
+            "Fabric Availability Recovered",
+            f"{available}/{len(devices)} inventory devices are reachable again.",
+            "RECOVERED", "_fabric", "availability", current_state,
+        )
+
     def check_all_devices(self):
         """Check alerts for all monitored devices"""
         if not self.config:
-            print("Notifications disabled or config error")
-            return
+            if self.notifications_disabled:
+                return True
+            print("❌ Notifications configuration could not be loaded")
+            return False
+
+        if self.monitor_is_stale():
+            return False
+        self.run_manifest = self.load_run_manifest()
+        if self.run_manifest is False:
+            return False
             
         # Get alert strategy
         alert_strategy = self.config.get('alert_strategy', {})
@@ -661,12 +977,23 @@ class LLDPqAlerts:
         
         if not devices:
             print("❌ No devices found in inventory or collected hardware data")
-            return
+            self.had_error = True
+            return False
+
+        manifest_device_count = self.run_manifest.get("device_count")
+        if manifest_device_count != len(devices):
+            print(
+                "❌ Current-run manifest device count does not match inventory "
+                f"({manifest_device_count} != {len(devices)})"
+            )
+            self.had_error = True
+            return False
             
         print(f"Found {len(devices)} devices to check")
         
         if mode == "summary":
-            self.send_summary_alert(devices)
+            if not self.send_summary_alert(devices):
+                self.had_error = True
         elif mode == "change_only":
             self.check_changes_only(devices)  
         else:
@@ -679,42 +1006,62 @@ class LLDPqAlerts:
                     self.check_log_alerts(device)
                 except Exception as e:
                     print(f"    ❌ Error checking {device}: {e}")
+                    self.had_error = True
                     continue
         
         print("Alert check completed")
+        return not self.had_error
 
     def send_summary_alert(self, devices):
         """Send dashboard-style summary alert"""
         print("Generating network health summary...")
+        if (not isinstance(self.run_manifest, dict) or
+                not self.run_manifest.get("pipeline_complete")):
+            print(
+                "❌ Summary was not sent because assets, LLDP and monitor "
+                "outputs were not produced by one complete pipeline"
+            )
+            return False
         
-        # Get stats directly from HTML analysis files with defaults
+        # A missing or malformed report is unknown evidence, not a healthy zero.
         total_devices = len(devices)
-        
         hardware_stats = self.get_stats_from_html("hardware-analysis.html")
-        if not hardware_stats:
-            hardware_stats = {"excellent": 0, "good": 0, "warnings": 0, "critical": 0}
-        
         log_stats = self.get_log_stats_from_json()
-        if not log_stats:
-            log_stats = {"critical": 0, "warnings": 0, "errors": 0, "info": 0}
-        
         bgp_stats = self.get_stats_from_html("bgp-analysis.html")
-        if not bgp_stats:
-            bgp_stats = {"established": 0, "down": 0, "stale": 0, "unknown": 0}
-        
         asset_stats = self.get_asset_stats(devices)
-        
         ber_stats = self.get_stats_from_html("ber-analysis.html")
-        if not ber_stats:
-            ber_stats = {"excellent": 0, "good": 0, "warnings": 0, "critical": 0}
-        
-        flap_stats = self.get_stats_from_html("link-flap-analysis.html")  # Correct filename
-        if not flap_stats:
-            flap_stats = {"stable": 0, "warnings": 0, "critical": 0}
-        
-        optical_stats = self.get_stats_from_html("optical-analysis.html")
-        if not optical_stats:
-            optical_stats = {"excellent": 0, "good": 0, "warnings": 0, "critical": 0}
+        flap_stats = self.get_stats_from_html("link-flap-analysis.html")
+        lldp_stats = self.get_lldp_stats_from_ini()
+
+        skipped = set()
+        if isinstance(self.run_manifest, dict):
+            skipped = set(self.run_manifest.get("skipped", []))
+        optical_skipped = "optical" in skipped
+        optical_stats = (
+            None if optical_skipped
+            else self.get_stats_from_html("optical-analysis.html")
+        )
+
+        required_sources = {
+            "assets.ini": asset_stats,
+            "hardware-analysis.html": hardware_stats,
+            "log_summary.json": log_stats,
+            "bgp-analysis.html": bgp_stats,
+            "ber-analysis.html": ber_stats,
+            "link-flap-analysis.html": flap_stats,
+            "lldp_results.ini": lldp_stats,
+        }
+        if not optical_skipped:
+            required_sources["optical-analysis.html"] = optical_stats
+        missing_sources = [
+            name for name, stats in required_sources.items() if not stats
+        ]
+        if missing_sources:
+            print(
+                "❌ Summary was not sent because required report data is "
+                f"missing or invalid: {', '.join(missing_sources)}"
+            )
+            return False
         
         critical_issues = []
         
@@ -732,11 +1079,15 @@ class LLDPqAlerts:
         if bgp_stats.get('unknown', 0) > 0:
             critical_issues.append(f"BGP: {bgp_stats['unknown']} device collections unknown")
         
-        if optical_stats.get('critical', 0) > 0:
+        if optical_stats and optical_stats.get('critical', 0) > 0:
             critical_issues.append(f"Optical: {optical_stats['critical']} ports with critical issues")
         
         if ber_stats.get('critical', 0) > 0:
             critical_issues.append(f"BER: {ber_stats['critical']} ports with critical errors")
+        if ber_stats.get('unknown', 0) > 0:
+            critical_issues.append(
+                f"BER: {ber_stats['unknown']} ports awaiting a complete traffic sample"
+            )
         
         if flap_stats.get('critical', 0) > 0:
             critical_issues.append(f"Link Flap: {flap_stats['critical']} problematic ports")
@@ -754,21 +1105,46 @@ class LLDPqAlerts:
                 f"Assets: {asset_stats['stale']} devices have stale status data"
             )
         
-        # Analyze LLDP topology (global analysis, not per device)
-        lldp_stats = self.get_lldp_stats_from_ini()
-        if not lldp_stats:
-            lldp_stats = {"successful": 0, "failed": 0, "warnings": 0, "no_info": 0}
-        
         # Check for LLDP critical issues
         if lldp_stats['failed'] > 0:
             critical_issues.append(f"🔗 LLDP Topology: {lldp_stats['failed']} failed connections")
         
         # Create summary signature for state tracking (include optical and LLDP)
-        summary_signature = f"{total_devices}_{hardware_stats['excellent']}_{hardware_stats['good']}_{hardware_stats['warnings']}_{hardware_stats['critical']}_{log_stats['critical']}_{log_stats['warnings']}_{bgp_stats['down']}_{bgp_stats.get('stale', 0)}_{bgp_stats.get('unknown', 0)}_{asset_stats['failed']}_{asset_stats['unknown']}_{asset_stats['stale']}_{ber_stats['excellent']}_{ber_stats['critical']}_{flap_stats['critical']}_{optical_stats['critical']}_{lldp_stats['failed']}"
+        optical_signature = (
+            "skipped" if optical_skipped else
+            f"{optical_stats['excellent']}:{optical_stats['good']}:"
+            f"{optical_stats['warnings']}:{optical_stats['critical']}"
+        )
+        summary_signature = "_".join(map(str, (
+            total_devices,
+            hardware_stats['excellent'], hardware_stats['good'],
+            hardware_stats['warnings'], hardware_stats['critical'],
+            log_stats['critical'], log_stats['warnings'], log_stats['errors'],
+            bgp_stats['established'], bgp_stats['down'],
+            bgp_stats.get('stale', 0), bgp_stats.get('unknown', 0),
+            asset_stats['successful'], asset_stats['failed'],
+            asset_stats['unknown'], asset_stats['stale'],
+            ber_stats['excellent'], ber_stats['good'], ber_stats['warnings'],
+            ber_stats['critical'], ber_stats.get('unknown', 0),
+            flap_stats['stable'], flap_stats['warnings'],
+            flap_stats['critical'], optical_signature,
+            lldp_stats['successful'], lldp_stats['failed'],
+            lldp_stats['warnings'], lldp_stats['no_info'],
+        )))
         
         # Check if summary changed or it's scheduled time (critical issues don't force immediate send in summary mode)
         if self.should_send_summary_alert(summary_signature):
             server_url = self.config.get('notifications', {}).get('server_url', 'http://localhost')
+            if optical_skipped:
+                optical_section = "Optical Diagnostics Analysis:\n\nSkipped by configuration"
+            else:
+                optical_section = (
+                    "Optical Diagnostics Analysis:\n\n"
+                    f"Excellent: {optical_stats['excellent']}     "
+                    f"Good: {optical_stats['good']}     "
+                    f"Warning: {optical_stats['warnings']}     "
+                    f"Critical: {optical_stats['critical']}"
+                )
             
             # Create clean dashboard-style message with spacing
             title = "Network Health Summary"
@@ -825,10 +1201,7 @@ Stable: {flap_stats['stable']}     Warnings: {flap_stats['warnings']}     Critic
 
 ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ──
 
-Optical Diagnostics Analysis:
-
-
-Excellent: {optical_stats['excellent']}     Good: {optical_stats['good']}     Warning: {optical_stats['warnings']}     Critical: {optical_stats['critical']}
+{optical_section}
 
 
 ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ──
@@ -836,7 +1209,7 @@ Excellent: {optical_stats['excellent']}     Good: {optical_stats['good']}     Wa
 BER Analysis Results:
 
 
-Excellent: {ber_stats['excellent']}     Good: {ber_stats['good']}     Warnings: {ber_stats['warnings']}     Critical: {ber_stats['critical']}
+Excellent: {ber_stats['excellent']}     Good: {ber_stats['good']}     Warnings: {ber_stats['warnings']}     Critical: {ber_stats['critical']}     Awaiting Sample: {ber_stats.get('unknown', 0)}
 
 """
             if critical_issues:
@@ -857,16 +1230,18 @@ Excellent: {ber_stats['excellent']}     Good: {ber_stats['good']}     Warnings: 
             # A failed summary remains pending and will be retried. Neither its
             # signature nor its schedule marker may claim a delivery occurred.
             if delivered:
-                self.record_alert_delivery(
+                persisted = self.record_alert_delivery(
                     "network_summary", "last_summary", summary_signature
                 )
                 if self.is_summary_time():
                     current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-                    self.set_alert_state(
+                    persisted = self.set_alert_state(
                         "network_summary", "last_summary_time", current_time
-                    )
-            
-        
+                    ) and persisted
+                return delivered and persisted
+            return False
+
+        return True
 
     def should_send_summary_alert(self, current_signature):
         """Check if summary should be sent based on changes or schedule"""
@@ -950,10 +1325,17 @@ Excellent: {ber_stats['excellent']}     Good: {ber_stats['good']}     Warnings: 
                 
             with open(bgp_history_file, 'r') as f:
                 bgp_data = json.load(f)
+            if not isinstance(bgp_data, dict):
+                raise ValueError("BGP history root must be an object")
             
             # Get latest BGP stats for this device. Older files may not contain
             # data_status; those remain compatible and are treated as current.
-            device_bgp = bgp_data.get("current_bgp_stats", {}).get(device, {})
+            current_stats = bgp_data.get("current_bgp_stats", {})
+            if not isinstance(current_stats, dict):
+                raise ValueError("current_bgp_stats must be an object")
+            device_bgp = current_stats.get(device, {})
+            if device_bgp and not isinstance(device_bgp, dict):
+                raise ValueError(f"invalid BGP status record for {device}")
             if device_bgp:
                 data_status = device_bgp.get("data_status", "current")
                 if data_status in {"stale", "unknown"}:
@@ -962,7 +1344,9 @@ Excellent: {ber_stats['excellent']}     Good: {ber_stats['good']}     Warnings: 
                 return "down" if down_neighbors > 0 else "established"
             
             return "unknown"
-        except:
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            print(f"    ❌ Error reading BGP status for {device}: {exc}")
+            self.had_error = True
             return "unknown"
 
     def get_device_asset_status(self, device):
@@ -999,31 +1383,20 @@ Excellent: {ber_stats['excellent']}     Good: {ber_stats['good']}     Warnings: 
 
     def get_device_flap_status(self, device):
         """Get link flap status for a device from processed summary"""
+        counts = self.get_device_flap_counts(device, window_seconds=3600)
+        if counts is None:
+            return "unknown"
+        thresholds = self.config.get('thresholds', {}).get('network', {})
         try:
-            # Read from processed flap_history.json
-            flap_history_file = self.monitor_results / "flap_history.json"
-            if not flap_history_file.exists():
-                return "stable"
-                
-            with open(flap_history_file, 'r') as f:
-                flap_data = json.load(f)
-            
-            # Get flap stats for this device
-            device_flap = flap_data.get(device, {})
-            if device_flap:
-                current_stats = device_flap.get("current_stats", {})
-                # Look for flapping or flapped ports
-                flapping_count = len(current_stats.get("flapping_ports", []))
-                flapped_count = len(current_stats.get("flapped_ports", []))
-                
-                if flapping_count > 0:
-                    return "critical"
-                elif flapped_count > 0:
-                    return "warnings"
-            
-            return "stable"
-        except:
-            return "stable"
+            warning = float(thresholds.get('link_flaps_per_hour', 10))
+            critical = float(thresholds.get('link_flaps_critical', 20))
+        except (TypeError, ValueError):
+            warning, critical = 10, 20
+        if any(count >= critical for count in counts.values()):
+            return "critical"
+        if any(count >= warning for count in counts.values()):
+            return "warnings"
+        return "stable"
     
     def get_device_optical_status(self, device):
         """Get optical diagnostics status for a device from processed summary"""
@@ -1161,6 +1534,13 @@ Excellent: {ber_stats['excellent']}     Good: {ber_stats['good']}     Warnings: 
                 
             with open(html_file, 'r', encoding='utf-8') as f:
                 content = f.read()
+
+            if 'data-collection-status="unavailable"' in content:
+                print(
+                    f"    ❌ {html_filename} has no current device telemetry"
+                )
+                self.had_error = True
+                return {}
             
             # Extract numbers from specific HTML element IDs (JavaScript logic)
             stats = {}
@@ -1199,12 +1579,14 @@ Excellent: {ber_stats['excellent']}     Good: {ber_stats['good']}     Warnings: 
                 good = self.extract_element_value(content, 'good-ports')
                 warnings = self.extract_element_value(content, 'warning-ports')
                 critical = self.extract_element_value(content, 'critical-ports')
+                unknown = self.extract_element_value(content, 'unknown-ports')
                 
                 stats = {
                     "excellent": excellent,
                     "good": good,
                     "warnings": warnings,
-                    "critical": critical
+                    "critical": critical,
+                    "unknown": unknown,
                 }
                 
             elif "link-flap" in html_filename:
@@ -1231,7 +1613,17 @@ Excellent: {ber_stats['excellent']}     Good: {ber_stats['good']}     Warnings: 
                     "stale": stale,
                     "unknown": unknown
                 }
-            
+
+            missing_metrics = [
+                name for name, value in stats.items() if value is None
+            ]
+            if not stats or missing_metrics:
+                if missing_metrics:
+                    print(
+                        f"    ❌ Missing metrics in {html_filename}: "
+                        f"{', '.join(missing_metrics)}"
+                    )
+                return {}
             return stats
             
         except Exception as e:
@@ -1242,13 +1634,13 @@ Excellent: {ber_stats['excellent']}     Good: {ber_stats['good']}     Warnings: 
         """Extract numeric value from HTML element by ID"""
         try:
             # Look for id="element_id">number
-            pattern = rf'id="{element_id}"[^>]*>(\d+)'
+            pattern = rf'id="{re.escape(element_id)}"[^>]*>\s*(\d+)'
             match = re.search(pattern, html_content)
             if match:
                 return int(match.group(1))
-            return 0
-        except:
-            return 0
+            return None
+        except (TypeError, ValueError, re.error):
+            return None
 
     def get_log_stats_from_json(self):
         """Get log statistics from log_summary.json (JavaScript logic)"""
@@ -1259,14 +1651,24 @@ Excellent: {ber_stats['excellent']}     Good: {ber_stats['good']}     Warnings: 
                 
             with open(log_summary_file, 'r') as f:
                 log_data = json.load(f)
+
+            if log_data.get("collection_status") != "current":
+                print("    ❌ log_summary.json has no current device telemetry")
+                self.had_error = True
+                return {}
             
-            totals = log_data.get("totals", {})
-            
+            totals = log_data.get("totals")
+            required = ("critical", "warning", "error", "info")
+            if not isinstance(totals, dict) or any(
+                    key not in totals or not isinstance(totals[key], (int, float))
+                    for key in required):
+                print("    ❌ log_summary.json has incomplete totals")
+                return {}
             return {
-                "critical": totals.get("critical", 0),
-                "warnings": totals.get("warning", 0),  # Note: "warning" not "warnings" in JSON
-                "errors": totals.get("error", 0),
-                "info": totals.get("info", 0)
+                "critical": totals["critical"],
+                "warnings": totals["warning"],
+                "errors": totals["error"],
+                "info": totals["info"]
             }
             
         except Exception as e:
@@ -1277,43 +1679,79 @@ Excellent: {ber_stats['excellent']}     Good: {ber_stats['good']}     Warnings: 
         """Get LLDP topology statistics from lldp_results.ini (JavaScript logic)"""
         try:
             # Check for lldp_results.ini in different locations
-            possible_paths = [
-                self.script_dir / "lldp-results" / "lldp_results.ini",  # monitor/lldp-results/
-                self.script_dir.parent / "html" / "lldp_results.ini",  # html/ directory  
-                self.monitor_results / "lldp_results.ini"  # monitor-results/
-            ]
+            canonical_lldp = self.script_dir / "lldp-results" / "lldp_results.ini"
+            if (isinstance(self.run_manifest, dict) and
+                    self.run_manifest.get("pipeline_complete")):
+                # Parse the immutable copy bundled with this monitor run.
+                possible_paths = [
+                    self.monitor_results / ".pipeline-inputs" / "lldp_results.ini"
+                ]
+            else:
+                possible_paths = [
+                    canonical_lldp,
+                    self.script_dir.parent / "html" / "lldp_results.ini",
+                    self.monitor_results / "lldp_results.ini",
+                ]
             
-            lldp_file = None
-            for path in possible_paths:
-                if path.exists():
-                    lldp_file = path
-                    break
+            existing_paths = [path for path in possible_paths if path.is_file()]
+            lldp_file = max(
+                existing_paths, key=lambda path: path.stat().st_mtime,
+                default=None,
+            )
                     
             if not lldp_file:
                 print(f"    ❌ No lldp_results.ini found in any expected location")
                 return {}
+            if not self.source_matches_run_manifest("lldp", lldp_file):
+                return {}
                 
             with open(lldp_file, 'r') as f:
                 content = f.read()
+
+            nonempty_lines = [line.strip() for line in content.splitlines()
+                              if line.strip()]
+            if (not nonempty_lines or
+                    not nonempty_lines[0].startswith("Created on ")):
+                print("    ❌ lldp_results.ini is empty or missing its header")
+                return {}
+
+            created = datetime.datetime.strptime(
+                nonempty_lines[0].removeprefix("Created on ").strip(),
+                "%Y-%m-%d %H-%M-%S",
+            )
+            created_time = created.timestamp()
+            file_mtime = lldp_file.stat().st_mtime
+            if abs(file_mtime - created_time) > 120:
+                print("    ❌ lldp_results.ini Created time does not match file mtime")
+                return {}
+            lldp_age = time.time() - created_time
+            max_age = self.get_frequency_seconds("data_stale_minutes", 30)
+            if lldp_age < -300 or lldp_age > max_age:
+                print("    ❌ lldp_results.ini is stale or from the future")
+                return {}
             
-            lines = content.split('\n')
             stats = {"successful": 0, "failed": 0, "warnings": 0, "no_info": 0}
+            recognized_rows = 0
             
             # Parse each line like JavaScript does
-            for line in lines:
-                line = line.strip()
+            for line in nonempty_lines[1:]:
                 # Look for port status lines (swp + Pass/Fail/No-Info pattern)
-                if 'swp' in line and ('Pass' in line or 'Fail' in line or 'No-Info' in line):
-                    parts = line.split()
-                    if len(parts) >= 2:
-                        status = parts[1]  # Status is second column
-                        if status == 'Pass':
-                            stats["successful"] += 1
-                        elif status == 'Fail':
-                            stats["failed"] += 1  
-                        elif status == 'No-Info':
-                            stats["no_info"] += 1
-            
+                parts = line.split()
+                if (len(parts) < 2 or not parts[0].startswith("swp") or
+                        parts[1] not in {"Pass", "Fail", "No-Info"}):
+                    continue
+                recognized_rows += 1
+                status = parts[1]
+                if status == 'Pass':
+                    stats["successful"] += 1
+                elif status == 'Fail':
+                    stats["failed"] += 1
+                else:
+                    stats["no_info"] += 1
+
+            if recognized_rows == 0:
+                print("    ❌ lldp_results.ini contains no valid port results")
+                return {}
 
             return stats
             
@@ -1342,25 +1780,48 @@ Excellent: {ber_stats['excellent']}     Good: {ber_stats['good']}     Warnings: 
                 self.check_log_alerts(device)
             except Exception as e:
                 print(f"    ❌ Error checking {device}: {e}")
+                self.had_error = True
                 continue
 
 def main():
     """Main function"""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    alerts = LLDPqAlerts(script_dir)
+
+    lock_path = alerts.state_dir / ".check-alerts.lock"
+    try:
+        alert_lock = lock_path.open("a+")
+        fcntl.flock(alert_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (OSError, BlockingIOError) as exc:
+        print(f"Alert evaluation is already running or could not be locked: {exc}")
+        return 75
+
+    if len(sys.argv) > 1 and sys.argv[1] == "--assets-only":
+        if not alerts.config:
+            return 0 if alerts.notifications_disabled else 1
+        return 0 if alerts.check_fabric_availability() else 1
+
     if len(sys.argv) > 1:
         # Specific device check (for debugging)
         device = sys.argv[1]
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        alerts = LLDPqAlerts(script_dir)
-        
+        if not alerts.config:
+            return 0 if alerts.notifications_disabled else 1
+        if alerts.monitor_is_stale():
+            return 1
+        alerts.run_manifest = alerts.load_run_manifest()
+        if alerts.run_manifest is False:
+            return 1
         print(f"Checking alerts for device: {device}")
-        alerts.check_hardware_alerts(device)
-        alerts.check_network_alerts(device)
-        alerts.check_log_alerts(device)
-    else:
-        # Check all devices
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        alerts = LLDPqAlerts(script_dir)
-        alerts.check_all_devices()
+        try:
+            alerts.check_hardware_alerts(device)
+            alerts.check_network_alerts(device)
+            alerts.check_log_alerts(device)
+        except Exception as exc:
+            print(f"❌ Alert evaluation failed for {device}: {exc}")
+            alerts.had_error = True
+        return 1 if alerts.had_error else 0
+
+    return 0 if alerts.check_all_devices() else 1
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

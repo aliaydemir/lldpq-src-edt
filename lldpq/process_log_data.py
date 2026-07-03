@@ -13,7 +13,12 @@ import json
 import html
 from datetime import datetime, timedelta
 from collections import defaultdict
-from collection_freshness import is_current_collection, read_asset_snapshot
+from collection_freshness import (
+    asset_snapshot_is_valid,
+    is_current_collection,
+    mark_html_collection_unavailable,
+    read_asset_snapshot,
+)
 
 try:
     from device_names import canonical
@@ -37,6 +42,7 @@ class LogAnalyzer:
         self.log_data_dir = os.path.join(data_dir, "log-data")
         self.log_analysis = defaultdict(lambda: {"critical": [], "warning": [], "error": [], "info": []})
         self.log_counts = defaultdict(lambda: {"critical": 0, "warning": 0, "error": 0, "info": 0})
+        self.collection_status = "current"
         
         # Patterns that should NOT be critical (demoted to warning)
         # These are transient issues, not real critical problems
@@ -1159,6 +1165,7 @@ class LogAnalyzer:
         
         summary_data = {
             "timestamp": datetime.now().isoformat(),
+            "collection_status": self.collection_status,
             "total_devices": len(self.log_counts),
             "totals": {
                 "critical": sum(device["critical"] for device in self.log_counts.values()),
@@ -1186,6 +1193,16 @@ class LogAnalyzer:
         
         # Process all log files
         asset_snapshot = read_asset_snapshot()
+        statuses, _asset_mtime, assets_available = asset_snapshot
+        snapshot_valid = asset_snapshot_is_valid(asset_snapshot)
+        if assets_available and not snapshot_valid:
+            print("❌ Asset snapshot is invalid or incomplete")
+            return False
+        expected_hosts = (
+            {host for host, status in statuses.items() if status == "OK"}
+            if snapshot_valid else set()
+        )
+        all_devices_unavailable = snapshot_valid and not expected_hosts
         log_files = [
             f for f in os.listdir(self.log_data_dir)
             if f.endswith('_logs.txt')
@@ -1196,9 +1213,21 @@ class LogAnalyzer:
             )
         ]
         
-        if not log_files:
+        collected_hosts = {
+            filename.removesuffix('_logs.txt') for filename in log_files
+        }
+        missing_hosts = sorted(expected_hosts - collected_hosts)
+        if missing_hosts:
+            print(
+                "❌ Missing current log collections for: "
+                + ", ".join(missing_hosts)
+            )
+            return False
+        if not log_files and not all_devices_unavailable:
             print("⚠️  No log files found")
             return False
+        if all_devices_unavailable:
+            self.collection_status = "unavailable"
         
         for log_file in log_files:
             device_name = log_file.replace('_logs.txt', '')
@@ -1216,6 +1245,10 @@ class LogAnalyzer:
         # Generate outputs
         self.generate_html_report()
         self.save_summary_data()
+        if all_devices_unavailable:
+            mark_html_collection_unavailable(
+                os.path.join(self.data_dir, "log-analysis.html")
+            )
         
         # Print summary
         total_logs = sum(sum(device.values()) for device in self.log_counts.values())

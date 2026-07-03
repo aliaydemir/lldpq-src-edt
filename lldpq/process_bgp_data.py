@@ -13,6 +13,15 @@ import copy
 import time
 from datetime import datetime
 from bgp_analyzer import BGPAnalyzer
+from collection_freshness import (
+    asset_snapshot_is_authoritative,
+    asset_snapshot_is_valid,
+    is_current_collection,
+    read_asset_snapshot,
+)
+
+
+COLLECTION_ERROR_MARKER = "__LLDPQ_COLLECTION_ERROR__:"
 
 def parse_data_file(filepath):
     """Parse data file"""
@@ -104,6 +113,8 @@ def mark_collection_unavailable(analyzer, hostname, previous_stats, reason):
 
 def bgp_output_is_valid(analyzer, bgp_data):
     """Accept parsed neighbors or an explicit, valid zero-neighbor response."""
+    if COLLECTION_ERROR_MARKER in bgp_data:
+        return False
     if analyzer.parse_bgp_output(bgp_data):
         return True
     if re.search(r'Total number of neighbors\s+0\b', bgp_data, re.IGNORECASE):
@@ -116,6 +127,16 @@ def bgp_output_is_valid(analyzer, bgp_data):
         return True
     return False
 
+
+def evpn_output_is_valid(evpn_data):
+    """Accept a complete EVPN response, including an explicit zero-EVPN fabric."""
+    if not evpn_data or COLLECTION_ERROR_MARKER in evpn_data:
+        return False
+    return (
+        "=== EVPN VNI SUMMARY ===" in evpn_data
+        and "=== EVPN TYPE COUNTS ===" in evpn_data
+    )
+
 def process_bgp_data_files(data_dir="monitor-results/bgp-data"):
     """Process BGP data files and update BGP analyzer"""
     data_dir = os.path.abspath(data_dir)
@@ -124,6 +145,7 @@ def process_bgp_data_files(data_dir="monitor-results/bgp-data"):
     previous_current_stats = copy.deepcopy(bgp_analyzer.current_bgp_stats)
     bgp_analyzer.current_bgp_stats = {}
     processed_hosts = set()
+    current_bgp_hosts = set()
     assets_file = os.path.join(os.path.dirname(result_dir), "assets.ini")
     asset_statuses = parse_asset_statuses(assets_file)
     
@@ -133,13 +155,32 @@ def process_bgp_data_files(data_dir="monitor-results/bgp-data"):
     
     if not os.path.exists(data_dir):
         print(f"BGP data directory {data_dir} not found")
-        return
+        return None
+
+    asset_snapshot = read_asset_snapshot(assets_file)
+    snapshot_statuses, _asset_mtime, assets_available = asset_snapshot
+    snapshot_valid = asset_snapshot_is_valid(asset_snapshot)
+    assets_authoritative = asset_snapshot_is_authoritative(asset_snapshot)
+    if assets_available and not snapshot_valid:
+        raise RuntimeError("asset snapshot is invalid or incomplete")
+    if snapshot_valid:
+        asset_statuses = snapshot_statuses
     
     # Process all BGP neighbor files
     for filename in sorted(os.listdir(data_dir)):
         if filename.endswith("_bgp.txt"):
             hostname = filename.replace("_bgp.txt", "")
             filepath = os.path.join(data_dir, filename)
+
+            if snapshot_valid and hostname not in asset_statuses:
+                if assets_authoritative:
+                    try:
+                        os.unlink(filepath)
+                    except OSError as exc:
+                        raise RuntimeError(
+                            f"could not prune retired BGP data {filename}: {exc}"
+                        ) from exc
+                continue
             processed_hosts.add(hostname)
             
             # Parse BGP data file
@@ -155,7 +196,7 @@ def process_bgp_data_files(data_dir="monitor-results/bgp-data"):
                 )
                 continue
 
-            if not bgp_data or len(bgp_data.strip()) < 50:
+            if not bgp_data or not bgp_data.strip():
                 mark_collection_unavailable(
                     bgp_analyzer, hostname,
                     previous_current_stats.get(hostname), "collection_empty_or_invalid"
@@ -175,6 +216,7 @@ def process_bgp_data_files(data_dir="monitor-results/bgp-data"):
                 "data_status": "current",
                 "collection_checked_at": datetime.now().isoformat(),
             })
+            current_bgp_hosts.add(hostname)
             
             # Show results
             if hostname in bgp_analyzer.current_bgp_stats:
@@ -189,7 +231,11 @@ def process_bgp_data_files(data_dir="monitor-results/bgp-data"):
     # Process EVPN data files
     # Devices present in the prior snapshot but absent from this collection must
     # not survive as apparently-current data.
-    expected_hosts = set(previous_current_stats) | set(asset_statuses)
+    expected_hosts = (
+        set(asset_statuses)
+        if snapshot_valid
+        else set(previous_current_stats) | set(asset_statuses)
+    )
     for hostname in expected_hosts:
         if hostname not in processed_hosts:
             mark_collection_unavailable(
@@ -198,19 +244,54 @@ def process_bgp_data_files(data_dir="monitor-results/bgp-data"):
             )
 
     evpn_data_dir = os.path.join(result_dir, "evpn-data")
+    evpn_processed_hosts = set()
     if os.path.exists(evpn_data_dir):
         print("Processing EVPN data")
-        for filename in os.listdir(evpn_data_dir):
+        for filename in sorted(os.listdir(evpn_data_dir)):
             if filename.endswith("_evpn.txt"):
                 hostname = filename.replace("_evpn.txt", "")
                 filepath = os.path.join(evpn_data_dir, filename)
+
+                if snapshot_valid and hostname not in asset_statuses:
+                    if assets_authoritative:
+                        try:
+                            os.unlink(filepath)
+                        except OSError as exc:
+                            raise RuntimeError(
+                                f"could not prune retired EVPN data {filename}: {exc}"
+                            ) from exc
+                    continue
+                if not is_current_collection(filepath, hostname, asset_snapshot):
+                    continue
                 
                 # Parse EVPN data file
                 evpn_data = parse_data_file(filepath)
-                
-                if evpn_data and len(evpn_data.strip()) > 20:
-                    # Update EVPN stats
-                    bgp_analyzer.update_evpn_stats(hostname, evpn_data)
+                if not evpn_output_is_valid(evpn_data):
+                    raise RuntimeError(
+                        f"invalid current EVPN collection for: {hostname}"
+                    )
+                bgp_analyzer.update_evpn_stats(hostname, evpn_data)
+                evpn_processed_hosts.add(hostname)
+
+    if snapshot_valid:
+        expected_bgp_hosts = {
+            host for host, status in asset_statuses.items() if status == "OK"
+        }
+        missing_bgp_hosts = sorted(expected_bgp_hosts - current_bgp_hosts)
+        if missing_bgp_hosts:
+            raise RuntimeError(
+                "missing or invalid current BGP collections for: "
+                + ", ".join(missing_bgp_hosts)
+            )
+        expected_evpn_hosts = {
+            host for host, status in asset_statuses.items() if status == "OK"
+        }
+        missing_evpn_hosts = sorted(expected_evpn_hosts - evpn_processed_hosts)
+        if missing_evpn_hosts:
+            raise RuntimeError(
+                "missing current EVPN collections for: "
+                + ", ".join(missing_evpn_hosts)
+            )
     
     # Save updated BGP history
     bgp_analyzer.save_bgp_history()
@@ -265,7 +346,9 @@ if __name__ == "__main__":
     logging.info("Starting BGP data processing")
     
     try:
-        process_bgp_data_files()
+        analyzer = process_bgp_data_files()
+        if analyzer is None:
+            sys.exit(1)
         logging.info("BGP data processing completed")
     except Exception as e:
         logging.error(f"BGP data processing failed: {e}")

@@ -203,6 +203,20 @@
         .section-title:hover {
             color: #8bd400;
         }
+
+        .section-title-link {
+            color: inherit;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            text-decoration: none;
+        }
+
+        .section-title-link:focus-visible,
+        .summary-card:focus-visible {
+            outline: 2px solid #76b900;
+            outline-offset: 2px;
+        }
         
         .section-content {
             padding: 16px;
@@ -216,11 +230,14 @@
         }
         
         .summary-card {
+            display: block;
             background: #252526;
             padding: 15px;
             border-radius: 6px;
             border-left: 3px solid #76b900;
+            color: inherit;
             cursor: pointer;
+            text-decoration: none;
             transition: all 0.2s ease;
         }
         
@@ -309,7 +326,7 @@
                 </div>
                 <div class="stat-item" id="critical-issues-container" onclick="window.location.href='lldp-problem.html'" style="position: relative; cursor: pointer;">
                     <div class="stat-value" id="critical-issues">--</div>
-                    <div class="stat-label">Critical Issues</div>
+                    <div class="stat-label">Open Issues</div>
                     <div class="critical-tooltip" id="critical-tooltip"></div>
                 </div>
             </div>
@@ -570,33 +587,43 @@
         <!-- Duplicate Address Analysis Section -->
         <div class="analysis-section">
             <div class="section-header">
-                <h2 class="section-title" onclick="window.location.href='/monitor-results/duplicate-analysis.html'">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
-                    Duplicate Address Analysis
+                <h2 class="section-title">
+                    <a class="section-title-link" href="/monitor-results/duplicate-analysis.html">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+                        Duplicate Address Analysis
+                    </a>
                 </h2>
             </div>
             <div class="section-content">
             <div class="summary-grid">
-                <div class="summary-card card-critical" onclick="window.location.href='/monitor-results/duplicate-analysis.html'">
-                    <div class="card-value status-critical" id="dup-ip-active">--</div>
-                    <div class="card-label">Active IP Duplicates</div>
-                </div>
-                <div class="summary-card card-warning" onclick="window.location.href='/monitor-results/duplicate-analysis.html'">
-                    <div class="card-value status-warning" id="dup-ip-quiesced">--</div>
-                    <div class="card-label">Quiesced IP Duplicates</div>
-                </div>
-                <div class="summary-card card-critical" onclick="window.location.href='/monitor-results/duplicate-analysis.html'">
-                    <div class="card-value status-critical" id="dup-mac">--</div>
-                    <div class="card-label">MAC Duplicates</div>
-                </div>
-                <div class="summary-card card-warning" onclick="window.location.href='/monitor-results/duplicate-analysis.html'">
-                    <div class="card-value status-warning" id="dup-apipa">--</div>
-                    <div class="card-label">APIPA (DHCP Failed)</div>
-                </div>
-                <div class="summary-card card-info" onclick="window.location.href='/monitor-results/duplicate-analysis.html'">
-                    <div class="card-value status-info" id="dup-vlans">--</div>
-                    <div class="card-label">VLANs Affected</div>
-                </div>
+                <a class="summary-card card-critical" href="/monitor-results/duplicate-analysis.html">
+                    <div class="card-value status-critical" id="dup-confirmed-ip-active">--</div>
+                    <div class="card-label">Active IP Conflict Incidents</div>
+                </a>
+                <a class="summary-card card-warning" href="/monitor-results/duplicate-analysis.html">
+                    <div class="card-value status-warning" id="dup-active-mobility">--</div>
+                    <div class="card-label">Active Mobility Incidents</div>
+                </a>
+                <a class="summary-card card-critical" href="/monitor-results/duplicate-analysis.html">
+                    <div class="card-value status-critical" id="dup-confirmed-mac-standalone-active">--</div>
+                    <div class="card-label">Standalone Active MAC Conflicts</div>
+                </a>
+                <a class="summary-card card-warning" href="/monitor-results/duplicate-analysis.html">
+                    <div class="card-value status-warning" id="dup-dad-finding-active">--</div>
+                    <div class="card-label">Active DAD-only Findings</div>
+                </a>
+                <a class="summary-card card-warning" href="/monitor-results/duplicate-analysis.html">
+                    <div class="card-value status-warning" id="dup-possible-loops">--</div>
+                    <div class="card-label">Possible Loop Incidents</div>
+                </a>
+                <a class="summary-card card-info" href="/monitor-results/duplicate-analysis.html">
+                    <div class="card-value status-info" id="dup-ipv4ll-unique">--</div>
+                    <div class="card-label">IPv4LL Resolved Claims</div>
+                </a>
+                <a class="summary-card card-info" id="dup-coverage-card" href="/monitor-results/duplicate-analysis.html">
+                    <div class="card-value status-info" id="dup-coverage">--</div>
+                    <div class="card-label">Coverage (Current / Expected)</div>
+                </a>
             </div>
             </div>
         </div>
@@ -721,6 +748,208 @@
             };
             const formattedDate = now.toLocaleString('en-US', options);
             document.getElementById('last-updated-time').textContent = formattedDate;
+        }
+
+        function reportCollectionUnavailable(doc) {
+            return Boolean(doc && doc.querySelector(
+                '[data-collection-status="unavailable"], [data-analysis-status="skipped"]'
+            ));
+        }
+
+        function dashboardMetric(data, value) {
+            return data && data.unavailable ? 'N/A' : value;
+        }
+
+        function duplicateDashboardMetric(data, value) {
+            if (!data || data.unavailable || value === null || value === undefined) return 'N/A';
+            return value;
+        }
+
+        function normalizeDuplicateMetricKey(value) {
+            return String(value || '')
+                .trim()
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, '_')
+                .replace(/^_+|_+$/g, '');
+        }
+
+        function duplicateMetricNumber(value) {
+            if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+            const text = String(value === null || value === undefined ? '' : value)
+                .trim()
+                .replace(/,/g, '');
+            if (!/^-?\d+(?:\.\d+)?$/.test(text)) return null;
+            const parsed = Number(text);
+            return Number.isFinite(parsed) ? parsed : null;
+        }
+
+        function duplicateMetricBoolean(value) {
+            if (typeof value === 'boolean') return value;
+            const normalized = String(value === null || value === undefined ? '' : value)
+                .trim()
+                .toLowerCase();
+            if (['true', '1', 'yes', 'partial'].includes(normalized)) return true;
+            if (['false', '0', 'no', 'current', 'complete'].includes(normalized)) return false;
+            return null;
+        }
+
+        function parseDuplicateSummary(doc) {
+            const metrics = {};
+            let legacySchemaSeen = false;
+
+            function putMetric(key, value) {
+                const normalized = normalizeDuplicateMetricKey(key);
+                if (!normalized || value === null || value === undefined || value === '') return;
+                metrics[normalized] = value;
+            }
+
+            // Preferred machine-readable contract. It lets the analysis page change
+            // display labels without silently changing dashboard semantics.
+            doc.querySelectorAll('[data-metric-key], [data-duplicate-metric]').forEach(card => {
+                const key = card.getAttribute('data-metric-key') ||
+                    card.getAttribute('data-duplicate-metric');
+                const valueNode = card.querySelector('.metric, [data-metric-value]');
+                const value = card.getAttribute('data-metric-value') ||
+                    (valueNode && valueNode.getAttribute('data-metric-value')) ||
+                    (valueNode ? valueNode.textContent : card.textContent);
+                putMetric(key, value);
+            });
+
+            // Optional JSON metadata is supported for reports that do not render every
+            // metric as a card. Attribute, script and meta forms are intentionally read-only.
+            doc.querySelectorAll('[data-duplicate-summary]').forEach(node => {
+                const raw = node.getAttribute('data-duplicate-summary') ||
+                    (node.tagName === 'SCRIPT' ? node.textContent : '');
+                if (!raw) return;
+                try {
+                    const parsed = JSON.parse(raw);
+                    if (parsed && typeof parsed === 'object') {
+                        Object.keys(parsed).forEach(key => putMetric(key, parsed[key]));
+                    }
+                } catch (error) {
+                    console.warn('Ignoring malformed duplicate summary metadata:', error);
+                }
+            });
+            const summaryMeta = doc.querySelector('meta[name="lldpq-duplicate-summary"]');
+            if (summaryMeta) {
+                try {
+                    const parsed = JSON.parse(summaryMeta.getAttribute('content') || '{}');
+                    Object.keys(parsed).forEach(key => putMetric(key, parsed[key]));
+                } catch (error) {
+                    console.warn('Ignoring malformed duplicate summary meta tag:', error);
+                }
+            }
+
+            // Label fallback is limited to unambiguous new semantics. Legacy labels such
+            // as "Active IP Duplicates" and "MAC Duplicates" mix conflicts, mobility,
+            // settled and aged records, so they must never feed critical totals.
+            doc.querySelectorAll('.summary-card').forEach(card => {
+                const label = (card.querySelector('.metric-label')?.textContent || '').trim().toLowerCase();
+                const value = (card.querySelector('.metric')?.textContent || '').trim();
+                if (!label) return;
+                if (label.includes('confirmed active ip')) putMetric('confirmed_ip_active', value);
+                else if (label.includes('active ip conflict')) putMetric('confirmed_ip_active', value);
+                else if (label.includes('active ip mobility')) putMetric('ip_mobility_active', value);
+                else if (label.includes('active mac mobility')) putMetric('mac_mobility_active', value);
+                else if (label.includes('active mobility')) putMetric('active_mobility', value);
+                else if (label.includes('standalone') && label.includes('mac conflict')) {
+                    putMetric('confirmed_mac_standalone_active', value);
+                }
+                else if (label.includes('active') && label.includes('dad') && label.includes('finding')) {
+                    putMetric('dad_finding_active', value);
+                }
+                else if (label.includes('active mac conflict')) putMetric('confirmed_mac_active', value);
+                else if (label.includes('possible loop')) putMetric('possible_loops', value);
+                else if ((label.includes('ipv4ll') || label.includes('apipa')) &&
+                         (label.includes('unique') || label.includes('resolved'))) {
+                    putMetric('apipa_unique', value);
+                } else if (label.includes('coverage') && label.includes('current') && label.includes('expected')) {
+                    const ratio = value.match(/(\d[\d,]*)\s*\/\s*(\d[\d,]*)/);
+                    if (ratio) {
+                        putMetric('coverage_current_hosts', ratio[1]);
+                        putMetric('coverage_expected_hosts', ratio[2]);
+                    }
+                } else if (label.includes('coverage') && label.includes('expected')) {
+                    putMetric('coverage_expected_hosts', value);
+                } else if (label.includes('coverage') && label.includes('current')) {
+                    putMetric('coverage_current_hosts', value);
+                } else if (label.includes('coverage') && label.includes('failure')) {
+                    putMetric('coverage_failures', value);
+                } else if (label.includes('active ip duplicate') ||
+                           label.includes('quiesced ip') ||
+                           label.includes('mac duplicate') ||
+                           label === 'apipa (dhcp failed)') {
+                    legacySchemaSeen = true;
+                }
+            });
+
+            function numberFor() {
+                for (let i = 0; i < arguments.length; i++) {
+                    const value = duplicateMetricNumber(metrics[normalizeDuplicateMetricKey(arguments[i])]);
+                    if (value !== null) return value;
+                }
+                return null;
+            }
+
+            const confirmedConflictActive = numberFor('confirmed_conflict_incident_active');
+            const confirmedIpActive = numberFor('confirmed_ip_active');
+            const ipMobilityActive = numberFor('ip_mobility_active');
+            const macMobilityActive = numberFor('mac_mobility_active');
+            const directActiveMobility = numberFor('active_mobility');
+            const activeMobility = directActiveMobility !== null
+                ? directActiveMobility
+                : (ipMobilityActive !== null && macMobilityActive !== null
+                    ? ipMobilityActive + macMobilityActive
+                    : null);
+            const confirmedMacActive = numberFor('confirmed_mac_active');
+            const confirmedMacStandaloneActive = numberFor('confirmed_mac_standalone_active');
+            const dadFindingActive = numberFor('dad_finding_active');
+            const possibleLoops = numberFor('possible_loops');
+            const ipv4llUnique = numberFor('apipa_unique', 'ipv4ll_unique');
+            const coverageExpected = numberFor('coverage_expected_hosts');
+            const coverageCurrent = numberFor('coverage_current_hosts');
+            const coverageFailures = numberFor('coverage_failures');
+            let coveragePartial = duplicateMetricBoolean(metrics.coverage_partial);
+            if (coverageExpected !== null && coverageCurrent !== null) {
+                if (coverageCurrent < coverageExpected) coveragePartial = true;
+                else if (coveragePartial === null) coveragePartial = false;
+            }
+            if ((coverageFailures || 0) > 0) coveragePartial = true;
+
+            const coverageText = coverageExpected !== null && coverageCurrent !== null
+                ? `${coverageCurrent}/${coverageExpected}`
+                : null;
+            const semanticComplete = [
+                confirmedConflictActive,
+                confirmedIpActive,
+                activeMobility,
+                confirmedMacActive,
+                confirmedMacStandaloneActive,
+                dadFindingActive,
+                possibleLoops,
+                ipv4llUnique,
+                coverageExpected,
+                coverageCurrent,
+                coverageFailures
+            ].every(value => value !== null);
+
+            return {
+                confirmedConflictActive,
+                confirmedIpActive,
+                activeMobility,
+                confirmedMacActive,
+                confirmedMacStandaloneActive,
+                dadFindingActive,
+                possibleLoops,
+                ipv4llUnique,
+                coverageExpected,
+                coverageCurrent,
+                coverageFailures,
+                coveragePartial: coveragePartial === true,
+                coverageText,
+                semanticComplete,
+                legacySchemaSeen
+            };
         }
 
         // Fetch summary data directly from data files
@@ -879,6 +1108,7 @@
                     const html = await response.text();
                     const parser = new DOMParser();
                     const doc = parser.parseFromString(html, 'text/html');
+                    if (reportCollectionUnavailable(doc)) return { unavailable: true };
                     
                     // Parse summary cards for optical (they have the correct total ports count)
                     const totalPortsElement = doc.querySelector('#total-ports');
@@ -908,6 +1138,7 @@
                     const html = await response.text();
                     const parser = new DOMParser();
                     const doc = parser.parseFromString(html, 'text/html');
+                    if (reportCollectionUnavailable(doc)) return { unavailable: true };
                     
                     // Parse summary cards for hardware
                     const totalDevicesElement = doc.querySelector('#total-devices');
@@ -939,6 +1170,9 @@
                         }
                         
                         const logSummaryData = await response.json();
+                        if (logSummaryData.collection_status !== 'current') {
+                            return { unavailable: true };
+                        }
                         
                         summaryData.totalDevices = logSummaryData.total_devices || 0;
                         summaryData.critical = logSummaryData.totals?.critical || 0;
@@ -959,23 +1193,15 @@
                     }
                     
                 } else if (dataType === 'duplicate') {
-                    // Parse duplicate-analysis.html summary cards (.metric / .metric-label)
+                    // Parse only machine-readable/new semantic metrics. Legacy duplicate
+                    // cards aggregate unlike incident types and cannot safely feed health.
                     const response = await fetch('monitor-results/duplicate-analysis.html');
-                    if (!response.ok) return summaryData;
+                    if (!response.ok) return { unavailable: true, reason: 'report-fetch-failed' };
                     const html = await response.text();
                     const parser = new DOMParser();
                     const doc = parser.parseFromString(html, 'text/html');
-                    summaryData.ipActive = 0; summaryData.ipQuiesced = 0;
-                    summaryData.macDup = 0; summaryData.apipa = 0; summaryData.vlans = 0;
-                    doc.querySelectorAll('.summary-card').forEach(card => {
-                        const label = (card.querySelector('.metric-label')?.textContent || '').toLowerCase();
-                        const value = parseInt(card.querySelector('.metric')?.textContent) || 0;
-                        if (label.includes('active ip')) summaryData.ipActive = value;
-                        else if (label.includes('quiesced ip')) summaryData.ipQuiesced = value;
-                        else if (label.includes('mac duplicate')) summaryData.macDup = value;
-                        else if (label.includes('apipa')) summaryData.apipa = value;
-                        else if (label.includes('vlans affected')) summaryData.vlans = value;
-                    });
+                    if (reportCollectionUnavailable(doc)) return { unavailable: true };
+                    summaryData = parseDuplicateSummary(doc);
                     
                 } else {
                     // For other analysis pages (BGP, BER, Link Flap), parse table data
@@ -996,6 +1222,7 @@
                         const html = await response.text();
                         const parser = new DOMParser();
                         const doc = parser.parseFromString(html, 'text/html');
+                        if (reportCollectionUnavailable(doc)) return { unavailable: true };
                         
                         // Parse table rows instead of summary cards
                         const rows = doc.querySelectorAll('tbody tr[data-health], tbody tr[data-status], tbody tr[data-state]');
@@ -1097,47 +1324,79 @@
                 updateDashboardCard('evpn-type2', evpnData.type2Routes);
                 updateDashboardCard('evpn-type5', evpnData.type5Routes);
 
-                updateDashboardCard('optical-total', opticalData.totalPorts);
-                updateDashboardCard('optical-excellent', opticalData.excellent);
-                updateDashboardCard('optical-good', opticalData.good);
-                updateDashboardCard('optical-warning', opticalData.warning);
-                updateDashboardCard('optical-critical', opticalData.critical);
+                updateDashboardCard('optical-total', dashboardMetric(opticalData, opticalData.totalPorts));
+                updateDashboardCard('optical-excellent', dashboardMetric(opticalData, opticalData.excellent));
+                updateDashboardCard('optical-good', dashboardMetric(opticalData, opticalData.good));
+                updateDashboardCard('optical-warning', dashboardMetric(opticalData, opticalData.warning));
+                updateDashboardCard('optical-critical', dashboardMetric(opticalData, opticalData.critical));
 
-                updateDashboardCard('ber-total', berData.totalPorts);
-                updateDashboardCard('ber-excellent', berData.excellent);
-                updateDashboardCard('ber-good', berData.good);
-                updateDashboardCard('ber-warning', berData.warning);
-                updateDashboardCard('ber-critical', berData.critical);
+                updateDashboardCard('ber-total', dashboardMetric(berData, berData.totalPorts));
+                updateDashboardCard('ber-excellent', dashboardMetric(berData, berData.excellent));
+                updateDashboardCard('ber-good', dashboardMetric(berData, berData.good));
+                updateDashboardCard('ber-warning', dashboardMetric(berData, berData.warning));
+                updateDashboardCard('ber-critical', dashboardMetric(berData, berData.critical));
 
-                updateDashboardCard('flap-devices', flapData.totalDevices);
-                updateDashboardCard('flap-ports', flapData.totalPorts);
-                updateDashboardCard('flap-stable', flapData.stable);
-                updateDashboardCard('flap-problematic', flapData.problematic);
-                updateDashboardCard('flap-stability', flapData.stabilityPercent ? flapData.stabilityPercent + '%' : '0.0%');
+                updateDashboardCard('flap-devices', dashboardMetric(flapData, flapData.totalDevices));
+                updateDashboardCard('flap-ports', dashboardMetric(flapData, flapData.totalPorts));
+                updateDashboardCard('flap-stable', dashboardMetric(flapData, flapData.stable));
+                updateDashboardCard('flap-problematic', dashboardMetric(flapData, flapData.problematic));
+                updateDashboardCard('flap-stability', dashboardMetric(flapData, flapData.stabilityPercent ? flapData.stabilityPercent + '%' : '0.0%'));
 
-                updateDashboardCard('hardware-total', hardwareData.totalDevices);
-                updateDashboardCard('hardware-excellent', hardwareData.excellent);
-                updateDashboardCard('hardware-good', hardwareData.good);
-                updateDashboardCard('hardware-warnings', hardwareData.warning);
-                updateDashboardCard('hardware-critical', hardwareData.critical);
+                updateDashboardCard('hardware-total', dashboardMetric(hardwareData, hardwareData.totalDevices));
+                updateDashboardCard('hardware-excellent', dashboardMetric(hardwareData, hardwareData.excellent));
+                updateDashboardCard('hardware-good', dashboardMetric(hardwareData, hardwareData.good));
+                updateDashboardCard('hardware-warnings', dashboardMetric(hardwareData, hardwareData.warning));
+                updateDashboardCard('hardware-critical', dashboardMetric(hardwareData, hardwareData.critical));
 
-                updateDashboardCard('log-devices', logData.totalDevices);
-                updateDashboardCard('log-critical', logData.critical);
-                updateDashboardCard('log-warnings', logData.warning);
-                updateDashboardCard('log-errors', logData.error);
-                updateDashboardCard('log-info', logData.info);
+                updateDashboardCard('log-devices', dashboardMetric(logData, logData.totalDevices));
+                updateDashboardCard('log-critical', dashboardMetric(logData, logData.critical));
+                updateDashboardCard('log-warnings', dashboardMetric(logData, logData.warning));
+                updateDashboardCard('log-errors', dashboardMetric(logData, logData.error));
+                updateDashboardCard('log-info', dashboardMetric(logData, logData.info));
 
-                updateDashboardCard('dup-ip-active', dupData.ipActive);
-                updateDashboardCard('dup-ip-quiesced', dupData.ipQuiesced);
-                updateDashboardCard('dup-mac', dupData.macDup);
-                updateDashboardCard('dup-apipa', dupData.apipa);
-                updateDashboardCard('dup-vlans', dupData.vlans);
+                updateDashboardCard('dup-confirmed-ip-active', duplicateDashboardMetric(dupData, dupData.confirmedIpActive));
+                updateDashboardCard('dup-active-mobility', duplicateDashboardMetric(dupData, dupData.activeMobility));
+                updateDashboardCard('dup-confirmed-mac-standalone-active', duplicateDashboardMetric(dupData, dupData.confirmedMacStandaloneActive));
+                updateDashboardCard('dup-dad-finding-active', duplicateDashboardMetric(dupData, dupData.dadFindingActive));
+                updateDashboardCard('dup-possible-loops', duplicateDashboardMetric(dupData, dupData.possibleLoops));
+                updateDashboardCard('dup-ipv4ll-unique', duplicateDashboardMetric(dupData, dupData.ipv4llUnique));
+                updateDashboardCard('dup-coverage', duplicateDashboardMetric(dupData, dupData.coverageText));
+
+                const duplicateCoverageIncomplete = !dupData.unavailable &&
+                    (!dupData.semanticComplete || dupData.coveragePartial);
+                const duplicateCoverageCard = document.getElementById('dup-coverage-card');
+                const duplicateCoverageValue = document.getElementById('dup-coverage');
+                if (duplicateCoverageCard) {
+                    const coverageNeedsAttention = Boolean(dupData.unavailable || duplicateCoverageIncomplete);
+                    duplicateCoverageCard.classList.toggle('card-warning', coverageNeedsAttention);
+                    duplicateCoverageCard.classList.toggle('card-info', !coverageNeedsAttention);
+                    if (duplicateCoverageValue) {
+                        duplicateCoverageValue.classList.toggle('status-warning', coverageNeedsAttention);
+                        duplicateCoverageValue.classList.toggle('status-info', !coverageNeedsAttention);
+                    }
+                    duplicateCoverageCard.title = dupData.unavailable
+                        ? 'Duplicate analysis is unavailable'
+                        : (duplicateCoverageIncomplete
+                            ? 'Duplicate analysis coverage is partial or uses a legacy summary schema'
+                            : 'Current devices / expected devices');
+                }
 
                 // Calculate overall network statistics
                 const totalDevices = assetsData.totalDevices || 0;
-                const totalInterfaces = Math.max(opticalData.totalPorts || 0, berData.totalPorts || 0);
+                const unavailableAnalyses = [
+                    opticalData, berData, flapData, hardwareData, logData, dupData
+                ].filter(data => data && data.unavailable).length;
+                const analysisCoverageProblems = unavailableAnalyses +
+                    (duplicateCoverageIncomplete ? 1 : 0);
+                const interfaceSources = [opticalData, berData].filter(data =>
+                    data && !data.unavailable && Number.isFinite(Number(data.totalPorts))
+                );
+                const totalInterfaces = interfaceSources.length
+                    ? Math.max(...interfaceSources.map(data => Number(data.totalPorts)))
+                    : null;
                 
-            // Calculate critical issues with breakdown for tooltip
+            // Calculate open issues with breakdown for tooltip. This includes
+            // warning-class operational signals as well as critical failures.
             const criticalBreakdown = {
                 'Assets Failed': assetsData.failed || 0,
                 'LLDP Failed Ports': lldpData.failed || 0,
@@ -1150,14 +1409,18 @@
                 'Hardware Warning': hardwareData.warning || 0,
                 'Log Critical': logData.critical || 0,
                 'Log Warning': logData.warning || 0,
-                'Duplicate Active IP': dupData.ipActive || 0,
-                'Duplicate MAC': dupData.macDup || 0
+                'Duplicate Confirmed Conflicts': dupData.confirmedConflictActive || 0,
+                'Duplicate Active DAD-only Findings': dupData.dadFindingActive || 0,
+                'Duplicate Active Mobility': dupData.activeMobility || 0,
+                'Duplicate Possible Loops': dupData.possibleLoops || 0,
+                'Duplicate Coverage Partial': duplicateCoverageIncomplete ? 1 : 0,
+                'Unavailable Analyses': unavailableAnalyses
             };
             
             const criticalIssues = Object.values(criticalBreakdown).reduce((a, b) => a + b, 0);
             
             // Build tooltip HTML
-            let tooltipHtml = '<div class="tooltip-title">Critical Issues Breakdown</div>';
+            let tooltipHtml = '<div class="tooltip-title">Open Issues Breakdown</div>';
             for (const [source, count] of Object.entries(criticalBreakdown)) {
                 const hasIssues = count > 0 ? 'has-issues' : '';
                 tooltipHtml += `<div class="tooltip-row ${hasIssues}"><span class="source">${source}</span><span class="count">${count}</span></div>`;
@@ -1181,17 +1444,21 @@
                     (hardwareData.totalDevices || 0) +
                     ((logData.critical || 0) + (logData.warning || 0) + (logData.info || 0));
                 
-            const overallHealth = totalAssessments > 0 ? Math.round((healthyItems / totalAssessments) * 100) : 0;
+            const overallHealth = analysisCoverageProblems
+                ? null
+                : (totalAssessments > 0 ? Math.round((healthyItems / totalAssessments) * 100) : 0);
             
             // Update dashboard stats
             document.getElementById('total-network-devices').textContent = totalDevices;
-            document.getElementById('total-interfaces').textContent = totalInterfaces;
-            document.getElementById('overall-health').textContent = overallHealth + '%';
+            document.getElementById('total-interfaces').textContent = totalInterfaces === null ? 'N/A' : totalInterfaces;
+            document.getElementById('overall-health').textContent = overallHealth === null ? 'N/A' : overallHealth + '%';
             document.getElementById('critical-issues').textContent = criticalIssues;
             
             // Color code the health percentage
             const healthElement = document.getElementById('overall-health');
-            if (overallHealth >= 95) {
+            if (overallHealth === null) {
+                healthElement.style.color = '#ff9800';
+            } else if (overallHealth >= 95) {
                 healthElement.style.color = '#4caf50';
             } else if (overallHealth >= 85) {
                 healthElement.style.color = '#8bc34a';

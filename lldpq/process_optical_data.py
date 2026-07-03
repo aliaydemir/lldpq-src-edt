@@ -11,7 +11,12 @@ import re
 import sys
 from datetime import datetime
 from optical_analyzer import OpticalAnalyzer
-from collection_freshness import is_current_collection, read_asset_snapshot
+from collection_freshness import (
+    asset_snapshot_is_valid,
+    is_current_collection,
+    mark_html_collection_unavailable,
+    read_asset_snapshot,
+)
 
 def parse_optical_diagnostics_file(filepath):
     """Parse optical diagnostics file"""
@@ -48,7 +53,9 @@ def parse_optical_diagnostics_file(filepath):
 
 def process_optical_data_files(data_dir="monitor-results/optical-data"):
     """Process optical data files and update optical analyzer"""
-    optical_analyzer = OpticalAnalyzer("monitor-results")
+    data_dir = os.path.abspath(data_dir)
+    result_dir = os.path.dirname(data_dir.rstrip(os.sep))
+    optical_analyzer = OpticalAnalyzer(result_dir)
     # Historical readings remain in optical_history; only files from this
     # successful collection may populate the current snapshot.
     optical_analyzer.current_optical_stats = {}
@@ -68,6 +75,16 @@ def process_optical_data_files(data_dir="monitor-results/optical-data"):
 
     # List files in directory
     asset_snapshot = read_asset_snapshot()
+    statuses, _asset_mtime, assets_available = asset_snapshot
+    snapshot_valid = asset_snapshot_is_valid(asset_snapshot)
+    if assets_available and not snapshot_valid:
+        print("❌ Asset snapshot is invalid or incomplete")
+        return False
+    expected_hosts = (
+        {host for host, status in statuses.items() if status == "OK"}
+        if snapshot_valid else set()
+    )
+    all_devices_unavailable = snapshot_valid and not expected_hosts
     files = [
         filename for filename in os.listdir(data_dir)
         if filename.endswith("_optical.txt")
@@ -79,7 +96,16 @@ def process_optical_data_files(data_dir="monitor-results/optical-data"):
     ]
     print(f"Found {len(files)} optical data files")
 
-    if not files:
+    collected_hosts = {
+        filename.removesuffix("_optical.txt") for filename in files
+    }
+    if snapshot_valid and expected_hosts - collected_hosts:
+        print(
+            "❌ Missing current optical collections for: "
+            + ", ".join(sorted(expected_hosts - collected_hosts))
+        )
+        return False
+    if not files and not all_devices_unavailable:
         print("❌ No current optical collection files found")
         optical_analyzer.save_optical_history()
         return False
@@ -191,8 +217,10 @@ def process_optical_data_files(data_dir="monitor-results/optical-data"):
     print("Optical history saved")
 
     # Generate web report
-    output_file = "monitor-results/optical-analysis.html"
+    output_file = os.path.join(result_dir, "optical-analysis.html")
     optical_analyzer.export_optical_data_for_web(output_file)
+    if all_devices_unavailable:
+        mark_html_collection_unavailable(output_file)
     print(f"Optical analysis report generated: {output_file}")
 
     # Generate summary for dashboard
