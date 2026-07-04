@@ -14,7 +14,7 @@ Licensed under MIT License - see LICENSE file for details
 import json
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from collection_freshness import is_current_collection, read_asset_snapshot
 
 try:
@@ -22,6 +22,136 @@ try:
 except Exception:
     def canonical(_n):
         return _n
+
+
+# One grading contract drives both the calculation and the threshold reference
+# rendered in the report.  Tuples are the boundaries between
+# EXCELLENT/GOOD/WARNING/CRITICAL in that order.
+HARDWARE_THRESHOLDS = {
+    "cpu_temp_c": (60.0, 70.0, 80.0),
+    "asic_temp_c": (85.0, 105.0, 115.0),
+    "memory_percent": (60.0, 75.0, 85.0),
+    "load_per_core": (0.7, 1.0, 1.5),
+    # Low values are bad for fan speed and PSU efficiency.  These tuples are
+    # CRITICAL/WARNING/GOOD boundaries; values above the final boundary are
+    # EXCELLENT (strictly above for compatibility with the existing grading).
+    "fan_rpm": (1000.0, 3000.0, 4000.0),
+    "psu_efficiency_percent": (30.0, 50.0, 90.0),
+}
+
+GRADE_PRIORITY = {"CRITICAL": 4, "WARNING": 3, "GOOD": 2, "EXCELLENT": 1}
+HISTORY_MAX_SKEW_SECONDS = 300.0
+
+
+def grade_high_is_bad(value, threshold_key):
+    """Grade a metric where higher values are worse."""
+    if not isinstance(value, (int, float)):
+        return None
+    excellent_max, good_max, warning_max = HARDWARE_THRESHOLDS[threshold_key]
+    if value < excellent_max:
+        return "EXCELLENT"
+    if value < good_max:
+        return "GOOD"
+    if value < warning_max:
+        return "WARNING"
+    return "CRITICAL"
+
+
+def grade_low_is_bad(value, threshold_key):
+    """Grade a metric where lower values are worse."""
+    if not isinstance(value, (int, float)):
+        return None
+    critical_min, warning_min, excellent_min = HARDWARE_THRESHOLDS[threshold_key]
+    if value > excellent_min:
+        return "EXCELLENT"
+    if value >= warning_min:
+        return "GOOD"
+    if value >= critical_min:
+        return "WARNING"
+    return "CRITICAL"
+
+
+def _power_to_watts(value, unit):
+    watts = float(value)
+    if unit == "kW":
+        return watts * 1000.0
+    if unit == "mW":
+        return watts / 1000.0
+    return watts
+
+
+def _parse_history_timestamp(value):
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        # Legacy entries were written in local time.  Treat them as local for
+        # the sole purpose of comparing them with the raw file mtime.
+        return parsed.timestamp()
+    return parsed.astimezone(timezone.utc).timestamp()
+
+
+def fresh_history_entry(history, raw_file, max_skew_seconds=HISTORY_MAX_SKEW_SECONDS):
+    """Return history data only when it belongs to the current raw sample."""
+    if not isinstance(history, list) or not history:
+        return None
+    entry = history[-1]
+    if not isinstance(entry, dict):
+        return None
+    entry_timestamp = _parse_history_timestamp(entry.get("timestamp"))
+    if entry_timestamp is None:
+        return None
+    try:
+        raw_timestamp = os.path.getmtime(raw_file)
+    except OSError:
+        return None
+    if abs(entry_timestamp - raw_timestamp) > max(max_skew_seconds, 0.0):
+        return None
+    return entry
+
+
+def _format_threshold(value):
+    return str(int(value)) if float(value).is_integer() else f"{value:g}"
+
+
+def threshold_reference_rows():
+    """Render the visible reference from the same constants used for grading."""
+    rows = []
+    for label, key, unit in (
+        ("CPU Temperature", "cpu_temp_c", "°C"),
+        ("ASIC Temperature", "asic_temp_c", "°C"),
+        ("Memory Usage", "memory_percent", "%"),
+        ("CPU Load (5min avg per core)", "load_per_core", ""),
+    ):
+        excellent_max, good_max, warning_max = HARDWARE_THRESHOLDS[key]
+        a, b, c = map(_format_threshold, (excellent_max, good_max, warning_max))
+        rows.append(
+            f"<tr><td>{label}</td>"
+            f"<td>&lt; {a}{unit}</td>"
+            f"<td>&ge; {a}{unit} and &lt; {b}{unit}</td>"
+            f"<td>&ge; {b}{unit} and &lt; {c}{unit}</td>"
+            f"<td>&ge; {c}{unit}</td></tr>"
+        )
+    for label, key, unit in (
+        ("Fan Speed", "fan_rpm", " RPM"),
+        ("PSU Efficiency", "psu_efficiency_percent", "%"),
+    ):
+        critical_min, warning_min, excellent_min = HARDWARE_THRESHOLDS[key]
+        a, b, c = map(_format_threshold, (critical_min, warning_min, excellent_min))
+        rows.append(
+            f"<tr><td>{label}</td>"
+            f"<td>&gt; {c}{unit}</td>"
+            f"<td>&ge; {b}{unit} and &le; {c}{unit}</td>"
+            f"<td>&ge; {a}{unit} and &lt; {b}{unit}</td>"
+            f"<td>&lt; {a}{unit}</td></tr>"
+        )
+    return "\n".join(rows)
 
 def parse_assets_file(assets_file_path="assets.ini"):
     """Parse assets.ini file to get device model information"""
@@ -169,24 +299,19 @@ def parse_psu_efficiency_from_hardware_file(device_name):
         # Support both 54V (most switches) and 12V (some platforms)
         psu_dc_out_w = re.findall(r'^PSU-[^\n]*(?:54V|12V)\s+Rail\s+Pwr\s*\(out\):\s*(\d+\.?\d*)\s*([km]?W)', content, re.MULTILINE)
 
-        # Convert kW to W, handle both W and kW units
+        # Normalize W/kW/mW before aggregating.
         total_psu_in = 0.0
         for value, unit in psu_ac_in_w:
-            watts = float(value)
-            if unit == 'kW':
-                watts *= 1000
-            total_psu_in += watts
+            total_psu_in += _power_to_watts(value, unit)
             
         total_psu_out = 0.0  
         for value, unit in psu_dc_out_w:
-            watts = float(value)
-            if unit == 'kW':
-                watts *= 1000
-            total_psu_out += watts
+            total_psu_out += _power_to_watts(value, unit)
 
         if total_psu_in > 0 and total_psu_out > 0:
             efficiency = (total_psu_out / total_psu_in) * 100.0
-            return min(efficiency, 100.0)
+            # A value above 100% is invalid telemetry, not an excellent PSU.
+            return efficiency if efficiency <= 100.0 else None
 
         # 2) Fallback (legacy): aggregate PMIC/VR in/out if PSU rails are unavailable
         total_input_power = 0.0
@@ -230,7 +355,7 @@ def parse_psu_efficiency_from_hardware_file(device_name):
 
         if total_input_power > 0 and total_output_power > 0:
             efficiency = (total_output_power / total_input_power) * 100.0
-            return min(efficiency, 100.0)
+            return efficiency if efficiency <= 100.0 else None
         
     except Exception as e:
         print(f"Warning: Could not parse PSU efficiency for {device_name}: {e}")
@@ -258,27 +383,21 @@ def parse_psu_power_in_out_from_hardware_file(device_name):
         psu_ac_in_w = re.findall(r'^PSU-[^\n]*220V\s+Rail\s+Pwr\s*\(in\):\s*(\d+\.?\d*)\s*([km]?W)', content, re.MULTILINE)
         psu_dc_out_w = re.findall(r'^PSU-[^\n]*(?:54V|12V)\s+Rail\s+Pwr\s*\(out\):\s*(\d+\.?\d*)\s*([km]?W)', content, re.MULTILINE)
 
-        # Convert kW to W, handle both W and kW units
+        # Normalize W/kW/mW before aggregating.
         total_psu_in = 0.0
         for value, unit in psu_ac_in_w:
-            watts = float(value)
-            if unit == 'kW':
-                watts *= 1000
-            total_psu_in += watts
+            total_psu_in += _power_to_watts(value, unit)
             
         total_psu_out = 0.0  
         for value, unit in psu_dc_out_w:
-            watts = float(value)
-            if unit == 'kW':
-                watts *= 1000
-            total_psu_out += watts
+            total_psu_out += _power_to_watts(value, unit)
 
 
         if total_psu_in > 0 and total_psu_out > 0:
             # Sanity check: Output should never be higher than input (physics!)
             if total_psu_out > total_psu_in:
                 print(f"⚠️  {device_name}: PSU output ({total_psu_out}W) > input ({total_psu_in}W) - IMPOSSIBLE!")
-                return total_psu_in, total_psu_out  # Still return for debugging
+                return None, None
             return total_psu_in, total_psu_out
 
         # Fallback: PMIC/VR and generic PSU Pwr(in/out)
@@ -319,6 +438,8 @@ def parse_psu_power_in_out_from_hardware_file(device_name):
             total_output_power += float(s)
 
         if total_input_power > 0 and total_output_power > 0:
+            if total_output_power > total_input_power:
+                return None, None
             return total_input_power, total_output_power
         return None, None
     except Exception:
@@ -327,7 +448,7 @@ def parse_psu_power_in_out_from_hardware_file(device_name):
 def _parse_size_to_gib(size_str: str) -> float:
     """Convert a size token like '15Gi', '286Mi' into GiB float."""
     try:
-        m = re.match(r'(\d+\.?\d*)([KMG]i)', size_str)
+        m = re.fullmatch(r'(\d+\.?\d*)([KMGT]i)', size_str)
         if not m:
             return 0.0
         value = float(m.group(1))
@@ -427,44 +548,28 @@ def grade_load_per_core(cpu_load, cpu_cores):
         return None
     cores = cpu_cores if isinstance(cpu_cores, int) and cpu_cores > 0 else 4
     load_per_core = cpu_load / cores
-    if load_per_core < 0.7:
-        return "EXCELLENT"
-    elif load_per_core < 1.0:
-        return "GOOD"
-    elif load_per_core < 1.5:
-        return "WARNING"
-    else:
-        return "CRITICAL"
+    return grade_high_is_bad(load_per_core, "load_per_core")
 
 
 def calculate_device_health_grade(device_name, device_data):
     """Calculate overall health grade for a device based on our thresholds"""
     health_grades = []
     required_telemetry_missing = False
-    priority = {"CRITICAL": 4, "WARNING": 3, "GOOD": 2, "EXCELLENT": 1}
     
     # CPU Temperature grade
     cpu_temp, asic_temp = parse_temperature_from_hardware_file(device_name)
-    if cpu_temp is not None:
-        if cpu_temp < 60:
-            health_grades.append("EXCELLENT")
-        elif cpu_temp < 70:
-            health_grades.append("GOOD")
-        elif cpu_temp < 80:
-            health_grades.append("WARNING")
-        else:
-            health_grades.append("CRITICAL")
+    cpu_grade = grade_high_is_bad(cpu_temp, "cpu_temp_c")
+    if cpu_grade:
+        health_grades.append(cpu_grade)
+    else:
+        required_telemetry_missing = True
     
-    # ASIC Temperature grade  
-    if asic_temp is not None:
-        if asic_temp < 85:
-            health_grades.append("EXCELLENT")
-        elif asic_temp < 105:
-            health_grades.append("GOOD")
-        elif asic_temp < 115:
-            health_grades.append("WARNING")
-        else:
-            health_grades.append("CRITICAL")
+    # ASIC Temperature grade
+    asic_grade = grade_high_is_bad(asic_temp, "asic_temp_c")
+    if asic_grade:
+        health_grades.append(asic_grade)
+    else:
+        required_telemetry_missing = True
     
     parsed_resources = {}
 
@@ -475,14 +580,8 @@ def calculate_device_health_grade(device_name, device_data):
         memory_usage = parsed_resources.get('memory_usage')
     if not isinstance(memory_usage, (int, float)):
         required_telemetry_missing = True
-    elif memory_usage < 60:
-        health_grades.append("EXCELLENT")
-    elif memory_usage < 75:
-        health_grades.append("GOOD")
-    elif memory_usage < 85:
-        health_grades.append("WARNING")
     else:
-        health_grades.append("CRITICAL")
+        health_grades.append(grade_high_is_bad(memory_usage, "memory_percent"))
         
     # CPU Load grade
     cpu_load = device_data.get("resources", {}).get("cpu", {}).get("load_5min", None)
@@ -496,6 +595,8 @@ def calculate_device_health_grade(device_name, device_data):
         if not parsed_resources:
             parsed_resources = parse_resources_from_hardware_file(device_name)
         cpu_cores = parsed_resources.get('cpu_cores')
+    if not isinstance(cpu_cores, int) or cpu_cores <= 0:
+        required_telemetry_missing = True
     load_grade = grade_load_per_core(cpu_load, cpu_cores)
     if load_grade:
         health_grades.append(load_grade)
@@ -503,38 +604,34 @@ def calculate_device_health_grade(device_name, device_data):
         required_telemetry_missing = True
     
     # PSU Efficiency grade
-    psu_efficiency = parse_psu_efficiency_from_hardware_file(device_name) or 0.0
-    if psu_efficiency > 90:
-        health_grades.append("EXCELLENT")
-    elif psu_efficiency >= 50:
-        health_grades.append("GOOD")
-    elif psu_efficiency >= 30:
-        health_grades.append("WARNING")
-    elif psu_efficiency > 0:
-        health_grades.append("CRITICAL")
+    psu_efficiency = parse_psu_efficiency_from_hardware_file(device_name)
+    psu_grade = grade_low_is_bad(psu_efficiency, "psu_efficiency_percent")
+    if psu_grade:
+        health_grades.append(psu_grade)
+    else:
+        required_telemetry_missing = True
     
     # Fan status grade
     fans = device_data.get("fans", {})
     if not fans:
         fans = parse_fans_from_hardware_file(device_name)
     if fans:
-        fan_grades = []
-        for fan_name, fan_speed in fans.items():
-            if fan_speed > 4000:
-                fan_grades.append("EXCELLENT")
-            elif fan_speed >= 3000:
-                fan_grades.append("GOOD")  
-            elif fan_speed >= 1000:
-                fan_grades.append("WARNING")
-            else:
-                fan_grades.append("CRITICAL")
+        fan_grades = [
+            grade_low_is_bad(fan_speed, "fan_rpm")
+            for fan_speed in fans.values()
+            if isinstance(fan_speed, (int, float))
+        ]
         if fan_grades:
-            fan_status = max(fan_grades, key=lambda x: priority.get(x, 0))
+            fan_status = max(fan_grades, key=lambda x: GRADE_PRIORITY.get(x, 0))
             health_grades.append(fan_status)
+        else:
+            required_telemetry_missing = True
+    else:
+        required_telemetry_missing = True
     
     # Calculate overall health grade (worst case)
     if health_grades:
-        worst_known = max(health_grades, key=lambda x: priority.get(x, 0))
+        worst_known = max(health_grades, key=lambda x: GRADE_PRIORITY.get(x, 0))
         # Do not advertise an incomplete sample as healthy. A known warning or
         # critical condition still takes precedence over missing telemetry.
         if required_telemetry_missing and worst_known not in ("WARNING", "CRITICAL"):
@@ -583,12 +680,16 @@ def generate_hardware_html():
     for filename in current_device_files:
         device_name = filename.removesuffix('_hardware.txt')
         history = hardware_history.get(device_name, [])
-        if history:
-            latest_devices[device_name] = history[-1]
+        raw_file = os.path.join(hardware_data_dir, filename)
+        history_entry = fresh_history_entry(history, raw_file)
+        if history_entry is not None:
+            latest_devices[device_name] = history_entry
         else:
             latest_devices[device_name] = {
                 'device': device_name,
-                'timestamp': datetime.now().isoformat(),
+                'timestamp': datetime.fromtimestamp(
+                    os.path.getmtime(raw_file), tz=timezone.utc
+                ).isoformat(),
                 'fans': {},
                 'memory_usage': 'N/A',
                 'cpu_load': 'N/A',
@@ -794,7 +895,7 @@ def generate_hardware_html():
                         <th class="sortable" data-column="5" data-type="number">Load <span class="sort-arrow">▲▼</span></th>
                         <th class="sortable" data-column="6" data-type="hardware-status">Fan <span class="sort-arrow">▲▼</span></th>
                         <th class="sortable" data-column="7" data-type="number">PSU% <span class="sort-arrow">▲▼</span></th>
-                        <th class="sortable" data-column="8" data-type="string">PSU Power <span class="sort-arrow">▲▼</span></th>
+                        <th class="sortable" data-column="8" data-type="power">PSU Power <span class="sort-arrow">▲▼</span></th>
                         <th class="sortable" data-column="9" data-type="string">Model <span class="sort-arrow">▲▼</span></th>
                     </tr>
                 </thead>
@@ -842,21 +943,20 @@ def generate_hardware_html():
         if not fans:
             fans = parse_fans_from_hardware_file(device_name)
         if fans:
-            priority = {"CRITICAL": 4, "WARNING": 3, "GOOD": 2, "EXCELLENT": 1}
-            fan_grades_calculated = []
-            for fan_name, fan_speed in fans.items():
-                if fan_speed > 4000:
-                    grade = "EXCELLENT"
-                elif fan_speed >= 3000:
-                    grade = "GOOD"  
-                elif fan_speed >= 1000:
-                    grade = "WARNING"
-                else:
-                    grade = "CRITICAL"
-                fan_grades_calculated.append(grade)
+            fan_grades_calculated = [
+                grade_low_is_bad(fan_speed, "fan_rpm")
+                for fan_speed in fans.values()
+                if isinstance(fan_speed, (int, float))
+            ]
             
             # Get overall fan status (worst case from all fans)
-            fan_status = max(fan_grades_calculated, key=lambda x: priority.get(x, 0))
+            fan_status = (
+                max(
+                    fan_grades_calculated,
+                    key=lambda x: GRADE_PRIORITY.get(x, 0),
+                )
+                if fan_grades_calculated else "N/A"
+            )
         else:
             fan_status = "N/A"
         
@@ -886,53 +986,19 @@ def generate_hardware_html():
         
         # Compute per-metric grades for dot indicators
         def grade_cpu(t):
-            if t is None:
-                return None
-            if t < 60:
-                return "EXCELLENT"
-            elif t < 70:
-                return "GOOD"
-            elif t < 80:
-                return "WARNING"
-            else:
-                return "CRITICAL"
+            return grade_high_is_bad(t, "cpu_temp_c")
 
         def grade_asic(t):
-            if t is None:
-                return None
-            if t < 85:
-                return "EXCELLENT"
-            elif t < 105:
-                return "GOOD"
-            elif t < 115:
-                return "WARNING"
-            else:
-                return "CRITICAL"
+            return grade_high_is_bad(t, "asic_temp_c")
 
         def grade_memory(p):
-            if not isinstance(p, (int, float)):
-                return None
-            if p < 60:
-                return "EXCELLENT"
-            elif p < 75:
-                return "GOOD"
-            elif p < 85:
-                return "WARNING"
-            else:
-                return "CRITICAL"
+            return grade_high_is_bad(p, "memory_percent")
 
         def grade_psu(eff, raw):
             # Only grade when we have parsed value
             if raw is None:
                 return None
-            if eff > 90:
-                return "EXCELLENT"
-            elif eff >= 50:
-                return "GOOD"
-            elif eff >= 30:
-                return "WARNING"
-            else:
-                return "CRITICAL"
+            return grade_low_is_bad(eff, "psu_efficiency_percent")
 
         cpu_g = grade_cpu(cpu_temp)
         asic_g = grade_asic(asic_temp)
@@ -969,6 +1035,10 @@ def generate_hardware_html():
                             if isinstance(memory_usage, (int, float)) else "N/A")
         cpu_load_str = (f"{cpu_load:.2f}"
                         if isinstance(cpu_load, (int, float)) else "N/A")
+        psu_efficiency_str = (
+            f"{psu_efficiency:.1f}%"
+            if psu_efficiency_parsed is not None else "N/A"
+        )
         
         html_content += f"""
                 <tr data-status="{health_grade.lower()}">
@@ -979,13 +1049,14 @@ def generate_hardware_html():
                     <td>{memory_usage_str}{mem_cell_suffix}</td>
                     <td>{cpu_load_str}{load_cell_suffix}</td>
                     <td><span class="{fan_badge_class}">{fan_status}</span>{fan_cell_suffix}</td>
-                    <td>{psu_efficiency:.1f}%{psu_cell_suffix}</td>
+                    <td>{psu_efficiency_str}{psu_cell_suffix}</td>
                     <td>{psu_in_out_str}</td>
                     <td>{device_model}</td>
                 </tr>
 """
     
-    html_content += """
+    threshold_rows = threshold_reference_rows()
+    html_content += f"""
                 </tbody>
             </table>
         </div>
@@ -1002,12 +1073,7 @@ def generate_hardware_html():
                     <tr><th>Parameter</th><th>Excellent</th><th>Good</th><th>Warning</th><th>Critical</th></tr>
                 </thead>
                 <tbody>
-                    <tr><td>CPU Temperature</td><td>&lt; 60°C</td><td>60-70°C</td><td>70-80°C</td><td>&gt; 80°C</td></tr>
-                    <tr><td>ASIC Temperature</td><td>&lt; 85°C</td><td>85-105°C</td><td>105-115°C</td><td>&gt; 115°C</td></tr>
-                    <tr><td>Memory Usage</td><td>&lt; 60%</td><td>60-75%</td><td>75-85%</td><td>&gt; 85%</td></tr>
-                    <tr><td>CPU Load (5min avg)</td><td>&lt; 1.0</td><td>1.0-2.0</td><td>2.0-3.0</td><td>&gt; 3.0</td></tr>
-                    <tr><td>Fan Speed</td><td>&gt; 4000 RPM</td><td>3000-4000 RPM</td><td>1000-3000 RPM</td><td>&lt; 1000 RPM</td></tr>
-                    <tr><td>PSU Efficiency</td><td>&gt; 90%</td><td>50-90%</td><td>30-50%</td><td>&lt; 30%</td></tr>
+                    {threshold_rows}
                 </tbody>
             </table>
         </div>
@@ -1293,6 +1359,14 @@ def generate_hardware_html():
                         else if (isNaN(numB)) result = -1;
                         else result = numA - numB;
                         break;
+                    case 'power':
+                        const powerA = parseFloat(aVal);
+                        const powerB = parseFloat(bVal);
+                        if (isNaN(powerA) && isNaN(powerB)) result = 0;
+                        else if (isNaN(powerA)) result = 1;
+                        else if (isNaN(powerB)) result = -1;
+                        else result = powerA - powerB;
+                        break;
                     case 'string':
                     default:
                         result = aVal.localeCompare(bVal, undefined, { numeric: true, sensitivity: 'base' });
@@ -1316,7 +1390,9 @@ def generate_hardware_html():
                 'UNKNOWN': 4
             };
             
-            return (priority[a] || 5) - (priority[b] || 5);
+            const aPriority = Object.prototype.hasOwnProperty.call(priority, a) ? priority[a] : 5;
+            const bPriority = Object.prototype.hasOwnProperty.call(priority, b) ? priority[b] : 5;
+            return aPriority - bPriority;
         }
 
         // Run Analysis Function

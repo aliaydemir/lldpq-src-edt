@@ -62,6 +62,11 @@ class OpticalAnalyzer:
         "bias_current_max_ma": 100.0,   # Maximum laser bias current
         "link_margin_min_db": 3.0       # Minimum acceptable link margin
     }
+    # Several drivers report a dark optical lane as -40 dBm (or -inf).  Keep
+    # those readings as evidence; dropping them can turn a failed lane into a
+    # healthy-looking average.
+    DARK_POWER_DBM = -35.0
+    NEGATIVE_INFINITY_FLOOR_DBM = -40.0
 
     def __init__(self, data_dir="monitor-results"):
         self.data_dir = data_dir
@@ -95,7 +100,7 @@ class OpticalAnalyzer:
         except Exception as e:
             print(f"Error saving optical history: {e}")
 
-    def parse_optical_data(self, optical_data: str) -> Dict[str, float]:
+    def parse_optical_data(self, optical_data: str) -> Optional[Dict[str, Any]]:
         """Parse optical output (NVUE transceiver commands) for optical parameters
         
         Returns None if this is a DAC/Copper cable (not optical)
@@ -124,16 +129,54 @@ class OpticalAnalyzer:
             'bias_current_ma': None
         }
 
-        # Track channel data for averaging
-        rx_powers = []
-        tx_powers = []
-        bias_currents = []
+        # Preserve lane identity.  The scalar values exposed to the report are
+        # selected from the worst lane below rather than averaged, so the
+        # displayed value explains the resulting severity.
+        rx_readings = []
+        tx_readings = []
+        bias_readings = []
+
+        number = r'[-+]?(?:\d+(?:\.\d*)?|\.\d+)'
+        power_value = rf'(?P<value>-?inf|{number})'
+        rx_pattern = re.compile(
+            rf'(?:ch-(?P<nvue_lane>\d+)-rx-power|'
+            rf'(?:Rcvr|Receiver)\s+signal\s+(?:avg|average)\s+optical\s+power'
+            rf'(?:\s*\(\s*Channel\s+(?P<ethtool_lane>\d+)\s*\))?)'
+            rf'\s*:\s*(?:-?inf|{number})\s*mW\s*/\s*{power_value}\s*dBm',
+            re.IGNORECASE,
+        )
+        tx_pattern = re.compile(
+            rf'(?:ch-(?P<nvue_lane>\d+)-tx-power|'
+            rf'(?:Transmit\s+avg\s+optical\s+power|Laser\s+output\s+power)'
+            rf'(?:\s*\(\s*Channel\s+(?P<ethtool_lane>\d+)\s*\))?)'
+            rf'\s*:\s*(?:-?inf|{number})\s*mW\s*/\s*{power_value}\s*dBm',
+            re.IGNORECASE,
+        )
+        bias_pattern = re.compile(
+            rf'(?:ch-(?P<nvue_lane>\d+)-tx-bias-current|'
+            rf'Laser\s+tx\s+bias\s+current'
+            rf'(?:\s*\(\s*Channel\s+(?P<ethtool_lane>\d+)\s*\))?)'
+            rf'\s*:\s*(?P<value>{number})\s*mA',
+            re.IGNORECASE,
+        )
+
+        def lane_number(match, readings):
+            value = match.groupdict().get('nvue_lane') or match.groupdict().get('ethtool_lane')
+            return int(value) if value is not None else len(readings) + 1
+
+        def power_from_match(match):
+            value = match.group('value').lower()
+            if value == '-inf':
+                return self.NEGATIVE_INFINITY_FLOOR_DBM
+            if value == 'inf':
+                return abs(self.NEGATIVE_INFINITY_FLOOR_DBM)
+            return float(value)
 
         lines = optical_data.strip().split('\n')
         for line in lines:
             line = line.strip()
 
-                        # Parse temperature (NVUE format: "temperature : 48.71 degrees C" or ethtool: "Module temperature : 48.85 degrees C")
+            # Parse temperature (NVUE format: "temperature : 48.71 degrees C" or ethtool: "Module temperature : 48.85 degrees C")
             temp_match = re.search(r'(?:Module\s+)?temperature\s*:\s*([\d.-]+)\s*degrees?\s*C', line)
             if temp_match:
                 optical_params['temperature_c'] = float(temp_match.group(1))
@@ -143,81 +186,110 @@ class OpticalAnalyzer:
             if voltage_match:
                 optical_params['voltage_v'] = float(voltage_match.group(1))
 
-            # Parse RX power (NVUE: "ch-1-rx-power : 1.7055 mW / 2.32 dBm" or ethtool: "Rcvr signal avg optical power(Channel 1) : 1.5601 mW / 1.93 dBm")
-            # Enhanced regex to handle parentheses around Channel
-            rx_power_match = re.search(r'(?:ch-\d+-rx-power|Rcvr\s+signal\s+avg\s+optical\s+power\s*\(?\s*Channel\s+\d+\s*\)?)\s*:\s*[\d.-]+\s*mW\s*/\s*([-\d.]+)\s*dBm', line)
+            rx_power_match = rx_pattern.search(line)
             if rx_power_match:
                 try:
-                    rx_dbm = float(rx_power_match.group(1))
-                    # Ignore placeholder lanes commonly reported as -40 dBm on unused channels
-                    if rx_dbm > -35.0:
-                        rx_powers.append(rx_dbm)
+                    rx_readings.append((
+                        lane_number(rx_power_match, rx_readings),
+                        power_from_match(rx_power_match),
+                    ))
                 except ValueError:
                     pass
 
-            # Parse TX power (NVUE: "ch-1-tx-power : 1.1706 mW / 0.68 dBm" or ethtool: "Transmit avg optical power (Channel 1) : 1.0466 mW / 0.20 dBm")
-            # Enhanced regex to handle parentheses around Channel
-            tx_power_match = re.search(r'(?:ch-\d+-tx-power|Transmit\s+avg\s+optical\s+power\s*\(?\s*Channel\s+\d+\s*\)?)\s*:\s*[\d.-]+\s*mW\s*/\s*([-\d.]+)\s*dBm', line)
+            tx_power_match = tx_pattern.search(line)
             if tx_power_match:
                 try:
-                    tx_dbm = float(tx_power_match.group(1))
-                    # Ignore unused lanes at ~-40 dBm
-                    if tx_dbm > -35.0:
-                        tx_powers.append(tx_dbm)
+                    tx_readings.append((
+                        lane_number(tx_power_match, tx_readings),
+                        power_from_match(tx_power_match),
+                    ))
                 except ValueError:
                     pass
 
-            # Parse bias current (NVUE: "ch-1-tx-bias-current : 7.056 mA" or ethtool: "Laser tx bias current (Channel 1) : 72.500 mA")
-            # Enhanced regex to handle parentheses around Channel
-            bias_match = re.search(r'(?:ch-\d+-tx-bias-current|Laser\s+tx\s+bias\s+current\s*\(?\s*Channel\s+\d+\s*\)?)\s*:\s*([\d.-]+)\s*mA', line)
+            bias_match = bias_pattern.search(line)
             if bias_match:
                 try:
-                    bias_ma = float(bias_match.group(1))
-                    # Ignore zero bias reported on unused lanes
-                    if bias_ma > 0.1:
-                        bias_currents.append(bias_ma)
+                    bias_readings.append((
+                        lane_number(bias_match, bias_readings),
+                        float(bias_match.group('value')),
+                    ))
                 except ValueError:
                     pass
 
-        # Keep the displayed scalar values as channel averages for backwards
-        # compatibility, but retain lane readings internally so one bad lane
-        # cannot be hidden by otherwise healthy lanes.
-        if rx_powers:
-            optical_params['rx_power_dbm'] = sum(rx_powers) / len(rx_powers)
-        if tx_powers:
-            optical_params['tx_power_dbm'] = sum(tx_powers) / len(tx_powers)
-        if bias_currents:
-            optical_params['bias_current_ma'] = sum(bias_currents) / len(bias_currents)
-
-        optical_params['_rx_power_lanes_dbm'] = rx_powers
-        optical_params['_tx_power_lanes_dbm'] = tx_powers
-        optical_params['_bias_current_lanes_ma'] = bias_currents
-
-        # Fallback: parse on full blob if line-by-line missed values (ethtool formatting variations)
-        # Enhanced to handle both "Channel 1" and "(Channel 1)" formats
-        if optical_params['rx_power_dbm'] is None:
-            rx_all = re.findall(r'(?:Rcvr\s+signal\s+avg\s+optical\s+power\s*\(?\s*Channel\s*\d+\s*\)?|ch-\d+-rx-power)\s*:\s*[\d.-]+\s*mW\s*/\s*([-\d.]+)\s*dBm', optical_data, flags=re.IGNORECASE)
-            if rx_all:
-                rx_vals = [float(v) for v in rx_all if float(v) > -35.0]
-                if rx_vals:
-                    optical_params['rx_power_dbm'] = sum(rx_vals) / len(rx_vals)
-                    optical_params['_rx_power_lanes_dbm'] = rx_vals
-        if optical_params['tx_power_dbm'] is None:
-            tx_all = re.findall(r'(?:Transmit\s+avg\s+optical\s+power\s*\(?\s*Channel\s*\d+\s*\)?|ch-\d+-tx-power)\s*:\s*[\d.-]+\s*mW\s*/\s*([-\d.]+)\s*dBm', optical_data, flags=re.IGNORECASE)
-            if tx_all:
-                tx_vals = [float(v) for v in tx_all if float(v) > -35.0]
-                if tx_vals:
-                    optical_params['tx_power_dbm'] = sum(tx_vals) / len(tx_vals)
-                    optical_params['_tx_power_lanes_dbm'] = tx_vals
-        if optical_params['bias_current_ma'] is None:
-            bias_all = re.findall(r'(?:Laser\s+tx\s+bias\s+current\s*\(?\s*Channel\s*\d+\s*\)?|ch-\d+-tx-bias-current)\s*:\s*([\d.-]+)\s*mA', optical_data, flags=re.IGNORECASE)
-            if bias_all:
-                bias_vals = [float(v) for v in bias_all if float(v) > 0.1]
-                if bias_vals:
-                    optical_params['bias_current_ma'] = sum(bias_vals) / len(bias_vals)
-                    optical_params['_bias_current_lanes_ma'] = bias_vals
+        self._set_lane_readings(optical_params, 'rx_power', rx_readings)
+        self._set_lane_readings(optical_params, 'tx_power', tx_readings)
+        self._set_lane_readings(optical_params, 'bias_current', bias_readings)
 
         return optical_params
+
+    def _lane_risk(self, metric: str, value: float) -> tuple:
+        """Return a sortable risk tuple used to select the displayed lane."""
+        if metric == 'rx_power':
+            low = self.thresholds['rx_power_min_dbm']
+            high = self.thresholds['rx_power_critical_high_dbm']
+            if value <= self.DARK_POWER_DBM:
+                return (4, low - value)
+            if value < low or value > high:
+                return (3, max(low - value, value - high))
+            if (self.calculate_link_margin(value) < self.thresholds['link_margin_min_db'] or
+                    value > self.thresholds['rx_power_warning_high_dbm']):
+                return (2, max(low + self.thresholds['link_margin_min_db'] - value,
+                               value - self.thresholds['rx_power_warning_high_dbm']))
+            return (1, -min(value - low, high - value))
+        if metric == 'tx_power':
+            low = self.thresholds['tx_power_min_dbm']
+            high = self.thresholds['tx_power_max_dbm']
+            if value < low or value > high:
+                return (3, max(low - value, value - high))
+            if value < low + 1.0 or value > high - 1.0:
+                return (2, max(low + 1.0 - value, value - (high - 1.0)))
+            return (1, -min(value - low, high - value))
+        # High bias is the only currently defined bias risk.
+        return (1, value)
+
+    def _set_lane_readings(self, optical_params: Dict[str, Any], metric: str,
+                           readings: List[tuple]) -> None:
+        value_key = f'{metric}_dbm' if metric != 'bias_current' else 'bias_current_ma'
+        lanes_key = f'_{metric}_lanes_dbm' if metric != 'bias_current' else '_bias_current_lanes_ma'
+        ids_key = f'_{metric}_lane_ids'
+        lane_key = f'{metric}_lane'
+
+        optical_params[lanes_key] = [value for _lane, value in readings]
+        optical_params[ids_key] = [lane for lane, _value in readings]
+        optical_params[lane_key] = None
+        if not readings:
+            optical_params[value_key] = None
+            return
+
+        lane, value = max(readings, key=lambda item: self._lane_risk(metric, item[1]))
+        optical_params[value_key] = value
+        optical_params[lane_key] = lane
+
+    def _select_breakout_lane(self, port_name: str,
+                              optical_params: Dict[str, Any]) -> None:
+        """Limit a breakout interface to its matching physical channel.
+
+        Drivers often return all cage lanes for every `swpNsM` interface.  In
+        that case channel M+1 is the only lane owned by the logical interface.
+        A single returned lane is already interface-scoped and is left intact.
+        """
+        interface = port_name.split(':', 1)[-1]
+        match = re.fullmatch(r'swp\d+s(\d+)', interface)
+        if not match:
+            return
+        wanted_lane = int(match.group(1)) + 1
+
+        for metric in ('rx_power', 'tx_power', 'bias_current'):
+            lanes_key = f'_{metric}_lanes_dbm' if metric != 'bias_current' else '_bias_current_lanes_ma'
+            ids_key = f'_{metric}_lane_ids'
+            values = optical_params.get(lanes_key) or []
+            lane_ids = optical_params.get(ids_key) or []
+            if len(values) <= 1:
+                continue
+            readings = list(zip(lane_ids, values))
+            selected = [item for item in readings if item[0] == wanted_lane]
+            if selected:
+                self._set_lane_readings(optical_params, metric, selected)
 
     def calculate_link_margin(self, rx_power_dbm: float) -> float:
         """Calculate optical link margin"""
