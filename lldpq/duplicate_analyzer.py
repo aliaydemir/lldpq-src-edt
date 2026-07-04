@@ -1232,4 +1232,3 @@ document.addEventListener('DOMContentLoaded', function(){
 <script src="/css/analysis-guard.js"></script>
 </body>
 </html>"""
-

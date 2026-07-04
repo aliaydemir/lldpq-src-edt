@@ -92,6 +92,11 @@
         return String(manifest.pipeline_id || manifest.completed_at || '');
     }
 
+    function markerIdentity(marker) {
+        if (!marker || typeof marker !== 'object') return '';
+        return [marker.status || '', marker.timestamp || '', marker.reason || ''].join('|');
+    }
+
     function delay(milliseconds) {
         return new Promise(function (resolve) { setTimeout(resolve, milliseconds); });
     }
@@ -104,13 +109,24 @@
         var pollMs = Math.max(Number(options.pollMs) || 2000, 500);
         var startedAt = Date.now();
         var baselineIdentity = manifestIdentity(baseline && baseline.manifest);
-        var sawCollection = false;
+        var baselineMarkerIdentity = markerIdentity(baseline && baseline.marker);
+        var baselineMarkerStatus = baseline && baseline.marker && baseline.marker.status;
+        var sawCollection = baselineMarkerStatus === 'collecting';
 
         while (Date.now() - startedAt < timeoutMs) {
             var state = await readPipelineState();
             var markerStatus = state.marker && state.marker.status;
-            if (markerStatus === 'collecting') sawCollection = true;
-            if (markerStatus === 'stale') {
+            var currentMarkerIdentity = markerIdentity(state.marker);
+            var markerChanged = currentMarkerIdentity !== baselineMarkerIdentity;
+            if (markerStatus === 'collecting' &&
+                    (markerChanged || baselineMarkerStatus !== 'stale')) {
+                sawCollection = true;
+            }
+            // A stale marker that already existed before the click describes
+            // the previous failed run.  Ignore that exact marker until this
+            // trigger starts or publishes a different failure marker.
+            if (markerStatus === 'stale' &&
+                    (sawCollection || markerChanged || baselineMarkerStatus !== 'stale')) {
                 throw new Error((state.marker && state.marker.reason) || 'Monitoring run failed');
             }
 

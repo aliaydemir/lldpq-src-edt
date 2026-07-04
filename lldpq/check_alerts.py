@@ -1682,6 +1682,8 @@ Excellent: {ber_stats['excellent']}     Good: {ber_stats['good']}     Warnings: 
             collection_status = (
                 self.extract_attribute_value(
                     content, "data-collection-status"
+                ) or self.extract_attribute_value(
+                    content, "data-coverage-status"
                 ) or "current"
             ).lower()
             if collection_status == "unavailable":

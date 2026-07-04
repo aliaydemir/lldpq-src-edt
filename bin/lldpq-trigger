@@ -26,6 +26,7 @@ LLDP_TRIGGER_FILE="/tmp/.lldp_web_trigger"
 MONITOR_TRIGGER_FILE="/tmp/.monitor_web_trigger"
 ASSETS_TRIGGER_FILE="/tmp/.assets_web_trigger"
 CONFIGS_TRIGGER_FILE="/tmp/.configs_web_trigger"
+TRANSCEIVER_TRIGGER_FILE="/tmp/.transceiver_web_trigger"
 DAEMON_PID_FILE="/tmp/lldp_trigger_daemon.pid"
 LLDP_LOCK_FILE="/tmp/lldp_running.lock"
 ASSETS_LOCK_FILE="/tmp/assets_running.lock"
@@ -164,11 +165,20 @@ refresh_configs() {
     ./get-configs.sh >/dev/null 2>&1
 }
 
+refresh_transceiver() {
+    cd "$LLDPQ_DIR" || return 1
+    # On-demand transceiver firmware sweep. collect-transceiver-fw.sh holds its
+    # own flock + minimum-interval and runs independently of the monitor lock,
+    # so a long mlxlink pass never blocks the LLDP/monitor/assets/configs paths.
+    ./collect-transceiver-fw.sh >/dev/null 2>&1
+}
+
 # Main daemon loop - check every 5 seconds
 LLDP_LAST_CHECK_FILE="$LLDPQ_DIR/.last_lldp_trigger_check"
 MONITOR_LAST_CHECK_FILE="$LLDPQ_DIR/.last_monitor_trigger_check"
 ASSETS_LAST_CHECK_FILE="$LLDPQ_DIR/.last_assets_trigger_check"
 CONFIGS_LAST_CHECK_FILE="$LLDPQ_DIR/.last_configs_trigger_check"
+TRANSCEIVER_LAST_CHECK_FILE="$LLDPQ_DIR/.last_transceiver_trigger_check"
 CONFIGS_PENDING_TRIGGER_TIME=0
 CONFIGS_NEXT_RETRY_AT=0
 CONFIGS_RETRY_DELAY="$CONFIGS_RETRY_BASE_SECONDS"
@@ -264,6 +274,21 @@ while true; do
         fi
     fi
     
+    # Check Transceiver firmware trigger (on-demand, out-of-band mlxlink sweep)
+    TRANSCEIVER_LAST_CHECK=$(read_trigger_timestamp "$TRANSCEIVER_LAST_CHECK_FILE")
+
+    if [ -f "$TRANSCEIVER_TRIGGER_FILE" ]; then
+        TRANSCEIVER_TRIGGER_TIME=$(read_trigger_timestamp "$TRANSCEIVER_TRIGGER_FILE")
+
+        if [[ "$TRANSCEIVER_TRIGGER_TIME" != "0" && "$TRANSCEIVER_TRIGGER_TIME" != "$TRANSCEIVER_LAST_CHECK" ]]; then
+            # Consume the click immediately; the collector enforces its own lock
+            # and minimum interval and runs in the background so it never blocks
+            # the other triggers during a potentially minutes-long sweep.
+            write_trigger_timestamp "$TRANSCEIVER_LAST_CHECK_FILE" "$TRANSCEIVER_TRIGGER_TIME"
+            refresh_transceiver &
+        fi
+    fi
+
     # Sleep for 3 seconds before next check
     sleep 3
 done

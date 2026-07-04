@@ -1057,10 +1057,6 @@ class LinkFlapAnalyzer:
         async function runAnalysis() {
             const button = document.getElementById('run-analysis');
             const originalText = button.innerHTML;
-            let baseline = null;
-            if (typeof window.lldpqCapturePipelineState === 'function') {
-                try { baseline = await window.lldpqCapturePipelineState(); } catch (error) { baseline = null; }
-            }
             
             // Disable button and show loading
             button.disabled = true;
@@ -1070,6 +1066,10 @@ class LinkFlapAnalyzer:
                 </svg>
                 Running...
             `;
+            let baseline = null;
+            if (typeof window.lldpqCapturePipelineState === 'function') {
+                try { baseline = await window.lldpqCapturePipelineState(); } catch (error) { baseline = null; }
+            }
             
             // Send POST request to trigger monitor
             fetch('/trigger-monitor', {

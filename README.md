@@ -424,7 +424,7 @@ cd lldpq-src
 - **duplicate address detection**: duplicate IP/MAC detection via EVPN DAD + MAC-mobility sequences, with severity, quiesced/aged lifecycle, and per-port interface descriptions (see [02e])
 - **optical diagnostics**: power levels, temperature, bias current, link margins  
 - **link flap detection**: carrier transitions on all interfaces (including breakouts), with time-windowed flap counts (1h / 12h / 24h)
-- **bit error rate**: comprehensive error statistics with industry thresholds — raw BER, effective BER, and PHY symbol errors
+- **Link error / BER**: directional frame-error density from interface counters, plus separately graded raw/effective PHY BER and PHY symbol-error deltas
 - **hardware health**: cpu/asic temperatures, memory usage, fan speeds, psu efficiency
 - **topology validation**: lldp neighbor verification against expected topology
 
