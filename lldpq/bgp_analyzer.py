@@ -848,7 +848,50 @@ class BGPAnalyzer:
         anomalies = self.detect_bgp_anomalies()
         
         # Serialize EVPN per-device data for JavaScript
-        evpn_per_device_json = json.dumps(evpn_summary.get('per_device', {}))
+        evpn_per_device_json = json.dumps(evpn_summary.get('per_device', {})).replace(
+            "<", "\\u003c"
+        )
+        coverage = summary.get("collection_coverage", {})
+        expected_devices = int(coverage.get("expected_devices", 0) or 0)
+        current_bgp_devices = int(coverage.get("current_bgp_devices", 0) or 0)
+        current_evpn_devices = int(coverage.get("current_evpn_devices", 0) or 0)
+        if expected_devices and current_bgp_devices == 0:
+            coverage_status = "unavailable"
+        elif expected_devices and (
+            current_bgp_devices < expected_devices
+            or current_evpn_devices < expected_devices
+        ):
+            coverage_status = "partial"
+        else:
+            coverage_status = "current"
+        coverage_banner = ""
+        if coverage_status != "current":
+            coverage_banner = (
+                f'<div data-collection-status="{coverage_status}" '
+                f'data-current-bgp-devices="{current_bgp_devices}" '
+                f'data-current-evpn-devices="{current_evpn_devices}" '
+                f'data-expected-devices="{expected_devices}" '
+                'style="margin:16px 0;padding:12px;border-left:4px solid #ff9800;'
+                'background:#332b20;color:#ffcc80">'
+                f'Collection coverage is {coverage_status}: BGP {current_bgp_devices}/'
+                f'{expected_devices}, EVPN {current_evpn_devices}/{expected_devices} devices current.'
+                '</div>'
+            )
+        route_banner = ""
+        if evpn_summary.get("route_counts_partial"):
+            affected = ", ".join(evpn_summary.get("truncated_devices", []))
+            route_banner = (
+                '<div data-evpn-route-coverage="partial" '
+                'style="margin:16px 0;padding:12px;border-left:4px solid #ff9800;'
+                'background:#332b20;color:#ffcc80">'
+                'EVPN route observations are truncated for: '
+                f'{html.escape(affected)}. Counts are lower bounds until collector metadata is complete.'
+                '</div>'
+            )
+        health_ratio_display = (
+            f"{summary['health_ratio']:.1f}%"
+            if summary["health_ratio"] is not None else "N/A"
+        )
         
         html_content = f"""
 <!DOCTYPE html>
@@ -1118,6 +1161,12 @@ class BGPAnalyzer:
     </style>
 </head>
 <body>
+    {coverage_banner}
+    {route_banner}
+    <div data-analysis-summary="bgp" data-collection-status="{coverage_status}"
+         data-expected-devices="{expected_devices}"
+         data-current-bgp-devices="{current_bgp_devices}"
+         data-current-evpn-devices="{current_evpn_devices}" style="display:none"></div>
     <!-- Page Header -->
     <div class="page-header">
         <div>
@@ -1160,32 +1209,32 @@ class BGPAnalyzer:
         </div>
         <div class="section-content">
             <div class="summary-grid">
-                <div class="summary-card card-info" id="total-devices-card">
+                <div class="summary-card card-info" id="total-devices-card" data-metric-key="bgp_expected_devices" data-metric-value="{summary['total_devices']}">
                     <div class="metric" id="total-devices">{summary['total_devices']}</div>
                     <div class="metric-label">BGP Devices</div>
                 </div>
-                <div class="summary-card card-info" id="total-neighbors-card">
+                <div class="summary-card card-info" id="total-neighbors-card" data-metric-key="bgp_total_neighbors" data-metric-value="{summary['total_neighbors']}">
                     <div class="metric" id="total-neighbors">{summary['total_neighbors']}</div>
                     <div class="metric-label">Total Neighbors</div>
                 </div>
-                <div class="summary-card card-excellent" id="established-card">
+                <div class="summary-card card-excellent" id="established-card" data-metric-key="bgp_established_neighbors" data-metric-value="{summary['established_neighbors']}">
                     <div class="metric bgp-excellent" id="established-neighbors">{summary['established_neighbors']}</div>
                     <div class="metric-label">Established</div>
                 </div>
-                <div class="summary-card card-critical" id="down-card">
+                <div class="summary-card card-critical" id="down-card" data-metric-key="bgp_non_established_neighbors" data-metric-value="{summary['down_neighbors']}">
                     <div class="metric bgp-critical" id="down-neighbors">{summary['down_neighbors']}</div>
                     <div class="metric-label">Down/Problem</div>
                 </div>
-                <div class="summary-card card-warning" id="stale-devices-card">
+                <div class="summary-card card-warning" id="stale-devices-card" data-metric-key="bgp_stale_devices" data-metric-value="{summary['stale_devices']}">
                     <div class="metric bgp-warning" id="stale-devices">{summary['stale_devices']}</div>
                     <div class="metric-label">Stale Collections</div>
                 </div>
-                <div class="summary-card card-info" id="unknown-devices-card">
+                <div class="summary-card card-info" id="unknown-devices-card" data-metric-key="bgp_unknown_devices" data-metric-value="{summary['unknown_devices']}">
                     <div class="metric bgp-unknown" id="unknown-devices">{summary['unknown_devices']}</div>
                     <div class="metric-label">Unknown Collections</div>
                 </div>
-                <div class="summary-card" id="health-card">
-                    <div class="metric" id="health-ratio">{summary['health_ratio']:.1f}%</div>
+                <div class="summary-card" id="health-card" data-metric-key="bgp_health_ratio" data-metric-value="{health_ratio_display}">
+                    <div class="metric" id="health-ratio">{health_ratio_display}</div>
                     <div class="metric-label">Health Ratio</div>
                 </div>
             </div>
@@ -1202,9 +1251,9 @@ class BGPAnalyzer:
         </div>
         <div class="section-content">
             <div class="summary-grid">
-                <div class="summary-card card-info evpn-clickable" onclick="showEvpnModal('all')" title="Click to see VNI details">
+                <div class="summary-card card-info evpn-clickable" data-metric-key="evpn_unique_vnis" data-metric-value="{evpn_summary['total_vnis']}" onclick="showEvpnModal('all')" title="Click to see VNI details">
                     <div class="metric" id="evpn-total-vnis" style="color: #4fc3f7;">{evpn_summary['total_vnis']}</div>
-                    <div class="metric-label">Total VNIs</div>
+                    <div class="metric-label">Unique VNIs</div>
                 </div>
                 <div class="summary-card evpn-clickable" style="border-left-color: #9c27b0;" onclick="showEvpnModal('L2')" title="Click to see L2 VNIs">
                     <div class="metric" id="evpn-l2-vnis" style="color: #ce93d8;">{evpn_summary['l2_vnis']}</div>
@@ -1216,11 +1265,11 @@ class BGPAnalyzer:
                 </div>
                 <div class="summary-card evpn-clickable" style="border-left-color: #00bcd4;" onclick="showEvpnModal('type2')" title="Click to see Type-2 route breakdown">
                     <div class="metric" id="evpn-type2-routes" style="color: #4dd0e1;">{evpn_summary['type2_routes']}</div>
-                    <div class="metric-label">Type-2 Routes (MAC/IP)</div>
+                    <div class="metric-label">Type-2 Route Observations (MAC/IP)</div>
                 </div>
                 <div class="summary-card evpn-clickable" style="border-left-color: #8bc34a;" onclick="showEvpnModal('type5')" title="Click to see Type-5 route breakdown">
                     <div class="metric" id="evpn-type5-routes" style="color: #aed581;">{evpn_summary['type5_routes']}</div>
-                    <div class="metric-label">Type-5 Routes (IP Prefix)</div>
+                    <div class="metric-label">Type-5 Route Observations (IP Prefix)</div>
                 </div>
             </div>
         </div>

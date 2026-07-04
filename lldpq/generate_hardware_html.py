@@ -14,6 +14,7 @@ Licensed under MIT License - see LICENSE file for details
 import json
 import os
 import re
+import html
 from datetime import datetime, timezone
 from collection_freshness import is_current_collection, read_asset_snapshot
 
@@ -1030,7 +1031,10 @@ def generate_hardware_html():
             psu_in_out_str = f"{psu_in_w:.1f}W / {psu_out_w:.1f}W"
 
         # Get model information from assets
-        device_model = assets_data.get(device_name, {}).get("model", "N/A")
+        device_label = html.escape(str(canonical(device_name)))
+        device_model = html.escape(
+            str(assets_data.get(device_name, {}).get("model", "N/A"))
+        )
         memory_usage_str = (f"{memory_usage:.1f}%"
                             if isinstance(memory_usage, (int, float)) else "N/A")
         cpu_load_str = (f"{cpu_load:.2f}"
@@ -1042,7 +1046,7 @@ def generate_hardware_html():
         
         html_content += f"""
                 <tr data-status="{health_grade.lower()}">
-                    <td>{canonical(device_name)}</td>
+                    <td>{device_label}</td>
                     <td><span class="{health_badge_class}">{health_grade.upper()}</span></td>
                     <td>{cpu_temp_str}{cpu_cell_suffix}</td>
                     <td>{asic_temp_str}{asic_cell_suffix}</td>
