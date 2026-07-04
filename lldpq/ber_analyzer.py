@@ -895,6 +895,18 @@ class BERAnalyzer:
         """Export BER data for web display - same format as BGP/Link Flap/Optical"""
         summary = self.get_ber_summary()
         anomalies = self.detect_ber_anomalies()
+        expected_hosts = getattr(self, 'coverage_expected_hosts', None)
+        current_hosts = getattr(self, 'coverage_current_hosts', None)
+        coverage_attrs = ''
+        if isinstance(expected_hosts, int) and isinstance(current_hosts, int):
+            coverage_status = (
+                'complete' if current_hosts >= expected_hosts else 'partial'
+            )
+            coverage_attrs = (
+                f' data-coverage-status="{coverage_status}"'
+                f' data-coverage-expected="{expected_hosts}"'
+                f' data-coverage-current="{current_hosts}"'
+            )
         
         # Determine overall health status
         total_problematic = len(summary['warning_ports']) + len(summary['critical_ports'])
@@ -1004,7 +1016,7 @@ class BERAnalyzer:
         @keyframes spin {{ from {{ transform: rotate(0deg); }} to {{ transform: rotate(360deg); }} }}
     </style>
 </head>
-<body>
+<body{coverage_attrs}>
     <div class="page-header">
         <div>
             <div class="page-title">BER Analysis Results</div>

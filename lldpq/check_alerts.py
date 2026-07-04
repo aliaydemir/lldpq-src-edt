@@ -560,13 +560,19 @@ class LLDPqAlerts:
                 f"    ⚠️ Skipping BGP neighbor state for {device}: "
                 f"collection is {processed_bgp_status}"
             )
-        elif processed_bgp_status == "down":
-            current_state = "CRITICAL"
+        elif processed_bgp_status in {"warning", "critical"}:
+            current_state = processed_bgp_status.upper()
             if self.should_send_alert(device, "bgp_neighbors", current_state):
+                state_detail = (
+                    "exceeded the configured down-duration threshold"
+                    if current_state == "CRITICAL"
+                    else "is down but remains inside the configured grace period"
+                )
                 self.send_stateful_notification(
-                    "BGP Neighbors Down",
-                    "Processed BGP analysis reports one or more neighbors down",
-                    "CRITICAL", device, "bgp_neighbors", current_state
+                    ("BGP Neighbors Down" if current_state == "CRITICAL"
+                     else "BGP Neighbor Warning"),
+                    f"Processed BGP analysis reports that a neighbor {state_detail}",
+                    current_state, device, "bgp_neighbors", current_state
                 )
         elif processed_bgp_status == "established":
             current_state = "OK"
@@ -1340,8 +1346,26 @@ Excellent: {ber_stats['excellent']}     Good: {ber_stats['good']}     Warnings: 
                 data_status = device_bgp.get("data_status", "current")
                 if data_status in {"stale", "unknown"}:
                     return data_status
-                down_neighbors = device_bgp.get("down_neighbors", 0)
-                return "down" if down_neighbors > 0 else "established"
+                critical_neighbors = int(
+                    device_bgp.get("critical_neighbors", 0) or 0
+                )
+                warning_neighbors = int(
+                    device_bgp.get("warning_neighbors", 0) or 0
+                )
+                if critical_neighbors > 0:
+                    return "critical"
+                if warning_neighbors > 0:
+                    return "warning"
+
+                # Legacy history did not persist severity buckets.  Keep its
+                # prior fail-closed behavior until one new analysis is saved.
+                if "critical_neighbors" not in device_bgp:
+                    down_neighbors = int(
+                        device_bgp.get("down_neighbors", 0) or 0
+                    )
+                    if down_neighbors > 0:
+                        return "critical"
+                return "established"
             
             return "unknown"
         except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:

@@ -402,6 +402,9 @@ def process_ber_data_files(data_dir="monitor-results/ber-data"):
     
     # Export web report
     output_file = os.path.join(result_dir, "ber-analysis.html")
+    if snapshot_valid:
+        ber_analyzer.coverage_expected_hosts = len(statuses)
+        ber_analyzer.coverage_current_hosts = len(hosts_with_interfaces)
     ber_analyzer.export_ber_data_for_web(output_file)
     if all_devices_unavailable:
         mark_html_collection_unavailable(output_file)

@@ -26,8 +26,7 @@ def process_carrier_transition_files(data_dir="monitor-results/flap-data"):
     flap_analyzer = LinkFlapAnalyzer(result_dir)
 
     print("Processing carrier transition data")
-    print(f"Using parameters: Detection window={flap_analyzer.FLAPPING_INTERVAL}s, "
-          f"Min delta={flap_analyzer.MIN_CARRIER_TRANSITION_DELTA} transitions, "
+    print(f"Using parameters: Min delta={flap_analyzer.MIN_CARRIER_TRANSITION_DELTA} transitions, "
           f"Warning={flap_analyzer.thresholds['warning_flaps_per_hour']}/h, "
           f"Critical={flap_analyzer.thresholds['critical_flaps_per_hour']}/h")
     

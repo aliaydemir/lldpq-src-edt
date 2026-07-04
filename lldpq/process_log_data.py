@@ -388,9 +388,12 @@ class LogAnalyzer:
     def coverage_summary(self):
         """Return machine-readable log collection coverage metadata."""
         expected_devices = self.expected_devices or self.current_devices
-        partial_devices = sorted(
+        source_error_devices = {
             device for device, statuses in self.source_status.items()
             if any(status == 'ERROR' for status in statuses.values())
+        }
+        partial_devices = sorted(
+            (set(expected_devices) - self.current_devices) | source_error_devices
         )
         unsupported_sources = {
             device: sorted(
@@ -1351,11 +1354,12 @@ class LogAnalyzer:
         if assets_available and not snapshot_valid:
             print("❌ Asset snapshot is invalid or incomplete")
             return False
-        expected_hosts = (
+        inventory_hosts = set(statuses) if snapshot_valid else set()
+        expected_current_hosts = (
             {host for host, status in statuses.items() if status == "OK"}
             if snapshot_valid else set()
         )
-        all_devices_unavailable = snapshot_valid and not expected_hosts
+        all_devices_unavailable = snapshot_valid and not expected_current_hosts
         log_files = [
             f for f in os.listdir(self.log_data_dir)
             if f.endswith('_logs.txt')
@@ -1369,9 +1373,9 @@ class LogAnalyzer:
         collected_hosts = {
             filename.removesuffix('_logs.txt') for filename in log_files
         }
-        self.expected_devices = set(expected_hosts or collected_hosts)
+        self.expected_devices = set(inventory_hosts or collected_hosts)
         self.current_devices = set(collected_hosts)
-        missing_hosts = sorted(expected_hosts - collected_hosts)
+        missing_hosts = sorted(expected_current_hosts - collected_hosts)
         if missing_hosts:
             print(
                 "❌ Missing current log collections for: "

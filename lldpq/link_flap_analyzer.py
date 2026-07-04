@@ -68,7 +68,8 @@ class LinkFlapAnalyzer:
     def __init__(self, data_dir="monitor-results"):
         self.data_dir = data_dir
         self.carrier_transitions_lookback = {}  # port -> deque of (time, transitions)
-        self.flapping_hist = {}  # port -> deque of (time, transitions, flap_count)
+        # port -> deque of legacy 3-tuples or interval-aware 5-tuples
+        self.flapping_hist = {}
         self.carrier_transitions_stats = {}  # port -> current transition count
         self.prev_cumulative = {}  # port -> last cycle's cumulative carrier_changes (persisted baseline)
         self.prev_sample_time = {}  # port -> timestamp of persisted baseline
@@ -241,11 +242,7 @@ class LinkFlapAnalyzer:
                 flap_hist_queue.popleft()
     
     def check_flapping(self) -> bool:
-        """Return True if any port recorded a flap within the most recent detection window.
-
-        Detection itself now happens per-cycle in update_carrier_transitions (delta vs the previous
-        cumulative reading). This is read-only: it must NOT mutate the lookback or append history
-        (doing so previously double-counted / cleared the baseline)."""
+        """Return True when any port crosses the configured hourly warning rate."""
         warning = self.thresholds["warning_flaps_per_hour"]
         for port_name in self.carrier_transitions_stats:
             count = self.calculate_flapping_rate(port_name)["flap_1_hr"]

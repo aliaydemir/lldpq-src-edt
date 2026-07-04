@@ -826,9 +826,9 @@ def generate_hardware_html():
     # Use current device files count instead of historical count
     total_devices = current_device_count
     asset_statuses = asset_snapshot[0] if asset_snapshot else {}
-    expected_devices = sum(
-        1 for status in asset_statuses.values() if status == "OK"
-    ) or total_devices
+    # Coverage represents the whole inventory, including devices that were
+    # unreachable in this run; current data still contains only OK devices.
+    expected_devices = len(asset_statuses) or total_devices
     unknown_device_count = len(summary['unknown_devices'])
     coverage_partial = (
         current_device_count < expected_devices or unknown_device_count > 0

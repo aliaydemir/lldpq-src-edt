@@ -88,6 +88,7 @@ class BGPNeighbor:
     description: str
     interface: Optional[str] = None
     vrf: str = "default"
+    address_family: str = "unknown"
 
 @dataclass
 class EVPNStats:
@@ -255,15 +256,17 @@ class BGPAnalyzer:
         
         lines = bgp_data.strip().split('\n')
         current_vrf = "default"
+        current_address_family = "unknown"
         local_asn = None
         
         for i, line in enumerate(lines):
             line = line.strip()
             
             # Extract VRF information
-            vrf_match = re.search(r'Summary \(VRF\s+([^\)]+)\)', line)
+            vrf_match = re.search(r'^(.+?)\s+Summary \(VRF\s+([^\)]+)\)', line)
             if vrf_match:
-                current_vrf = vrf_match.group(1)
+                current_address_family = vrf_match.group(1).strip()
+                current_vrf = vrf_match.group(2).strip()
                 continue
             
             # Extract local AS number
@@ -292,8 +295,20 @@ class BGPAnalyzer:
                         
                         # Parse state and prefix count
                         state_pfx = parts[9] if len(parts) > 9 else "Unknown"
-                        pfx_sent = int(parts[10]) if len(parts) > 10 else 0
-                        description = " ".join(parts[11:]) if len(parts) > 11 else "N/A"
+                        pfx_sent = 0
+                        description_start = 10
+                        if len(parts) > 10:
+                            try:
+                                pfx_sent = int(parts[10])
+                                description_start = 11
+                            except ValueError:
+                                # Older FRR output omits PfxSnt; token 10 is
+                                # already the optional description.
+                                pass
+                        description = (
+                            " ".join(parts[description_start:])
+                            if len(parts) > description_start else "N/A"
+                        )
                         
                         # Determine state and prefix count
                         try:
@@ -331,16 +346,22 @@ class BGPAnalyzer:
                             description=description,
                             interface=interface,
                             vrf=current_vrf,
+                            address_family=current_address_family,
                         )
                         
-                        # The same neighbor address/name is valid in multiple VRFs.
-                        neighbor_dict[(current_vrf, neighbor_name)] = neighbor
+                        # A peer can legitimately appear in multiple VRFs and
+                        # multiple address-family summary sections.
+                        neighbor_dict[(
+                            current_vrf,
+                            current_address_family,
+                            neighbor_name,
+                        )] = neighbor
                         
                     except (ValueError, IndexError) as e:
                         print(f"Error parsing BGP neighbor line: {line}, Error: {e}")
                         continue
         
-        # Return unique neighbors within each VRF.
+        # Return unique rows within each VRF and address-family summary.
         return list(neighbor_dict.values())
 
     @staticmethod
@@ -406,9 +427,13 @@ class BGPAnalyzer:
             if uptime_str.lower() == "never":
                 return timedelta(0)
             
-            # Format: "01w2d22h" 
-            if 'w' in uptime_str or 'd' in uptime_str or 'h' in uptime_str:
+            # Formats such as "1y02w", "01w2d22h", or "4m12s".
+            if re.search(r'[ywdhms]', uptime_str, re.IGNORECASE):
                 total_seconds = 0
+
+                year_match = re.search(r'(\d+)y', uptime_str)
+                if year_match:
+                    total_seconds += int(year_match.group(1)) * 365 * 24 * 3600
                 
                 # Extract weeks
                 week_match = re.search(r'(\d+)w', uptime_str)
@@ -429,6 +454,10 @@ class BGPAnalyzer:
                 min_match = re.search(r'(\d+)m', uptime_str)
                 if min_match:
                     total_seconds += int(min_match.group(1)) * 60
+
+                sec_match = re.search(r'(\d+)s', uptime_str)
+                if sec_match:
+                    total_seconds += int(sec_match.group(1))
                 
                 return timedelta(seconds=total_seconds)
             
@@ -807,6 +836,7 @@ class BGPAnalyzer:
                             "asn": neighbor.asn,
                             "interface": neighbor.interface,
                             "vrf": neighbor.vrf,
+                            "address_family": neighbor.address_family,
                         },
                         "action": "Verify the FRR summary format and neighbor state",
                     })
@@ -830,6 +860,7 @@ class BGPAnalyzer:
                             "asn": neighbor.asn,
                             "interface": neighbor.interface,
                             "vrf": neighbor.vrf,
+                            "address_family": neighbor.address_family,
                             "critical_after_minutes": self.thresholds["bgp_down_minutes"],
                         },
                         "action": f"Check connectivity and BGP configuration for {neighbor.neighbor_name}",
@@ -1329,6 +1360,12 @@ class BGPAnalyzer:
                 }
                 
                 all_neighbors.append(neighbor_info)
+
+        neighbor_occurrences = {}
+        for item in all_neighbors:
+            peer = item["neighbor"]
+            identity = (item["hostname"], peer.vrf, peer.neighbor_name)
+            neighbor_occurrences[identity] = neighbor_occurrences.get(identity, 0) + 1
         
         # Add anomalies section if any exist
         if anomalies:
@@ -1433,19 +1470,23 @@ class BGPAnalyzer:
 
             dashboard_state = 'established' if state_val == 'established' else 'down'
             vrf = neighbor.vrf or 'default'
+            address_family = neighbor.address_family or 'unknown'
             neighbor_display = (
                 neighbor.neighbor_name
                 if vrf == 'default'
                 else f"{vrf} / {neighbor.neighbor_name}"
             )
+            if neighbor_occurrences.get((hostname, vrf, neighbor.neighbor_name), 0) > 1:
+                neighbor_display = f"{neighbor_display} [{address_family}]"
             display_hostname = html.escape(str(canonical(hostname)))
             display_neighbor = html.escape(str(neighbor_display))
             display_interface = html.escape(str(neighbor.interface or 'N/A'))
             display_vrf = html.escape(str(vrf), quote=True)
+            display_address_family = html.escape(str(address_family), quote=True)
             display_uptime = html.escape(str(neighbor.uptime))
             
             html_content += f"""
-        <tr data-health="{health_val}" data-state="{dashboard_state}" data-bgp-state="{state_val}" data-vrf="{display_vrf}">
+        <tr data-health="{health_val}" data-state="{dashboard_state}" data-bgp-state="{state_val}" data-vrf="{display_vrf}" data-address-family="{display_address_family}">
             <td>{display_hostname}</td>
             <td>{display_neighbor}</td>
             <td>{display_interface}</td>
@@ -2043,6 +2084,7 @@ class BGPAnalyzer:
                 const headers = [
                     'Device',
                     'VRF',
+                    'Address Family',
                     'Neighbor', 
                     'Interface',
                     'State',
@@ -2081,6 +2123,7 @@ class BGPAnalyzer:
                             const rowData = [
                                 cells[0].textContent.trim(), // Device
                                 row.dataset.vrf || 'default', // VRF
+                                row.dataset.addressFamily || 'unknown', // Address Family
                                 cells[1].textContent.trim(), // Neighbor
                                 cells[2].textContent.trim(), // Interface
                                 cells[3].textContent.trim(), // State

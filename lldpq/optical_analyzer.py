@@ -685,6 +685,18 @@ class OpticalAnalyzer:
         """Export optical data for web display - EXACT same styling as BGP/Link Flap"""
         summary = self.get_optical_summary()
         anomalies = self.detect_optical_anomalies()
+        expected_hosts = getattr(self, 'coverage_expected_hosts', None)
+        current_hosts = getattr(self, 'coverage_current_hosts', None)
+        coverage_attrs = ''
+        if isinstance(expected_hosts, int) and isinstance(current_hosts, int):
+            coverage_status = (
+                'complete' if current_hosts >= expected_hosts else 'partial'
+            )
+            coverage_attrs = (
+                f' data-coverage-status="{coverage_status}"'
+                f' data-coverage-expected="{expected_hosts}"'
+                f' data-coverage-current="{current_hosts}"'
+            )
 
         html_content = f"""<!DOCTYPE html>
 <html lang="en">
@@ -765,7 +777,7 @@ class OpticalAnalyzer:
         @keyframes spin {{ from {{ transform: rotate(0deg); }} to {{ transform: rotate(360deg); }} }}
     </style>
 </head>
-<body>
+<body{coverage_attrs}>
     <div class="page-header">
         <div>
             <div class="page-title">Optical Diagnostics Analysis</div>

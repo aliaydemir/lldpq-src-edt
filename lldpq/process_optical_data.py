@@ -104,11 +104,12 @@ def process_optical_data_files(data_dir="monitor-results/optical-data"):
     if assets_available and not snapshot_valid:
         print("❌ Asset snapshot is invalid or incomplete")
         return False
-    expected_hosts = (
+    inventory_hosts = set(statuses) if snapshot_valid else set()
+    current_expected_hosts = (
         {host for host, status in statuses.items() if status == "OK"}
         if snapshot_valid else set()
     )
-    all_devices_unavailable = snapshot_valid and not expected_hosts
+    all_devices_unavailable = snapshot_valid and not current_expected_hosts
     files = [
         filename for filename in os.listdir(data_dir)
         if filename.endswith("_optical.txt")
@@ -123,10 +124,10 @@ def process_optical_data_files(data_dir="monitor-results/optical-data"):
     collected_hosts = {
         filename.removesuffix("_optical.txt") for filename in files
     }
-    if snapshot_valid and expected_hosts - collected_hosts:
+    if snapshot_valid and current_expected_hosts - collected_hosts:
         print(
             "❌ Missing current optical collections for: "
-            + ", ".join(sorted(expected_hosts - collected_hosts))
+            + ", ".join(sorted(current_expected_hosts - collected_hosts))
         )
         return False
     if not files and not all_devices_unavailable:
@@ -166,6 +167,37 @@ def process_optical_data_files(data_dir="monitor-results/optical-data"):
                              re.IGNORECASE | re.MULTILINE):
                     record_optical_state(
                         optical_analyzer, port_name, hostname, 'unplugged', optical_data
+                    )
+                    continue
+
+                state_match = re.search(
+                    r'^\s*Interface\s+state\s*:\s*([^\s]+)',
+                    optical_data,
+                    re.IGNORECASE | re.MULTILINE,
+                )
+                interface_state = (
+                    state_match.group(1).strip().lower()
+                    if state_match else None
+                )
+                if interface_state in {'down', 'lowerlayerdown', 'dormant'}:
+                    # Preserve any DOM values that remain readable while the
+                    # operational link state is down.  Copper/DAC or empty
+                    # sections still receive an explicit DOWN coverage row.
+                    if optical_analyzer.update_optical_stats(port_name, optical_data):
+                        current = optical_analyzer.current_optical_stats.get(port_name)
+                        if current:
+                            current['health_status'] = 'down'
+                        history = optical_analyzer.optical_history.get(port_name, [])
+                        if history:
+                            history[-1]['health'] = 'down'
+                    else:
+                        record_optical_state(
+                            optical_analyzer, port_name, hostname, 'down', optical_data
+                        )
+                    continue
+                if interface_state == 'unknown':
+                    record_optical_state(
+                        optical_analyzer, port_name, hostname, 'unknown', optical_data
                     )
                     continue
 
@@ -223,6 +255,9 @@ def process_optical_data_files(data_dir="monitor-results/optical-data"):
 
     # Generate web report
     output_file = os.path.join(result_dir, "optical-analysis.html")
+    if snapshot_valid:
+        optical_analyzer.coverage_expected_hosts = len(inventory_hosts)
+        optical_analyzer.coverage_current_hosts = len(collected_hosts)
     optical_analyzer.export_optical_data_for_web(output_file)
     if all_devices_unavailable:
         mark_html_collection_unavailable(output_file)

@@ -302,7 +302,7 @@ def process_bgp_data_files(data_dir="monitor-results/bgp-data"):
             )
 
     bgp_analyzer.set_collection_coverage(
-        expected_hosts,
+        expected_hosts | processed_hosts | evpn_processed_hosts,
         current_bgp_hosts,
         evpn_processed_hosts,
     )
