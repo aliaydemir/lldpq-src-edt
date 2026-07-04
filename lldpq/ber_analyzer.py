@@ -480,10 +480,37 @@ class BERAnalyzer:
             sample_seconds,
         )
         
+        # Calculate the observed directional event density before applying the
+        # confidence gate.  Low-traffic ports still have a real observation to
+        # display, and an early error must not be hidden by returning a forced
+        # zero merely because the packet target has not been reached yet.
+        def directional_density(errors, byte_count, packet_count):
+            if errors <= 0:
+                return 0.0
+            if byte_count > 0:
+                return errors / (byte_count * 8)
+            avg_bits_per_packet = 12000  # 1500 bytes conservative estimate
+            return (errors / (packet_count * avg_bits_per_packet)
+                    if packet_count > 0 else 0.0)
+
+        error_density = (
+            max(
+                directional_density(
+                    delta_rx_errors, delta_rx_bytes, delta_rx_packets
+                ),
+                directional_density(
+                    delta_tx_errors, delta_tx_bytes, delta_tx_packets
+                ),
+            )
+            if total_delta_errors > 0 else 0.0
+        )
+
         if total_delta_packets < self.config["min_packets_for_analysis"]:
             # Retain the prior baseline so several low-traffic intervals can
-            # accumulate into one statistically useful sample.
-            return 0.0, False, total_delta_errors, total_delta_bytes, total_delta_packets
+            # accumulate into one statistically useful grading sample.  The
+            # observed value is returned for transparent UI display only.
+            return (error_density, False, total_delta_errors,
+                    total_delta_bytes, total_delta_packets)
 
         # Update baseline only after a complete sample (or counter reset).
         self.baseline_data[hostname][interface] = {
@@ -496,25 +523,6 @@ class BERAnalyzer:
             'timestamp': current_time
         }
         # Note: save_baseline_data() called once after all interfaces processed
-        
-        # Calculate directional event density from deltas.  Combining RX and TX
-        # traffic can dilute a one-directional fault, so grade the worse side.
-        if total_delta_errors == 0:
-            return 0.0, False, 0, total_delta_bytes, total_delta_packets
-
-        def directional_density(errors, byte_count, packet_count):
-            if errors <= 0:
-                return 0.0
-            if byte_count > 0:
-                return errors / (byte_count * 8)
-            avg_bits_per_packet = 12000  # 1500 bytes conservative estimate
-            return (errors / (packet_count * avg_bits_per_packet)
-                    if packet_count > 0 else 0.0)
-
-        error_density = max(
-            directional_density(delta_rx_errors, delta_rx_bytes, delta_rx_packets),
-            directional_density(delta_tx_errors, delta_tx_bytes, delta_tx_packets),
-        )
 
         return error_density, False, total_delta_errors, total_delta_bytes, total_delta_packets
 
@@ -731,11 +739,35 @@ class BERAnalyzer:
         grades = []
         reasons = []
 
-        if sample_status == 'analyzed' and isinstance(frame_density, (int, float)):
-            frame_grade = self.get_ber_grade(frame_density).value
-            grades.append(frame_grade)
-            if self._grade_priority(frame_grade) >= self._grade_priority(BERGrade.WARNING.value):
-                reasons.append(f"interface error density {frame_density:.2e}")
+        low_sample_with_errors = (
+            sample_status == 'insufficient_traffic'
+            and (
+                stats.get('delta_rx_errors', 0)
+                + stats.get('delta_tx_errors', 0)
+            ) > 0
+        )
+        if ((sample_status == 'analyzed' or low_sample_with_errors)
+                and isinstance(frame_density, (int, float))):
+            observed_frame_grade = self.get_ber_grade(frame_density).value
+            is_actionable = (
+                self._grade_priority(observed_frame_grade)
+                >= self._grade_priority(BERGrade.WARNING.value)
+            )
+            # A complete sample may establish any grade.  Before the sample
+            # target, only an observed warning/critical condition is allowed
+            # to affect health; a small provisional sample cannot prove GOOD.
+            if sample_status == 'analyzed' or is_actionable:
+                frame_grade = observed_frame_grade
+                grades.append(frame_grade)
+            else:
+                frame_grade = BERGrade.UNKNOWN.value
+            if is_actionable:
+                qualifier = (
+                    'provisional low-sample ' if low_sample_with_errors else ''
+                )
+                reasons.append(
+                    f"{qualifier}interface error density {frame_density:.2e}"
+                )
         else:
             frame_grade = BERGrade.UNKNOWN.value
 
@@ -1209,7 +1241,26 @@ class BERAnalyzer:
                 "CRITICAL": "badge badge-red",
             }.get(status, "badge badge-gray")
             
-            if port_info.get('frame_grade') == BERGrade.UNKNOWN.value:
+            sample_status = port_info.get('sample_status')
+            delta_packets = port_info.get('delta_packets', 0)
+            sample_target = self.config['min_packets_for_analysis']
+            if (sample_status == 'insufficient_traffic'
+                    and isinstance(ber_value, (int, float))
+                    and delta_packets > 0):
+                observed = f"{ber_value:.2e}" if ber_value > 0 else "0"
+                ber_display = (
+                    f'<span title="Observed low-traffic value; grading waits '
+                    f'for {sample_target:,} packets while the baseline keeps '
+                    f'accumulating">{observed} '
+                    f'({delta_packets:,}/{sample_target:,})</span>'
+                )
+            elif sample_status == 'insufficient_traffic':
+                ber_display = "No traffic"
+            elif sample_status == 'counter_reset':
+                ber_display = "Counter reset"
+            elif sample_status == 'baseline':
+                ber_display = "Baseline"
+            elif port_info.get('frame_grade') == BERGrade.UNKNOWN.value:
                 ber_display = "N/A"
             else:
                 ber_display = f"{ber_value:.2e}" if ber_value > 0 else "0"
@@ -1291,7 +1342,7 @@ class BERAnalyzer:
                 <li><strong style="color: #d4d4d4;">Physical BER</strong>: Physical layer bit error rate from l1-show/PCS layer. Shows actual fiber and optics health including FEC-corrected errors.</li>
                 <li><strong style="color: #d4d4d4;">Effective BER</strong>: Post-FEC bit error rate from l1-show (<code>effective_ber_coef × 10^effective_ber_magnitude</code>). This is the error rate the traffic actually sees after FEC correction — the primary day-to-day health metric.</li>
                 <li><strong style="color: #d4d4d4;">PHY Symbol Errors</strong>: The table shows new symbol errors and the lifetime total from <code>l1-show</code>. Severity uses only the new delta; a reset establishes a fresh baseline.</li>
-                <li><strong style="color: #d4d4d4;">Sample window</strong>: The Δ packet/error columns and the window beside Updated describe the exact interval used for Frame Error Density. Raw and Effective BER are current L1 snapshots.</li>
+                <li><strong style="color: #d4d4d4;">Sample window</strong>: The Δ packet/error columns and the window beside Updated describe the exact interval used for Frame Error Density. A value followed by progress such as <code>0 (509/1,000)</code> is the observed low-traffic value; the baseline keeps accumulating and a zero-error sample is not graded until the target is reached. Errors observed before the target are evaluated immediately. Raw and Effective BER are current L1 snapshots.</li>
             </ul>
         </div>
     </div>

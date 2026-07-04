@@ -246,7 +246,11 @@ def process_ber_data_files(data_dir="monitor-results/ber-data"):
                             'timestamp': time.time(),
                             'ber_value': 0.0,
                             'grade': 'unknown',
-                            'sample_status': 'baseline',
+                            'sample_status': (
+                                'counter_reset'
+                                if delta_details.get('counter_reset')
+                                else 'baseline'
+                            ),
                             'rx_packets': stats.get('rx_packets', 0),
                             'tx_packets': stats.get('tx_packets', 0),
                             'rx_errors': stats.get('rx_errors', 0),
@@ -276,7 +280,11 @@ def process_ber_data_files(data_dir="monitor-results/ber-data"):
                     if delta_packets < ber_analyzer.config['min_packets_for_analysis']:
                         ber_analyzer.current_ber_stats[port_name] = {
                             'timestamp': time.time(),
-                            'ber_value': 0.0,
+                            # Preserve the observed value for display and for
+                            # immediate evaluation when an error is already
+                            # present.  The low sample remains ungraded when it
+                            # contains no errors, and its baseline accumulates.
+                            'ber_value': ber_value,
                             'grade': 'unknown',
                             'sample_status': 'insufficient_traffic',
                             'rx_packets': stats.get('rx_packets', 0),
