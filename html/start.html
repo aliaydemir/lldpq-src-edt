@@ -604,9 +604,9 @@
                     <div class="card-value status-warning" id="dup-quiesced-ip">--</div>
                     <div class="card-label">Quiesced IP Duplicates</div>
                 </a>
-                <a class="summary-card card-info" id="dup-coverage-card" href="/monitor-results/duplicate-analysis.html">
-                    <div class="card-value status-info" id="dup-coverage">--</div>
-                    <div class="card-label">Coverage</div>
+                <a class="summary-card card-info" id="dup-mac-card" href="/monitor-results/duplicate-analysis.html">
+                    <div class="card-value status-info" id="dup-mac">--</div>
+                    <div class="card-label">MAC Duplicates</div>
                 </a>
             </div>
             </div>
@@ -911,6 +911,7 @@
                 if (!label) return;
                 if (label.includes('active ip duplicate')) putMetric('ip_active', value);
                 else if (label.includes('quiesced ip')) putMetric('ip_quiesced', value);
+                else if (label.includes('mac duplicate')) putMetric('mac_duplicates', value);
                 else if (label.includes('coverage') && label.includes('current') && label.includes('expected')) {
                     const ratio = value.match(/(\d[\d,]*)\s*\/\s*(\d[\d,]*)/);
                     if (ratio) {
@@ -941,6 +942,8 @@
             ) ?? duplicateMetricNumber(metadata?.dataset?.confirmedIpActive);
             const quiescedIp = numberFor('ip_quiesced', 'quiesced_ip_duplicates') ??
                 duplicateMetricNumber(metadata?.dataset?.ipQuiesced);
+            const macDuplicates = numberFor('mac_duplicates', 'mac_duplicate_count') ??
+                duplicateMetricNumber(metadata?.dataset?.macDuplicates);
             const coverageExpected = numberFor('coverage_expected_hosts', 'coverage_expected') ??
                 duplicateMetricNumber(metadata?.dataset?.coverageExpected);
             const coverageCurrent = numberFor('coverage_current_hosts', 'coverage_current') ??
@@ -955,8 +958,11 @@
             const coverageContractComplete = coverageExpected !== null &&
                 coverageCurrent !== null && coverageFailures !== null &&
                 coveragePartial !== null;
-            coveragePartial = !coverageContractComplete || reportState.coveragePartial ||
-                coveragePartial === true;
+            // The simplified Duplicate report does not publish the optional coverage
+            // contract; its absence must NOT mark the report "partial" (that used to
+            // force Overall Health to N/A). Only a genuinely unavailable/partial
+            // collection should count toward coverage problems.
+            coveragePartial = reportState.coveragePartial || coveragePartial === true;
             if (coverageExpected !== null && coverageCurrent !== null) {
                 if (coverageCurrent < coverageExpected) coveragePartial = true;
             }
@@ -970,6 +976,7 @@
             return {
                 confirmedIpActive,
                 quiescedIp,
+                macDuplicates,
                 coverageExpected,
                 coverageCurrent,
                 coverageFailures,
@@ -1395,28 +1402,13 @@
 
                 updateDashboardCard('dup-active-ip', duplicateDashboardMetric(dupData, dupData.confirmedIpActive));
                 updateDashboardCard('dup-quiesced-ip', duplicateDashboardMetric(dupData, dupData.quiescedIp));
-                updateDashboardCard('dup-coverage', duplicateDashboardMetric(dupData, dupData.coverageText));
+                updateDashboardCard('dup-mac', duplicateDashboardMetric(dupData, dupData.macDuplicates));
 
-                const duplicateCoverageIncomplete = Boolean(
-                    dupData.unavailable || dupData.coveragePartial
-                );
-                const duplicateCoverageCard = document.getElementById('dup-coverage-card');
-                const duplicateCoverageValue = document.getElementById('dup-coverage');
-                if (duplicateCoverageCard) {
-                    const coverageNeedsAttention = Boolean(dupData.unavailable || duplicateCoverageIncomplete);
-                    duplicateCoverageCard.classList.toggle('card-warning', coverageNeedsAttention);
-                    duplicateCoverageCard.classList.toggle('card-info', !coverageNeedsAttention);
-                    if (duplicateCoverageValue) {
-                        duplicateCoverageValue.classList.toggle('status-warning', coverageNeedsAttention);
-                        duplicateCoverageValue.classList.toggle('status-info', !coverageNeedsAttention);
-                    }
-                    duplicateCoverageCard.title = dupData.unavailable
+                const duplicateMacCard = document.getElementById('dup-mac-card');
+                if (duplicateMacCard) {
+                    duplicateMacCard.title = dupData.unavailable
                         ? 'Duplicate analysis is unavailable'
-                        : (duplicateCoverageIncomplete
-                            ? 'Duplicate analysis coverage is partial'
-                            : (dupData.coverageExpected !== null && dupData.coverageCurrent !== null
-                                ? 'Current devices / expected devices'
-                                : 'Duplicate analysis report is current'));
+                        : 'MAC address duplicates seen across the fabric (mobility + conflicts)';
                 }
 
                 // Calculate overall network statistics
