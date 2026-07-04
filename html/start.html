@@ -1509,23 +1509,31 @@
                     totalNumber <= 0) return;
                 healthDomains.push(Math.max(0, Math.min(1, healthyNumber / totalNumber)));
             }
-            addHealthDomain(assetsData.successful, assetsData.totalDevices, assetsData);
-            addHealthDomain(lldpData.successful, lldpData.totalConnections, lldpData);
-            addHealthDomain(bgpData.established, bgpData.totalNeighbors, bgpData);
-            addHealthDomain((opticalData.excellent || 0) + (opticalData.good || 0),
-                opticalData.totalPorts, opticalData);
-            addHealthDomain((berData.excellent || 0) + (berData.good || 0),
-                berData.totalPorts, berData);
-            addHealthDomain(flapData.stable, flapData.totalPorts, flapData);
-            addHealthDomain((hardwareData.excellent || 0) + (hardwareData.good || 0),
-                hardwareData.totalDevices, hardwareData);
+            // Only hard failures (the red breakdown rows) lower health; warning-class
+            // signals (optical/BER/hardware warnings, LLDP no-info, optical down) count
+            // as healthy so they never drag the percentage down.
+            addHealthDomain(assetsData.totalDevices - (assetsData.failed || 0), assetsData.totalDevices, assetsData);
+            addHealthDomain(lldpData.totalConnections - (lldpData.failed || 0), lldpData.totalConnections, lldpData);
+            addHealthDomain(bgpData.totalNeighbors - (bgpData.failed || 0), bgpData.totalNeighbors, bgpData);
+            addHealthDomain(opticalData.totalPorts - (opticalData.critical || 0), opticalData.totalPorts, opticalData);
+            addHealthDomain(berData.totalPorts - (berData.critical || 0), berData.totalPorts, berData);
+            addHealthDomain(flapData.totalPorts - (flapData.problematic || 0), flapData.totalPorts, flapData);
+            addHealthDomain(hardwareData.totalDevices - (hardwareData.critical || 0), hardwareData.totalDevices, hardwareData);
 
-            const overallHealth = analysisCoverageProblems
+            // Sum the hard-failure (red) breakdown rows; a perfect 100% must never
+            // show while any of these are open, even if the domain ratios round up.
+            const criticalOnlyCount = Object.entries(criticalBreakdown)
+                .filter(([source]) => CRITICAL_SOURCES.has(source))
+                .reduce((sum, [, count]) => sum + (count || 0), 0);
+            let overallHealth = analysisCoverageProblems
                 ? null
                 : (healthDomains.length
-                    ? Math.round(healthDomains.reduce((sum, value) => sum + value, 0) /
+                    ? Math.floor(healthDomains.reduce((sum, value) => sum + value, 0) /
                         healthDomains.length * 100)
                     : null);
+            if (overallHealth !== null && criticalOnlyCount > 0) {
+                overallHealth = Math.min(overallHealth, 99);
+            }
             
             // Update dashboard stats
             document.getElementById('total-network-devices').textContent = totalDevices === null ? 'N/A' : totalDevices;
