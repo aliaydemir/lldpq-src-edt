@@ -27,7 +27,9 @@ def process_carrier_transition_files(data_dir="monitor-results/flap-data"):
 
     print("Processing carrier transition data")
     print(f"Using parameters: Detection window={flap_analyzer.FLAPPING_INTERVAL}s, "
-          f"Min delta={flap_analyzer.MIN_CARRIER_TRANSITION_DELTA} transitions")
+          f"Min delta={flap_analyzer.MIN_CARRIER_TRANSITION_DELTA} transitions, "
+          f"Warning={flap_analyzer.thresholds['warning_flaps_per_hour']}/h, "
+          f"Critical={flap_analyzer.thresholds['critical_flaps_per_hour']}/h")
     
     if not os.path.exists(data_dir):
         print(f"Flap data directory {data_dir} not found")
@@ -59,7 +61,8 @@ def process_carrier_transition_files(data_dir="monitor-results/flap-data"):
 
         active_hosts = set(statuses)
         for attribute in (
-            "flapping_hist", "carrier_transitions_lookback", "prev_cumulative"
+            "flapping_hist", "carrier_transitions_lookback", "prev_cumulative",
+            "prev_sample_time",
         ):
             values = getattr(flap_analyzer, attribute, {})
             for port_name in list(values):
@@ -155,6 +158,13 @@ def process_carrier_transition_files(data_dir="monitor-results/flap-data"):
     if (processed_devices == 0 and not all_devices_unavailable) or processing_errors:
         print("Carrier transition collection was incomplete; preserving the prior report")
         return False
+
+    current_hosts = {
+        filename.removesuffix("_carrier_transitions.txt")
+        for filename in current_files
+    }
+    expected_hosts = set(statuses) if snapshot_valid else current_hosts
+    flap_analyzer.set_collection_coverage(expected_hosts, current_hosts)
     
     # Check for flapping
     if flap_analyzer.check_flapping():
@@ -183,23 +193,23 @@ def process_carrier_transition_files(data_dir="monitor-results/flap-data"):
     
     print(f"\n Flap Detection Summary:")
     print(f"  Total ports monitored: {summary['total_ports']}")
-    print(f"  Currently flapping: {len(summary['flapping_ports'])}")
-    print(f"  Previously flapped: {len(summary['flapped_ports'])}")
+    print(f"  Critical ports: {len(summary['critical_ports'])}")
+    print(f"  Warning ports: {len(summary['warning_ports'])}")
     print(f"  Stable ports: {len(summary['ok_ports'])}")
     print(f"  Anomalies detected: {len(anomalies)}")
     
-    if summary['flapping_ports']:
-        print("\nCurrently Flapping Ports (detected):")
-        for port in summary['flapping_ports']:
-            print(f"    {port['port']}: {port['counters']['flap_30_sec']} flaps in last 30 seconds")
+    if summary['critical_ports']:
+        print("\nCritical Flapping Ports:")
+        for port in summary['critical_ports']:
+            print(f"    {port['port']}: {port['counters']['flap_1_hr']} flaps in last hour")
     
-    if summary['flapped_ports']:
-        print("\n🟠 Previously Flapped Ports:")
-        for port in summary['flapped_ports'][:5]:  # Show top 5
-            print(f"    {port['port']}: {port['counters']['flap_24_hrs']} flaps in last 24 hours")
+    if summary['warning_ports']:
+        print("\nWarning Flapping Ports:")
+        for port in summary['warning_ports'][:5]:  # Show top 5
+            print(f"    {port['port']}: {port['counters']['flap_1_hr']} flaps in last hour")
     
     # Algorithm status
-    total_problematic = len(summary['flapping_ports']) + len(summary['flapped_ports'])
+    total_problematic = len(summary['critical_ports']) + len(summary['warning_ports'])
     stability_ratio = ((summary['total_ports'] - total_problematic) / summary['total_ports'] * 100) if summary['total_ports'] > 0 else 0
     
     if all_devices_unavailable:

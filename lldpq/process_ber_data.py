@@ -103,9 +103,14 @@ def process_ber_data_files(data_dir="monitor-results/ber-data"):
     
     print("Processing link error analysis data")
     print(
-        f"Using shared thresholds: Good < {ber_analyzer.config['warning_ber_threshold']:.2e}, "
-        f"Warning < {ber_analyzer.config['critical_ber_threshold']:.2e}, "
-        f"Critical >= {ber_analyzer.config['critical_ber_threshold']:.2e}"
+        "Using frame-density thresholds: "
+        f"Warning >= {ber_analyzer.config['frame_density_warning_threshold']:.2e}, "
+        f"Critical >= {ber_analyzer.config['frame_density_critical_threshold']:.2e}"
+    )
+    print(
+        "Using PHY BER thresholds: "
+        f"Warning >= {ber_analyzer.config['phy_ber_warning_threshold']:.2e}, "
+        f"Critical >= {ber_analyzer.config['phy_ber_critical_threshold']:.2e}"
     )
     
     if not os.path.exists(data_dir):

@@ -16,6 +16,11 @@ from typing import Dict, List, Any, Optional
 from enum import Enum
 
 try:
+    import yaml
+except ImportError:
+    yaml = None
+
+try:
     from device_names import canonical
 except Exception:
     def canonical(_n):
@@ -32,13 +37,16 @@ class BERGrade(Enum):
 class BERAnalyzer:
     """Professional BER Analysis System"""
     
-    # One threshold contract is shared by interface error-event density and
-    # PHY BER metrics.  Warning is the lower boundary; critical is the upper
-    # boundary.  Zero remains EXCELLENT and a non-zero value below warning is
-    # GOOD.
+    # Interface error-event density and real PHY BER are different metrics and
+    # intentionally have separate contracts.  The PHY warning threshold is
+    # overridden by thresholds.network.ber_error_rate in notifications.yaml;
+    # critical is one decade above it.  Invalid/missing config keeps the
+    # documented defaults below.
     DEFAULT_CONFIG = {
-        "warning_ber_threshold": 1.0E-6,
-        "critical_ber_threshold": 1.0E-5,
+        "frame_density_warning_threshold": 1.0E-6,
+        "frame_density_critical_threshold": 1.0E-5,
+        "phy_ber_warning_threshold": 1.0E-12,
+        "phy_ber_critical_threshold": 1.0E-11,
         "symbol_error_warning_delta": 1,
         "symbol_error_critical_delta": 1000,
         "min_packets_for_analysis": 1000,  # Minimum packets for reliable BER
@@ -55,6 +63,7 @@ class BERAnalyzer:
         self._l1_extras_cache = {}  # hostname -> { interface: {effective_ber, symbol_errors} }
         self._last_delta_details = {}  # port -> directional deltas/sample window
         self.baseline_data = {}  # hostname -> { interface: {counters, timestamp} }
+        self._load_network_thresholds()
         
         # Ensure ber-data directory exists
         os.makedirs(f"{self.data_dir}/ber-data", exist_ok=True)
@@ -62,6 +71,35 @@ class BERAnalyzer:
         # Load historical data and baseline
         self.load_ber_history()
         self.load_baseline_data()
+
+    def _load_network_thresholds(self) -> None:
+        """Load the configured PHY BER boundary without affecting frame density."""
+        if yaml is None:
+            return
+        candidates = [
+            os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         'notifications.yaml'),
+            os.path.join(os.path.dirname(os.path.abspath(self.data_dir)),
+                         'notifications.yaml'),
+        ]
+        for path in dict.fromkeys(candidates):
+            if not os.path.isfile(path):
+                continue
+            try:
+                with open(path, 'r') as stream:
+                    config = yaml.safe_load(stream) or {}
+                value = config.get('thresholds', {}).get('network', {}).get(
+                    'ber_error_rate'
+                )
+                if value is None:
+                    return
+                threshold = float(value)
+                if math.isfinite(threshold) and threshold > 0:
+                    self.config['phy_ber_warning_threshold'] = threshold
+                    self.config['phy_ber_critical_threshold'] = threshold * 10.0
+                return
+            except (OSError, TypeError, ValueError, yaml.YAMLError):
+                return
     
     def load_ber_history(self):
         """Load historical BER data from file"""
@@ -498,15 +536,25 @@ class BERAnalyzer:
         )
     
     def get_ber_grade(self, ber_value: float) -> BERGrade:
-        """Determine error-density/BER grade from the shared thresholds."""
+        """Determine interface error-density grade (compatibility name)."""
         if ber_value == 0.0:
             return BERGrade.EXCELLENT
-        elif ber_value < self.config["warning_ber_threshold"]:
+        elif ber_value < self.config["frame_density_warning_threshold"]:
             return BERGrade.GOOD
-        elif ber_value < self.config["critical_ber_threshold"]:
+        elif ber_value < self.config["frame_density_critical_threshold"]:
             return BERGrade.WARNING
         else:
             return BERGrade.CRITICAL
+
+    def get_phy_ber_grade(self, ber_value: float) -> BERGrade:
+        """Determine Raw/Effective PHY BER grade from configured PHY limits."""
+        if ber_value == 0.0:
+            return BERGrade.EXCELLENT
+        if ber_value < self.config['phy_ber_warning_threshold']:
+            return BERGrade.GOOD
+        if ber_value < self.config['phy_ber_critical_threshold']:
+            return BERGrade.WARNING
+        return BERGrade.CRITICAL
     
     def update_interface_ber(self, port_name: str, interface_stats: Dict[str, int]):
         """Update BER statistics for an interface"""
@@ -602,6 +650,18 @@ class BERAnalyzer:
             BERGrade.CRITICAL.value: 3,
         }.get(grade, -1)
 
+    @staticmethod
+    def _format_duration(seconds: Any) -> str:
+        try:
+            seconds = max(0, int(float(seconds)))
+        except (TypeError, ValueError):
+            return 'N/A'
+        if seconds < 60:
+            return f'{seconds}s'
+        if seconds < 3600:
+            return f'{seconds // 60}m{seconds % 60:02d}s'
+        return f'{seconds // 3600}h{(seconds % 3600) // 60:02d}m'
+
     def _previous_symbol_errors(self, port_name: str,
                                 current_stats: Dict[str, Any]) -> Optional[int]:
         current_timestamp = current_stats.get('timestamp', 0)
@@ -650,14 +710,14 @@ class BERAnalyzer:
 
         raw_grade = BERGrade.UNKNOWN.value
         if isinstance(raw_ber, (int, float)):
-            raw_grade = self.get_ber_grade(raw_ber).value
+            raw_grade = self.get_phy_ber_grade(raw_ber).value
             grades.append(raw_grade)
             if self._grade_priority(raw_grade) >= self._grade_priority(BERGrade.WARNING.value):
                 reasons.append(f"raw PHY BER {raw_ber:.2e}")
 
         effective_grade = BERGrade.UNKNOWN.value
         if isinstance(effective_ber, (int, float)):
-            effective_grade = self.get_ber_grade(effective_ber).value
+            effective_grade = self.get_phy_ber_grade(effective_ber).value
             grades.append(effective_grade)
             if self._grade_priority(effective_grade) >= self._grade_priority(BERGrade.WARNING.value):
                 reasons.append(f"effective PHY BER {effective_ber:.2e}")
@@ -776,7 +836,12 @@ class BERAnalyzer:
                         "raw_ber": port_info.get('raw_ber'),
                         "effective_ber": port_info.get('effective_ber'),
                         "symbol_error_delta": port_info.get('symbol_error_delta'),
-                        "threshold": self.config["critical_ber_threshold"],
+                        "frame_density_threshold": self.config[
+                            "frame_density_critical_threshold"
+                        ],
+                        "phy_ber_threshold": self.config[
+                            "phy_ber_critical_threshold"
+                        ],
                         "delta_rx_errors": port_info.get('delta_rx_errors', 0),
                         "delta_tx_errors": port_info.get('delta_tx_errors', 0),
                     },
@@ -795,7 +860,12 @@ class BERAnalyzer:
                         "raw_ber": port_info.get('raw_ber'),
                         "effective_ber": port_info.get('effective_ber'),
                         "symbol_error_delta": port_info.get('symbol_error_delta'),
-                        "threshold": self.config["warning_ber_threshold"],
+                        "frame_density_threshold": self.config[
+                            "frame_density_warning_threshold"
+                        ],
+                        "phy_ber_threshold": self.config[
+                            "phy_ber_warning_threshold"
+                        ],
                         "delta_rx_errors": port_info.get('delta_rx_errors', 0),
                         "delta_tx_errors": port_info.get('delta_tx_errors', 0),
                     },
@@ -1025,7 +1095,7 @@ class BERAnalyzer:
     <div class="dashboard-section">
         <div class="section-header">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M4,1H20A1,1 0 0,1 21,2V6A1,1 0 0,1 20,7H4A1,1 0 0,1 3,6V2A1,1 0 0,1 4,1M4,9H20A1,1 0 0,1 21,10V14A1,1 0 0,1 20,15H4A1,1 0 0,1 3,14V10A1,1 0 0,1 4,9M4,17H20A1,1 0 0,1 21,18V22A1,1 0 0,1 20,23H4A1,1 0 0,1 3,22V18A1,1 0 0,1 4,17Z"/></svg>
-            Interface BER Status
+            Interface Error Status
         </div>
         <div class="section-content-table">
             <div id="filter-info" class="filter-info">
@@ -1038,14 +1108,14 @@ class BERAnalyzer:
                         <th class="sortable" data-column="0" data-type="string">Device <span class="sort-arrow">▲▼</span></th>
                         <th class="sortable" data-column="1" data-type="port">Interface <span class="sort-arrow">▲▼</span></th>
                         <th class="sortable" data-column="2" data-type="ber-status">Status <span class="sort-arrow">▲▼</span></th>
-                        <th class="sortable" data-column="3" data-type="ber-value">Frame BER <span class="sort-arrow">▲▼</span></th>
+                        <th class="sortable" data-column="3" data-type="ber-value">Frame Error Density <span class="sort-arrow">▲▼</span></th>
                         <th class="sortable" data-column="4" data-type="ber-value">Physical BER <span class="sort-arrow">▲▼</span></th>
                         <th class="sortable" data-column="5" data-type="ber-value">Effective BER <span class="sort-arrow">▲▼</span></th>
-                        <th class="sortable" data-column="6" data-type="number">PHY Symbol Errors <span class="sort-arrow">▲▼</span></th>
-                        <th class="sortable" data-column="7" data-type="number">Total Pkt <span class="sort-arrow">▲▼</span></th>
-                        <th class="sortable" data-column="8" data-type="number">RX Err <span class="sort-arrow">▲▼</span></th>
-                        <th class="sortable" data-column="9" data-type="number">TX Err <span class="sort-arrow">▲▼</span></th>
-                        <th class="sortable" data-column="10" data-type="time">Updated <span class="sort-arrow">▲▼</span></th>
+                        <th class="sortable" data-column="6" data-type="number">PHY Symbol Δ / Total <span class="sort-arrow">▲▼</span></th>
+                        <th class="sortable" data-column="7" data-type="number">Δ Pkt <span class="sort-arrow">▲▼</span></th>
+                        <th class="sortable" data-column="8" data-type="number">Δ RX Err <span class="sort-arrow">▲▼</span></th>
+                        <th class="sortable" data-column="9" data-type="number">Δ TX Err <span class="sort-arrow">▲▼</span></th>
+                        <th class="sortable" data-column="10" data-type="time">Updated / Window <span class="sort-arrow">▲▼</span></th>
                     </tr>
                 </thead>
                 <tbody id="ber-data">
@@ -1076,7 +1146,7 @@ class BERAnalyzer:
             # Status = effective grade (frame BER escalated by raw/physical BER), computed once
             # in get_ber_summary so the summary cards and this table always agree.
             ber_value = port_info['ber_value']
-            status = str(port_info.get('status') or 'excellent').upper()
+            status = str(port_info.get('status') or 'unknown').upper()
             badge_class = {
                 "EXCELLENT": "badge badge-green",
                 "GOOD": "badge badge-green",
@@ -1084,7 +1154,10 @@ class BERAnalyzer:
                 "CRITICAL": "badge badge-red",
             }.get(status, "badge badge-gray")
             
-            ber_display = f"{ber_value:.2e}" if ber_value > 0 else "0"
+            if port_info.get('frame_grade') == BERGrade.UNKNOWN.value:
+                ber_display = "N/A"
+            else:
+                ber_display = f"{ber_value:.2e}" if ber_value > 0 else "0"
             
             # RAW PHY BER (pre-FEC) — already parsed during classification.
             raw_phy_val = port_info.get('raw_ber')
@@ -1095,9 +1168,18 @@ class BERAnalyzer:
             eff_val = port_info.get('effective_ber')
             eff_display = f"{eff_val:.2e}" if isinstance(eff_val, (int, float)) else "N/A"
             sym_val = port_info.get('symbol_errors')
-            sym_display = f"{sym_val:,}" if isinstance(sym_val, int) else "N/A"
+            sym_delta = port_info.get('symbol_error_delta')
+            if isinstance(sym_val, int) and isinstance(sym_delta, int):
+                sym_display = f"+{sym_delta:,} / {sym_val:,}"
+            elif isinstance(sym_val, int):
+                sym_display = f"baseline / {sym_val:,}"
+            else:
+                sym_display = "N/A"
 
             timestamp = datetime.fromtimestamp(port_info['timestamp']).strftime('%H:%M:%S')
+            sample_window = self._format_duration(
+                port_info.get('sample_duration_seconds', 0)
+            )
             
             html_content += f"""
                 <tr data-status="{status.lower()}">
@@ -1108,14 +1190,14 @@ class BERAnalyzer:
                     <td>{raw_phy_display}</td>
                     <td>{eff_display}</td>
                     <td>{sym_display}</td>
-                    <td>{port_info['total_packets']:,}</td>
-                    <td>{port_info['rx_errors']:,}</td>
-                    <td>{port_info['tx_errors']:,}</td>
-                    <td>{timestamp}</td>
+                    <td>{port_info['delta_packets']:,}</td>
+                    <td>{port_info['delta_rx_errors']:,}</td>
+                    <td>{port_info['delta_tx_errors']:,}</td>
+                    <td>{timestamp} / {sample_window}</td>
                 </tr>
 """
         
-        html_content += """
+        html_content += f"""
                 </tbody>
             </table>
         </div>
@@ -1132,11 +1214,11 @@ class BERAnalyzer:
                     <tr><th>Parameter</th><th>Threshold</th><th>Description</th></tr>
                 </thead>
                 <tbody>
-                    <tr><td>Excellent</td><td>Zero errors</td><td>Zero bit errors detected</td></tr>
-                    <tr><td>Good</td><td>&lt; 1×10⁻⁶</td><td>Industry standard acceptable BER level</td></tr>
-                    <tr><td>Warning</td><td>1×10⁻⁶ to 1×10⁻⁵</td><td>Elevated error rate requiring monitoring</td></tr>
-                    <tr><td>Critical</td><td>&gt; 1×10⁻⁵</td><td>Unacceptable error rate, immediate attention required</td></tr>
-                    <tr><td>Analysis Method</td><td>Interface statistics</td><td>Based on error counters and packet statistics</td></tr>
+                    <tr><td>Excellent</td><td>Zero new errors</td><td>No new error events in the sample</td></tr>
+                    <tr><td>Frame Density</td><td>Warning &ge; {self.config['frame_density_warning_threshold']:.0e}; Critical &ge; {self.config['frame_density_critical_threshold']:.0e}</td><td>Interface error events per observed bit volume</td></tr>
+                    <tr><td>Raw / Effective PHY BER</td><td>Warning &ge; {self.config['phy_ber_warning_threshold']:.0e}; Critical &ge; {self.config['phy_ber_critical_threshold']:.0e}</td><td>Configured by notifications.yaml network.ber_error_rate (critical is 10×)</td></tr>
+                    <tr><td>PHY Symbol Δ</td><td>Warning &ge; {self.config['symbol_error_warning_delta']:,}; Critical &ge; {self.config['symbol_error_critical_delta']:,}</td><td>New symbol errors since the previous L1 sample</td></tr>
+                    <tr><td>Analysis Method</td><td>Worst RX/TX direction</td><td>Interface error events per observed bit volume; this is not a physical BER</td></tr>
                 </tbody>
             </table>
         </div>
@@ -1149,11 +1231,11 @@ class BERAnalyzer:
         </div>
         <div class="section-content" style="font-size: 13px; color: #888;">
             <ul style="margin-left: 20px; line-height: 1.8;">
-                <li><strong style="color: #d4d4d4;">Frame BER</strong>: Computed from interface error counters to show overall link quality. Uses delta measurement (new errors since last check) for accurate current status.</li>
+                <li><strong style="color: #d4d4d4;">Frame Error Density</strong>: The worse RX/TX <code>/proc/net/dev</code> error-event count divided by that direction's observed bit volume. It is an operational density indicator, not a physical bit-error rate.</li>
                 <li><strong style="color: #d4d4d4;">Physical BER</strong>: Physical layer bit error rate from l1-show/PCS layer. Shows actual fiber and optics health including FEC-corrected errors.</li>
                 <li><strong style="color: #d4d4d4;">Effective BER</strong>: Post-FEC bit error rate from l1-show (<code>effective_ber_coef × 10^effective_ber_magnitude</code>). This is the error rate the traffic actually sees after FEC correction — the primary day-to-day health metric.</li>
-                <li><strong style="color: #d4d4d4;">PHY Symbol Errors</strong>: Physical-layer symbol error count (<code>phy_symbol_errors</code> from l1-show). A rising count indicates a degrading lane/fiber even while FEC still hides it from the frame BER.</li>
-                <li><strong style="color: #d4d4d4;">Delta-based measurement</strong>: Both metrics use only new errors since the last measurement to avoid showing accumulated historical errors. First measurement establishes baseline.</li>
+                <li><strong style="color: #d4d4d4;">PHY Symbol Errors</strong>: The table shows new symbol errors and the lifetime total from <code>l1-show</code>. Severity uses only the new delta; a reset establishes a fresh baseline.</li>
+                <li><strong style="color: #d4d4d4;">Sample window</strong>: The Δ packet/error columns and the window beside Updated describe the exact interval used for Frame Error Density. Raw and Effective BER are current L1 snapshots.</li>
             </ul>
         </div>
     </div>
@@ -1492,15 +1574,11 @@ class BERAnalyzer:
                 'UNKNOWN': 4
             };
             
-            return (priority[a] || 5) - (priority[b] || 5);
+            return (priority[a] ?? 5) - (priority[b] ?? 5);
         }
         
         function compareBERValue(a, b) {
             // Handle scientific notation (1.23e-5) and plain numbers
-            if (a === '0' && b === '0') return 0;
-            if (a === '0') return 1; // 0 is best (excellent)
-            if (b === '0') return -1;
-            
             const numA = parseFloat(a);
             const numB = parseFloat(b);
             
@@ -1512,9 +1590,10 @@ class BERAnalyzer:
         }
 
         // Run Analysis Function
-        function runAnalysis() {
+        async function runAnalysis() {
             const button = document.getElementById('run-analysis');
             const originalText = button.innerHTML;
+            let notification = null;
             
             // Disable button and show loading
             button.disabled = true;
@@ -1525,19 +1604,23 @@ class BERAnalyzer:
                 Running...
             `;
             
-            // Send POST request to trigger monitor
-            fetch('/trigger-monitor', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
+            try {
+                let baseline = null;
+                if (typeof window.lldpqCapturePipelineState === 'function') {
+                    baseline = await window.lldpqCapturePipelineState();
                 }
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.status === 'success') {
-                    console.log('✅ Monitor analysis triggered successfully');
-                    // Show notification
-                    const notification = document.createElement('div');
+
+                const response = await fetch('/trigger-monitor', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await response.json();
+                if (data.status !== 'success') {
+                    throw new Error(data.message || 'Failed to trigger monitor analysis');
+                }
+
+                console.log('✅ Monitor analysis triggered successfully');
+                notification = document.createElement('div');
                     notification.style.cssText = `
                         position: fixed;
                         top: 20px;
@@ -1555,28 +1638,24 @@ class BERAnalyzer:
                     notification.innerHTML = `
                         <strong>✅ Monitor Analysis Started</strong><br>
                         The full system analysis is running in the background.<br>
-                        <small>Page will automatically refresh in 35 seconds to show the latest results.</small>
+                        <small>Page will refresh after the new analysis is completely published.</small>
                     `;
-                    document.body.appendChild(notification);
-                    // Auto-refresh page after 35 seconds
-                    setTimeout(() => {
-                        window.location.reload();
-                    }, 35000);
+                document.body.appendChild(notification);
+
+                if (typeof window.waitForLldpqAnalysisCompletion === 'function') {
+                    await window.waitForLldpqAnalysisCompletion(baseline);
                 } else {
-                    console.error('❌ Failed to trigger monitor analysis:', data.message);
-                    alert('Failed to trigger analysis. Please try again.');
-                    // Restore button
-                    button.disabled = false;
-                    button.innerHTML = originalText;
+                    await new Promise(resolve => setTimeout(resolve, 35000));
                 }
-            })
-            .catch(error => {
+
+                window.location.reload();
+            } catch (error) {
                 console.error('❌ Error triggering analysis:', error);
-                alert('Error triggering analysis. Please try again.');
-                // Restore button
+                if (notification) notification.remove();
+                alert('Analysis did not complete: ' + (error.message || error));
                 button.disabled = false;
                 button.innerHTML = originalText;
-            });
+            }
         }
 
         // CSV Download Function

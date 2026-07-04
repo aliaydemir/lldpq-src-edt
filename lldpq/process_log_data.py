@@ -120,7 +120,7 @@ class LogAnalyzer:
             ]
         }
 
-        self.section_names = {
+        self.section_names = (
             'FRR_ROUTING_LOGS',
             'SWITCHD_LOGS',
             'NVUE_CONFIG_LOGS',
@@ -131,7 +131,7 @@ class LogAnalyzer:
             'JOURNALCTL_PRIORITY_LOGS',
             'DMESG_HARDWARE_LOGS',
             'NETWORK_INTERFACE_LOGS',
-        }
+        )
 
     @staticmethod
     def _syslog_priority_severity(line):
@@ -272,7 +272,6 @@ class LogAnalyzer:
             r'.+ log not found|log not found)',
             normalized,
         ))
-        return None
     
     def adjust_severity_by_age(self, severity, log_datetime):
         """Adjust severity based on log age - older logs are less critical"""
@@ -311,7 +310,7 @@ class LogAnalyzer:
         """Process logs for a single device"""
         if not os.path.exists(log_file_path):
             print(f"⚠️  Log file not found: {log_file_path}")
-            return
+            return False
         
         
         try:
@@ -319,18 +318,7 @@ class LogAnalyzer:
                 content = f.read()
                 
             # Split into sections based on log type markers
-            sections = {
-                'FRR_ROUTING_LOGS': [],
-                'SWITCHD_LOGS': [],
-                'NVUE_CONFIG_LOGS': [],
-                'MSTPD_STP_LOGS': [],
-                'CLAGD_MLAG_LOGS': [],
-                'AUTH_SECURITY_LOGS': [],
-                'SYSTEM_CRITICAL_LOGS': [],
-                'JOURNALCTL_PRIORITY_LOGS': [],
-                'DMESG_HARDWARE_LOGS': [],
-                'NETWORK_INTERFACE_LOGS': []
-            }
+            sections = {section: [] for section in self.section_names}
             
             current_section = None
             for line in content.split('\n'):
@@ -338,34 +326,19 @@ class LogAnalyzer:
                 if not line:
                     continue
                 
-                # Check for section markers
-                if line.startswith('===') or line.endswith(':'):
-                    if 'FRR_ROUTING_LOGS' in line:
-                        current_section = 'FRR_ROUTING_LOGS'
-                    elif 'SWITCHD_LOGS' in line:
-                        current_section = 'SWITCHD_LOGS'
-                    elif 'NVUE_CONFIG_LOGS' in line:
-                        current_section = 'NVUE_CONFIG_LOGS'
-                    elif 'MSTPD_STP_LOGS' in line:
-                        current_section = 'MSTPD_STP_LOGS'
-                    elif 'CLAGD_MLAG_LOGS' in line:
-                        current_section = 'CLAGD_MLAG_LOGS'
-                    elif 'AUTH_SECURITY_LOGS' in line:
-                        current_section = 'AUTH_SECURITY_LOGS'
-                    elif 'SYSTEM_CRITICAL_LOGS' in line:
-                        current_section = 'SYSTEM_CRITICAL_LOGS'
-                    elif 'JOURNALCTL_PRIORITY_LOGS' in line:
-                        current_section = 'JOURNALCTL_PRIORITY_LOGS'
-                    elif 'DMESG_HARDWARE_LOGS' in line:
-                        current_section = 'DMESG_HARDWARE_LOGS'
-                    elif 'NETWORK_INTERFACE_LOGS' in line:
-                        current_section = 'NETWORK_INTERFACE_LOGS'
+                # Source-status markers are coverage metadata, not events.
+                if self._record_source_status(device_name, line):
+                    continue
+
+                # Match exact section labels only. A real message such as
+                # "fatal error:" must remain available to the classifier.
+                marker = self._section_marker(line)
+                if marker in self.section_names:
+                    current_section = marker
                     continue
                 
                 # Skip non-informative lines
-                if (line.startswith('No ') or line == '' or len(line) < 10 or 
-                    'No entries' in line or line.strip() == '-- No entries --' or
-                    'not found' in line.lower() or 'log not found' in line):
+                if len(line) < 5 or self._is_placeholder_line(line):
                     continue
                 
                 if current_section:
@@ -382,6 +355,11 @@ class LogAnalyzer:
                     # Skip if severity is None (monitoring noise)
                     if severity is None:
                         continue
+
+                    normalized_line = self._normalized_event_line(line)
+                    if normalized_line in self.seen_events[device_name]:
+                        continue
+                    self.seen_events[device_name].add(normalized_line)
                     
                     timestamp = self.parse_timestamp(line)
                     
@@ -395,18 +373,51 @@ class LogAnalyzer:
                         'section': section_name,
                         'message': line.strip(),
                         'severity': severity,
-                        'original_severity': original_severity if original_severity != severity else None
+                        'original_severity': original_severity,
                     }
                     
                     self.log_analysis[device_name][severity].append(log_entry)
                     self.log_counts[device_name][severity] += 1
+
+            return True
         
         except Exception as e:
             print(f"❌ Error processing logs for {device_name}: {e}")
+            return False
+
+    def coverage_summary(self):
+        """Return machine-readable log collection coverage metadata."""
+        expected_devices = self.expected_devices or self.current_devices
+        partial_devices = sorted(
+            device for device, statuses in self.source_status.items()
+            if any(status == 'ERROR' for status in statuses.values())
+        )
+        unsupported_sources = {
+            device: sorted(
+                source for source, status in statuses.items()
+                if status == 'UNAVAILABLE'
+            )
+            for device, statuses in sorted(self.source_status.items())
+            if any(status == 'UNAVAILABLE' for status in statuses.values())
+        }
+        return {
+            'expected_devices': sorted(expected_devices),
+            'current_devices': sorted(self.current_devices),
+            'partial': bool(partial_devices),
+            'partial_devices': partial_devices,
+            'unsupported_sources': unsupported_sources,
+        }
     
     def generate_html_report(self):
         """Generate HTML report for log analysis"""
         print("Generating log analysis HTML report...")
+
+        coverage = self.coverage_summary()
+        coverage_partial_attr = 'true' if coverage['partial'] else 'false'
+        partial_devices_attr = html.escape(
+            json.dumps(coverage['partial_devices'], separators=(',', ':')),
+            quote=True,
+        )
         
         # Calculate totals
         total_devices = len(self.log_counts)
@@ -504,7 +515,12 @@ class LogAnalyzer:
         @keyframes spin {{ from {{ transform: rotate(0deg); }} to {{ transform: rotate(360deg); }} }}
     </style>
 </head>
-<body>
+<body data-analysis-summary="log"
+      data-collection-status="{self.collection_status}"
+      data-coverage-partial="{coverage_partial_attr}"
+      data-coverage-expected="{len(coverage['expected_devices'])}"
+      data-coverage-current="{len(coverage['current_devices'])}"
+      data-coverage-partial-devices="{partial_devices_attr}">
     <div class="page-header">
         <div>
             <div class="page-title">Log Analysis Results</div>
@@ -589,18 +605,19 @@ class LogAnalyzer:
             device_label = html.escape(str(canonical(device_name)))
             device_attr = html.escape(str(device_name), quote=True)
             
-            # Color code total count like other analysis pages
-            if total_count == 0:
-                total_class = "total-excellent"
-            elif total_count <= 50:
-                total_class = "total-good" 
-            elif total_count <= 100:
-                total_class = "total-warning"
-            else:
+            # Operational severity, not raw info volume, determines the row
+            # color. A chatty but healthy device must not look critical.
+            if counts['critical'] > 0:
                 total_class = "total-critical"
+            elif counts['error'] > 0 or counts['warning'] > 0:
+                total_class = "total-warning"
+            elif counts['info'] > 0:
+                total_class = "total-good"
+            else:
+                total_class = "total-excellent"
             
             html_content += f"""
-                    <tr>
+                    <tr data-device-key="{device_attr}">
                         <td>{device_label}</td>
                         <td>
                             <span class="severity-count critical {'zero' if counts['critical'] == 0 else ''}" 
@@ -632,22 +649,22 @@ class LogAnalyzer:
                         </td>
                         <td><span class="{total_class}">{total_count}</span></td>
                     </tr>
-                    <tr id="details-{device_attr}-critical" class="log-details">
+                    <tr id="details-{device_attr}-critical" class="log-details" data-parent-device-key="{device_attr}">
                         <td colspan="6">
                             <div id="content-{device_attr}-critical"></div>
                         </td>
                     </tr>
-                    <tr id="details-{device_attr}-warning" class="log-details">
+                    <tr id="details-{device_attr}-warning" class="log-details" data-parent-device-key="{device_attr}">
                         <td colspan="6">
                             <div id="content-{device_attr}-warning"></div>
                         </td>
                     </tr>
-                    <tr id="details-{device_attr}-error" class="log-details">
+                    <tr id="details-{device_attr}-error" class="log-details" data-parent-device-key="{device_attr}">
                         <td colspan="6">
                             <div id="content-{device_attr}-error"></div>
                         </td>
                     </tr>
-                    <tr id="details-{device_attr}-info" class="log-details">
+                    <tr id="details-{device_attr}-info" class="log-details" data-parent-device-key="{device_attr}">
                         <td colspan="6">
                             <div id="content-{device_attr}-info"></div>
                         </td>
@@ -962,6 +979,15 @@ class LogAnalyzer:
                     section.textContent = String(log.section ?? '');
                     entry.appendChild(section);
 
+                    const severityTrace = document.createElement('span');
+                    severityTrace.className = 'log-section';
+                    const originalSeverity = String(log.original_severity ?? log.severity ?? severity).toUpperCase();
+                    const effectiveSeverity = String(log.severity ?? severity).toUpperCase();
+                    severityTrace.textContent = originalSeverity === effectiveSeverity
+                        ? effectiveSeverity
+                        : `${originalSeverity} → ${effectiveSeverity}`;
+                    entry.appendChild(severityTrace);
+
                     const message = document.createElement('span');
                     message.className = 'log-message';
                     message.textContent = String(log.message ?? '');
@@ -1046,15 +1072,15 @@ class LogAnalyzer:
             });
             
             // DIFFERENT APPROACH: Move existing DOM nodes instead of destroying them
-            rows.forEach((row, index) => {
-                const deviceName = row.cells[0].textContent.trim();
+            rows.forEach(row => {
+                const deviceKey = row.dataset.deviceKey;
                 
                 // Move the device row to its new position
                 tbody.appendChild(row);
                 
                 // Move the associated log-details rows right after the device row
                 const logDetailsRows = Array.from(tbody.querySelectorAll('.log-details')).filter(
-                    detailRow => detailRow.id.includes(deviceName)
+                    detailRow => detailRow.dataset.parentDeviceKey === deviceKey
                 );
                 logDetailsRows.forEach(detailRow => tbody.appendChild(detailRow));
             });
@@ -1063,9 +1089,15 @@ class LogAnalyzer:
         // reattachClickHandlers function removed - no longer needed since we don't destroy DOM nodes
         
         // Run Analysis Function
-        function runAnalysis() {
+        async function runAnalysis() {
             const button = document.getElementById('run-analysis');
             const originalText = button.innerHTML;
+            let notification = null;
+
+            const restoreButton = () => {
+                button.disabled = false;
+                button.innerHTML = originalText;
+            };
             
             // Disable button and show loading
             button.disabled = true;
@@ -1076,19 +1108,24 @@ class LogAnalyzer:
                 Running...
             `;
             
-            // Send POST request to trigger monitor
-            fetch('/trigger-monitor', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
+            try {
+                const baseline = typeof window.lldpqCapturePipelineState === 'function'
+                    ? await window.lldpqCapturePipelineState()
+                    : null;
+
+                const response = await fetch('/trigger-monitor', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+                const data = await response.json();
+                if (!response.ok || data.status !== 'success') {
+                    throw new Error(data.message || `HTTP ${response.status}`);
                 }
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.status === 'success') {
-                    console.log('Monitor analysis triggered successfully');
-                    // Show notification
-                    const notification = document.createElement('div');
+
+                console.log('Monitor analysis triggered successfully');
+                notification = document.createElement('div');
                     notification.style.cssText = `
                         position: fixed;
                         top: 20px;
@@ -1103,31 +1140,39 @@ class LogAnalyzer:
                         max-width: 350px;
                         font-family: monospace;
                     `;
-                    notification.innerHTML = `
+                const completionHelperAvailable =
+                    typeof window.waitForLldpqAnalysisCompletion === 'function';
+                notification.innerHTML = `
                         <strong>Monitor Analysis Started</strong><br>
                         The full system analysis is running in the background.<br>
-                        <small>Page will automatically refresh in 35 seconds to show the latest results.</small>
+                        <small>${completionHelperAvailable
+                            ? 'Page will refresh when the latest results are ready.'
+                            : 'Page will automatically refresh in 35 seconds.'}</small>
                     `;
-                    document.body.appendChild(notification);
-                    // Auto-refresh page after 35 seconds
+                document.body.appendChild(notification);
+
+                if (!completionHelperAvailable) {
                     setTimeout(() => {
                         window.location.reload();
                     }, 35000);
-                } else {
-                    console.error('❌ Failed to trigger monitor analysis:', data.message);
-                    alert('Failed to trigger analysis. Please try again.');
-                    // Restore button
-                    button.disabled = false;
-                    button.innerHTML = originalText;
+                    return;
                 }
-            })
-            .catch(error => {
-                console.error('❌ Error triggering analysis:', error);
-                alert('Error triggering analysis. Please try again.');
-                // Restore button
-                button.disabled = false;
-                button.innerHTML = originalText;
-            });
+
+                await window.waitForLldpqAnalysisCompletion(baseline);
+                window.location.reload();
+            } catch (error) {
+                console.error('❌ Analysis did not complete:', error);
+                if (notification) notification.remove();
+                restoreButton();
+                alert(`Analysis did not complete: ${error.message || error}`);
+            }
+        }
+
+        function csvEscape(value) {
+            let text = String(value ?? '').replace(/\\r?\\n/g, ' ');
+            // Prevent spreadsheet formula execution for untrusted log text.
+            if (/^[=+\\-@\\t\\r]/.test(text)) text = "'" + text;
+            return '"' + text.replace(/"/g, '""') + '"';
         }
 
         // CSV Download Function
@@ -1149,7 +1194,7 @@ class LogAnalyzer:
                     'Total'
                 ];
                 
-                let csvContent = headers.join(',') + '\\n';
+                let csvContent = '';
                 
                 // Get table data (only visible rows)
                 const table = document.getElementById('log-table');
@@ -1165,12 +1210,19 @@ class LogAnalyzer:
                 csvContent += `# Error Messages: ${document.getElementById('error-logs').textContent}\\n`;
                 csvContent += `# Info Messages: ${document.getElementById('info-logs').textContent}\\n`;
                 csvContent += `#\\n`;
+                csvContent += headers.map(csvEscape).join(',') + '\\n';
+
+                const visibleDevices = [];
                 
                 // Process each visible row (skip log-details rows)
                 rows.forEach(row => {
                     if (row.style.display !== 'none' && !row.classList.contains('log-details')) {
                         const cells = row.querySelectorAll('td');
                         if (cells.length >= 6) {
+                            visibleDevices.push({
+                                key: row.dataset.deviceKey,
+                                label: cells[0].textContent.trim()
+                            });
                             const rowData = [
                                 cells[0].textContent.trim(), // Device
                                 cells[1].querySelector('.severity-count') ? cells[1].querySelector('.severity-count').textContent.trim() : '0', // Critical
@@ -1180,28 +1232,47 @@ class LogAnalyzer:
                                 cells[5].textContent.trim()  // Total
                             ];
                             
-                            // Escape commas and quotes in data
-                            const escapedData = rowData.map(field => {
-                                if (field.includes(',') || field.includes('"') || field.includes('\\n')) {
-                                    return '"' + field.replace(/"/g, '""') + '"';
-                                }
-                                return field;
-                            });
-                            
-                            csvContent += escapedData.join(',') + '\\n';
+                            csvContent += rowData.map(csvEscape).join(',') + '\\n';
                         }
                     }
+                });
+
+                // Preserve event-level provenance, including age demotion.
+                csvContent += '\\n' + [
+                    'Device',
+                    'Effective Severity',
+                    'Original Severity',
+                    'Timestamp',
+                    'Section',
+                    'Message'
+                ].map(csvEscape).join(',') + '\\n';
+                visibleDevices.forEach(device => {
+                    ['critical', 'error', 'warning', 'info'].forEach(severity => {
+                        const entries = logData[device.key]?.[severity] || [];
+                        entries.forEach(entry => {
+                            csvContent += [
+                                device.label,
+                                entry.severity || severity,
+                                entry.original_severity || entry.severity || severity,
+                                entry.timestamp || '',
+                                entry.section || '',
+                                entry.message || ''
+                            ].map(csvEscape).join(',') + '\\n';
+                        });
+                    });
                 });
                 
                 // Create and trigger download
                 const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
                 const link = document.createElement('a');
-                link.href = URL.createObjectURL(blob);
+                const objectUrl = URL.createObjectURL(blob);
+                link.href = objectUrl;
                 link.download = filename;
                 link.style.display = 'none';
                 document.body.appendChild(link);
                 link.click();
                 document.body.removeChild(link);
+                URL.revokeObjectURL(objectUrl);
                 
                 console.log(`CSV downloaded: ${filename}`);
                 
@@ -1225,6 +1296,8 @@ class LogAnalyzer:
     
     def save_summary_data(self):
         """Save summary data for dashboard and AI integration"""
+        coverage = self.coverage_summary()
+        unsupported_sources = coverage.pop('unsupported_sources')
         recent_messages = {}
         for device, categories in self.log_analysis.items():
             msgs = []
@@ -1238,8 +1311,14 @@ class LogAnalyzer:
                 recent_messages[device] = msgs
         
         summary_data = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "collection_status": self.collection_status,
+            "coverage": coverage,
+            "source_status": {
+                device: dict(sorted(statuses.items()))
+                for device, statuses in sorted(self.source_status.items())
+            },
+            "unsupported_sources": unsupported_sources,
             "total_devices": len(self.log_counts),
             "totals": {
                 "critical": sum(device["critical"] for device in self.log_counts.values()),
@@ -1290,6 +1369,8 @@ class LogAnalyzer:
         collected_hosts = {
             filename.removesuffix('_logs.txt') for filename in log_files
         }
+        self.expected_devices = set(expected_hosts or collected_hosts)
+        self.current_devices = set(collected_hosts)
         missing_hosts = sorted(expected_hosts - collected_hosts)
         if missing_hosts:
             print(
@@ -1303,6 +1384,7 @@ class LogAnalyzer:
         if all_devices_unavailable:
             self.collection_status = "unavailable"
         
+        failed_devices = []
         for log_file in log_files:
             device_name = log_file.replace('_logs.txt', '')
             log_file_path = os.path.join(self.log_data_dir, log_file)
@@ -1312,7 +1394,15 @@ class LogAnalyzer:
                 self.log_counts[device_name] = {"critical": 0, "warning": 0, "error": 0, "info": 0}
                 self.log_analysis[device_name] = {"critical": [], "warning": [], "error": [], "info": []}
             
-            self.process_device_logs(device_name, log_file_path)
+            if not self.process_device_logs(device_name, log_file_path):
+                failed_devices.append(device_name)
+
+        if failed_devices:
+            print(
+                "❌ Failed to process current logs for: "
+                + ", ".join(sorted(failed_devices))
+            )
+            return False
         
         print(f"Processed {len(log_files)} devices")
         

@@ -47,7 +47,7 @@ normalize_bool() {
 
 # Parse flags
 SKIP_OPTICAL="${SKIP_OPTICAL:-false}"
-SKIP_L1="${SKIP_L1:-true}"
+SKIP_L1="${SKIP_L1:-false}"
 while getopts "s" opt; do
     case $opt in
         s) SKIP_OPTICAL=true ;;
@@ -1893,7 +1893,20 @@ EOF
         # =====================================================================
         echo "===HARDWARE_DATA_START==="
         echo "HARDWARE_HEALTH:"
-        sensors 2>/dev/null || echo "No sensors available"
+        if command -v sensors >/dev/null 2>&1; then
+            _hardware_output=$(sensors 2>/dev/null)
+            _hardware_status=$?
+            if [ "$_hardware_status" -eq 0 ]; then
+                echo "__LLDPQ_HARDWARE_SOURCE_STATUS__:SENSORS:OK"
+                printf "%s\n" "$_hardware_output"
+            else
+                echo "__LLDPQ_HARDWARE_SOURCE_STATUS__:SENSORS:ERROR"
+                echo "No sensors available"
+            fi
+        else
+            echo "__LLDPQ_HARDWARE_SOURCE_STATUS__:SENSORS:UNAVAILABLE"
+            echo "No sensors available"
+        fi
         echo "HW_MGMT_THERMAL:"
         asic_raw=""
         for asic_file in /var/run/hw-management/thermal/asic /run/hw-management/thermal/asic /var/run/hw-management/thermal/asic1 /run/hw-management/thermal/asic1; do
@@ -1956,9 +1969,25 @@ EOF
             awk "BEGIN{printf \"HW_MGMT_CPU: %.1f\n\", $cpu_raw/1000}"
         fi
         echo "MEMORY_INFO:"
-        free -h 2>/dev/null || echo "No memory info"
+        _hardware_output=$(free -h 2>/dev/null)
+        _hardware_status=$?
+        if [ "$_hardware_status" -eq 0 ]; then
+            echo "__LLDPQ_HARDWARE_SOURCE_STATUS__:MEMORY:OK"
+            printf "%s\n" "$_hardware_output"
+        else
+            echo "__LLDPQ_HARDWARE_SOURCE_STATUS__:MEMORY:ERROR"
+            echo "No memory info"
+        fi
         echo "CPU_INFO:"
-        cat /proc/loadavg 2>/dev/null || echo "No CPU info"
+        _hardware_output=$(cat /proc/loadavg 2>/dev/null)
+        _hardware_status=$?
+        if [ "$_hardware_status" -eq 0 ]; then
+            echo "__LLDPQ_HARDWARE_SOURCE_STATUS__:CPU_LOAD:OK"
+            printf "%s\n" "$_hardware_output"
+        else
+            echo "__LLDPQ_HARDWARE_SOURCE_STATUS__:CPU_LOAD:ERROR"
+            echo "No CPU info"
+        fi
         echo "CPU_CORES: $(nproc 2>/dev/null || grep -c ^processor /proc/cpuinfo 2>/dev/null || echo 0)"
         echo "===HARDWARE_DATA_END==="
         

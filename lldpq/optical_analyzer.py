@@ -11,9 +11,15 @@ import json
 import time
 import re
 import os
+import math
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 from enum import Enum
+
+try:
+    import yaml
+except ImportError:
+    yaml = None
 
 try:
     from device_names import canonical
@@ -73,9 +79,44 @@ class OpticalAnalyzer:
         self.optical_history = {}  # port -> historical readings
         self.current_optical_stats = {}  # port -> current optical status
         self.thresholds = self.DEFAULT_THRESHOLDS.copy()
+        self._load_network_thresholds()
 
         # Load historical data
         self.load_optical_history()
+
+    def _load_network_thresholds(self) -> None:
+        """Load the configurable margin while retaining safe defaults.
+
+        Module-specific alarm tables are not collected yet, so all other
+        optical limits remain the documented conservative defaults above.
+        """
+        if yaml is None:
+            return
+        candidates = [
+            os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         'notifications.yaml'),
+            os.path.join(os.path.dirname(os.path.abspath(self.data_dir)),
+                         'notifications.yaml'),
+        ]
+        for path in dict.fromkeys(candidates):
+            if not os.path.isfile(path):
+                continue
+            try:
+                with open(path, 'r') as stream:
+                    config = yaml.safe_load(stream) or {}
+                value = config.get('thresholds', {}).get('network', {}).get(
+                    'optical_power_margin'
+                )
+                if value is None:
+                    return
+                margin = float(value)
+                if math.isfinite(margin) and margin >= 0:
+                    self.thresholds['link_margin_min_db'] = margin
+                return
+            except (OSError, TypeError, ValueError, yaml.YAMLError):
+                # Invalid or unreadable configuration deliberately keeps the
+                # documented 3 dB default.
+                return
 
     def load_optical_history(self):
         """Load historical optical data"""
@@ -533,7 +574,9 @@ class OpticalAnalyzer:
 
             if health == OpticalHealth.CRITICAL:
                 # Critical optical issues
+                anomaly_count = len(anomalies)
                 rx_power = stats.get('rx_power_dbm')
+                tx_power = stats.get('tx_power_dbm')
                 temperature = stats.get('temperature_c')
 
                 if rx_power is not None and rx_power < self.thresholds['rx_power_min_dbm']:
@@ -546,6 +589,18 @@ class OpticalAnalyzer:
                         "rx_power_dbm": rx_power
                     })
 
+                if tx_power is not None and (
+                        tx_power < self.thresholds['tx_power_min_dbm'] or
+                        tx_power > self.thresholds['tx_power_max_dbm']):
+                    anomalies.append({
+                        "port": port_name,
+                        "type": "TX_POWER_OUT_OF_RANGE",
+                        "severity": "critical",
+                        "message": f"TX power out of range: {tx_power:.2f} dBm",
+                        "action": "Inspect or replace the transceiver and verify module compatibility",
+                        "tx_power_dbm": tx_power
+                    })
+
                 if temperature is not None and temperature > self.thresholds['temperature_max_c']:
                     anomalies.append({
                         "port": port_name,
@@ -556,10 +611,20 @@ class OpticalAnalyzer:
                         "temperature_c": temperature
                     })
 
+                if len(anomalies) == anomaly_count:
+                    anomalies.append({
+                        "port": port_name,
+                        "type": "CRITICAL_OPTICAL_PARAMETER",
+                        "severity": "critical",
+                        "message": "A voltage, bias, high-RX, or lane threshold is critical",
+                        "action": "Inspect the displayed worst-lane values and transceiver diagnostics"
+                    })
+
             elif health == OpticalHealth.WARNING:
                 # Warning level issues
-                link_margin = stats.get('link_margin_db', 0)
-                if link_margin < self.thresholds['link_margin_min_db']:
+                link_margin = stats.get('link_margin_db')
+                if (isinstance(link_margin, (int, float)) and
+                        link_margin < self.thresholds['link_margin_min_db']):
                     anomalies.append({
                         "port": port_name,
                         "type": "LOW_LINK_MARGIN",
@@ -567,6 +632,14 @@ class OpticalAnalyzer:
                         "message": f"Low link margin: {link_margin:.2f} dB (threshold: {self.thresholds['link_margin_min_db']} dB)",
                         "action": "Monitor closely, schedule proactive maintenance",
                         "link_margin_db": link_margin
+                    })
+                else:
+                    anomalies.append({
+                        "port": port_name,
+                        "type": "OPTICAL_PARAMETER_WARNING",
+                        "severity": "warning",
+                        "message": "An optical power or temperature value is near its limit",
+                        "action": "Review the displayed worst-lane value and monitor the port"
                     })
 
         return anomalies
@@ -596,8 +669,9 @@ class OpticalAnalyzer:
                 return "Investigate critical optical parameters immediately"
 
         if health == OpticalHealth.WARNING.value:
-            link_margin = port_info.get('link_margin_db', 0)
-            if link_margin < self.thresholds['link_margin_min_db']:
+            link_margin = port_info.get('link_margin_db')
+            if (isinstance(link_margin, (int, float)) and
+                    link_margin < self.thresholds['link_margin_min_db']):
                 return "Monitor closely, schedule proactive maintenance"
             else:
                 return "Monitor optical parameters regularly"
@@ -859,7 +933,7 @@ class OpticalAnalyzer:
                     <tr><td>TX Power</td><td>{self.thresholds['tx_power_min_dbm']} dBm</td><td>{self.thresholds['tx_power_max_dbm']} dBm</td><td>Transmitted optical power range</td></tr>
                     <tr><td>Temperature</td><td>{self.thresholds['temperature_min_c']}°C</td><td>{self.thresholds['temperature_max_c']}°C</td><td>SFP/QSFP operating temperature</td></tr>
                     <tr><td>Voltage</td><td>{self.thresholds['voltage_min_v']}V</td><td>{self.thresholds['voltage_max_v']}V</td><td>Supply voltage range</td></tr>
-                    <tr><td>Link Margin</td><td>{self.thresholds['link_margin_min_db']} dB</td><td>-</td><td>Minimum acceptable link budget margin</td></tr>
+                    <tr><td>Link Margin</td><td>{self.thresholds['link_margin_min_db']} dB</td><td>-</td><td>Minimum margin from notifications.yaml; based on the current generic RX sensitivity until module-specific limits are collected</td></tr>
                     <tr><td>Bias Current</td><td>-</td><td>{self.thresholds['bias_current_max_ma']} mA</td><td>Maximum laser bias current</td></tr>
                 </tbody>
             </table>

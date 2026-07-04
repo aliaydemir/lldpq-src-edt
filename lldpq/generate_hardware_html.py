@@ -26,19 +26,105 @@ except Exception:
 
 
 # One grading contract drives both the calculation and the threshold reference
-# rendered in the report.  Tuples are the boundaries between
-# EXCELLENT/GOOD/WARNING/CRITICAL in that order.
-HARDWARE_THRESHOLDS = {
-    "cpu_temp_c": (60.0, 70.0, 80.0),
-    "asic_temp_c": (85.0, 105.0, 115.0),
-    "memory_percent": (60.0, 75.0, 85.0),
+# rendered in the report. Tuples are the boundaries between
+# EXCELLENT/GOOD/WARNING/CRITICAL in that order. Notification warning/critical
+# values are loaded below, while the extra GOOD/EXCELLENT boundaries retain
+# conservative defaults unless explicitly configured.
+DEFAULT_HARDWARE_THRESHOLDS = {
+    "cpu_temp_c": (60.0, 75.0, 85.0),
+    "asic_temp_c": (70.0, 80.0, 90.0),
+    "memory_percent": (60.0, 80.0, 90.0),
     "load_per_core": (0.7, 1.0, 1.5),
     # Low values are bad for fan speed and PSU efficiency.  These tuples are
     # CRITICAL/WARNING/GOOD boundaries; values above the final boundary are
     # EXCELLENT (strictly above for compatibility with the existing grading).
-    "fan_rpm": (1000.0, 3000.0, 4000.0),
-    "psu_efficiency_percent": (30.0, 50.0, 90.0),
+    "fan_rpm": (3000.0, 4000.0, 5000.0),
+    "psu_efficiency_percent": (30.0, 80.0, 90.0),
 }
+
+
+def _finite_number(mapping, key, fallback):
+    value = mapping.get(key, fallback) if isinstance(mapping, dict) else fallback
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return float(fallback)
+    return value if value == value and abs(value) != float("inf") else float(fallback)
+
+
+def load_hardware_thresholds():
+    """Load the alert thresholds and safely extend them to four UI grades."""
+    defaults = DEFAULT_HARDWARE_THRESHOLDS
+    try:
+        import yaml
+
+        config_file = os.path.join(os.path.dirname(__file__), "notifications.yaml")
+        with open(config_file, "r", encoding="utf-8") as source:
+            config = yaml.safe_load(source) or {}
+        configured = config.get("thresholds", {}).get("hardware", {})
+        if not isinstance(configured, dict):
+            raise ValueError("hardware thresholds must be a mapping")
+    except Exception as exc:
+        print(f"Warning: using default hardware thresholds: {exc}")
+        return dict(defaults)
+
+    def high_is_bad(key, warning_key, critical_key, excellent_default):
+        warning = _finite_number(configured, warning_key, defaults[key][1])
+        critical = _finite_number(configured, critical_key, defaults[key][2])
+        excellent = _finite_number(
+            configured,
+            f"{warning_key.removesuffix('_warning')}_excellent",
+            excellent_default,
+        )
+        values = (excellent, warning, critical)
+        return values if 0 <= excellent < warning < critical else defaults[key]
+
+    def low_is_bad(key, critical_key, warning_key, excellent_default):
+        critical = _finite_number(configured, critical_key, defaults[key][0])
+        warning = _finite_number(configured, warning_key, defaults[key][1])
+        excellent = _finite_number(
+            configured,
+            f"{warning_key.removesuffix('_warning')}_excellent",
+            excellent_default,
+        )
+        values = (critical, warning, excellent)
+        return values if 0 <= critical < warning < excellent else defaults[key]
+
+    cpu_warning = _finite_number(configured, "cpu_temp_warning", 75.0)
+    asic_warning = _finite_number(configured, "asic_temp_warning", 80.0)
+    memory_warning = _finite_number(configured, "memory_usage_warning", 80.0)
+    fan_warning = _finite_number(configured, "fan_rpm_warning", 4000.0)
+    psu_warning = _finite_number(configured, "psu_efficiency_warning", 80.0)
+
+    return {
+        "cpu_temp_c": high_is_bad(
+            "cpu_temp_c", "cpu_temp_warning", "cpu_temp_critical",
+            min(defaults["cpu_temp_c"][0], cpu_warning - 1.0),
+        ),
+        "asic_temp_c": high_is_bad(
+            "asic_temp_c", "asic_temp_warning", "asic_temp_critical",
+            min(70.0, asic_warning - 1.0),
+        ),
+        "memory_percent": high_is_bad(
+            "memory_percent", "memory_usage_warning", "memory_usage_critical",
+            min(defaults["memory_percent"][0], memory_warning - 1.0),
+        ),
+        # notifications.yaml currently defines absolute load thresholds, while
+        # this report intentionally grades load per core. Keep that distinct
+        # metric on its validated default rather than mixing units.
+        "load_per_core": defaults["load_per_core"],
+        "fan_rpm": low_is_bad(
+            "fan_rpm", "fan_rpm_critical", "fan_rpm_warning",
+            max(5000.0, fan_warning + 1.0),
+        ),
+        "psu_efficiency_percent": low_is_bad(
+            "psu_efficiency_percent", "psu_efficiency_critical",
+            "psu_efficiency_warning", max(90.0, psu_warning + 1.0),
+        ),
+    }
+
+
+HARDWARE_THRESHOLDS = load_hardware_thresholds()
 
 GRADE_PRIORITY = {"CRITICAL": 4, "WARNING": 3, "GOOD": 2, "EXCELLENT": 1}
 HISTORY_MAX_SKEW_SECONDS = 300.0
@@ -198,7 +284,12 @@ def parse_assets_file(assets_file_path="assets.ini"):
     return device_info
 
 def parse_temperature_from_hardware_file(device_name):
-    """Parse CPU and ASIC temperatures from raw hardware file"""
+    """Parse the hottest CPU and ASIC sensor from the raw hardware file.
+
+    Alerts use the maximum observed temperature because one hot core/package
+    is operationally significant. The report uses the same max metric rather
+    than averaging cores and disagreeing with the alert state.
+    """
     
     cpu_temp = None
     asic_temp = None
@@ -212,72 +303,37 @@ def parse_temperature_from_hardware_file(device_name):
         with open(hardware_file, 'r') as f:
             content = f.read()
         
-        # Parse ASIC temperature: try fast Linux/hw-management sources first.
-        asic_mgmt = re.search(r'^HW_MGMT_ASIC:\s*([0-9]+\.?[0-9]*)', content, re.MULTILINE)
-        if asic_mgmt:
-            asic_temp = float(asic_mgmt.group(1))
-        else:
-            asic_match = re.search(r'Ambient ASIC Temp:\s*\+?(-?\d+\.?\d*)[°C]', content)
-            if asic_match:
-                asic_temp = float(asic_match.group(1))
-            else:
-                thermal_zone_asic = re.search(r'^THERMAL_ZONE_ASIC:\s*([0-9]+\.?[0-9]*)', content, re.MULTILINE)
-                if thermal_zone_asic:
-                    asic_temp = float(thermal_zone_asic.group(1))
-                else:
-                    hwmon_asic = re.search(r'^HWMON_ASIC:\s*([0-9]+\.?[0-9]*)', content, re.MULTILINE)
-                    if hwmon_asic:
-                        asic_temp = float(hwmon_asic.group(1))
-                    else:
-                        # Passive support for already-collected NVUE output; monitor.sh does not run nv.
-                        nvue_asic = re.search(
-                            r'^\s*Asic-Temp-Sensor\s+(-?\d+\.?\d*)\s+',
-                            content,
-                            re.MULTILINE | re.IGNORECASE,
-                        )
-                        if nvue_asic:
-                            asic_temp = float(nvue_asic.group(1))
-        
-        # Parse CPU temperature: prefer real CPU sensors and avoid unrelated ones (e.g., drivetemp)
-        # Pattern 1: Average of CPU cores "Core 0:        +40.0°C"
-        core_matches = re.findall(r'Core \d+:\s*\+?(-?\d+\.?\d*)[°C]', content)
-        if core_matches:
-            core_temps = [float(temp) for temp in core_matches]
-            cpu_temp = sum(core_temps) / len(core_temps)
-        else:
-            # Pattern 2: CPU package temperature
-            package_match = re.search(r'Package id \d+:\s*\+?(-?\d+\.?\d*)[°C]', content)
-            if package_match:
-                cpu_temp = float(package_match.group(1))
-            else:
-                # Pattern 3: "CPU ACPI temp:  +27.8°C"
-                cpu_acpi_matches = re.findall(r'CPU ACPI temp:\s*\+?(-?\d+\.?\d*)[°C]', content)
-                if cpu_acpi_matches:
-                    cpu_temp = float(cpu_acpi_matches[0])
-                else:
-                    # Pattern 4: HW_MGMT_CPU injected by monitor.sh
-                    cpu_mgmt = re.search(r'^HW_MGMT_CPU:\s*([0-9]+\.?[0-9]*)', content, re.MULTILINE)
-                    if cpu_mgmt:
-                        cpu_temp = float(cpu_mgmt.group(1))
-                    else:
-                        # Passive support for already-collected NVUE output; monitor.sh does not run nv.
-                        nvue_core_matches = re.findall(
-                            r'^\s*CPU-Core-Sensor-\d+\s+(-?\d+\.?\d*)\s+',
-                            content,
-                            re.MULTILINE | re.IGNORECASE,
-                        )
-                        if nvue_core_matches:
-                            core_temps = [float(temp) for temp in nvue_core_matches]
-                            cpu_temp = sum(core_temps) / len(core_temps)
-                        else:
-                            package_match = re.search(
-                                r'^\s*CPU-Package-Sensor\s+(-?\d+\.?\d*)\s+',
-                                content,
-                                re.MULTILINE | re.IGNORECASE,
-                            )
-                            if package_match:
-                                cpu_temp = float(package_match.group(1))
-                # Intentionally not falling back to generic "temp1" to avoid picking up disks/PSU sensors
+        asic_temperatures = []
+        for pattern in (
+            r'Ambient ASIC Temp:\s*\+?(-?\d+\.?\d*)[°C]',
+            r'^(?:HW_MGMT_ASIC|THERMAL_ZONE_ASIC|HWMON_ASIC):\s*(-?\d+\.?\d*)',
+            r'^\s*Asic-Temp-Sensor\s+(-?\d+\.?\d*)\s+',
+        ):
+            asic_temperatures.extend(
+                float(value) for value in re.findall(
+                    pattern, content, re.MULTILINE | re.IGNORECASE
+                )
+            )
+        if asic_temperatures:
+            asic_temp = max(asic_temperatures)
+
+        # Deliberately do not use generic "temp1": it may be a disk or PSU.
+        cpu_temperatures = []
+        for pattern in (
+            r'CPU ACPI temp:\s*\+?(-?\d+\.?\d*)[°C]',
+            r'Core \d+:\s*\+?(-?\d+\.?\d*)[°C]',
+            r'Package id \d+:\s*\+?(-?\d+\.?\d*)[°C]',
+            r'^HW_MGMT_CPU:\s*(-?\d+\.?\d*)',
+            r'^\s*CPU-Core-Sensor-\d+\s+(-?\d+\.?\d*)\s+',
+            r'^\s*CPU-Package-Sensor\s+(-?\d+\.?\d*)\s+',
+        ):
+            cpu_temperatures.extend(
+                float(value) for value in re.findall(
+                    pattern, content, re.MULTILINE | re.IGNORECASE
+                )
+            )
+        if cpu_temperatures:
+            cpu_temp = max(cpu_temperatures)
         
     except Exception as e:
         print(f"Warning: Could not parse temperatures for {device_name}: {e}")
@@ -553,6 +609,13 @@ def hardware_missing_telemetry_markers(device_name):
         return {"hardware_file"}
 
     markers = set()
+    for source, status in re.findall(
+        r'^__LLDPQ_HARDWARE_SOURCE_STATUS__:([A-Za-z0-9_.-]+):(OK|ERROR|UNAVAILABLE)\s*$',
+        content,
+        re.MULTILINE | re.IGNORECASE,
+    ):
+        if status.upper() != "OK":
+            markers.add(source.lower())
     if "no sensors available" in content:
         markers.add("sensors")
     if "no memory info" in content:
@@ -762,6 +825,15 @@ def generate_hardware_html():
     
     # Use current device files count instead of historical count
     total_devices = current_device_count
+    asset_statuses = asset_snapshot[0] if asset_snapshot else {}
+    expected_devices = sum(
+        1 for status in asset_statuses.values() if status == "OK"
+    ) or total_devices
+    unknown_device_count = len(summary['unknown_devices'])
+    coverage_partial = (
+        current_device_count < expected_devices or unknown_device_count > 0
+    )
+    coverage_status = "partial" if coverage_partial else "current"
     
     # Generate dark theme HTML
     html_content = f"""<!DOCTYPE html>
@@ -849,6 +921,13 @@ def generate_hardware_html():
     </style>
 </head>
 <body>
+    <div data-analysis-summary="hardware"
+         data-collection-status="{coverage_status}"
+         data-coverage-expected="{expected_devices}"
+         data-coverage-current="{current_device_count}"
+         data-coverage-partial="{'true' if coverage_partial else 'false'}"
+         data-unknown-devices="{unknown_device_count}"
+         style="display:none"></div>
     <div class="page-header">
         <div>
             <div class="page-title">Hardware Health Analysis</div>

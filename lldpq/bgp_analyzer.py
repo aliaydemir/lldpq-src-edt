@@ -273,7 +273,9 @@ class BGPAnalyzer:
                 continue
             
             # Parse neighbor entries (skip header lines)
-            if re.match(r'^[A-Za-z0-9._-]+.*\s+\d+\s+\d+\s+\d+\s+\d+', line):
+            # Let integer conversion below identify summary rows.  Restricting
+            # the first token to hostname characters drops valid IPv6 peers.
+            if line and not line.lower().startswith("neighbor"):
                 parts = line.split()
                 if len(parts) >= 10:
 
@@ -458,12 +460,23 @@ class BGPAnalyzer:
             neighbor_dict = neighbor.__dict__.copy()
             neighbor_dict['state'] = get_enum_value(neighbor.state)
             neighbor_dicts.append(neighbor_dict)
+
+        neighbor_health = [self.assess_neighbor_health(neighbor) for neighbor in neighbors]
+        warning_neighbors = sum(
+            health in {BGPHealth.WARNING, BGPHealth.UNKNOWN}
+            for health in neighbor_health
+        )
+        critical_neighbors = sum(
+            health == BGPHealth.CRITICAL for health in neighbor_health
+        )
         
         self.current_bgp_stats[hostname] = {
             "neighbors": neighbor_dicts,
             "total_neighbors": len(neighbors),
             "established_neighbors": len([n for n in neighbors if n.state == BGPState.ESTABLISHED]),
             "down_neighbors": len([n for n in neighbors if n.state != BGPState.ESTABLISHED]),
+            "warning_neighbors": warning_neighbors,
+            "critical_neighbors": critical_neighbors,
             "last_update": datetime.now().isoformat()
         }
         
@@ -476,6 +489,8 @@ class BGPAnalyzer:
             "total_neighbors": len(neighbors),
             "established_count": len([n for n in neighbors if n.state == BGPState.ESTABLISHED]),
             "down_count": len([n for n in neighbors if n.state != BGPState.ESTABLISHED]),
+            "warning_neighbors": warning_neighbors,
+            "critical_neighbors": critical_neighbors,
             "neighbors": neighbor_dicts  # Use the same serialized data
         }
         
@@ -691,6 +706,14 @@ class BGPAnalyzer:
         total_neighbors = sum(stats["total_neighbors"] for stats in self.current_bgp_stats.values())
         total_established = sum(stats["established_neighbors"] for stats in self.current_bgp_stats.values())
         total_down = sum(stats["down_neighbors"] for stats in self.current_bgp_stats.values())
+        total_warning = sum(
+            int(stats.get("warning_neighbors", 0) or 0)
+            for stats in self.current_bgp_stats.values()
+        )
+        total_critical = sum(
+            int(stats.get("critical_neighbors", 0) or 0)
+            for stats in self.current_bgp_stats.values()
+        )
         stale_devices = sum(
             1 for stats in self.current_bgp_stats.values()
             if stats.get("data_status") == "stale"
@@ -727,6 +750,8 @@ class BGPAnalyzer:
             "total_neighbors": total_neighbors,
             "established_neighbors": total_established,
             "down_neighbors": total_down,
+            "warning_neighbors": total_warning,
+            "critical_neighbors": total_critical,
             "stale_devices": stale_devices,
             "unknown_devices": unknown_devices,
             "problem_neighbors": problem_neighbors,
@@ -886,30 +911,12 @@ class BGPAnalyzer:
             coverage_status = "partial"
         else:
             coverage_status = "current"
-        coverage_banner = ""
-        if coverage_status != "current":
-            coverage_banner = (
-                f'<div data-collection-status="{coverage_status}" '
-                f'data-current-bgp-devices="{current_bgp_devices}" '
-                f'data-current-evpn-devices="{current_evpn_devices}" '
-                f'data-expected-devices="{expected_devices}" '
-                'style="margin:16px 0;padding:12px;border-left:4px solid #ff9800;'
-                'background:#332b20;color:#ffcc80">'
-                f'Collection coverage is {coverage_status}: BGP {current_bgp_devices}/'
-                f'{expected_devices}, EVPN {current_evpn_devices}/{expected_devices} devices current.'
-                '</div>'
-            )
-        route_banner = ""
-        if evpn_summary.get("route_counts_partial"):
-            affected = ", ".join(evpn_summary.get("truncated_devices", []))
-            route_banner = (
-                '<div data-evpn-route-coverage="partial" '
-                'style="margin:16px 0;padding:12px;border-left:4px solid #ff9800;'
-                'background:#332b20;color:#ffcc80">'
-                'EVPN route observations are truncated for: '
-                f'{html.escape(affected)}. Counts are lower bounds until collector metadata is complete.'
-                '</div>'
-            )
+        route_coverage = (
+            "partial" if evpn_summary.get("route_counts_partial") else "complete"
+        )
+        truncated_devices = html.escape(
+            ",".join(evpn_summary.get("truncated_devices", [])), quote=True
+        )
         health_ratio_display = (
             f"{summary['health_ratio']:.1f}%"
             if summary["health_ratio"] is not None else "N/A"
@@ -1183,12 +1190,17 @@ class BGPAnalyzer:
     </style>
 </head>
 <body>
-    {coverage_banner}
-    {route_banner}
     <div data-analysis-summary="bgp" data-collection-status="{coverage_status}"
          data-expected-devices="{expected_devices}"
          data-current-bgp-devices="{current_bgp_devices}"
-         data-current-evpn-devices="{current_evpn_devices}" style="display:none"></div>
+         data-current-evpn-devices="{current_evpn_devices}"
+         data-warning-neighbors="{summary['warning_neighbors']}"
+         data-critical-neighbors="{summary['critical_neighbors']}"
+         data-evpn-route-coverage="{route_coverage}"
+         data-evpn-truncated-devices="{truncated_devices}" style="display:none">
+        <span id="warning-neighbors">{summary['warning_neighbors']}</span>
+        <span id="critical-neighbors">{summary['critical_neighbors']}</span>
+    </div>
     <!-- Page Header -->
     <div class="page-header">
         <div>
@@ -1386,8 +1398,9 @@ class BGPAnalyzer:
         sorted_neighbors = sorted(all_neighbors, key=lambda x: (
             0 if x['health'] == BGPHealth.CRITICAL else
             1 if x['health'] == BGPHealth.WARNING else
-            2 if x['health'] == BGPHealth.GOOD else
-            3 if x['health'] == BGPHealth.EXCELLENT else 4
+            2 if x['health'] == BGPHealth.UNKNOWN else
+            3 if x['health'] == BGPHealth.GOOD else
+            4
         ))
         
         for neighbor_info in sorted_neighbors:
@@ -1401,7 +1414,7 @@ class BGPAnalyzer:
             # Badge class based on state
             if state_val == 'established':
                 state_badge_class = 'badge badge-green'
-            elif state_val in ['idle', 'active', 'connect']:
+            elif health_val == 'critical':
                 state_badge_class = 'badge badge-red'
             else:
                 state_badge_class = 'badge badge-orange'

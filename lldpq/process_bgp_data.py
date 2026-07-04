@@ -102,6 +102,8 @@ def mark_collection_unavailable(analyzer, hostname, previous_stats, reason):
         "total_neighbors": 0,
         "established_neighbors": 0,
         "down_neighbors": 0,
+        "warning_neighbors": 0,
+        "critical_neighbors": 0,
         "last_update": last_known.get("last_update") if last_known else None,
         "data_status": status,
         "collection_checked_at": datetime.now().isoformat(),
@@ -112,19 +114,25 @@ def mark_collection_unavailable(analyzer, hostname, previous_stats, reason):
 
 
 def bgp_output_is_valid(analyzer, bgp_data):
-    """Accept parsed neighbors or an explicit, valid zero-neighbor response."""
+    """Accept only a complete FRR summary, including an explicit zero result.
+
+    FRR emits one ``Total number of neighbors`` line per VRF.  Comparing the
+    sum of those declarations with the number of parsed VRF/neighbor rows
+    prevents a partially collected or partially parsed summary from silently
+    becoming the current report.
+    """
     if COLLECTION_ERROR_MARKER in bgp_data:
         return False
-    if analyzer.parse_bgp_output(bgp_data):
-        return True
-    if re.search(r'Total number of neighbors\s+0\b', bgp_data, re.IGNORECASE):
-        return True
+    parsed_count = len(analyzer.parse_bgp_output(bgp_data))
+    declared_count = analyzer.declared_neighbor_total(bgp_data)
+    if declared_count is not None:
+        return parsed_count == declared_count
     if re.search(
         r'no\s+(?:bgp\s+)?neighbors|bgp\s+(?:instance|process).*not configured',
         bgp_data,
         re.IGNORECASE,
     ):
-        return True
+        return parsed_count == 0
     return False
 
 
@@ -150,7 +158,7 @@ def process_bgp_data_files(data_dir="monitor-results/bgp-data"):
     asset_statuses = parse_asset_statuses(assets_file)
     
     print("Processing BGP neighbor data")
-    print(f"Using BGP thresholds: Down time={bgp_analyzer.thresholds['critical_down_hours']}h, "
+    print(f"Using BGP thresholds: Down time={bgp_analyzer.thresholds['bgp_down_minutes']:g}m, "
           f"Queue threshold={bgp_analyzer.thresholds['high_queue_threshold']}")
     
     if not os.path.exists(data_dir):
@@ -292,6 +300,12 @@ def process_bgp_data_files(data_dir="monitor-results/bgp-data"):
                 "missing current EVPN collections for: "
                 + ", ".join(missing_evpn_hosts)
             )
+
+    bgp_analyzer.set_collection_coverage(
+        expected_hosts,
+        current_bgp_hosts,
+        evpn_processed_hosts,
+    )
     
     # Save updated BGP history
     bgp_analyzer.save_bgp_history()
@@ -311,15 +325,20 @@ def process_bgp_data_files(data_dir="monitor-results/bgp-data"):
     print(f"  Total neighbors: {summary['total_neighbors']}")
     print(f"  Established: {summary['established_neighbors']}")
     print(f"  Down/Problem: {summary['down_neighbors']}")
-    print(f"  Health ratio: {summary['health_ratio']:.1f}%")
+    health_ratio = summary['health_ratio']
+    print(
+        f"  Health ratio: {health_ratio:.1f}%"
+        if health_ratio is not None else
+        "  Health ratio: N/A (no current neighbors)"
+    )
     print(f"  Anomalies detected: {len(anomalies)}")
     
     print(f"\n EVPN Summary:")
     print(f"  Total VNIs: {evpn_summary['total_vnis']}")
     print(f"  L2 VNIs: {evpn_summary['l2_vnis']}")
     print(f"  L3 VNIs: {evpn_summary['l3_vnis']}")
-    print(f"  Type-2 Routes (MAC/IP): {evpn_summary['type2_routes']}")
-    print(f"  Type-5 Routes (IP Prefix): {evpn_summary['type5_routes']}")
+    print(f"  Type-2 Routes (MAC/IP, summed RIB observations): {evpn_summary['type2_routes']}")
+    print(f"  Type-5 Routes (IP Prefix, summed RIB observations): {evpn_summary['type5_routes']}")
     
     # Show critical issues
     critical_anomalies = [a for a in anomalies if a['severity'] == 'critical']

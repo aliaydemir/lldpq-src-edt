@@ -795,10 +795,17 @@
             ));
             if (!doc) return { unavailable: true, coveragePartial: true };
             const root = doc.body || doc.documentElement;
-            const coverageStatus = String(root?.dataset?.coverageStatus || '').toLowerCase();
+            const metadata = doc.querySelector('[data-analysis-summary], [data-coverage-status]') || root;
+            const coverageStatus = String(
+                metadata?.dataset?.coverageStatus || metadata?.dataset?.collectionStatus ||
+                root?.dataset?.coverageStatus || root?.dataset?.collectionStatus || ''
+            ).toLowerCase();
             const coveragePartial = unavailable || coverageStatus === 'partial' ||
-                root?.dataset?.coveragePartial === 'true' ||
-                root?.dataset?.collectionStatus === 'partial';
+                metadata?.dataset?.coveragePartial === 'true' ||
+                root?.dataset?.coveragePartial === 'true' || Boolean(doc.querySelector(
+                    '[data-collection-status="partial"], [data-coverage-partial="true"], ' +
+                    '[data-evpn-route-coverage="partial"]'
+                ));
             return { unavailable, coveragePartial };
         }
 
@@ -811,8 +818,14 @@
             summaryData.unavailable = state.unavailable;
             summaryData.coveragePartial = state.coveragePartial;
             const root = doc && (doc.body || doc.documentElement);
-            const expected = Number(root?.dataset?.coverageExpected);
-            const current = Number(root?.dataset?.coverageCurrent);
+            const metadata = doc && (doc.querySelector('[data-analysis-summary], [data-coverage-status]') || root);
+            const expectedText = metadata?.dataset?.coverageExpected ??
+                metadata?.dataset?.expectedDevices ?? root?.dataset?.coverageExpected;
+            const currentText = metadata?.dataset?.coverageCurrent ??
+                metadata?.dataset?.currentDevices ?? metadata?.dataset?.currentBgpDevices ??
+                root?.dataset?.coverageCurrent;
+            const expected = expectedText === undefined ? NaN : Number(expectedText);
+            const current = currentText === undefined ? NaN : Number(currentText);
             if (Number.isFinite(expected)) summaryData.coverageExpected = expected;
             if (Number.isFinite(current)) summaryData.coverageCurrent = current;
             if (Number.isFinite(expected) && Number.isFinite(current) && current < expected) {
@@ -1173,6 +1186,10 @@
                     summaryData.good = goodElement ? parseInt(goodElement.textContent) : 0;
                     summaryData.warning = warningElement ? parseInt(warningElement.textContent) : 0;
                     summaryData.critical = criticalElement ? parseInt(criticalElement.textContent) : 0;
+                    summaryData.unknown = Math.max(0, summaryData.totalPorts -
+                        summaryData.excellent - summaryData.good -
+                        summaryData.warning - summaryData.critical);
+                    if (summaryData.unknown > 0) summaryData.coveragePartial = true;
                     
                     // Count unique devices from table for optical (if needed)
                     const rows = doc.querySelectorAll('tbody tr[data-health]');
@@ -1206,6 +1223,11 @@
                     summaryData.warning = warningElement ? parseInt(warningElement.textContent) : 0;
                     summaryData.critical = criticalElement ? parseInt(criticalElement.textContent) : 0;
                     summaryData.unknown = unknownElement ? parseInt(unknownElement.textContent) : 0;
+                    if (!unknownElement) {
+                        summaryData.unknown = Math.max(0, summaryData.totalDevices -
+                            summaryData.excellent - summaryData.good -
+                            summaryData.warning - summaryData.critical);
+                    }
                     if (summaryData.unknown > 0) summaryData.coveragePartial = true;
                     
                 } else if (dataType === 'log') {
@@ -1228,8 +1250,9 @@
                         summaryData.error = logSummaryData.totals?.error || 0;
                         summaryData.info = logSummaryData.totals?.info || 0;
                         const coverage = logSummaryData.coverage || {};
-                        summaryData.coverageExpected = Number(coverage.expected_devices);
-                        summaryData.coverageCurrent = Number(coverage.current_devices);
+                        const coverageCount = value => Array.isArray(value) ? value.length : Number(value);
+                        summaryData.coverageExpected = coverageCount(coverage.expected_devices);
+                        summaryData.coverageCurrent = coverageCount(coverage.current_devices);
                         summaryData.coveragePartial = Boolean(coverage.partial) ||
                             (Number.isFinite(summaryData.coverageExpected) &&
                              Number.isFinite(summaryData.coverageCurrent) &&
@@ -1270,6 +1293,13 @@
                         const doc = parser.parseFromString(html, 'text/html');
                         copyReportState(summaryData, doc);
                         if (summaryData.unavailable) return summaryData;
+                        const reportMeta = doc.querySelector('[data-analysis-summary]');
+                        const metadataNumber = name => {
+                            const text = reportMeta?.dataset?.[name];
+                            if (text === undefined || text === '') return null;
+                            const value = Number(text);
+                            return Number.isFinite(value) ? value : null;
+                        };
                         const metric = selector => {
                             const text = String(doc.querySelector(selector)?.textContent || '')
                                 .replace(/,/g, '').replace(/%/g, '').trim();
@@ -1285,6 +1315,8 @@
                             summaryData.failed = metric('#down-neighbors');
                             summaryData.stale = metric('#stale-devices') || 0;
                             summaryData.unknown = metric('#unknown-devices') || 0;
+                            summaryData.warning = metadataNumber('warningNeighbors') || 0;
+                            summaryData.critical = metadataNumber('criticalNeighbors') || 0;
                             summaryData.healthPercent = metric('#health-ratio');
                             summaryData.coveragePartial = summaryData.coveragePartial ||
                                 summaryData.stale > 0 || summaryData.unknown > 0;
@@ -1301,8 +1333,11 @@
                             summaryData.totalPorts = metric('#total-ports');
                             summaryData.stable = metric('#stable-ports') || 0;
                             summaryData.problematic = metric('#problematic-ports') || 0;
-                            summaryData.flapping = metric('#flapping-ports') || 0;
-                            summaryData.flapped = metric('#flapped-ports') || 0;
+                            summaryData.critical = metadataNumber('criticalPorts') || 0;
+                            summaryData.warning = metadataNumber('warningPorts') || 0;
+                            if (summaryData.critical || summaryData.warning) {
+                                summaryData.problematic = summaryData.critical + summaryData.warning;
+                            }
                             summaryData.stabilityPercent = summaryData.totalPorts > 0
                                 ? ((summaryData.stable / summaryData.totalPorts) * 100).toFixed(1)
                                 : null;
