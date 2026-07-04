@@ -11,7 +11,7 @@ import os
 import re
 import json
 import html
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
 from collections import defaultdict
 from collection_freshness import (
     asset_snapshot_is_valid,
@@ -42,6 +42,10 @@ class LogAnalyzer:
         self.log_data_dir = os.path.join(data_dir, "log-data")
         self.log_analysis = defaultdict(lambda: {"critical": [], "warning": [], "error": [], "info": []})
         self.log_counts = defaultdict(lambda: {"critical": 0, "warning": 0, "error": 0, "info": 0})
+        self.seen_events = defaultdict(set)
+        self.source_status = defaultdict(dict)
+        self.expected_devices = set()
+        self.current_devices = set()
         self.collection_status = "current"
         
         # Patterns that should NOT be critical (demoted to warning)
@@ -70,11 +74,11 @@ class LogAnalyzer:
         # Enhanced severity patterns for network infrastructure
         self.severity_patterns = {
             'critical': [
-                r'\b(critical|emergency|panic|fatal|disaster|catastrophic)\b',
+                r'\b(emerg(?:ency)?|alert|crit(?:ical)?|panic|fatal|disaster|catastrophic)\b',
                 r'\b(failed|failure|error|exception|crash|abort)\b.*\b(critical|severe)\b',
                 r'\b(down|offline|unreachable|disconnected)\b.*\b(interface|link|connection|peer|neighbor)\b',
+                r'\b(interface|link|connection|peer|neighbor)\b.*\b(down|offline|unreachable|disconnected)\b',
                 r'\b(kernel panic|segmentation fault|out of memory|disk full)\b',
-                r'priority:\s*[0-2]',  # Emergency, Alert, Critical
                 # Network-specific critical patterns
                 r'\b(bgp.*down|ospf.*down|routing.*failed|switching.*failed)\b',
                 r'\b(mlag.*failed|clag.*conflict|spanning.*tree.*blocked)\b',
@@ -82,11 +86,10 @@ class LogAnalyzer:
                 r'\b(hardware.*fault|transceiver.*failed|port.*failed)\b',
             ],
             'warning': [
-                r'\b(warning|warn|caution|alert)\b',
+                r'\b(warning|warn|caution)\b',
                 r'\b(high|elevated|unusual|abnormal)\b.*\b(usage|load|temperature|traffic)\b',
                 r'\b(timeout|retry|retransmit|flap|unstable)\b',
                 r'\b(deprecat|obsolet|unsupport)\b',
-                r'priority:\s*[3-4]',  # Error, Warning
                 # Network-specific warning patterns
                 r'\b(bgp.*flap|neighbor.*timeout|routing.*convergence)\b',
                 r'\b(stp.*topology.*change|vlan.*inconsistent)\b',
@@ -95,11 +98,10 @@ class LogAnalyzer:
                 r'\b(authentication.*failed|permission.*denied)\b',
             ],
             'error': [
-                r'\b(error|err|exception|fault|fail)\b',
+                r'\b(error|err|exception|fault|fail(?:ed|ure)?)\b',
                 r'\b(invalid|illegal|unauthorized|forbidden|denied)\b',
                 r'\b(corrupt|damaged|broken|malformed)\b',
                 r'\b(cannot|unable|refused|rejected)\b',
-                r'priority:\s*[5-6]',  # Notice, Info (errors in context)
                 # Network-specific error patterns
                 r'\b(config.*error|nv.*set.*failed|commit.*failed)\b',
                 r'\b(route.*unreachable|arp.*failed|mac.*learning.*failed)\b',
@@ -110,7 +112,6 @@ class LogAnalyzer:
                 r'\b(start|started|stop|stopped|restart|reload)\b',
                 r'\b(up|online|connected|established|ready)\b',
                 r'\b(configured|enabled|disabled|updated)\b',
-                r'priority:\s*[7]',  # Debug
                 # Network-specific info patterns
                 r'\b(bgp.*established|neighbor.*up|route.*learned)\b',
                 r'\b(interface.*up|link.*up|carrier.*detected)\b',
@@ -118,6 +119,34 @@ class LogAnalyzer:
                 r'\b(config.*applied|nv.*set.*success|commit.*complete)\b',
             ]
         }
+
+        self.section_names = {
+            'FRR_ROUTING_LOGS',
+            'SWITCHD_LOGS',
+            'NVUE_CONFIG_LOGS',
+            'MSTPD_STP_LOGS',
+            'CLAGD_MLAG_LOGS',
+            'AUTH_SECURITY_LOGS',
+            'SYSTEM_CRITICAL_LOGS',
+            'JOURNALCTL_PRIORITY_LOGS',
+            'DMESG_HARDWARE_LOGS',
+            'NETWORK_INTERFACE_LOGS',
+        }
+
+    @staticmethod
+    def _syslog_priority_severity(line):
+        """Return RFC 5424 severity for an explicit PRIORITY value."""
+        match = re.search(r'\bpriority\s*[:=]\s*([0-7])\b', line, re.IGNORECASE)
+        if not match:
+            return None
+        priority = int(match.group(1))
+        if priority <= 2:
+            return 'critical'
+        if priority == 3:
+            return 'error'
+        if priority == 4:
+            return 'warning'
+        return 'info'
     
     def categorize_log_line(self, line):
         """Categorize a log line by severity"""
@@ -133,21 +162,27 @@ class LogAnalyzer:
         for pattern in self.excluded_from_critical:
             if re.search(pattern, line_lower):
                 return 'info'     # These are just noise, not real warnings
+
+        # An explicit syslog priority is authoritative.  In particular,
+        # priority 3 is Error and must not be grouped with Warning.
+        priority_severity = self._syslog_priority_severity(line)
+        if priority_severity:
+            return priority_severity
         
         # Check critical patterns first (highest priority)
         for pattern in self.severity_patterns['critical']:
             if re.search(pattern, line_lower):
                 return 'critical'
         
-        # Then warning patterns
-        for pattern in self.severity_patterns['warning']:
-            if re.search(pattern, line_lower):
-                return 'warning'
-        
-        # Then error patterns
+        # Error outranks Warning.  Checking Warning first caused strings such
+        # as "error ... warning threshold" to be understated.
         for pattern in self.severity_patterns['error']:
             if re.search(pattern, line_lower):
                 return 'error'
+
+        for pattern in self.severity_patterns['warning']:
+            if re.search(pattern, line_lower):
+                return 'warning'
         
         # Default to info if no specific pattern matches
         return 'info'
@@ -156,8 +191,9 @@ class LogAnalyzer:
         """Extract timestamp from log line if available"""
         # Common timestamp patterns
         timestamp_patterns = [
+            # ISO-8601, preserving an optional timezone for display/export.
+            r'(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)',
             r'(\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})',  # Nov 15 14:30:22
-            r'(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})',  # 2024-11-15T14:30:22
             r'(\d{2}:\d{2}:\d{2})',                     # 14:30:22
         ]
         
@@ -168,44 +204,74 @@ class LogAnalyzer:
         return None
     
     def parse_timestamp_to_datetime(self, line):
-        """Extract timestamp from log line and convert to datetime object"""
-        now = datetime.now()
-        
-        # Pattern 1: "Jan 13 18:37:49" format
-        match = re.search(r'(\w{3})\s+(\d{1,2})\s+(\d{2}):(\d{2}):(\d{2})', line)
-        if match:
-            try:
-                month_str, day, hour, minute, second = match.groups()
-                month_map = {'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6,
-                            'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12}
-                month = month_map.get(month_str, 1)
-                year = now.year
-                log_dt = datetime(year, month, int(day), int(hour), int(minute), int(second))
-                # Handle year rollover (if log is from December and now is January)
-                if log_dt > now + timedelta(days=1):
-                    log_dt = datetime(year - 1, month, int(day), int(hour), int(minute), int(second))
-                return log_dt
-            except:
-                pass
-        
-        # Pattern 2: "2024-01-13T18:37:49" format
-        match = re.search(r'(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})', line)
-        if match:
-            try:
-                year, month, day, hour, minute, second = match.groups()
-                return datetime(int(year), int(month), int(day), int(hour), int(minute), int(second))
-            except:
-                pass
-        
-        # Pattern 3: Just time "18:37:49" - assume today
-        match = re.search(r'(\d{2}):(\d{2}):(\d{2})', line)
-        if match:
-            try:
-                hour, minute, second = match.groups()
-                return datetime(now.year, now.month, now.day, int(hour), int(minute), int(second))
-            except:
-                pass
-        
+        """Return only an unambiguous, timezone-aware ISO timestamp.
+
+        Syslog month/day timestamps have no year or timezone, and bare times
+        have neither.  Guessing their age can silently demote a fresh incident,
+        especially around year rollover or when the switch timezone differs
+        from the report host.
+        """
+        match = re.search(
+            r'(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}'
+            r'(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2}))',
+            line,
+        )
+        if not match:
+            return None
+        value = match.group(1).replace(',', '.')
+        if value.endswith('Z'):
+            value = value[:-1] + '+00:00'
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo is not None else None
+
+    @staticmethod
+    def _normalized_event_line(line):
+        """Normalize insignificant whitespace for cross-section deduplication."""
+        return re.sub(r'\s+', ' ', line).strip()
+
+    @staticmethod
+    def _section_marker(line):
+        """Recognize only an exact collector section heading.
+
+        A normal log message is allowed to end in a colon; the old broad
+        ``line.endswith(':')`` test discarded those messages.
+        """
+        candidate = line.strip()
+        candidate = re.sub(r'^=+\s*', '', candidate)
+        candidate = re.sub(r'\s*=+$', '', candidate)
+        candidate = candidate.rstrip(':').strip()
+        return candidate
+
+    def _record_source_status(self, device_name, line):
+        match = re.fullmatch(
+            r'__LLDPQ_LOG_SOURCE_STATUS__:([A-Za-z0-9_.-]+):(OK|ERROR|UNAVAILABLE)',
+            line.strip(),
+            re.IGNORECASE,
+        )
+        if not match:
+            return False
+        source, status = (part.upper() for part in match.groups())
+        previous = self.source_status[device_name].get(source)
+        precedence = {'OK': 1, 'UNAVAILABLE': 2, 'ERROR': 3}
+        if previous is None or precedence[status] >= precedence.get(previous, 0):
+            self.source_status[device_name][source] = status
+        return True
+
+    @staticmethod
+    def _is_placeholder_line(line):
+        """Skip collector placeholders without swallowing real error text."""
+        normalized = re.sub(r'\s+', ' ', line).strip().lower()
+        if normalized in {'-- no entries --', 'no entries', 'not available'}:
+            return True
+        return bool(re.fullmatch(
+            r'(?:no recent .+|no .+ (?:issues|entries)|'
+            r'(?:frr service/|switchd service/)?log not available|'
+            r'.+ log not found|log not found)',
+            normalized,
+        ))
         return None
     
     def adjust_severity_by_age(self, severity, log_datetime):
@@ -213,9 +279,17 @@ class LogAnalyzer:
         if log_datetime is None:
             return severity  # Can't determine age, keep original
         
-        now = datetime.now()
-        age = now - log_datetime
+        if log_datetime.tzinfo is None:
+            return severity
+
+        now = datetime.now(timezone.utc)
+        age = now - log_datetime.astimezone(timezone.utc)
         age_minutes = age.total_seconds() / 60
+
+        # Clock skew or a future-dated event must never make an incident look
+        # less severe.
+        if age_minutes < 0:
+            return severity
         
         # Time-based severity adjustment:
         # - Last 30 minutes: Keep original severity
@@ -225,11 +299,11 @@ class LogAnalyzer:
         if age_minutes < 30:
             return severity  # Fresh log, keep original
         elif age_minutes < 120:  # 30 min - 2 hours
-            if severity == 'critical':
+            if severity in ('critical', 'error'):
                 return 'warning'  # Demote critical to warning
             return severity
         else:  # Over 2 hours
-            if severity in ('critical', 'warning'):
+            if severity in ('critical', 'error', 'warning'):
                 return 'info'  # Demote to info (historical)
             return severity
     

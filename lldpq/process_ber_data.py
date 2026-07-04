@@ -101,10 +101,12 @@ def process_ber_data_files(data_dir="monitor-results/ber-data"):
     # from this run's successful raw files.
     ber_analyzer.current_ber_stats = {}
     
-    print(f"Processing BER analysis data")
-    print(f"Using thresholds: Good < {ber_analyzer.config['raw_ber_threshold']:.2e}, "
-          f"Warning < {ber_analyzer.config['warning_ber_threshold']:.2e}, "
-          f"Critical > {ber_analyzer.config['critical_ber_threshold']:.2e}")
+    print("Processing link error analysis data")
+    print(
+        f"Using shared thresholds: Good < {ber_analyzer.config['warning_ber_threshold']:.2e}, "
+        f"Warning < {ber_analyzer.config['critical_ber_threshold']:.2e}, "
+        f"Critical >= {ber_analyzer.config['critical_ber_threshold']:.2e}"
+    )
     
     if not os.path.exists(data_dir):
         print(f"❌ BER data directory {data_dir} not found")
@@ -226,6 +228,7 @@ def process_ber_data_files(data_dir="monitor-results/ber-data"):
                      delta_packets) = ber_analyzer.calculate_delta_ber(
                         hostname, interface_name, stats
                     )
+                    delta_details = ber_analyzer._last_delta_details.get(port_name, {})
                     
                     if is_baseline:
                         # Create baseline record for web display
@@ -242,7 +245,15 @@ def process_ber_data_files(data_dir="monitor-results/ber-data"):
                             'delta_errors': 0,
                             'delta_bytes': 0,
                             'delta_packets': 0,
+                            'delta_rx_errors': 0,
+                            'delta_tx_errors': 0,
+                            'sample_duration_seconds': delta_details.get(
+                                'sample_duration_seconds', 0
+                            ),
                         }
+                        ber_analyzer.ber_history.setdefault(port_name, []).append(
+                            baseline_record
+                        )
                         ber_analyzer.current_ber_stats[port_name] = baseline_record
                         processed_interfaces += 1
                         total_interfaces_processed += 1
@@ -266,7 +277,15 @@ def process_ber_data_files(data_dir="monitor-results/ber-data"):
                             'delta_errors': delta_errors,
                             'delta_bytes': delta_bytes,
                             'delta_packets': delta_packets,
+                            'delta_rx_errors': delta_details.get('delta_rx_errors', 0),
+                            'delta_tx_errors': delta_details.get('delta_tx_errors', 0),
+                            'sample_duration_seconds': delta_details.get(
+                                'sample_duration_seconds', 0
+                            ),
                         }
+                        ber_analyzer.ber_history.setdefault(port_name, []).append(
+                            ber_analyzer.current_ber_stats[port_name]
+                        )
                         processed_interfaces += 1
                         total_interfaces_processed += 1
                         continue
@@ -287,6 +306,11 @@ def process_ber_data_files(data_dir="monitor-results/ber-data"):
                         'delta_errors': delta_errors,
                         'delta_bytes': delta_bytes,
                         'delta_packets': delta_packets,
+                        'delta_rx_errors': delta_details.get('delta_rx_errors', 0),
+                        'delta_tx_errors': delta_details.get('delta_tx_errors', 0),
+                        'sample_duration_seconds': delta_details.get(
+                            'sample_duration_seconds', 0
+                        ),
                         'sample_status': 'analyzed',
                     }
                     
@@ -356,7 +380,10 @@ def process_ber_data_files(data_dir="monitor-results/ber-data"):
             ber_value = port_info['ber_value']
             rx_errors = port_info['rx_errors']
             tx_errors = port_info['tx_errors']
-            print(f"    {port}: BER={ber_value:.2e}, RX_Errors={rx_errors}, TX_Errors={tx_errors}")
+            print(
+                f"    {port}: ErrorDensity={ber_value:.2e}, "
+                f"RX_Errors={rx_errors}, TX_Errors={tx_errors}"
+            )
     
     # Show anomalies
     if anomalies:

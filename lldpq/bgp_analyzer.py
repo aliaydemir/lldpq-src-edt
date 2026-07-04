@@ -492,9 +492,17 @@ class BGPAnalyzer:
         lines = evpn_data.strip().split('\n')
         current_section = None
         route_meta_seen = False
+        exact_route_counts = {}
         
         for line in lines:
             line = line.strip()
+
+            exact_count = re.match(
+                r"^__LLDPQ_EVPN_ROUTE_COUNT__:(2|5):(\d+)$", line
+            )
+            if exact_count:
+                exact_route_counts[exact_count.group(1)] = int(exact_count.group(2))
+                continue
 
             route_meta = re.match(
                 r"^__LLDPQ_EVPN_ROUTE_META__:MATCHES=(\d+|UNKNOWN):"
@@ -569,7 +577,18 @@ class BGPAnalyzer:
                     stats.type5_routes += 1
 
         parsed_route_rows = stats.type2_routes + stats.type5_routes
-        if not route_meta_seen:
+        if exact_route_counts:
+            if "2" in exact_route_counts:
+                stats.type2_routes = exact_route_counts["2"]
+            if "5" in exact_route_counts:
+                stats.type5_routes = exact_route_counts["5"]
+            stats.route_rows_total = stats.type2_routes + stats.type5_routes
+            stats.route_rows_emitted = parsed_route_rows
+            stats.routes_truncated = not {"2", "5"}.issubset(exact_route_counts)
+            stats.route_metadata_status = (
+                "complete" if not stats.routes_truncated else "partial-count-markers"
+            )
+        elif not route_meta_seen:
             stats.route_rows_emitted = parsed_route_rows
             # Legacy collectors cap the combined route sample at 1000 without
             # metadata. Exactly hitting that boundary is therefore incomplete.
@@ -851,6 +870,9 @@ class BGPAnalyzer:
         evpn_per_device_json = json.dumps(evpn_summary.get('per_device', {})).replace(
             "<", "\\u003c"
         )
+        evpn_unique_vnis_json = json.dumps(
+            evpn_summary.get("unique_vni_details", [])
+        ).replace("<", "\\u003c")
         coverage = summary.get("collection_coverage", {})
         expected_devices = int(coverage.get("expected_devices", 0) or 0)
         current_bgp_devices = int(coverage.get("current_bgp_devices", 0) or 0)
@@ -1255,21 +1277,21 @@ class BGPAnalyzer:
                     <div class="metric" id="evpn-total-vnis" style="color: #4fc3f7;">{evpn_summary['total_vnis']}</div>
                     <div class="metric-label">Unique VNIs</div>
                 </div>
-                <div class="summary-card evpn-clickable" style="border-left-color: #9c27b0;" onclick="showEvpnModal('L2')" title="Click to see L2 VNIs">
+                <div class="summary-card evpn-clickable" data-metric-key="evpn_unique_l2_vnis" data-metric-value="{evpn_summary['l2_vnis']}" style="border-left-color: #9c27b0;" onclick="showEvpnModal('L2')" title="Click to see unique L2 VNIs">
                     <div class="metric" id="evpn-l2-vnis" style="color: #ce93d8;">{evpn_summary['l2_vnis']}</div>
                     <div class="metric-label">L2 VNIs</div>
                 </div>
-                <div class="summary-card evpn-clickable" style="border-left-color: #ff9800;" onclick="showEvpnModal('L3')" title="Click to see L3 VNIs">
+                <div class="summary-card evpn-clickable" data-metric-key="evpn_unique_l3_vnis" data-metric-value="{evpn_summary['l3_vnis']}" style="border-left-color: #ff9800;" onclick="showEvpnModal('L3')" title="Click to see unique L3 VNIs">
                     <div class="metric" id="evpn-l3-vnis" style="color: #ffb74d;">{evpn_summary['l3_vnis']}</div>
                     <div class="metric-label">L3 VNIs</div>
                 </div>
-                <div class="summary-card evpn-clickable" style="border-left-color: #00bcd4;" onclick="showEvpnModal('type2')" title="Click to see Type-2 route breakdown">
+                <div class="summary-card evpn-clickable" data-metric-key="evpn_type2_route_observations" data-metric-value="{evpn_summary['type2_routes']}" data-route-semantics="per-device-rib-observations-summed" style="border-left-color: #00bcd4;" onclick="showEvpnModal('type2')" title="Per-device RIB observations summed; click for device breakdown">
                     <div class="metric" id="evpn-type2-routes" style="color: #4dd0e1;">{evpn_summary['type2_routes']}</div>
-                    <div class="metric-label">Type-2 Route Observations (MAC/IP)</div>
+                    <div class="metric-label">Type-2 Routes (MAC/IP)</div>
                 </div>
-                <div class="summary-card evpn-clickable" style="border-left-color: #8bc34a;" onclick="showEvpnModal('type5')" title="Click to see Type-5 route breakdown">
+                <div class="summary-card evpn-clickable" data-metric-key="evpn_type5_route_observations" data-metric-value="{evpn_summary['type5_routes']}" data-route-semantics="per-device-rib-observations-summed" style="border-left-color: #8bc34a;" onclick="showEvpnModal('type5')" title="Per-device RIB observations summed; click for device breakdown">
                     <div class="metric" id="evpn-type5-routes" style="color: #aed581;">{evpn_summary['type5_routes']}</div>
-                    <div class="metric-label">Type-5 Route Observations (IP Prefix)</div>
+                    <div class="metric-label">Type-5 Routes (IP Prefix)</div>
                 </div>
             </div>
         </div>
@@ -1283,8 +1305,7 @@ class BGPAnalyzer:
             for neighbor_data in stats["neighbors"]:
                 # Handle both enum and string state values
                 neighbor_dict = neighbor_data.copy()
-                if isinstance(neighbor_dict['state'], str):
-                    neighbor_dict['state'] = BGPState(neighbor_dict['state'])
+                neighbor_dict['state'] = coerce_bgp_state(neighbor_dict.get('state'))
                 
                 neighbor = BGPNeighbor(**neighbor_dict)
                 health = self.assess_neighbor_health(neighbor)
@@ -1312,11 +1333,15 @@ class BGPAnalyzer:
 """
             for anomaly in anomalies:
                 severity_class = "warning" if anomaly['severity'] == 'warning' else ""
+                anomaly_device = html.escape(str(anomaly['device']))
+                anomaly_neighbor = html.escape(str(anomaly['neighbor']))
+                anomaly_message = html.escape(str(anomaly['message']))
+                anomaly_action = html.escape(str(anomaly['action']))
                 html_content += f"""
             <div class="anomaly-card {severity_class}">
-                <h4>{anomaly['device']} - {anomaly['neighbor']}</h4>
-                <p><strong>Issue:</strong> {anomaly['message']}</p>
-                <p><strong>Recommended Action:</strong> {anomaly['action']}</p>
+                <h4>{anomaly_device} - {anomaly_neighbor}</h4>
+                <p><strong>Issue:</strong> {anomaly_message}</p>
+                <p><strong>Recommended Action:</strong> {anomaly_action}</p>
             </div>
 """
             html_content += """
@@ -1392,15 +1417,28 @@ class BGPAnalyzer:
                 health_badge_class = 'badge badge-red'
             else:
                 health_badge_class = 'badge badge-gray'
+
+            dashboard_state = 'established' if state_val == 'established' else 'down'
+            vrf = neighbor.vrf or 'default'
+            neighbor_display = (
+                neighbor.neighbor_name
+                if vrf == 'default'
+                else f"{vrf} / {neighbor.neighbor_name}"
+            )
+            display_hostname = html.escape(str(canonical(hostname)))
+            display_neighbor = html.escape(str(neighbor_display))
+            display_interface = html.escape(str(neighbor.interface or 'N/A'))
+            display_vrf = html.escape(str(vrf), quote=True)
+            display_uptime = html.escape(str(neighbor.uptime))
             
             html_content += f"""
-        <tr data-health="{health_val}" data-state="{state_val}">
-            <td>{canonical(hostname)}</td>
-            <td>{neighbor.neighbor_name}</td>
-            <td>{neighbor.interface or 'N/A'}</td>
+        <tr data-health="{health_val}" data-state="{dashboard_state}" data-bgp-state="{state_val}" data-vrf="{display_vrf}">
+            <td>{display_hostname}</td>
+            <td>{display_neighbor}</td>
+            <td>{display_interface}</td>
             <td><span class="{state_badge_class}">{state_val.upper()}</span></td>
             <td>{neighbor.asn}</td>
-            <td>{neighbor.uptime}</td>
+            <td>{display_uptime}</td>
             <td>{neighbor.prefixes_received}/{neighbor.prefixes_sent}</td>
             <td>{neighbor.messages_received}/{neighbor.messages_sent}</td>
             <td>{neighbor.in_queue}/{neighbor.out_queue}</td>
@@ -1428,10 +1466,10 @@ class BGPAnalyzer:
                     <tr><th>Parameter</th><th>Threshold</th><th>Description</th></tr>
                 </thead>
                 <tbody>
-                    <tr><td>Critical Down Time</td><td>1+ hours</td><td>Neighbor down for extended period</td></tr>
-                    <tr><td>High Queue Depth</td><td>10+ messages</td><td>Processing delays or congestion</td></tr>
-                    <tr><td>Low Prefix Count</td><td>&lt; 1 prefix</td><td>Potential route advertisement issues</td></tr>
-                    <tr><td>Message Ratio</td><td>&lt; 80%</td><td>Imbalanced message exchange</td></tr>
+                    <tr><td>Critical Down Time</td><td>__BGP_DOWN_THRESHOLD__</td><td>Shorter non-established periods remain warnings</td></tr>
+                    <tr><td>High Queue Depth</td><td>__BGP_QUEUE_THRESHOLD__</td><td>Processing delays or congestion</td></tr>
+                    <tr><td>Low Prefix Count</td><td>__BGP_PREFIX_THRESHOLD__</td><td>Disabled by default; policy-specific opt-in</td></tr>
+                    <tr><td>Message Ratio</td><td>__BGP_RATIO_THRESHOLD__</td><td>Disabled by default; directional-policy opt-in</td></tr>
                 </tbody>
             </table>
         </div>
@@ -1457,6 +1495,7 @@ class BGPAnalyzer:
     <script>
         // EVPN per-device data
         const evpnPerDevice = __EVPN_DATA_PLACEHOLDER__;
+        const evpnUniqueVnis = __EVPN_UNIQUE_VNI_PLACEHOLDER__;
         
         // EVPN Modal functions
         function showEvpnModal(filterType) {
@@ -1492,27 +1531,9 @@ class BGPAnalyzer:
                 let vniFilter = filterType; // 'all', 'L2', or 'L3'
                 title.textContent = vniFilter === 'all' ? 'All VNIs' : vniFilter + ' VNIs';
                 
-                // Collect all VNIs from all devices
-                let allVnis = [];
-                Object.entries(evpnPerDevice).forEach(([device, data]) => {
-                    if (data.vni_details) {
-                        data.vni_details.forEach(vni => {
-                            if (vniFilter === 'all' || vni.type === vniFilter) {
-                                allVnis.push(Object.assign({}, vni, {device: device}));
-                            }
-                        });
-                    }
-                });
-                
-                // Remove duplicates (same VNI from multiple devices) - keep first occurrence
-                const uniqueVnis = [];
-                const seenVnis = new Set();
-                allVnis.forEach(vni => {
-                    if (!seenVnis.has(vni.vni)) {
-                        seenVnis.add(vni.vni);
-                        uniqueVnis.push(vni);
-                    }
-                });
+                const uniqueVnis = evpnUniqueVnis
+                    .filter(vni => vniFilter === 'all' || vni.type === vniFilter)
+                    .map(vni => Object.assign({}, vni));
                 
                 // Sort by Type (L3 first), then VNI number
                 uniqueVnis.sort((a, b) => {
@@ -1881,21 +1902,29 @@ class BGPAnalyzer:
                 'IDLE': 0,
                 'ACTIVE': 1,
                 'CONNECT': 2,
-                'ESTABLISHED': 3
+                'OPENSENT': 3,
+                'OPENCONFIRM': 4,
+                'UNKNOWN': 5,
+                'ESTABLISHED': 6
             };
             
-            return (priority[a] || 4) - (priority[b] || 4);
+            const aPriority = Object.prototype.hasOwnProperty.call(priority, a) ? priority[a] : 99;
+            const bPriority = Object.prototype.hasOwnProperty.call(priority, b) ? priority[b] : 99;
+            return aPriority - bPriority;
         }
         
         function compareBGPHealth(a, b) {
             const priority = {
                 'CRITICAL': 0,
                 'WARNING': 1,
-                'GOOD': 2,
-                'EXCELLENT': 3
+                'UNKNOWN': 2,
+                'GOOD': 3,
+                'EXCELLENT': 4
             };
             
-            return (priority[a] || 4) - (priority[b] || 4);
+            const aPriority = Object.prototype.hasOwnProperty.call(priority, a) ? priority[a] : 99;
+            const bPriority = Object.prototype.hasOwnProperty.call(priority, b) ? priority[b] : 99;
+            return aPriority - bPriority;
         }
         
         function compareRatio(a, b) {
@@ -1909,9 +1938,13 @@ class BGPAnalyzer:
         }
 
         // Run Analysis Function
-        function runAnalysis() {
+        async function runAnalysis() {
             const button = document.getElementById('run-analysis');
             const originalText = button.innerHTML;
+            let baseline = null;
+            if (typeof window.lldpqCapturePipelineState === 'function') {
+                try { baseline = await window.lldpqCapturePipelineState(); } catch (error) { baseline = null; }
+            }
             
             // Disable button and show loading
             button.disabled = true;
@@ -1952,13 +1985,21 @@ class BGPAnalyzer:
                     notification.innerHTML = `
                         <strong style="color: #76b900;">✅ Monitor Analysis Started</strong><br>
                         The full system analysis is running in the background.<br>
-                        <small style="color: #888;">Page will automatically refresh in 35 seconds to show the latest results.</small>
+                        <small style="color: #888;">Waiting for the current pipeline to complete before refreshing.</small>
                     `;
                     document.body.appendChild(notification);
-                    // Auto-refresh page after 35 seconds
-                    setTimeout(() => {
-                        window.location.reload();
-                    }, 35000);
+                    const completion = typeof window.waitForLldpqAnalysisCompletion === 'function'
+                        ? window.waitForLldpqAnalysisCompletion(baseline)
+                        : new Promise(resolve => setTimeout(resolve, 35000));
+                    Promise.resolve(completion)
+                        .then(() => window.location.reload())
+                        .catch(error => {
+                            console.error('Analysis did not complete successfully:', error);
+                            notification.remove();
+                            alert('Analysis did not complete successfully. The previous report was kept.');
+                            button.disabled = false;
+                            button.innerHTML = originalText;
+                        });
                 } else {
                     console.error('❌ Failed to trigger monitor analysis:', data.message);
                     alert('Failed to trigger analysis. Please try again.');
@@ -1988,6 +2029,7 @@ class BGPAnalyzer:
                 // Create CSV header
                 const headers = [
                     'Device',
+                    'VRF',
                     'Neighbor', 
                     'Interface',
                     'State',
@@ -2013,6 +2055,8 @@ class BGPAnalyzer:
                 csvContent += `# Total Neighbors: ${document.getElementById('total-neighbors').textContent}\\n`;
                 csvContent += `# Established: ${document.getElementById('established-neighbors').textContent}\\n`;
                 csvContent += `# Down/Problem: ${document.getElementById('down-neighbors').textContent}\\n`;
+                csvContent += `# Stale Collections: ${document.getElementById('stale-devices').textContent}\\n`;
+                csvContent += `# Unknown Collections: ${document.getElementById('unknown-devices').textContent}\\n`;
                 csvContent += `# Health Ratio: ${document.getElementById('health-ratio').textContent}\\n`;
                 csvContent += `#\\n`;
                 
@@ -2023,6 +2067,7 @@ class BGPAnalyzer:
                         if (cells.length >= 10) {
                             const rowData = [
                                 cells[0].textContent.trim(), // Device
+                                row.dataset.vrf || 'default', // VRF
                                 cells[1].textContent.trim(), // Neighbor
                                 cells[2].textContent.trim(), // Interface
                                 cells[3].textContent.trim(), // State
@@ -2118,6 +2163,23 @@ class BGPAnalyzer:
         
         # Replace EVPN data placeholder with actual JSON
         html_content = html_content.replace('__EVPN_DATA_PLACEHOLDER__', evpn_per_device_json)
+        html_content = html_content.replace(
+            '__EVPN_UNIQUE_VNI_PLACEHOLDER__', evpn_unique_vnis_json
+        )
+        prefix_threshold = self.thresholds["low_prefix_threshold"]
+        ratio_threshold = self.thresholds["message_ratio_threshold"]
+        replacements = {
+            "__BGP_DOWN_THRESHOLD__": f'{self.thresholds["bgp_down_minutes"]:g}+ minutes',
+            "__BGP_QUEUE_THRESHOLD__": f'{self.thresholds["high_queue_threshold"]:g}+ messages',
+            "__BGP_PREFIX_THRESHOLD__": (
+                f'&lt; {prefix_threshold:g} prefixes' if prefix_threshold > 0 else 'Disabled'
+            ),
+            "__BGP_RATIO_THRESHOLD__": (
+                f'&lt; {ratio_threshold:.0%}' if ratio_threshold > 0 else 'Disabled'
+            ),
+        }
+        for marker, value in replacements.items():
+            html_content = html_content.replace(marker, value)
         
         with open(output_file, "w") as f:
             f.write(html_content)

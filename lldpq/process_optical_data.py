@@ -9,6 +9,7 @@ Licensed under MIT License - see LICENSE file for details
 import os
 import re
 import sys
+import time
 from datetime import datetime
 from optical_analyzer import OpticalAnalyzer
 from collection_freshness import (
@@ -17,6 +18,29 @@ from collection_freshness import (
     mark_html_collection_unavailable,
     read_asset_snapshot,
 )
+
+NO_TRANSCEIVER_DATA_RE = re.compile(
+    r'\bno\s+(?:transceiver|module)\s+data(?:\s+available)?\b',
+    re.IGNORECASE,
+)
+
+
+def record_optical_state(analyzer, port_name, hostname, health_status,
+                         raw_data=''):
+    """Keep an explicit row when diagnostics are unavailable or unplugged."""
+    analyzer.current_optical_stats[port_name] = {
+        'port': port_name,
+        'device': hostname,
+        'health_status': health_status,
+        'rx_power_dbm': None,
+        'tx_power_dbm': None,
+        'temperature_c': None,
+        'voltage_v': None,
+        'bias_current_ma': None,
+        'link_margin_db': None,
+        'last_updated': time.time(),
+        'raw_data': raw_data[:500],
+    }
 
 def parse_optical_diagnostics_file(filepath):
     """Parse optical diagnostics file"""
@@ -129,60 +153,41 @@ def process_optical_data_files(data_dir="monitor-results/optical-data"):
                 if any(skip_iface in interface.lower() for skip_iface in ['eth0', 'lo', 'bond', 'mgmt', 'vlan']):
                     continue
 
-                # Skip if no meaningful data (Fixed: don't filter on error-status N/A)
+                # A collected interface with no usable diagnostics is coverage,
+                # not a port that should disappear from the report.
                 if not optical_data or len(optical_data.strip()) < 10:
+                    record_optical_state(
+                        optical_analyzer, port_name, hostname, 'unknown', optical_data
+                    )
                     continue
 
                 # Check for unplugged ports - add as "unplugged" status for troubleshooting
-                if "status                      : unplugged" in optical_data:
-                    # Add unplugged port to stats with special status
-                    optical_analyzer.current_optical_stats[port_name] = {
-                        'port': port_name,
-                        'device': hostname,
-                        'health_status': 'unplugged',
-                        'rx_power_dbm': None,
-                        'tx_power_dbm': None,
-                        'temperature_c': None,
-                        'voltage_v': None,
-                        'link_margin_db': None,
-                        'timestamp': datetime.now().isoformat()
-                    }
+                if re.search(r'^\s*status\s*:\s*unplugged\b', optical_data,
+                             re.IGNORECASE | re.MULTILINE):
+                    record_optical_state(
+                        optical_analyzer, port_name, hostname, 'unplugged', optical_data
+                    )
                     continue
-
-                # Check for extremely low RX power indicating link down (even if status shows plugged)
-                rx_power_match = re.search(r'ch-\d+-rx-power\s*:\s*[\d.]+\s*mW\s*/\s*([-\d.]+)\s*dBm', optical_data)
-                if rx_power_match:
-                    rx_power_dbm = float(rx_power_match.group(1))
-                    # If RX power is extremely low (< -20 dBm), mark as "down" for troubleshooting
-                    if rx_power_dbm < -20.0:
-                        # Try to get other values even for down ports
-                        temp_match = re.search(r'temperature\s*:\s*([\d.]+)', optical_data)
-                        voltage_match = re.search(r'voltage\s*:\s*([\d.]+)', optical_data)
-                        optical_analyzer.current_optical_stats[port_name] = {
-                            'port': port_name,
-                            'device': hostname,
-                            'health_status': 'down',
-                            'rx_power_dbm': rx_power_dbm,
-                            'tx_power_dbm': None,
-                            'temperature_c': float(temp_match.group(1)) if temp_match else None,
-                            'voltage_v': float(voltage_match.group(1)) if voltage_match else None,
-                            'link_margin_db': None,
-                            'timestamp': datetime.now().isoformat()
-                        }
-                        continue
 
                 # Check for ports with no meaningful optical readings (N/A values, temp 0.0, etc.)
                 if (("temperature                 : 0.0" in optical_data or 
                      "temperature                 : 0.00" in optical_data) and
                     ("voltage                     : 0.0" in optical_data or
                      "voltage                     : 0.00" in optical_data)):
+                    record_optical_state(
+                        optical_analyzer, port_name, hostname, 'unknown', optical_data
+                    )
                     continue
 
-                # Skip ports without optical modules
-                if ("No transceiver data available" in optical_data or
+                # Accept both collector marker spellings.  Lack of diagnostics
+                # is UNKNOWN unless the source explicitly said unplugged.
+                if (NO_TRANSCEIVER_DATA_RE.search(optical_data) or
                     ("diagnostics-status          : N/A" in optical_data and
                      "temperature" not in optical_data and "voltage" not in optical_data and
                      "rx-power" not in optical_data and "tx-power" not in optical_data)):
+                    record_optical_state(
+                        optical_analyzer, port_name, hostname, 'unknown', optical_data
+                    )
                     continue
                 
                 # Skip DAC/Copper cables - they don't have optical diagnostics
@@ -234,6 +239,7 @@ def process_optical_data_files(data_dir="monitor-results/optical-data"):
     print(f"  Good health: {len(summary['good_ports'])}")
     print(f"  Warning level: {len(summary['warning_ports'])}")
     print(f"  Critical issues: {len(summary['critical_ports'])}")
+    print(f"  Diagnostics unavailable: {len(summary['unknown_ports'])}")
     print(f"  Anomalies detected: {len(anomalies)}")
 
     if summary['critical_ports']:

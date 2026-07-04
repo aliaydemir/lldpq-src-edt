@@ -536,6 +536,31 @@ def parse_resources_from_hardware_file(device_name):
         print(f"Warning: Could not parse resources for {device_name}: {e}")
     return results
 
+
+def hardware_missing_telemetry_markers(device_name):
+    """Return collector-declared telemetry gaps from the current raw sample.
+
+    The collector deliberately writes these messages when a command cannot
+    provide data.  Treating them as ordinary text can otherwise allow a fresh
+    history entry or a partial fallback to make an incomplete sample look
+    healthy.
+    """
+    hardware_file = f"monitor-results/hardware-data/{device_name}_hardware.txt"
+    try:
+        with open(hardware_file, "r", encoding="utf-8", errors="ignore") as source:
+            content = source.read().lower()
+    except OSError:
+        return {"hardware_file"}
+
+    markers = set()
+    if "no sensors available" in content:
+        markers.add("sensors")
+    if "no memory info" in content:
+        markers.add("memory")
+    if "no cpu info" in content:
+        markers.add("cpu")
+    return markers
+
 def grade_load_per_core(cpu_load, cpu_cores):
     """Grade the CPU load average normalized by core count.
 
@@ -547,7 +572,11 @@ def grade_load_per_core(cpu_load, cpu_cores):
     """
     if not isinstance(cpu_load, (int, float)):
         return None
-    cores = cpu_cores if isinstance(cpu_cores, int) and cpu_cores > 0 else 4
+    cores = (
+        cpu_cores
+        if isinstance(cpu_cores, (int, float)) and cpu_cores > 0
+        else 4
+    )
     load_per_core = cpu_load / cores
     return grade_high_is_bad(load_per_core, "load_per_core")
 
@@ -555,7 +584,8 @@ def grade_load_per_core(cpu_load, cpu_cores):
 def calculate_device_health_grade(device_name, device_data):
     """Calculate overall health grade for a device based on our thresholds"""
     health_grades = []
-    required_telemetry_missing = False
+    missing_markers = hardware_missing_telemetry_markers(device_name)
+    required_telemetry_missing = bool(missing_markers)
     
     # CPU Temperature grade
     cpu_temp, asic_temp = parse_temperature_from_hardware_file(device_name)
@@ -596,7 +626,7 @@ def calculate_device_health_grade(device_name, device_data):
         if not parsed_resources:
             parsed_resources = parse_resources_from_hardware_file(device_name)
         cpu_cores = parsed_resources.get('cpu_cores')
-    if not isinstance(cpu_cores, int) or cpu_cores <= 0:
+    if not isinstance(cpu_cores, (int, float)) or cpu_cores <= 0:
         required_telemetry_missing = True
     load_grade = grade_load_per_core(cpu_load, cpu_cores)
     if load_grade:
@@ -1400,9 +1430,15 @@ def generate_hardware_html():
         }
 
         // Run Analysis Function
-        function runAnalysis() {
+        async function runAnalysis() {
             const button = document.getElementById('run-analysis');
             const originalText = button.innerHTML;
+            let notification = null;
+
+            const restoreButton = () => {
+                button.disabled = false;
+                button.innerHTML = originalText;
+            };
             
             // Disable button and show loading
             button.disabled = true;
@@ -1413,19 +1449,27 @@ def generate_hardware_html():
                 Running...
             `;
             
-            // Send POST request to trigger monitor
-            fetch('/trigger-monitor', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
+            try {
+                // Capture the current pipeline generation before starting a
+                // new run, so completion means "new output is ready" rather
+                // than merely "some output exists".
+                const baseline = typeof window.lldpqCapturePipelineState === 'function'
+                    ? await window.lldpqCapturePipelineState()
+                    : null;
+
+                const response = await fetch('/trigger-monitor', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+                const data = await response.json();
+                if (!response.ok || data.status !== 'success') {
+                    throw new Error(data.message || `HTTP ${response.status}`);
                 }
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.status === 'success') {
-                    console.log('Monitor analysis triggered successfully');
-                    // Show notification
-                    const notification = document.createElement('div');
+
+                console.log('Monitor analysis triggered successfully');
+                notification = document.createElement('div');
                     notification.style.cssText = `
                         position: fixed;
                         top: 20px;
@@ -1440,31 +1484,32 @@ def generate_hardware_html():
                         max-width: 350px;
                         font-family: monospace;
                     `;
-                    notification.innerHTML = `
+                const completionHelperAvailable =
+                    typeof window.waitForLldpqAnalysisCompletion === 'function';
+                notification.innerHTML = `
                         <strong>Monitor Analysis Started</strong><br>
                         The full system analysis is running in the background.<br>
-                        <small>Page will automatically refresh in 35 seconds to show the latest results.</small>
+                        <small>${completionHelperAvailable
+                            ? 'Page will refresh when the latest results are ready.'
+                            : 'Page will automatically refresh in 35 seconds.'}</small>
                     `;
-                    document.body.appendChild(notification);
-                    // Auto-refresh page after 35 seconds
+                document.body.appendChild(notification);
+
+                if (!completionHelperAvailable) {
                     setTimeout(() => {
                         window.location.reload();
                     }, 35000);
-                } else {
-                    console.error('❌ Failed to trigger monitor analysis:', data.message);
-                    alert('Failed to trigger analysis. Please try again.');
-                    // Restore button
-                    button.disabled = false;
-                    button.innerHTML = originalText;
+                    return;
                 }
-            })
-            .catch(error => {
-                console.error('❌ Error triggering analysis:', error);
-                alert('Error triggering analysis. Please try again.');
-                // Restore button
-                button.disabled = false;
-                button.innerHTML = originalText;
-            });
+
+                await window.waitForLldpqAnalysisCompletion(baseline);
+                window.location.reload();
+            } catch (error) {
+                console.error('❌ Analysis did not complete:', error);
+                if (notification) notification.remove();
+                restoreButton();
+                alert(`Analysis did not complete: ${error.message || error}`);
+            }
         }
 
         // CSV Download Function

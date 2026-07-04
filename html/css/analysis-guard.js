@@ -140,4 +140,35 @@
         if (timestamp.textContent.indexOf(suffix) === -1) timestamp.textContent += suffix;
         document.body.setAttribute('data-pipeline-status', status);
     }).catch(function () {});
+
+    function enableKeyboardActivation(element) {
+        if (element.hasAttribute('tabindex')) return;
+        element.setAttribute('tabindex', '0');
+        if (!element.hasAttribute('role')) element.setAttribute('role', 'button');
+        element.addEventListener('keydown', function (event) {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                element.click();
+            }
+        });
+    }
+
+    // Accessibility metadata only; no CSS or layout changes.
+    document.querySelectorAll('.sortable, .summary-card[onclick]').forEach(enableKeyboardActivation);
+    document.querySelectorAll('.sortable').forEach(function (header) {
+        header.setAttribute('aria-sort', 'none');
+        header.addEventListener('click', function () {
+            document.querySelectorAll('.sortable').forEach(function (item) {
+                item.setAttribute('aria-sort', 'none');
+            });
+            header.setAttribute(
+                'aria-sort',
+                header.classList.contains('desc') ? 'descending' : 'ascending'
+            );
+        });
+    });
+    document.querySelectorAll('.threshold-modal, .evpn-modal').forEach(function (modal) {
+        modal.setAttribute('role', 'dialog');
+        modal.setAttribute('aria-modal', 'true');
+    });
 })();

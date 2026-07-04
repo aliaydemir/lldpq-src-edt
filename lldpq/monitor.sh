@@ -1629,7 +1629,8 @@ EOF
         if ! sudo vtysh -c "show evpn vni" 2>/dev/null; then
             echo "__LLDPQ_COLLECTION_ERROR__:EVPN_VNI"
         fi
-        # Type-2 and Type-5 route counts (grep lines with route types [N]:)
+        # Exact Type-2 and Type-5 route counts.  Do not truncate a combined
+        # sample: the analysis needs counts, not thousands of route rows.
         echo "=== EVPN TYPE COUNTS ==="
         _evpn_tmp=$(mktemp /tmp/lldpq-evpn.XXXXXXXX) || {
             echo "__LLDPQ_COLLECTION_ERROR__:EVPN_TEMPFILE"
@@ -1637,7 +1638,14 @@ EOF
         }
         if [ -n "$_evpn_tmp" ]; then
             if sudo vtysh -c "show bgp l2vpn evpn" > "$_evpn_tmp" 2>/dev/null; then
-                grep -E '\[[1-5]\]:' "$_evpn_tmp" | head -1000 || echo "No EVPN routes"
+                awk '\''
+                    index($0, "[2]:") { type2++ }
+                    index($0, "[5]:") { type5++ }
+                    END {
+                        printf "__LLDPQ_EVPN_ROUTE_COUNT__:2:%d\n", type2 + 0
+                        printf "__LLDPQ_EVPN_ROUTE_COUNT__:5:%d\n", type5 + 0
+                    }
+                '\'' "$_evpn_tmp"
             else
                 echo "__LLDPQ_COLLECTION_ERROR__:EVPN_ROUTES"
             fi
@@ -1828,21 +1836,33 @@ EOF
         # =====================================================================
         echo "===OPTICAL_DATA_START==="
         if [ "$SKIP_OPTICAL" != "true" ]; then
-            all_interfaces=$(ip link show | awk "/^[0-9]+: swp[0-9]+[s0-9]*/ {gsub(/:/, \"\", \$2); print \$2}")
-            for interface in $all_interfaces; do
-                if [ -e "/sys/class/net/$interface" ]; then
-                    state=$(cat /sys/class/net/$interface/operstate 2>/dev/null)
+            _optical_links=$(ip link show 2>/dev/null)
+            _optical_links_status=$?
+            if [ "$_optical_links_status" -ne 0 ]; then
+                echo "__LLDPQ_COLLECTION_ERROR__:OPTICAL_LINK_INVENTORY"
+            else
+                all_interfaces=$(printf "%s\n" "$_optical_links" | awk "/^[0-9]+: swp[0-9]+[s0-9]*/ {gsub(/:/, \"\", \$2); print \$2}")
+                for interface in $all_interfaces; do
+                    echo "--- Interface: $interface"
+                    if [ ! -e "/sys/class/net/$interface" ]; then
+                        echo "Interface state: unknown"
+                        echo "No transceiver data"
+                        continue
+                    fi
+                    state=$(cat "/sys/class/net/$interface/operstate" 2>/dev/null || echo "unknown")
+                    echo "Interface state: ${state:-unknown}"
                     if [ "$state" = "up" ]; then
-                        echo "--- Interface: $interface"
-                        ethtool_output=$(sudo ethtool -m "$interface" 2>/dev/null)
+                        ethtool_output=$(sudo ethtool -m "$interface" 2>/dev/null || true)
                         if [ -n "$ethtool_output" ]; then
                             echo "$ethtool_output"
                         else
                             echo "No transceiver data"
                         fi
+                    else
+                        echo "No transceiver data"
                     fi
-                fi
-            done
+                done
+            fi
         fi
         echo "===OPTICAL_DATA_END==="
         
@@ -1947,91 +1967,220 @@ EOF
         # =====================================================================
         echo "===LOG_DATA_START==="
         echo "=== COMPREHENSIVE SYSTEM LOGS ==="
+        _lldpq_log_status() {
+            printf "__LLDPQ_LOG_SOURCE_STATUS__:%s:%s\n" "$1" "$2"
+        }
         
         # FRR Routing Logs
         echo "FRR_ROUTING_LOGS:"
         if systemctl is-active --quiet frr 2>/dev/null; then
-            sudo journalctl -u frr --since="2 hours ago" --no-pager --lines=200 2>/dev/null | grep -E "(ERROR|WARN|CRIT|FAIL|DOWN|BGP|neighbor|peer)" || echo "No recent FRR routing issues"
+            _source_output=$(sudo journalctl -u frr --since="2 hours ago" --no-pager --lines=200 2>/dev/null)
+            _source_status=$?
+            if [ "$_source_status" -eq 0 ]; then
+                _lldpq_log_status FRR OK
+                printf "%s\n" "$_source_output" | grep -E "(ERROR|WARN|CRIT|FAIL|DOWN|BGP|neighbor|peer)" || echo "No recent FRR routing issues"
+            else
+                _lldpq_log_status FRR ERROR
+            fi
         elif [ -f "/var/log/frr/frr.log" ]; then
-            sudo grep "$(date '\''+%b %d'\'')" /var/log/frr/frr.log 2>/dev/null | tail -30 | grep -E "(error|warn|crit|fail|down|bgp)" || echo "No recent FRR routing issues"
+            _source_output=$(sudo cat /var/log/frr/frr.log 2>/dev/null)
+            _source_status=$?
+            if [ "$_source_status" -eq 0 ]; then
+                _lldpq_log_status FRR OK
+                printf "%s\n" "$_source_output" | grep "$(date '\''+%b %d'\'')" | tail -30 | grep -Ei "(error|warn|crit|fail|down|bgp)" || echo "No recent FRR routing issues"
+            else
+                _lldpq_log_status FRR ERROR
+            fi
         else
+            _lldpq_log_status FRR UNAVAILABLE
             echo "FRR service/log not available"
         fi
         
         # Switch daemon logs
         echo "SWITCHD_LOGS:"
         if systemctl is-active --quiet switchd 2>/dev/null; then
-            sudo journalctl -u switchd --since="2 hours ago" --no-pager --lines=50 2>/dev/null | grep -E "(ERROR|WARN|CRIT|FAIL|EXCEPT|port|link|vlan)" || echo "No recent switchd issues"
+            _source_output=$(sudo journalctl -u switchd --since="2 hours ago" --no-pager --lines=50 2>/dev/null)
+            _source_status=$?
+            if [ "$_source_status" -eq 0 ]; then
+                _lldpq_log_status SWITCHD OK
+                printf "%s\n" "$_source_output" | grep -E "(ERROR|WARN|CRIT|FAIL|EXCEPT|port|link|vlan)" || echo "No recent switchd issues"
+            else
+                _lldpq_log_status SWITCHD ERROR
+            fi
         elif [ -f "/var/log/switchd.log" ]; then
-            sudo grep "$(date '\''+%b %d'\'')" /var/log/switchd.log 2>/dev/null | tail -30 | grep -E "(error|warn|crit|fail|except)" || echo "No recent switchd issues"
+            _source_output=$(sudo cat /var/log/switchd.log 2>/dev/null)
+            _source_status=$?
+            if [ "$_source_status" -eq 0 ]; then
+                _lldpq_log_status SWITCHD OK
+                printf "%s\n" "$_source_output" | grep "$(date '\''+%b %d'\'')" | tail -30 | grep -Ei "(error|warn|crit|fail|except)" || echo "No recent switchd issues"
+            else
+                _lldpq_log_status SWITCHD ERROR
+            fi
         else
+            _lldpq_log_status SWITCHD UNAVAILABLE
             echo "Switchd service/log not available"
         fi
         
         # NVUE configuration logs
         echo "NVUE_CONFIG_LOGS:"
         if systemctl is-active --quiet nvued 2>/dev/null; then
-            sudo journalctl -u nvued --since="2 hours ago" --no-pager --lines=50 2>/dev/null | grep -E "(ERROR|WARN|FAIL|EXCEPT|config|commit|rollback)" || echo "No recent NVUE config issues"
+            _source_output=$(sudo journalctl -u nvued --since="2 hours ago" --no-pager --lines=50 2>/dev/null)
+            _source_status=$?
+            if [ "$_source_status" -eq 0 ]; then
+                _lldpq_log_status NVUE OK
+                printf "%s\n" "$_source_output" | grep -E "(ERROR|WARN|FAIL|EXCEPT|config|commit|rollback)" || echo "No recent NVUE config issues"
+            else
+                _lldpq_log_status NVUE ERROR
+            fi
         elif [ -f "/var/log/nvued.log" ]; then
-            sudo grep "$(date '\''+%b %d'\'')" /var/log/nvued.log 2>/dev/null | tail -30 | grep -E "(ERROR|WARN|FAIL|EXCEPT|config|commit|rollback)" || echo "No recent NVUE config issues"
+            _source_output=$(sudo cat /var/log/nvued.log 2>/dev/null)
+            _source_status=$?
+            if [ "$_source_status" -eq 0 ]; then
+                _lldpq_log_status NVUE OK
+                printf "%s\n" "$_source_output" | grep "$(date '\''+%b %d'\'')" | tail -30 | grep -E "(ERROR|WARN|FAIL|EXCEPT|config|commit|rollback)" || echo "No recent NVUE config issues"
+            else
+                _lldpq_log_status NVUE ERROR
+            fi
         else
+            _lldpq_log_status NVUE UNAVAILABLE
             echo "NVUE log not found"
         fi
         
         # Spanning Tree Protocol logs
         echo "MSTPD_STP_LOGS:"
         if systemctl is-active --quiet mstpd 2>/dev/null; then
-            sudo journalctl -u mstpd --since="2 hours ago" --no-pager --lines=50 2>/dev/null | grep -E "(ERROR|WARN|TOPOLOGY|CHANGE|port|state|bridge)" || echo "No recent STP issues"
+            _source_output=$(sudo journalctl -u mstpd --since="2 hours ago" --no-pager --lines=50 2>/dev/null)
+            _source_status=$?
+            if [ "$_source_status" -eq 0 ]; then
+                _lldpq_log_status MSTPD OK
+                printf "%s\n" "$_source_output" | grep -E "(ERROR|WARN|TOPOLOGY|CHANGE|port|state|bridge)" || echo "No recent STP issues"
+            else
+                _lldpq_log_status MSTPD ERROR
+            fi
         elif [ -f "/var/log/mstpd" ]; then
-            sudo grep "$(date '\''+%b %d'\'')" /var/log/mstpd 2>/dev/null | tail -30 | grep -E "(ERROR|WARN|TOPOLOGY|CHANGE|port|state|bridge)" || echo "No recent STP issues"
+            _source_output=$(sudo cat /var/log/mstpd 2>/dev/null)
+            _source_status=$?
+            if [ "$_source_status" -eq 0 ]; then
+                _lldpq_log_status MSTPD OK
+                printf "%s\n" "$_source_output" | grep "$(date '\''+%b %d'\'')" | tail -30 | grep -E "(ERROR|WARN|TOPOLOGY|CHANGE|port|state|bridge)" || echo "No recent STP issues"
+            else
+                _lldpq_log_status MSTPD ERROR
+            fi
         else
+            _lldpq_log_status MSTPD UNAVAILABLE
             echo "MSTPD log not found"
         fi
         
         # MLAG coordination logs
         echo "CLAGD_MLAG_LOGS:"
         if systemctl is-active --quiet clagd 2>/dev/null; then
-            sudo journalctl -u clagd --since="2 hours ago" --no-pager --lines=50 2>/dev/null | grep -E "(ERROR|WARN|FAIL|CONFLICT|PEER|bond|backup|primary)" || echo "No recent MLAG issues"
+            _source_output=$(sudo journalctl -u clagd --since="2 hours ago" --no-pager --lines=50 2>/dev/null)
+            _source_status=$?
+            if [ "$_source_status" -eq 0 ]; then
+                _lldpq_log_status CLAGD OK
+                printf "%s\n" "$_source_output" | grep -E "(ERROR|WARN|FAIL|CONFLICT|PEER|bond|backup|primary)" || echo "No recent MLAG issues"
+            else
+                _lldpq_log_status CLAGD ERROR
+            fi
         elif [ -f "/var/log/clagd.log" ]; then
-            sudo grep "$(date '\''+%b %d'\'')" /var/log/clagd.log 2>/dev/null | tail -30 | grep -E "(ERROR|WARN|FAIL|CONFLICT|PEER|bond|backup|primary)" || echo "No recent MLAG issues"
+            _source_output=$(sudo cat /var/log/clagd.log 2>/dev/null)
+            _source_status=$?
+            if [ "$_source_status" -eq 0 ]; then
+                _lldpq_log_status CLAGD OK
+                printf "%s\n" "$_source_output" | grep "$(date '\''+%b %d'\'')" | tail -30 | grep -E "(ERROR|WARN|FAIL|CONFLICT|PEER|bond|backup|primary)" || echo "No recent MLAG issues"
+            else
+                _lldpq_log_status CLAGD ERROR
+            fi
         else
+            _lldpq_log_status CLAGD UNAVAILABLE
             echo "CLAG log not found"
         fi
         
         # Authentication and security logs
         echo "AUTH_SECURITY_LOGS:"
         if systemctl is-active --quiet systemd-journald 2>/dev/null; then
-            sudo journalctl --since="2 hours ago" --grep="FAIL|ERROR|INVALID|DENIED|ATTACK|authentication|unauthorized" --no-pager --lines=50 2>/dev/null | grep -v -E "(journalctl|monitor\.sh|monitor2\.sh|--since|--grep|swp\|bond\|vlan\|carrier\|link|vtysh|sudo.*authentication.*grantor=pam_permit|USER_AUTH.*res=success)" || echo "No recent auth issues"
+            _source_output=$(sudo journalctl --since="2 hours ago" --grep="FAIL|ERROR|INVALID|DENIED|ATTACK|authentication|unauthorized" --no-pager --lines=50 2>/dev/null)
+            _source_status=$?
+            if [ "$_source_status" -eq 0 ]; then
+                _lldpq_log_status AUTH OK
+                printf "%s\n" "$_source_output" | grep -v -E "(journalctl|monitor\.sh|monitor2\.sh|--since|--grep|swp\|bond\|vlan\|carrier\|link|vtysh|sudo.*authentication.*grantor=pam_permit|USER_AUTH.*res=success)" || echo "No recent auth issues"
+            else
+                _lldpq_log_status AUTH ERROR
+            fi
         elif [ -f "/var/log/auth.log" ]; then
-            sudo grep "$(date '\''+%b %d'\'')" /var/log/auth.log 2>/dev/null | tail -30 | grep -E "(FAIL|ERROR|INVALID|DENIED|ATTACK|authentication|unauthorized)" | grep -v -E "(journalctl|monitor\.sh|monitor2\.sh|--since|swp\|bond\|vlan\|carrier\|link|vtysh|sudo.*authentication.*grantor=pam_permit|USER_AUTH.*res=success)" || echo "No recent auth issues"
+            _source_output=$(sudo cat /var/log/auth.log 2>/dev/null)
+            _source_status=$?
+            if [ "$_source_status" -eq 0 ]; then
+                _lldpq_log_status AUTH OK
+                printf "%s\n" "$_source_output" | grep "$(date '\''+%b %d'\'')" | tail -30 | grep -E "(FAIL|ERROR|INVALID|DENIED|ATTACK|authentication|unauthorized)" | grep -v -E "(journalctl|monitor\.sh|monitor2\.sh|--since|swp\|bond\|vlan\|carrier\|link|vtysh|sudo.*authentication.*grantor=pam_permit|USER_AUTH.*res=success)" || echo "No recent auth issues"
+            else
+                _lldpq_log_status AUTH ERROR
+            fi
         else
+            _lldpq_log_status AUTH UNAVAILABLE
             echo "Auth log not found"
         fi
         
         # System critical logs
+        echo "SYSTEM_CRITICAL_LOGS:"
         CRITICAL_LOGS=""
         if systemctl is-active --quiet systemd-journald 2>/dev/null; then
             CRITICAL_LOGS=$(sudo journalctl --since="2 hours ago" --priority=0..3 --grep="ERROR|CRIT|ALERT|EMERG|FAIL|kernel|oom|segfault" --no-pager --lines=50 2>/dev/null)
+            _source_status=$?
         elif [ -f "/var/log/syslog" ]; then
-            CRITICAL_LOGS=$(sudo grep "$(date '\''+%b %d'\'')" /var/log/syslog 2>/dev/null | tail -50 | grep -E "(ERROR|CRIT|ALERT|EMERG|FAIL|kernel|oom|segfault)")
+            _source_output=$(sudo cat /var/log/syslog 2>/dev/null)
+            _source_status=$?
+            if [ "$_source_status" -eq 0 ]; then
+                CRITICAL_LOGS=$(printf "%s\n" "$_source_output" | grep "$(date '\''+%b %d'\'')" | tail -50 | grep -E "(ERROR|CRIT|ALERT|EMERG|FAIL|kernel|oom|segfault)" || true)
+            fi
+        else
+            _source_status=2
         fi
-        
+        if [ "$_source_status" -eq 0 ]; then
+            _lldpq_log_status SYSTEM_CRITICAL OK
+        elif [ "$_source_status" -eq 2 ]; then
+            _lldpq_log_status SYSTEM_CRITICAL UNAVAILABLE
+        else
+            _lldpq_log_status SYSTEM_CRITICAL ERROR
+        fi
         if [ -n "$CRITICAL_LOGS" ]; then
-            echo "SYSTEM_CRITICAL_LOGS:"
             echo "$CRITICAL_LOGS"
+        else
+            echo "No system critical logs"
         fi
         
         # High priority journalctl logs
         echo "JOURNALCTL_PRIORITY_LOGS:"
-        sudo journalctl --since="3 hours ago" --priority=0..3 --no-pager --lines=75 2>/dev/null | grep -E "(CRIT|ALERT|EMERG|ERROR|fail|crash|panic)" || echo "No high priority journal logs"
+        _source_output=$(sudo journalctl --since="3 hours ago" --priority=0..3 --no-pager --lines=75 2>/dev/null)
+        _source_status=$?
+        if [ "$_source_status" -eq 0 ]; then
+            _lldpq_log_status JOURNAL_PRIORITY OK
+            printf "%s\n" "$_source_output" | grep -Ei "(CRIT|ALERT|EMERG|ERROR|fail|crash|panic)" || echo "No high priority journal logs"
+        else
+            _lldpq_log_status JOURNAL_PRIORITY ERROR
+        fi
         
         # Hardware and kernel critical messages
         echo "DMESG_HARDWARE_LOGS:"
-        sudo dmesg --since="3 hours ago" --level=crit,alert,emerg 2>/dev/null | tail -40 || echo "No critical hardware logs"
+        _source_output=$(sudo dmesg --since="3 hours ago" --level=crit,alert,emerg 2>/dev/null)
+        _source_status=$?
+        if [ "$_source_status" -eq 0 ]; then
+            _lldpq_log_status DMESG OK
+            if [ -n "$_source_output" ]; then printf "%s\n" "$_source_output" | tail -40; else echo "No critical hardware logs"; fi
+        else
+            _lldpq_log_status DMESG ERROR
+        fi
         
         # Network interface state changes
         echo "NETWORK_INTERFACE_LOGS:"
-        sudo journalctl --since="3 hours ago" --grep="swp|bond|vlan|carrier|link.*up|link.*down|port.*up|port.*down" --no-pager --lines=40 2>/dev/null | grep -v -E "(journalctl|monitor\.sh|monitor2\.sh|sudo.*journalctl)" || echo "No interface state changes"
+        _source_output=$(sudo journalctl --since="3 hours ago" --grep="swp|bond|vlan|carrier|link.*up|link.*down|port.*up|port.*down" --no-pager --lines=40 2>/dev/null)
+        _source_status=$?
+        if [ "$_source_status" -eq 0 ]; then
+            _lldpq_log_status NETWORK_INTERFACE OK
+            printf "%s\n" "$_source_output" | grep -v -E "(journalctl|monitor\.sh|monitor2\.sh|sudo.*journalctl)" || echo "No interface state changes"
+        else
+            _lldpq_log_status NETWORK_INTERFACE ERROR
+        fi
         
         echo "===LOG_DATA_END==="
         
