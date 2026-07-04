@@ -89,6 +89,7 @@ class BGPNeighbor:
     interface: Optional[str] = None
     vrf: str = "default"
     address_family: str = "unknown"
+    down_since: Optional[float] = None
 
 @dataclass
 class EVPNStats:
@@ -278,8 +279,10 @@ class BGPAnalyzer:
             # Parse neighbor entries (skip header lines)
             # Let integer conversion below identify summary rows.  Restricting
             # the first token to hostname characters drops valid IPv6 peers.
-            if line and not line.lower().startswith("neighbor"):
+            if line:
                 parts = line.split()
+                if parts and parts[0].lower() == "neighbor":
+                    continue
                 if len(parts) >= 10:
 
                     try:
@@ -381,10 +384,20 @@ class BGPAnalyzer:
             return BGPHealth.UNKNOWN
 
         if neighbor.state != BGPState.ESTABLISHED:
-            duration = self.parse_uptime(neighbor.uptime)
+            duration = (
+                None
+                if neighbor.uptime.lower() == "never"
+                else self.parse_uptime(neighbor.uptime)
+            )
+            if duration is None and neighbor.down_since is not None:
+                try:
+                    duration = timedelta(
+                        seconds=max(0.0, time.time() - float(neighbor.down_since))
+                    )
+                except (TypeError, ValueError):
+                    duration = None
             threshold = timedelta(minutes=self.thresholds["bgp_down_minutes"])
-            # "never" and unknown formats do not provide a trustworthy age.
-            if duration is not None and neighbor.uptime.lower() != "never" and duration >= threshold:
+            if duration is not None and duration >= threshold:
                 return BGPHealth.CRITICAL
             return BGPHealth.WARNING
 
@@ -475,13 +488,70 @@ class BGPAnalyzer:
         except Exception:
             return None
     
-    def update_bgp_stats(self, hostname: str, bgp_data: str):
+    def update_bgp_stats(
+        self,
+        hostname: str,
+        bgp_data: str,
+        previous_stats: Optional[Dict[str, Any]] = None,
+    ):
         """Update BGP statistics for a device"""
         neighbors = self.parse_bgp_output(bgp_data)
+        current_time = time.time()
+
+        if previous_stats is None:
+            previous_stats = self.current_bgp_stats.get(hostname, {})
+        previous_neighbors = {}
+        if isinstance(previous_stats, dict):
+            for item in previous_stats.get("neighbors", []):
+                if not isinstance(item, dict):
+                    continue
+                identity = (
+                    item.get("vrf", "default"),
+                    item.get("address_family", "unknown"),
+                    item.get("neighbor_name"),
+                )
+                previous_neighbors[identity] = item
         
         # Set hostname for all neighbors
         for neighbor in neighbors:
             neighbor.hostname = hostname
+            if neighbor.state == BGPState.ESTABLISHED:
+                neighbor.down_since = None
+                continue
+
+            parsed_duration = (
+                None
+                if neighbor.uptime.lower() == "never"
+                else self.parse_uptime(neighbor.uptime)
+            )
+            if parsed_duration is not None:
+                neighbor.down_since = max(
+                    0.0, current_time - parsed_duration.total_seconds()
+                )
+                continue
+
+            previous = previous_neighbors.get((
+                neighbor.vrf,
+                neighbor.address_family,
+                neighbor.neighbor_name,
+            ), {})
+            previous_state = coerce_bgp_state(previous.get("state"))
+            previous_down_since = previous.get("down_since")
+            if (
+                previous_state != BGPState.ESTABLISHED
+                and previous_state != BGPState.UNKNOWN
+                and previous_down_since is not None
+            ):
+                try:
+                    candidate = float(previous_down_since)
+                    neighbor.down_since = (
+                        candidate if 0 <= candidate <= current_time + 300
+                        else current_time
+                    )
+                except (TypeError, ValueError):
+                    neighbor.down_since = current_time
+            else:
+                neighbor.down_since = current_time
         
         # Update current stats (convert enums to strings for JSON serialization)
         neighbor_dicts = []

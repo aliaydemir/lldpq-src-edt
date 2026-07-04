@@ -203,11 +203,9 @@ class LinkFlapAnalyzer:
                 # interval so short-window counters can refuse to overclaim it.
                 if prev_time is None:
                     # Baselines persisted by older versions have no sampling
-                    # timestamp. Keep this as a legacy event; calculation will
-                    # exclude it from short windows.
-                    self.flapping_hist[port_name].append(
-                        (curr_time, current_transitions, delta // 2)
-                    )
+                    # timestamp, so the delta may span minutes or days. Rebase
+                    # once instead of assigning an unknowable interval.
+                    pass
                 else:
                     interval_start = float(prev_time)
                     interval_seconds = max(0.0, curr_time - interval_start)
@@ -360,8 +358,8 @@ class LinkFlapAnalyzer:
             
             if status == FlapStatus.CRITICAL:
                 anomalies.append({
-                    "device": port_name.split(':')[0] if ':' in port_name else "unknown",
-                    "interface": port_name.split(':')[1] if ':' in port_name else port_name,
+                    "device": port_name.split(':', 1)[0] if ':' in port_name else "unknown",
+                    "interface": port_name.split(':', 1)[1] if ':' in port_name else port_name,
                     "type": "CRITICAL_FLAPPING",
                     "severity": "critical",
                     "message": f"Port {port_name} crossed the critical threshold ({counters['flap_1_hr']} flaps in last hour)",
@@ -375,8 +373,8 @@ class LinkFlapAnalyzer:
             
             elif status == FlapStatus.WARNING:
                 anomalies.append({
-                    "device": port_name.split(':')[0] if ':' in port_name else "unknown",
-                    "interface": port_name.split(':')[1] if ':' in port_name else port_name,
+                    "device": port_name.split(':', 1)[0] if ':' in port_name else "unknown",
+                    "interface": port_name.split(':', 1)[1] if ':' in port_name else port_name,
                     "type": "WARNING_FLAPPING",
                     "severity": "warning",
                     "message": f"Port {port_name} crossed the warning threshold ({counters['flap_1_hr']} flaps in last hour)",
@@ -569,8 +567,8 @@ class LinkFlapAnalyzer:
         </div>
         <div class="section-content">
             <div class="summary-grid">
-                <div class="summary-card card-info" id="total-devices-card" data-metric-key="flap_current_devices" data-metric-value="{len(set(port.split(':')[0] for port in self.carrier_transitions_stats.keys()))}">
-                    <div class="metric" id="total-devices">{len(set(port.split(':')[0] for port in self.carrier_transitions_stats.keys()))}</div>
+                <div class="summary-card card-info" id="total-devices-card" data-metric-key="flap_current_devices" data-metric-value="{len(set(port.split(':', 1)[0] for port in self.carrier_transitions_stats.keys()))}">
+                    <div class="metric" id="total-devices">{len(set(port.split(':', 1)[0] for port in self.carrier_transitions_stats.keys()))}</div>
                     <div class="metric-label">Total Devices</div>
                 </div>
                 <div class="summary-card card-info" id="total-ports-card" data-metric-key="flap_total_ports" data-metric-value="{summary['total_ports']}">
@@ -621,8 +619,8 @@ class LinkFlapAnalyzer:
         # Collect all ports for display - using cache
         all_ports = []
         for port_name, cached in self._port_cache.items():
-            device = port_name.split(':')[0] if ':' in port_name else "unknown"
-            interface = port_name.split(':')[1] if ':' in port_name else port_name
+            device = port_name.split(':', 1)[0] if ':' in port_name else "unknown"
+            interface = port_name.split(':', 1)[1] if ':' in port_name else port_name
             
             port_info = {
                 'device': device,

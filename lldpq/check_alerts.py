@@ -566,7 +566,7 @@ class LLDPqAlerts:
                 state_detail = (
                     "exceeded the configured down-duration threshold"
                     if current_state == "CRITICAL"
-                    else "is down but remains inside the configured grace period"
+                    else "is in a warning state (grace-period or queue/policy issue)"
                 )
                 self.send_stateful_notification(
                     ("BGP Neighbors Down" if current_state == "CRITICAL"
@@ -686,7 +686,9 @@ class LLDPqAlerts:
                     f"link-flap history is stale ({history_age / 60:.1f} minutes old)"
                 )
 
-            cutoff = time.time() - max(float(window_seconds), 0)
+            now = time.time()
+            window = max(float(window_seconds), 0)
+            cutoff = now - window
             prefix = f"{device}:"
             counts = {}
             for port, entries in histories.items():
@@ -701,7 +703,18 @@ class LLDPqAlerts:
                         raise ValueError(f"invalid flap sample for {port}")
                     timestamp = float(entry[0])
                     flap_count = int(entry[2])
-                    if timestamp >= cutoff and flap_count > 0:
+                    if not math.isfinite(timestamp) or timestamp > now + 300:
+                        raise ValueError(f"invalid flap timestamp for {port}")
+                    if len(entry) >= 5:
+                        interval_seconds = max(float(entry[4]), 0.0)
+                        if not math.isfinite(interval_seconds):
+                            raise ValueError(f"invalid flap interval for {port}")
+                        fits_window = now - timestamp + interval_seconds <= window
+                    else:
+                        # Legacy samples do not say which poll interval produced
+                        # the delta. Never assign those deltas to a short window.
+                        fits_window = window >= 3600 and timestamp >= cutoff
+                    if fits_window and flap_count > 0:
                         total += flap_count
                 counts[interface] = total
             return counts
@@ -714,51 +727,49 @@ class LLDPqAlerts:
         """Check for critical system logs"""
         if not self.config.get('alert_types', {}).get('log_alerts', True):
             return
-            
-        log_file = self.monitor_results / "log-data" / f"{device}_logs.txt"
-        if not log_file.exists():
+
+        counts = self.get_device_log_counts(device)
+        if counts is None:
+            print(
+                f"    ⚠️ Skipping log state for {device}: "
+                "processed log summary is unavailable"
+            )
             return
-            
-        try:
-            with open(log_file, 'r') as f:
-                log_data = f.read()
-            
-            # Count critical log entries
-            critical_patterns = [
-                r'CRITICAL|CRIT',
-                r'ALERT|EMERG', 
-                r'kernel.*panic',
-                r'out of memory|oom',
-                r'segfault|segmentation fault'
-            ]
-            
-            critical_logs = []
-            for pattern in critical_patterns:
-                matches = re.findall(pattern, log_data, re.IGNORECASE)
-                critical_logs.extend(matches)
-            
-            if len(critical_logs) > 0:
-                current_state = "CRITICAL"
-                if self.should_send_alert(device, "system_logs", current_state):
-                    self.send_stateful_notification(
-                        f"Critical System Logs",
-                        f"Found {len(critical_logs)} critical log entries",
-                        "CRITICAL", device, "system_logs", current_state
-                    )
+
+        if counts["critical"] > 0:
+            current_state = "CRITICAL"
+        elif counts["errors"] > 0 or counts["warnings"] > 0:
+            current_state = "WARNING"
+        else:
+            current_state = "OK"
+
+        send_recovery = self.config.get('frequency', {}).get(
+            'send_recovery', True
+        )
+        if current_state == "OK" and not send_recovery:
+            self.record_state_without_delivery(
+                device, "system_logs", current_state
+            )
+        elif self.should_send_alert(device, "system_logs", current_state):
+            if current_state == "CRITICAL":
+                self.send_stateful_notification(
+                    "Critical System Logs",
+                    f"Found {counts['critical']} critical log entries",
+                    "CRITICAL", device, "system_logs", current_state,
+                )
+            elif current_state == "WARNING":
+                self.send_stateful_notification(
+                    "System Log Warning",
+                    (f"Found {counts['errors']} error and "
+                     f"{counts['warnings']} warning log entries"),
+                    "WARNING", device, "system_logs", current_state,
+                )
             else:
-                current_state = "OK"
-                send_recovery = self.config.get('frequency', {}).get('send_recovery', True)
-                if not send_recovery:
-                    self.record_state_without_delivery(device, "system_logs", current_state)
-                elif self.should_send_alert(device, "system_logs", current_state):
-                    self.send_stateful_notification(
-                        f"System Logs Clear",
-                        f"No critical system issues detected",
-                        "RECOVERED", device, "system_logs", current_state
-                    )
-        except (OSError, ValueError, TypeError, re.error) as exc:
-            print(f"    ❌ Could not evaluate log data for {device}: {exc}")
-            self.had_error = True
+                self.send_stateful_notification(
+                    "System Logs Clear",
+                    "No critical, error, or warning log entries detected",
+                    "RECOVERED", device, "system_logs", current_state,
+                )
 
     def get_inventory_devices(self):
         """Return every configured hostname from devices.yaml in inventory order."""
@@ -1070,70 +1081,141 @@ class LLDPqAlerts:
             return False
         
         critical_issues = []
+        warning_issues = []
         
-        # Generate critical issues summary from aggregate stats (faster than per-device checks)
+        # Generate an aggregate open-issues summary. Warning-only reports must
+        # not be sent as green/healthy.
         if hardware_stats.get('critical', 0) > 0:
             critical_issues.append(f"🔥 Hardware: {hardware_stats['critical']} devices with critical issues")
+        if hardware_stats.get('warnings', 0) > 0:
+            warning_issues.append(
+                f"Hardware: {hardware_stats['warnings']} devices with warnings"
+            )
+        if hardware_stats.get('unknown', 0) > 0:
+            warning_issues.append(
+                f"Hardware: {hardware_stats['unknown']} devices with unknown telemetry"
+            )
         
         if log_stats.get('critical', 0) > 0:
             critical_issues.append(f"Logs: {log_stats['critical']} critical log entries")
+        if log_stats.get('warnings', 0) > 0:
+            warning_issues.append(f"Logs: {log_stats['warnings']} warning entries")
+        if log_stats.get('errors', 0) > 0:
+            warning_issues.append(f"Logs: {log_stats['errors']} error entries")
         
-        if bgp_stats.get('down', 0) > 0:
-            critical_issues.append(f"BGP: {bgp_stats['down']} neighbors down")
+        if bgp_stats.get('critical', 0) > 0:
+            critical_issues.append(
+                f"BGP: {bgp_stats['critical']} critical neighbors"
+            )
+        if bgp_stats.get('warnings', 0) > 0:
+            warning_issues.append(
+                f"BGP: {bgp_stats['warnings']} warning-state neighbors"
+            )
         if bgp_stats.get('stale', 0) > 0:
-            critical_issues.append(f"BGP: {bgp_stats['stale']} device collections stale")
+            warning_issues.append(f"BGP: {bgp_stats['stale']} device collections stale")
         if bgp_stats.get('unknown', 0) > 0:
-            critical_issues.append(f"BGP: {bgp_stats['unknown']} device collections unknown")
+            warning_issues.append(f"BGP: {bgp_stats['unknown']} device collections unknown")
         
         if optical_stats and optical_stats.get('critical', 0) > 0:
             critical_issues.append(f"Optical: {optical_stats['critical']} ports with critical issues")
+        if optical_stats and optical_stats.get('warnings', 0) > 0:
+            warning_issues.append(
+                f"Optical: {optical_stats['warnings']} ports with warnings"
+            )
+        if optical_stats and optical_stats.get('unknown', 0) > 0:
+            warning_issues.append(
+                f"Optical: {optical_stats['unknown']} ports with unknown diagnostics"
+            )
         
         if ber_stats.get('critical', 0) > 0:
             critical_issues.append(f"BER: {ber_stats['critical']} ports with critical errors")
+        if ber_stats.get('warnings', 0) > 0:
+            warning_issues.append(
+                f"BER: {ber_stats['warnings']} ports with warnings"
+            )
         if ber_stats.get('unknown', 0) > 0:
-            critical_issues.append(
+            warning_issues.append(
                 f"BER: {ber_stats['unknown']} ports awaiting a complete traffic sample"
             )
         
         if flap_stats.get('critical', 0) > 0:
             critical_issues.append(f"Link Flap: {flap_stats['critical']} problematic ports")
+        if flap_stats.get('warnings', 0) > 0:
+            warning_issues.append(
+                f"Link Flap: {flap_stats['warnings']} warning ports"
+            )
 
         if asset_stats.get('unreachable', 0) > 0:
             critical_issues.append(
                 f"Assets: {asset_stats['unreachable']} devices unreachable"
             )
         if asset_stats.get('unknown', 0) > 0:
-            critical_issues.append(
+            warning_issues.append(
                 f"Assets: {asset_stats['unknown']} devices have unknown status"
             )
         if asset_stats.get('stale', 0) > 0:
-            critical_issues.append(
+            warning_issues.append(
                 f"Assets: {asset_stats['stale']} devices have stale status data"
             )
         
-        # Check for LLDP critical issues
         if lldp_stats['failed'] > 0:
             critical_issues.append(f"🔗 LLDP Topology: {lldp_stats['failed']} failed connections")
+        if lldp_stats['warnings'] > 0:
+            warning_issues.append(
+                f"LLDP Topology: {lldp_stats['warnings']} warning connections"
+            )
+        if lldp_stats['no_info'] > 0:
+            warning_issues.append(
+                f"LLDP Topology: {lldp_stats['no_info']} connections without current information"
+            )
+
+        report_stats = {
+            "Hardware": hardware_stats,
+            "Logs": log_stats,
+            "BGP": bgp_stats,
+            "BER": ber_stats,
+            "Link Flap": flap_stats,
+        }
+        if optical_stats:
+            report_stats["Optical"] = optical_stats
+        for label, report in report_stats.items():
+            if report.get("coverage_partial"):
+                expected = report.get("coverage_expected")
+                current = report.get("coverage_current")
+                suffix = (
+                    f" ({current}/{expected} devices current)"
+                    if expected is not None and current is not None else ""
+                )
+                warning_issues.append(f"{label}: partial collection coverage{suffix}")
         
         # Create summary signature for state tracking (include optical and LLDP)
         optical_signature = (
             "skipped" if optical_skipped else
             f"{optical_stats['excellent']}:{optical_stats['good']}:"
-            f"{optical_stats['warnings']}:{optical_stats['critical']}"
+            f"{optical_stats['warnings']}:{optical_stats['critical']}:"
+            f"{optical_stats.get('unknown', 0)}:"
+            f"{int(bool(optical_stats.get('coverage_partial')))}"
         )
         summary_signature = "_".join(map(str, (
             total_devices,
             hardware_stats['excellent'], hardware_stats['good'],
             hardware_stats['warnings'], hardware_stats['critical'],
+            hardware_stats.get('unknown', 0),
+            int(bool(hardware_stats.get('coverage_partial'))),
             log_stats['critical'], log_stats['warnings'], log_stats['errors'],
+            int(bool(log_stats.get('coverage_partial'))),
             bgp_stats['established'], bgp_stats['down'],
+            bgp_stats.get('warnings', 0), bgp_stats.get('critical', 0),
             bgp_stats.get('stale', 0), bgp_stats.get('unknown', 0),
+            int(bool(bgp_stats.get('coverage_partial'))),
             asset_stats['successful'], asset_stats['failed'],
             asset_stats['unknown'], asset_stats['stale'],
             ber_stats['excellent'], ber_stats['good'], ber_stats['warnings'],
             ber_stats['critical'], ber_stats.get('unknown', 0),
+            int(bool(ber_stats.get('coverage_partial'))),
             flap_stats['stable'], flap_stats['warnings'],
-            flap_stats['critical'], optical_signature,
+            flap_stats['critical'],
+            int(bool(flap_stats.get('coverage_partial'))), optical_signature,
             lldp_stats['successful'], lldp_stats['failed'],
             lldp_stats['warnings'], lldp_stats['no_info'],
         )))
@@ -1195,7 +1277,7 @@ Successful: {lldp_stats['successful']}     Failed: {lldp_stats['failed']}     Wa
 BGP Analysis Results:
 
 
-Established: {bgp_stats['established']}     Down: {bgp_stats['down']}     Stale: {bgp_stats.get('stale', 0)}     Unknown: {bgp_stats.get('unknown', 0)}
+Established: {bgp_stats['established']}     Down: {bgp_stats['down']}     Warning: {bgp_stats.get('warnings', 0)}     Critical: {bgp_stats.get('critical', 0)}     Stale: {bgp_stats.get('stale', 0)}     Unknown: {bgp_stats.get('unknown', 0)}
 
 
 ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ──
@@ -1218,16 +1300,27 @@ BER Analysis Results:
 Excellent: {ber_stats['excellent']}     Good: {ber_stats['good']}     Warnings: {ber_stats['warnings']}     Critical: {ber_stats['critical']}     Awaiting Sample: {ber_stats.get('unknown', 0)}
 
 """
-            if critical_issues:
-                message += f"\n─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ──\n\nCritical Issues:\n" + "\n".join(critical_issues[:5])
-                if len(critical_issues) > 5:
-                    message += f"\n... and {len(critical_issues) - 5} more issues"
+            open_issues = (
+                [f"[CRITICAL] {issue}" for issue in critical_issues]
+                + [f"[WARNING] {issue}" for issue in warning_issues]
+            )
+            if open_issues:
+                message += (
+                    "\n─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ──"
+                    "\n\nOpen Issues:\n" + "\n".join(open_issues[:5])
+                )
+                if len(open_issues) > 5:
+                    message += f"\n... and {len(open_issues) - 5} more issues"
                     
             message += f"\n\n─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ──\n\n[View Full Dashboard]({server_url})"
             
             # Send notification
-            color = "#FF0000" if critical_issues else "#00AA00"
-            severity = "CRITICAL" if critical_issues else "INFO"
+            if critical_issues:
+                severity = "CRITICAL"
+            elif warning_issues:
+                severity = "WARNING"
+            else:
+                severity = "INFO"
             self.record_alert_attempt("network_summary", "last_summary")
             delivered = self.send_notification(
                 title, message, severity, "Network Summary"
@@ -1280,7 +1373,7 @@ Excellent: {ber_stats['excellent']}     Good: {ber_stats['good']}     Warnings: 
             # Read from processed hardware_history.json
             hardware_history_file = self.monitor_results / "hardware_history.json"
             if not hardware_history_file.exists():
-                return "good"  # Default to healthy if no data
+                return "unknown"
                 
             with open(hardware_history_file, 'r') as f:
                 hardware_data = json.load(f)
@@ -1289,13 +1382,14 @@ Excellent: {ber_stats['excellent']}     Good: {ber_stats['good']}     Warnings: 
             device_history = hardware_data.get("hardware_history", {}).get(device, [])
             if device_history and len(device_history) > 0:
                 latest_entry = device_history[-1]  # Get most recent entry
-                overall_grade = latest_entry.get("overall_grade", "GOOD")
+                overall_grade = latest_entry.get("overall_grade", "UNKNOWN")
                 return overall_grade.lower()
             
-            return "good"
-        except Exception as e:
+            return "unknown"
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as e:
             print(f"    ❌ Error reading hardware status for {device}: {e}")
-            return "good"
+            self.had_error = True
+            return "unknown"
 
     def get_device_log_counts(self, device):
         """Get log severity counts for a device from processed summary"""
@@ -1388,22 +1482,38 @@ Excellent: {ber_stats['excellent']}     Good: {ber_stats['good']}     Warnings: 
     def get_device_ber_status(self, device):
         """Get BER status for a device"""
         try:
-            ber_file = self.monitor_results / "ber-data" / f"{device}_ber.txt"
-            if not ber_file.exists():
-                return "good"
-                
-            with open(ber_file, 'r') as f:
-                ber_data = f.read()
-            
-            # Simple BER check - look for high error rates
-            if re.search(r'ERROR|CRITICAL|HIGH.*ERROR', ber_data, re.IGNORECASE):
-                return "critical"
-            elif re.search(r'WARNING|WARN', ber_data, re.IGNORECASE):
-                return "warnings"
-            
-            return "good"
-        except:
-            return "good"
+            history_file = self.monitor_results / "ber_history.json"
+            if not history_file.exists():
+                return "unknown"
+            payload = json.loads(history_file.read_text(encoding="utf-8"))
+            current = payload.get("current_ber_stats", {})
+            if not isinstance(current, dict):
+                raise ValueError("current_ber_stats must be an object")
+            grades = []
+            for port_name, port_stats in current.items():
+                if (not isinstance(port_name, str) or
+                        port_name.split(":", 1)[0] != device or
+                        not isinstance(port_stats, dict)):
+                    continue
+                grade = str(
+                    port_stats.get("status")
+                    or port_stats.get("effective_grade")
+                    or port_stats.get("grade")
+                    or "unknown"
+                ).lower()
+                grades.append(grade)
+            if not grades:
+                return "unknown"
+            priority = {
+                "critical": 4, "warning": 3, "warnings": 3,
+                "unknown": 2, "good": 1, "excellent": 0,
+            }
+            result = max(grades, key=lambda value: priority.get(value, 2))
+            return "warnings" if result == "warning" else result
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            print(f"    ❌ Error reading BER status for {device}: {exc}")
+            self.had_error = True
+            return "unknown"
 
     def get_device_flap_status(self, device):
         """Get link flap status for a device from processed summary"""
@@ -1428,32 +1538,42 @@ Excellent: {ber_stats['excellent']}     Good: {ber_stats['good']}     Warnings: 
             # Read from processed optical_history.json
             optical_history_file = self.monitor_results / "optical_history.json"
             if not optical_history_file.exists():
-                return "excellent"  # Default to healthy if no data
+                return "unknown"
                 
             with open(optical_history_file, 'r') as f:
                 optical_data = json.load(f)
-            
-            # Get optical stats for this device
-            device_optical = optical_data.get(device, {})
-            if device_optical:
-                current_stats = device_optical.get("current_stats", {})
-                
-                # Check for critical optical issues
-                critical_ports = len(current_stats.get("critical_ports", []))
-                warning_ports = len(current_stats.get("warning_ports", []))
-                good_ports = len(current_stats.get("good_ports", []))
-                excellent_ports = len(current_stats.get("excellent_ports", []))
-                
-                if critical_ports > 0:
-                    return "critical"
-                elif warning_ports > 0:
-                    return "warnings"
-                elif good_ports > 0:
-                    return "good"
-            
-            return "excellent"
-        except:
-            return "excellent"
+
+            current_stats = optical_data.get("current_optical_stats", {})
+            if not isinstance(current_stats, dict):
+                raise ValueError("current_optical_stats must be an object")
+            health_values = []
+            for port_name, stats in current_stats.items():
+                if (not isinstance(port_name, str) or
+                        port_name.split(":", 1)[0] != device or
+                        not isinstance(stats, dict)):
+                    continue
+                health_values.append(
+                    str(stats.get("health_status", "unknown")).lower()
+                )
+            if not health_values:
+                return "unknown"
+            priority = {
+                "critical": 6, "down": 6, "warning": 5,
+                "unplugged": 4, "unknown": 3, "good": 2,
+                "excellent": 1,
+            }
+            result = max(
+                health_values, key=lambda value: priority.get(value, 3)
+            )
+            if result == "warning":
+                return "warnings"
+            if result in {"down", "unplugged"}:
+                return "critical"
+            return result
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            print(f"    ❌ Error reading optical status for {device}: {exc}")
+            self.had_error = True
+            return "unknown"
 
     def analyze_lldp_topology(self):
         """Analyze LLDP topology data like the web frontend does"""
@@ -1559,46 +1679,93 @@ Excellent: {ber_stats['excellent']}     Good: {ber_stats['good']}     Warnings: 
             with open(html_file, 'r', encoding='utf-8') as f:
                 content = f.read()
 
-            if 'data-collection-status="unavailable"' in content:
+            collection_status = (
+                self.extract_attribute_value(
+                    content, "data-collection-status"
+                ) or "current"
+            ).lower()
+            if collection_status == "unavailable":
                 print(
                     f"    ❌ {html_filename} has no current device telemetry"
                 )
                 self.had_error = True
                 return {}
-            
-            # Extract numbers from specific HTML element IDs (JavaScript logic)
+
+            expected = self.extract_attribute_int(
+                content, "data-coverage-expected"
+            )
+            if expected is None:
+                expected = self.extract_attribute_int(
+                    content, "data-expected-devices"
+                )
+            current = self.extract_attribute_int(
+                content, "data-coverage-current"
+            )
+            if current is None:
+                current = self.extract_attribute_int(
+                    content, "data-current-devices"
+                )
+            coverage_partial = (
+                self.extract_attribute_value(
+                    content, "data-coverage-partial"
+                ) or ""
+            ).lower() == "true"
+            if collection_status == "partial":
+                coverage_partial = True
+            if expected is not None and current is not None and current < expected:
+                coverage_partial = True
+
+            # Extract numbers from stable element IDs and hidden metadata.  The
+            # metadata does not change the report layout; it prevents an
+            # unreachable or partially collected domain being read as healthy.
             stats = {}
+            required_metrics = []
             
             if "hardware" in html_filename:
-                # Hardware stats from element IDs
                 excellent = self.extract_element_value(content, 'excellent-devices')
                 good = self.extract_element_value(content, 'good-devices')
                 warnings = self.extract_element_value(content, 'warning-devices')
                 critical = self.extract_element_value(content, 'critical-devices')
+                unknown = self.extract_attribute_int(
+                    content, 'data-unknown-devices'
+                )
+                if unknown is None:
+                    unknown = 0
                 
                 stats = {
                     "excellent": excellent,
                     "good": good,
                     "warnings": warnings,
-                    "critical": critical
+                    "critical": critical,
+                    "unknown": unknown,
                 }
+                required_metrics = ["excellent", "good", "warnings", "critical"]
                 
             elif "optical" in html_filename:
-                # Optical stats from element IDs
                 excellent = self.extract_element_value(content, 'excellent-ports')
                 good = self.extract_element_value(content, 'good-ports')
                 warnings = self.extract_element_value(content, 'warning-ports')
                 critical = self.extract_element_value(content, 'critical-ports')
+                total = self.extract_element_value(content, 'total-ports')
+                known = [excellent, good, warnings, critical]
+                unknown = (
+                    max(total - sum(known), 0)
+                    if total is not None and all(value is not None for value in known)
+                    else None
+                )
                 
                 stats = {
                     "excellent": excellent,
                     "good": good,
                     "warnings": warnings,
-                    "critical": critical
+                    "critical": critical,
+                    "unknown": unknown,
                 }
+                required_metrics = [
+                    "excellent", "good", "warnings", "critical", "unknown"
+                ]
                 
             elif "ber" in html_filename:
-                # BER stats from element IDs
                 excellent = self.extract_element_value(content, 'excellent-ports')
                 good = self.extract_element_value(content, 'good-ports')
                 warnings = self.extract_element_value(content, 'warning-ports')
@@ -1612,34 +1779,73 @@ Excellent: {ber_stats['excellent']}     Good: {ber_stats['good']}     Warnings: 
                     "critical": critical,
                     "unknown": unknown,
                 }
+                required_metrics = [
+                    "excellent", "good", "warnings", "critical", "unknown"
+                ]
                 
             elif "link-flap" in html_filename:
-                # Flap stats from element IDs
                 stable = self.extract_element_value(content, 'stable-ports')
                 problematic = self.extract_element_value(content, 'problematic-ports')
+                warnings = self.extract_attribute_int(
+                    content, 'data-warning-ports'
+                )
+                critical = self.extract_attribute_int(
+                    content, 'data-critical-ports'
+                )
+                if warnings is None and critical is None:
+                    # Legacy reports had a single problematic bucket.
+                    warnings, critical = 0, problematic
                 
                 stats = {
                     "stable": stable,
-                    "warnings": 0,  # Flap doesn't have warnings
-                    "critical": problematic
+                    "warnings": warnings,
+                    "critical": critical,
                 }
+                required_metrics = ["stable", "warnings", "critical"]
                 
             elif "bgp" in html_filename:
-                # BGP stats from element IDs
                 established = self.extract_element_value(content, 'established-neighbors')
                 down = self.extract_element_value(content, 'down-neighbors')
                 stale = self.extract_element_value(content, 'stale-devices')
                 unknown = self.extract_element_value(content, 'unknown-devices')
+                warnings = self.extract_attribute_int(
+                    content, 'data-warning-neighbors'
+                )
+                critical = self.extract_attribute_int(
+                    content, 'data-critical-neighbors'
+                )
+                if warnings is None and critical is None:
+                    warnings, critical = 0, down
+                bgp_current = self.extract_attribute_int(
+                    content, 'data-current-bgp-devices'
+                )
+                evpn_current = self.extract_attribute_int(
+                    content, 'data-current-evpn-devices'
+                )
+                if expected is not None:
+                    available_counts = [
+                        value for value in (bgp_current, evpn_current)
+                        if value is not None
+                    ]
+                    if available_counts:
+                        current = min(available_counts)
+                        coverage_partial = coverage_partial or current < expected
                 
                 stats = {
                     "established": established,
                     "down": down,
+                    "warnings": warnings,
+                    "critical": critical,
                     "stale": stale,
-                    "unknown": unknown
+                    "unknown": unknown,
                 }
+                required_metrics = [
+                    "established", "down", "warnings", "critical",
+                    "stale", "unknown",
+                ]
 
             missing_metrics = [
-                name for name, value in stats.items() if value is None
+                name for name in required_metrics if stats.get(name) is None
             ]
             if not stats or missing_metrics:
                 if missing_metrics:
@@ -1647,12 +1853,36 @@ Excellent: {ber_stats['excellent']}     Good: {ber_stats['good']}     Warnings: 
                         f"    ❌ Missing metrics in {html_filename}: "
                         f"{', '.join(missing_metrics)}"
                     )
+                self.had_error = True
                 return {}
+            stats.update({
+                "collection_status": collection_status,
+                "coverage_partial": coverage_partial,
+                "coverage_expected": expected,
+                "coverage_current": current,
+            })
             return stats
             
         except Exception as e:
             print(f"    ❌ Error reading stats from {html_filename}: {e}")
+            self.had_error = True
             return {}
+
+    def extract_attribute_value(self, html_content, attribute):
+        """Return one quoted machine-readable HTML attribute value."""
+        try:
+            pattern = rf'\b{re.escape(attribute)}="([^"]*)"'
+            match = re.search(pattern, html_content, re.IGNORECASE)
+            return match.group(1) if match else None
+        except (TypeError, re.error):
+            return None
+
+    def extract_attribute_int(self, html_content, attribute):
+        """Return a non-negative integer HTML attribute, or None."""
+        value = self.extract_attribute_value(html_content, attribute)
+        if value is None or not re.fullmatch(r'\d+', value.strip()):
+            return None
+        return int(value)
 
     def extract_element_value(self, html_content, element_id):
         """Extract numeric value from HTML element by ID"""
@@ -1684,19 +1914,42 @@ Excellent: {ber_stats['excellent']}     Good: {ber_stats['good']}     Warnings: 
             totals = log_data.get("totals")
             required = ("critical", "warning", "error", "info")
             if not isinstance(totals, dict) or any(
-                    key not in totals or not isinstance(totals[key], (int, float))
+                    key not in totals
+                    or isinstance(totals[key], bool)
+                    or not isinstance(totals[key], (int, float))
+                    or totals[key] < 0
                     for key in required):
                 print("    ❌ log_summary.json has incomplete totals")
+                self.had_error = True
+                return {}
+            coverage = log_data.get("coverage", {})
+            if coverage is None:
+                coverage = {}
+            if not isinstance(coverage, dict):
+                print("    ❌ log_summary.json has invalid coverage metadata")
+                self.had_error = True
+                return {}
+            expected_devices = coverage.get("expected_devices", [])
+            current_devices = coverage.get("current_devices", [])
+            if (not isinstance(expected_devices, list) or
+                    not isinstance(current_devices, list)):
+                print("    ❌ log_summary.json has invalid coverage device lists")
+                self.had_error = True
                 return {}
             return {
                 "critical": totals["critical"],
                 "warnings": totals["warning"],
                 "errors": totals["error"],
-                "info": totals["info"]
+                "info": totals["info"],
+                "collection_status": "current",
+                "coverage_partial": bool(coverage.get("partial", False)),
+                "coverage_expected": len(expected_devices),
+                "coverage_current": len(current_devices),
             }
             
-        except Exception as e:
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as e:
             print(f"    ❌ Error reading log stats from JSON: {e}")
+            self.had_error = True
             return {}
 
     def get_lldp_stats_from_ini(self):

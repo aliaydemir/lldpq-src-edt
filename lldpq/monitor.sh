@@ -47,7 +47,7 @@ normalize_bool() {
 
 # Parse flags
 SKIP_OPTICAL="${SKIP_OPTICAL:-false}"
-SKIP_L1="${SKIP_L1:-false}"
+SKIP_L1="${SKIP_L1:-true}"
 while getopts "s" opt; do
     case $opt in
         s) SKIP_OPTICAL=true ;;

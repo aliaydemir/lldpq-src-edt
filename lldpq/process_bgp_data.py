@@ -219,7 +219,11 @@ def process_bgp_data_files(data_dir="monitor-results/bgp-data"):
                 continue
             
             # Update BGP analyzer
-            bgp_analyzer.update_bgp_stats(hostname, bgp_data)
+            bgp_analyzer.update_bgp_stats(
+                hostname,
+                bgp_data,
+                previous_current_stats.get(hostname),
+            )
             bgp_analyzer.current_bgp_stats[hostname].update({
                 "data_status": "current",
                 "collection_checked_at": datetime.now().isoformat(),

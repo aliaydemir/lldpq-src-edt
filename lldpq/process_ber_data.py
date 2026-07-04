@@ -367,7 +367,7 @@ def process_ber_data_files(data_dir="monitor-results/ber-data"):
     summary = ber_analyzer.get_ber_summary()
     anomalies = ber_analyzer.detect_ber_anomalies()
     
-    print(f"\nBER Analysis Summary:")
+    print("\nLink Error / BER Analysis Summary:")
     print(f"  Total devices processed: {processed_devices}")
     print(f"  Total interfaces analyzed: {total_interfaces_processed}")
     print(f"  Excellent quality: {len(summary['excellent_ports'])}")
@@ -379,7 +379,7 @@ def process_ber_data_files(data_dir="monitor-results/ber-data"):
     
     # Show critical issues
     if summary['critical_ports']:
-        print(f"\nCritical BER Issues (Immediate Attention):")
+        print("\nCritical Link Error Issues (Immediate Attention):")
         for port_info in summary['critical_ports'][:5]:  # Show first 5
             port = port_info['port']
             ber_value = port_info['ber_value']

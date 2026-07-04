@@ -2151,7 +2151,7 @@ render_runtime_tuning_config \
     "${LLDPQ_CRON:-*/10 * * * *}" \
     "${GETCONF_CRON:-0 */12 * * *}" \
     "${SKIP_OPTICAL:-false}" \
-    "${SKIP_L1:-false}" \
+    "${SKIP_L1:-true}" \
     "${MONITOR_MAX_PARALLEL:-100}" \
     "${LLDP_MAX_PARALLEL:-100}" \
     "${ASSETS_MAX_PARALLEL:-100}" \
