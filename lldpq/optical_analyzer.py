@@ -635,8 +635,8 @@ class OpticalAnalyzer:
                 anomalies.append({
                     "port": port_name,
                     "type": "OPTICAL_LINK_DOWN",
-                    "severity": "critical",
-                    "message": "Optical link is down",
+                    "severity": "warning",
+                    "message": "No receive light on the selected active optical lane",
                     "action": "Check fiber connection, peer state, and transceiver",
                     "rx_power_dbm": stats.get('rx_power_dbm')
                 })
@@ -646,7 +646,7 @@ class OpticalAnalyzer:
                 anomalies.append({
                     "port": port_name,
                     "type": "OPTICAL_MODULE_UNPLUGGED",
-                    "severity": "critical",
+                    "severity": "warning",
                     "message": "Optical module is unplugged",
                     "action": "Install or reseat the expected optical module"
                 })
@@ -804,7 +804,7 @@ class OpticalAnalyzer:
         .card-good {{ border-left-color: #8bc34a; }}
         .card-warning {{ border-left-color: #ff9800; }}
         .card-critical {{ border-left-color: #f44336; }}
-        .card-down {{ border-left-color: #ef5350; }}
+        .card-down {{ border-left-color: #ff9800; }}
         .card-info {{ border-left-color: #4fc3f7; }}
         .metric {{ font-size: 22px; font-weight: bold; color: #d4d4d4; }}
         .metric-label {{ font-size: 12px; color: #888; margin-top: 4px; }}
@@ -817,7 +817,7 @@ class OpticalAnalyzer:
         .optical-good {{ color: #8bc34a; font-weight: bold; }}
         .optical-warning {{ color: #ff9800; font-weight: bold; }}
         .optical-critical {{ color: #f44336; font-weight: bold; }}
-        .optical-down {{ color: #ef5350; font-weight: bold; }}
+        .optical-down {{ color: #ff9800; font-weight: bold; }}
         .optical-unknown {{ color: #888; }}
         .optical-table {{ width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }}
         .optical-table th, .optical-table td {{ border: 1px solid #404040; padding: 10px 12px; text-align: left; }}
@@ -991,8 +991,12 @@ class OpticalAnalyzer:
                 badge_class = 'badge badge-green'
             elif health == 'warning':
                 badge_class = 'badge badge-orange'
-            elif health in ('critical', 'down', 'unplugged'):
+            elif health == 'critical':
                 badge_class = 'badge badge-red'
+            elif health == 'down':
+                badge_class = 'badge badge-orange'
+            elif health == 'unplugged':
+                badge_class = 'badge badge-gray'
             else:
                 badge_class = 'badge badge-gray'
 
@@ -1028,12 +1032,13 @@ class OpticalAnalyzer:
                     <tr><th>Parameter</th><th>Min Threshold</th><th>Max Threshold</th><th>Description</th></tr>
                 </thead>
                 <tbody>
-                    <tr><td>RX Power</td><td>{self.thresholds['rx_power_min_dbm']} dBm</td><td>{self.thresholds['rx_power_critical_high_dbm']} dBm</td><td>Received optical power range (warning above {self.thresholds['rx_power_warning_high_dbm']} dBm)</td></tr>
+                    <tr><td>RX Power</td><td>{self.thresholds['rx_power_min_dbm']} dBm</td><td>{self.thresholds['rx_power_critical_high_dbm']} dBm</td><td>Received power on active optical lanes only (warning above {self.thresholds['rx_power_warning_high_dbm']} dBm); media-declared inactive placeholder channels are excluded</td></tr>
                     <tr><td>TX Power</td><td>{self.thresholds['tx_power_min_dbm']} dBm</td><td>{self.thresholds['tx_power_max_dbm']} dBm</td><td>Transmitted optical power range</td></tr>
                     <tr><td>Temperature</td><td>{self.thresholds['temperature_min_c']}°C</td><td>{self.thresholds['temperature_max_c']}°C</td><td>SFP/QSFP operating temperature</td></tr>
                     <tr><td>Voltage</td><td>{self.thresholds['voltage_min_v']}V</td><td>{self.thresholds['voltage_max_v']}V</td><td>Supply voltage range</td></tr>
                     <tr><td>Link Margin</td><td>{self.thresholds['link_margin_min_db']} dB</td><td>-</td><td>Minimum margin from notifications.yaml; based on the current generic RX sensitivity until module-specific limits are collected</td></tr>
                     <tr><td>Bias Current</td><td>-</td><td>{self.thresholds['bias_current_max_ma']} mA</td><td>Maximum laser bias current</td></tr>
+                    <tr><td>Down</td><td>-</td><td>{self.DARK_POWER_DBM} dBm RX</td><td>No receive light on every selected active optical lane; reported separately from Critical threshold violations</td></tr>
                 </tbody>
             </table>
         </div>

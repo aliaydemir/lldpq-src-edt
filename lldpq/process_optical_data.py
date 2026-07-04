@@ -276,6 +276,8 @@ def process_optical_data_files(data_dir="monitor-results/optical-data"):
     print(f"  Good health: {len(summary['good_ports'])}")
     print(f"  Warning level: {len(summary['warning_ports'])}")
     print(f"  Critical issues: {len(summary['critical_ports'])}")
+    print(f"  No receive light / down: {len(summary['down_ports'])}")
+    print(f"  Modules unplugged: {len(summary['unplugged_ports'])}")
     print(f"  Diagnostics unavailable: {len(summary['unknown_ports'])}")
     print(f"  Anomalies detected: {len(anomalies)}")
 
