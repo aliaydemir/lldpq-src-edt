@@ -501,6 +501,8 @@ class OpticalAnalyzer:
             "good_ports": [],
             "warning_ports": [],
             "critical_ports": [],
+            "down_ports": [],
+            "unplugged_ports": [],
             "unknown_ports": []
         }
 
@@ -528,9 +530,15 @@ class OpticalAnalyzer:
                 summary["good_ports"].append(port_info)
             elif health_enum == OpticalHealth.WARNING:
                 summary["warning_ports"].append(port_info)
-            elif health_enum in (OpticalHealth.CRITICAL, OpticalHealth.DOWN,
-                                  OpticalHealth.UNPLUGGED):
+            elif health_enum == OpticalHealth.CRITICAL:
                 summary["critical_ports"].append(port_info)
+            elif health_enum == OpticalHealth.DOWN:
+                summary["down_ports"].append(port_info)
+            elif health_enum == OpticalHealth.UNPLUGGED:
+                # An absent module is an availability/inventory state, not a
+                # failed optical measurement.  Keep it visible in the table
+                # without inflating either Critical or Down.
+                summary["unplugged_ports"].append(port_info)
             else:
                 summary["unknown_ports"].append(port_info)
 
@@ -540,6 +548,8 @@ class OpticalAnalyzer:
                                  len(summary["good_ports"]) +
                                  len(summary["warning_ports"]) +
                                  len(summary["critical_ports"]) +
+                                 len(summary["down_ports"]) +
+                                 len(summary["unplugged_ports"]) +
                                  len(summary["unknown_ports"]))
 
         return summary
@@ -724,6 +734,7 @@ class OpticalAnalyzer:
         .card-good {{ border-left-color: #8bc34a; }}
         .card-warning {{ border-left-color: #ff9800; }}
         .card-critical {{ border-left-color: #f44336; }}
+        .card-down {{ border-left-color: #ef5350; }}
         .card-info {{ border-left-color: #4fc3f7; }}
         .metric {{ font-size: 22px; font-weight: bold; color: #d4d4d4; }}
         .metric-label {{ font-size: 12px; color: #888; margin-top: 4px; }}
@@ -736,6 +747,7 @@ class OpticalAnalyzer:
         .optical-good {{ color: #8bc34a; font-weight: bold; }}
         .optical-warning {{ color: #ff9800; font-weight: bold; }}
         .optical-critical {{ color: #f44336; font-weight: bold; }}
+        .optical-down {{ color: #ef5350; font-weight: bold; }}
         .optical-unknown {{ color: #888; }}
         .optical-table {{ width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }}
         .optical-table th, .optical-table td {{ border: 1px solid #404040; padding: 10px 12px; text-align: left; }}
@@ -830,6 +842,10 @@ class OpticalAnalyzer:
                     <div class="metric optical-critical" id="critical-ports">{len(summary['critical_ports'])}</div>
                     <div class="metric-label">Critical</div>
                 </div>
+                <div class="summary-card card-down" id="down-card">
+                    <div class="metric optical-down" id="down-ports">{len(summary['down_ports'])}</div>
+                    <div class="metric-label">Down</div>
+                </div>
             </div>
         </div>
     </div>
@@ -838,7 +854,8 @@ class OpticalAnalyzer:
 
         # Create one unified table for all monitored ports.  UNKNOWN rows are
         # retained so missing diagnostics cannot improve the visible coverage.
-        all_ports = (summary['critical_ports'] + summary['warning_ports'] +
+        all_ports = (summary['critical_ports'] + summary['down_ports'] +
+                     summary['warning_ports'] + summary['unplugged_ports'] +
                      summary['unknown_ports'] + summary['good_ports'] +
                      summary['excellent_ports'])
 
@@ -1010,6 +1027,12 @@ class OpticalAnalyzer:
                     filterPorts('CRITICAL');
                 }
             });
+
+            document.getElementById('down-card').addEventListener('click', function() {
+                if (parseInt(document.getElementById('down-ports').textContent) > 0) {
+                    filterPorts('DOWN');
+                }
+            });
         }
 
         function filterPorts(filterType) {
@@ -1044,11 +1067,13 @@ class OpticalAnalyzer:
                 filterText = `Showing ${filteredRows.length} Warning Ports`;
                 document.getElementById('warning-card').classList.add('active');
             } else if (filterType === 'CRITICAL') {
-                filteredRows = allRows.filter(row =>
-                    ['critical', 'down', 'unplugged'].includes(row.dataset.health)
-                );
+                filteredRows = allRows.filter(row => row.dataset.health === 'critical');
                 filterText = `Showing ${filteredRows.length} Critical Ports`;
                 document.getElementById('critical-card').classList.add('active');
+            } else if (filterType === 'DOWN') {
+                filteredRows = allRows.filter(row => row.dataset.health === 'down');
+                filterText = `Showing ${filteredRows.length} Down Ports`;
+                document.getElementById('down-card').classList.add('active');
             } else if (filterType === 'TOTAL') {
                 filteredRows = allRows;
                 document.getElementById('total-ports-card').classList.add('active');
@@ -1268,12 +1293,12 @@ class OpticalAnalyzer:
         function compareOpticalHealth(a, b) {
             const priority = {
                 'CRITICAL': 0,
-                'DOWN': 0,
-                'UNPLUGGED': 0,
-                'WARNING': 1,
-                'GOOD': 2,
-                'EXCELLENT': 3,
-                'UNKNOWN': 4
+                'DOWN': 1,
+                'UNPLUGGED': 2,
+                'WARNING': 3,
+                'GOOD': 4,
+                'EXCELLENT': 5,
+                'UNKNOWN': 6
             };
 
             return (priority[a] ?? 5) - (priority[b] ?? 5);
@@ -1399,6 +1424,7 @@ class OpticalAnalyzer:
                 csvContent += `# Good: ${document.getElementById('good-ports').textContent}\\n`;
                 csvContent += `# Warning: ${document.getElementById('warning-ports').textContent}\\n`;
                 csvContent += `# Critical: ${document.getElementById('critical-ports').textContent}\\n`;
+                csvContent += `# Down: ${document.getElementById('down-ports').textContent}\\n`;
                 csvContent += `#\\n`;
 
                 // Process each visible row
