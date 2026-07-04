@@ -525,7 +525,7 @@
             "Rate-limited to roughly once every 30&nbsp;minutes; it runs in the background and results appear here after it finishes.<br><br>" +
             "Run it now?</span>";
         lldpqConfirm('Run Transceiver Analysis', message, function () {
-            fetch('/trigger-transceiver.sh', { method: 'POST', credentials: 'same-origin' })
+            fetch('/trigger-transceiver', { method: 'POST', credentials: 'same-origin' })
                 .then(function (r) { return r.json().catch(function () { return {}; }); })
                 .then(function (d) {
                     if (d && d.status === 'success') {
