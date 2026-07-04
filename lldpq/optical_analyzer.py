@@ -73,6 +73,20 @@ class OpticalAnalyzer:
     # healthy-looking average.
     DARK_POWER_DBM = -35.0
     NEGATIVE_INFINITY_FLOOR_DBM = -40.0
+    # Match the optical media standard reported by common ethtool/NVUE
+    # variants, for example ``100G Base-DR`` and ``100GBASE-DR``.  The lane
+    # suffix describes optical lanes (DR4/SR4/etc.), not the host electrical
+    # width of the pluggable module.
+    OPTICAL_MEDIA_STANDARD_RE = re.compile(
+        r'\b\d+\s*G(?:\s*[-_ ]?\s*BASE)?\s*[-_ ]*'
+        r'(?P<family>DR|FR|SR|LR|ER|ZR|PSM|CWDM)'
+        r'(?P<lanes>\d+)?\b',
+        re.IGNORECASE,
+    )
+    # DR and FR without a numeric suffix are defined as a single optical
+    # lane.  Other families are only treated as single-lane when the media
+    # string explicitly says so (LR1/ER1/ZR1, for example).
+    UNNUMBERED_SINGLE_LANE_MEDIA = frozenset({'DR', 'FR'})
 
     def __init__(self, data_dir="monitor-results"):
         self.data_dir = data_dir
@@ -260,8 +274,64 @@ class OpticalAnalyzer:
         self._set_lane_readings(optical_params, 'rx_power', rx_readings)
         self._set_lane_readings(optical_params, 'tx_power', tx_readings)
         self._set_lane_readings(optical_params, 'bias_current', bias_readings)
+        self._select_declared_optical_lanes(optical_data, optical_params)
 
         return optical_params
+
+    def _declared_optical_lane_count(self, optical_data: str) -> Optional[int]:
+        """Return an unambiguous optical lane count from module media text.
+
+        A QSFP host can expose four diagnostic channels even when its optical
+        media is single-lane PAM4.  In that case unused channels are commonly
+        rendered as ``-40 dBm``/``0 mA`` placeholders.  Conversely, standards
+        such as DR4, SR4 and LR4 have genuinely independent optical lanes and
+        must retain worst-lane analysis.
+
+        If the raw block advertises conflicting media standards, return
+        ``None`` rather than guessing and potentially hiding a failed lane.
+        """
+        lane_counts = set()
+        for match in self.OPTICAL_MEDIA_STANDARD_RE.finditer(optical_data):
+            family = match.group('family').upper()
+            suffix = match.group('lanes')
+            if suffix is not None:
+                count = int(suffix)
+                if count > 0:
+                    lane_counts.add(count)
+            elif family in self.UNNUMBERED_SINGLE_LANE_MEDIA:
+                lane_counts.add(1)
+
+        if len(lane_counts) == 1:
+            return next(iter(lane_counts))
+        return None
+
+    def _select_declared_optical_lanes(
+            self, optical_data: str,
+            optical_params: Dict[str, Any]) -> None:
+        """Drop driver placeholder channels for declared single-lane media.
+
+        Filtering is intentionally metadata-driven.  A dark reading or zero
+        bias alone is never considered proof that a channel is unused.  Lane
+        1 must also be present; otherwise all readings are preserved so an
+        unfamiliar channel numbering scheme cannot mask a fault.
+        """
+        optical_lane_count = self._declared_optical_lane_count(optical_data)
+        optical_params['_declared_optical_lane_count'] = optical_lane_count
+        if optical_lane_count != 1:
+            return
+
+        for metric in ('rx_power', 'tx_power', 'bias_current'):
+            lanes_key = (f'_{metric}_lanes_dbm' if metric != 'bias_current'
+                         else '_bias_current_lanes_ma')
+            ids_key = f'_{metric}_lane_ids'
+            values = optical_params.get(lanes_key) or []
+            lane_ids = optical_params.get(ids_key) or []
+            if len(values) <= 1:
+                continue
+            readings = list(zip(lane_ids, values))
+            lane_one = [item for item in readings if item[0] == 1]
+            if lane_one:
+                self._set_lane_readings(optical_params, metric, lane_one)
 
     def _lane_risk(self, metric: str, value: float) -> tuple:
         """Return a sortable risk tuple used to select the displayed lane."""

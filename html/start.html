@@ -166,6 +166,10 @@
             color: #f44336;
         }
         
+        .tooltip-row.is-warning {
+            color: #ff9800;
+        }
+        
         .tooltip-row .source {
             color: #888;
         }
@@ -672,6 +676,10 @@
                     <div class="card-value status-warning" id="optical-warning">0</div>
                     <div class="card-label">Warning</div>
                 </div>
+                <div class="summary-card card-warning" onclick="window.location.href='monitor-results/optical-analysis.html'">
+                    <div class="card-value status-warning" id="optical-down">0</div>
+                    <div class="card-label">Down</div>
+                </div>
                 <div class="summary-card card-critical" onclick="window.location.href='monitor-results/optical-analysis.html'">
                     <div class="card-value status-critical" id="optical-critical">187</div>
                     <div class="card-label">Critical</div>
@@ -1137,15 +1145,17 @@
                     const goodElement = doc.querySelector('#good-ports');
                     const warningElement = doc.querySelector('#warning-ports');
                     const criticalElement = doc.querySelector('#critical-ports');
+                    const downElement = doc.querySelector('#down-ports');
                     
                     summaryData.totalPorts = totalPortsElement ? parseInt(totalPortsElement.textContent) : 0;
                     summaryData.excellent = excellentElement ? parseInt(excellentElement.textContent) : 0;
                     summaryData.good = goodElement ? parseInt(goodElement.textContent) : 0;
                     summaryData.warning = warningElement ? parseInt(warningElement.textContent) : 0;
                     summaryData.critical = criticalElement ? parseInt(criticalElement.textContent) : 0;
+                    summaryData.down = downElement ? parseInt(downElement.textContent) : 0;
                     summaryData.unknown = Math.max(0, summaryData.totalPorts -
                         summaryData.excellent - summaryData.good -
-                        summaryData.warning - summaryData.critical);
+                        summaryData.warning - summaryData.critical - summaryData.down);
                     if (summaryData.unknown > 0) summaryData.coveragePartial = true;
                     
                     // Count unique devices from table for optical (if needed)
@@ -1374,6 +1384,7 @@
                 updateDashboardCard('optical-excellent', dashboardMetric(opticalData, opticalData.excellent));
                 updateDashboardCard('optical-good', dashboardMetric(opticalData, opticalData.good));
                 updateDashboardCard('optical-warning', dashboardMetric(opticalData, opticalData.warning));
+                updateDashboardCard('optical-down', dashboardMetric(opticalData, opticalData.down));
                 updateDashboardCard('optical-critical', dashboardMetric(opticalData, opticalData.critical));
 
                 updateDashboardCard('ber-total', dashboardMetric(berData, berData.totalPorts));
@@ -1454,6 +1465,7 @@
                 'BGP Failed': bgpData.failed || 0,
                 'Optical Critical': opticalData.critical || 0,
                 'Optical Warning': opticalData.warning || 0,
+                'Optical Down': opticalData.down || 0,
                 'BER Critical': berData.critical || 0,
                 'BER Warning': berData.warning || 0,
                 'Link Flaps': flapData.problematic || 0,
@@ -1471,10 +1483,18 @@
             const criticalIssues = Object.values(criticalBreakdown).reduce((a, b) => a + b, 0);
             
             // Build tooltip HTML
+            // Hard failures render red; advisory / warning-severity signals render yellow.
+            const CRITICAL_SOURCES = new Set([
+                'Assets Failed', 'LLDP Failed Ports', 'BGP Failed',
+                'Optical Critical', 'BER Critical', 'Link Flaps',
+                'Hardware Critical', 'Log Critical', 'Active IP Duplicates'
+            ]);
             let tooltipHtml = '<div class="tooltip-title">Open Issues Breakdown</div>';
             for (const [source, count] of Object.entries(criticalBreakdown)) {
-                const hasIssues = count > 0 ? 'has-issues' : '';
-                tooltipHtml += `<div class="tooltip-row ${hasIssues}"><span class="source">${source}</span><span class="count">${count}</span></div>`;
+                const severityClass = count > 0
+                    ? (CRITICAL_SOURCES.has(source) ? 'has-issues' : 'is-warning')
+                    : '';
+                tooltipHtml += `<div class="tooltip-row ${severityClass}"><span class="source">${source}</span><span class="count">${count}</span></div>`;
             }
             document.getElementById('critical-tooltip').innerHTML = tooltipHtml;
                 

@@ -1122,6 +1122,10 @@ class LLDPqAlerts:
             warning_issues.append(
                 f"Optical: {optical_stats['warnings']} ports with warnings"
             )
+        if optical_stats and optical_stats.get('down', 0) > 0:
+            warning_issues.append(
+                f"Optical: {optical_stats['down']} ports with no receive light/down state"
+            )
         if optical_stats and optical_stats.get('unknown', 0) > 0:
             warning_issues.append(
                 f"Optical: {optical_stats['unknown']} ports with unknown diagnostics"
@@ -1193,6 +1197,7 @@ class LLDPqAlerts:
             "skipped" if optical_skipped else
             f"{optical_stats['excellent']}:{optical_stats['good']}:"
             f"{optical_stats['warnings']}:{optical_stats['critical']}:"
+            f"{optical_stats.get('down', 0)}:"
             f"{optical_stats.get('unknown', 0)}:"
             f"{int(bool(optical_stats.get('coverage_partial')))}"
         )
@@ -1231,6 +1236,7 @@ class LLDPqAlerts:
                     f"Excellent: {optical_stats['excellent']}     "
                     f"Good: {optical_stats['good']}     "
                     f"Warning: {optical_stats['warnings']}     "
+                    f"Down: {optical_stats.get('down', 0)}     "
                     f"Critical: {optical_stats['critical']}"
                 )
             
@@ -1558,7 +1564,7 @@ Excellent: {ber_stats['excellent']}     Good: {ber_stats['good']}     Warnings: 
             if not health_values:
                 return "unknown"
             priority = {
-                "critical": 6, "down": 6, "warning": 5,
+                "critical": 6, "down": 5, "warning": 4,
                 "unplugged": 4, "unknown": 3, "good": 2,
                 "excellent": 1,
             }
@@ -1568,7 +1574,7 @@ Excellent: {ber_stats['excellent']}     Good: {ber_stats['good']}     Warnings: 
             if result == "warning":
                 return "warnings"
             if result in {"down", "unplugged"}:
-                return "critical"
+                return "warnings"
             return result
         except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
             print(f"    ❌ Error reading optical status for {device}: {exc}")
@@ -1748,8 +1754,13 @@ Excellent: {ber_stats['excellent']}     Good: {ber_stats['good']}     Warnings: 
                 good = self.extract_element_value(content, 'good-ports')
                 warnings = self.extract_element_value(content, 'warning-ports')
                 critical = self.extract_element_value(content, 'critical-ports')
+                down = self.extract_element_value(content, 'down-ports')
+                if down is None:
+                    # Backward compatibility with reports generated before
+                    # DOWN received its own summary card.
+                    down = 0
                 total = self.extract_element_value(content, 'total-ports')
-                known = [excellent, good, warnings, critical]
+                known = [excellent, good, warnings, critical, down]
                 unknown = (
                     max(total - sum(known), 0)
                     if total is not None and all(value is not None for value in known)
@@ -1761,6 +1772,7 @@ Excellent: {ber_stats['excellent']}     Good: {ber_stats['good']}     Warnings: 
                     "good": good,
                     "warnings": warnings,
                     "critical": critical,
+                    "down": down,
                     "unknown": unknown,
                 }
                 required_metrics = [
