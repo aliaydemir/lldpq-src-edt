@@ -46,3 +46,98 @@
         })
         .catch(function () { /* leave the button as-is */ });
 })();
+
+/*
+ * Shared monitoring-run state helpers.
+ *
+ * Analysis pages are last-known-good snapshots.  A trigger response only means
+ * that a collection was queued; it does not mean the new report is ready.  Keep
+ * the existing page layout and let page scripts wait for a new current manifest
+ * instead of blindly reloading after a fixed delay.
+ */
+(function () {
+    function noCacheUrl(path) {
+        return path + (path.indexOf('?') === -1 ? '?' : '&') + '_=' + Date.now();
+    }
+
+    function parseStateMarker(text) {
+        var result = {};
+        String(text || '').split(/\r?\n/).forEach(function (line) {
+            var index = line.indexOf('=');
+            if (index > 0) result[line.slice(0, index)] = line.slice(index + 1);
+        });
+        return result;
+    }
+
+    async function readPipelineState() {
+        var marker = null;
+        var manifest = null;
+        try {
+            var markerResponse = await fetch(noCacheUrl('/monitor-results/.lldpq-stale'), {
+                cache: 'no-store'
+            });
+            if (markerResponse.ok) marker = parseStateMarker(await markerResponse.text());
+        } catch (error) {}
+        try {
+            var manifestResponse = await fetch(noCacheUrl('/monitor-results/.lldpq-current.json'), {
+                cache: 'no-store'
+            });
+            if (manifestResponse.ok) manifest = await manifestResponse.json();
+        } catch (error) {}
+        return { marker: marker, manifest: manifest };
+    }
+
+    function manifestIdentity(manifest) {
+        if (!manifest || typeof manifest !== 'object') return '';
+        return String(manifest.pipeline_id || manifest.completed_at || '');
+    }
+
+    function delay(milliseconds) {
+        return new Promise(function (resolve) { setTimeout(resolve, milliseconds); });
+    }
+
+    window.lldpqReadPipelineState = readPipelineState;
+    window.lldpqCapturePipelineState = readPipelineState;
+    window.waitForLldpqAnalysisCompletion = async function (baseline, options) {
+        options = options || {};
+        var timeoutMs = Number(options.timeoutMs) || 15 * 60 * 1000;
+        var pollMs = Math.max(Number(options.pollMs) || 2000, 500);
+        var startedAt = Date.now();
+        var baselineIdentity = manifestIdentity(baseline && baseline.manifest);
+        var sawCollection = false;
+
+        while (Date.now() - startedAt < timeoutMs) {
+            var state = await readPipelineState();
+            var markerStatus = state.marker && state.marker.status;
+            if (markerStatus === 'collecting') sawCollection = true;
+            if (markerStatus === 'stale') {
+                throw new Error((state.marker && state.marker.reason) || 'Monitoring run failed');
+            }
+
+            var currentIdentity = manifestIdentity(state.manifest);
+            var manifestCurrent = state.manifest &&
+                state.manifest.status === 'current' &&
+                state.manifest.pipeline_complete === true;
+            var isNewManifest = currentIdentity && currentIdentity !== baselineIdentity;
+            if (!markerStatus && manifestCurrent && (isNewManifest || sawCollection || !baselineIdentity)) {
+                return state.manifest;
+            }
+            await delay(pollMs);
+        }
+        throw new Error('Monitoring run did not complete before the timeout');
+    };
+
+    // Preserve the current visual structure: reuse the existing timestamp line
+    // to state that its snapshot is LKG while a run is collecting or stale.
+    readPipelineState().then(function (state) {
+        var status = state.marker && state.marker.status;
+        if (status !== 'collecting' && status !== 'stale') return;
+        var timestamp = document.querySelector('.last-updated');
+        if (!timestamp) return;
+        var suffix = status === 'collecting'
+            ? ' — collection in progress; showing previous report'
+            : ' — latest collection failed; showing previous report';
+        if (timestamp.textContent.indexOf(suffix) === -1) timestamp.textContent += suffix;
+        document.body.setAttribute('data-pipeline-status', status);
+    }).catch(function () {});
+})();

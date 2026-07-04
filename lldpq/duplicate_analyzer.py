@@ -23,21 +23,9 @@ Copyright (c) 2024 LLDPq Project - MIT License
 import os
 import re
 import json
-import copy
+import html
 import time
-import tempfile
 from datetime import datetime, timezone
-from collection_freshness import (
-    asset_snapshot_is_authoritative,
-    asset_snapshot_is_valid,
-    is_current_collection,
-    max_data_age_seconds,
-    read_asset_snapshot,
-)
-try:
-    from duplicate_report import export_duplicate_report
-except ImportError:  # package-style imports used by some tests/tools
-    from .duplicate_report import export_duplicate_report
 
 try:
     from device_names import canonical
@@ -48,19 +36,14 @@ except Exception:
 MAC_RE = re.compile(r'(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}')
 IPV4_RE = re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b')
 SEQ_RE = re.compile(r'(\d+)\s*/\s*(\d+)\s*$')
-LOG_TS_RE = re.compile(
-    r'(?P<ts>'
-    r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+\-]\d{2}:?\d{2})'
-    r'|\d{4}/\d{2}/\d{2}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?'
-    r')'
+LOG_RE = re.compile(
+    r'(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[.\d]*[+\-]\d{2}:?\d{2})'
+    r'.*?VNI\s+(?P<vni>\d+):\s+MAC\s+(?P<mac>[0-9a-fA-F:]+)\s+IP\s+(?P<ip>\S+)\s+'
+    r'detected as duplicate.*?last VTEP\s+(?P<vtep>\S+)'
 )
-LOG_VNI_RE = re.compile(r'\bVNI\s+(\d+)\s*:', re.I)
-LOG_MAC_RE = re.compile(r'\bMAC\s+(' + MAC_RE.pattern + r')\b', re.I)
-LOG_IP_RE = re.compile(r'\bIP\s+(\S+)', re.I)
-LOG_VTEP_RE = re.compile(r'\b(?:last|from)\s+VTEP\s+(\S+)', re.I)
 
 # Severity thresholds
-ACTIVE_WINDOW_SEC = 3600       # compatibility cap; per-host DAD window is preferred
+ACTIVE_WINDOW_SEC = 3600       # a dup event within this window = actively flapping
 APIPA_CRITICAL = 50            # APIPA neighbours on one switch >= this = critical
 SEQ_WARN = 10                  # EVPN mobility seq >= this = the entry has moved at all (collection floor)
 # A single-MAC, single-location, non-climbing entry is only treated as a (past) duplicate if its
@@ -70,381 +53,110 @@ SEQ_STORM = 10000
 LOOP_MIN_MACS = 10             # >= this many MACs flapping between the SAME endpoint pair (no dup IP) = likely L2 loop
 STALE_AGE_SEC = 7 * 86400      # a quiesced dup whose EVPN sequence has not moved for this long = aged/stale
                                # (collapsed out of the main list; still available via the "aged" toggle)
-DEFAULT_DAD_MOVES = 5
-DEFAULT_DAD_WINDOW_SEC = 180
-SEQ_SAMPLE_TTL_SEC = 6 * 3600
-EVIDENCE_TTL_SEC = 6 * 3600
-LOG_EVIDENCE_TTL_SEC = 3600
-FUTURE_CLOCK_SKEW_SEC = 300
-STATE_VERSION = 2
-DUP_COVERAGE_SOURCES = {
-    "COLLECTION_TIMESTAMP", "VNI_MAP", "CONFIG", "SELF", "ARP_DUPLICATES",
-    "MAC_DUPLICATES", "FRR_LOG", "MAC_MOBILITY", "ARP_MOBILITY", "IFALIAS",
-}
-DUP_SAMPLE_META_SOURCES = {
-    "CONFIG", "SELF", "FRR_LOG", "MAC_MOBILITY", "ARP_MOBILITY",
-}
 
 
 def _parse_ts(s):
-    """Parse supported FRR timestamps into an aware UTC datetime, or ``None``.
-
-    Current Cumulus releases can log RFC3339 while older/default FRR file logs
-    use ``YYYY/MM/DD HH:MM:SS.ffffff``.  The latter has no offset; FRR systems
-    normally log it in UTC, so it is treated as UTC instead of producing a
-    naive datetime that cannot safely be compared with collection time.
-    """
+    """Parse an ISO8601 timestamp (with offset) into an aware datetime, or None."""
     try:
-        value = datetime.fromisoformat(s.replace("Z", "+00:00"))
-        if value.tzinfo is None:
-            value = value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
+        return datetime.fromisoformat(s)
     except Exception:
         pass
-    for fmt in ('%Y/%m/%d %H:%M:%S.%f', '%Y/%m/%d %H:%M:%S'):
-        try:
-            return datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
-        except Exception:
-            continue
-    return None
+    # Fallback: strip fractional seconds / normalise offset
+    try:
+        s2 = re.sub(r'\.\d+', '', s)
+        return datetime.strptime(s2, '%Y-%m-%dT%H:%M:%S%z')
+    except Exception:
+        return None
 
 
 class DuplicateAnalyzer:
     def __init__(self, data_dir="monitor-results"):
-        self.data_dir = os.path.abspath(data_dir)
-        self.dup_dir = os.path.join(self.data_dir, "dup-data")
+        self.data_dir = data_dir
+        self.dup_dir = os.path.join(data_dir, "dup-data")
         self.state_file = os.path.join(self.dup_dir, "dup_seq_state.json")
         os.makedirs(self.dup_dir, exist_ok=True)
 
-        self.analysis_epoch = time.time()
-        self.analysis_now = datetime.fromtimestamp(
-            self.analysis_epoch, timezone.utc
-        )
-        self.collection_times = {}
-        self.collection_meta = {}
-
-        # VLAN is local to a VTEP.  VNI is the fabric-wide broadcast-domain
-        # identity, so never use one global VLAN map as an incident key.
-        self.vni_to_vlan = {}          # compatibility: only unambiguous VNI -> VLAN
-        self.host_vni_to_vlan = {}     # (host, vni) -> vlan
-        self.host_vlan_to_vnis = {}    # (host, vlan) -> set(vni)
-        self.host_vni_to_vrf = {}      # (host, vni) -> tenant VRF
-        self.vni_vlans = {}            # vni -> set(local VLANs)
-        self.vni_vrfs = {}             # vni -> set(tenant VRFs)
+        self.vni_to_vlan = {}          # vni(str) -> vlan(str)
         self.dup_config = {}           # host -> {'enabled': bool, 'max_moves': int, 'time': int}
-        self.ip_dups = {}              # (scope, ip) -> record; scope is vni:<id>/vlan:<id>
-        self.mac_dups = {}             # (scope, mac) -> record
+        self.ip_dups = {}              # (vlan, ip) -> record
+        self.mac_dups = {}             # (vlan, mac) -> record
         self.apipa = {}                # host -> {'total': int, 'per_vlan': {vlan: count}}
-        self.apipa_claims = {}         # (scope, ip, mac) -> unique claim + observations
-        self.fdb_local = {}            # (scope, mac) -> {host -> set(ports)}
+        self.fdb_local = {}            # (vlan, mac) -> {host -> port}
         self.if_desc = {}              # (host, port) -> interface description (ifalias)
-        self.arp_pairs = {}            # (scope, ip) -> {mac -> observation records}
-        self.mac_mob = {}              # (scope, mac) -> aggregated per-observer mobility
-        self.ip_mob = {}               # (scope, ip)  -> aggregated per-observer mobility
+        self.arp_pairs = {}            # (vlan, ip) -> {mac -> set(hosts)}
+        self.mac_mob = {}              # (vlan, mac) -> {seq, hosts, vteps, ports, vni}  (EVPN mobility seq>=WARN)
+        self.ip_mob = {}               # (vlan, ip)  -> {seq, macs, vteps, vni}
         self.log_events = {}           # (vni, ip) -> {'count': int, 'latest': dt, 'macs': set, 'vteps': set}
         self.log_events_mac = {}       # (vni, mac) -> {'count': int, 'latest': dt, 'vteps': set, 'ips': set}  (last VTEP = contender)
-        self.log_signatures = set()
         self.self_vteps = {}           # host -> set(local VTEP ip)   ; used to resolve a VTEP IP -> switch name
         self.vtep2host = {}            # vtep ip -> host
-        self.sequence_baseline_warmup = False
-        self.sequence_baseline_warmup_hosts = set()
-        self.collection_time_stale_hosts = set()
+        self.global_now = None         # max log timestamp seen (clock-safe "now")
         self.prev_state = self._load_state()
-        self.new_state = {
-            "version": STATE_VERSION,
-            "updated_at": self.analysis_epoch,
-            "coverage_hosts": [],
-            "samples": {},
-        }
-        # Cross-cycle evidence is timestamped per MAC/port. Historical evidence
-        # may be displayed, but is never promoted back to current simply because
-        # its parent incident is still present.
+        self.new_state = {}
+        # Cross-cycle memory of each duplicate IP's owner ports + MACs (fast flappers rarely have
+        # BOTH ends captured in one snapshot). Keyed "vlan|ip" -> {ports:{host:port}, macs:[], ts}.
         self.ip_state_file = os.path.join(self.dup_dir, "dup_ip_state.json")
         self.prev_ip_state = self._load_ip_state()
-        self.new_ip_state = {
-            "version": STATE_VERSION,
-            "updated_at": self.analysis_epoch,
-            "evidence": {},
-        }
-        assets_file = os.path.join(os.path.dirname(self.data_dir), "assets.ini")
-        self.asset_snapshot = read_asset_snapshot(assets_file)
-        self.collection_errors = []
-        self.current_hosts = set()
-        self.expected_hosts = set()
-        self.unavailable_hosts = {}
-        self.coverage_partial = False
-        self.collection_unavailable = False
-        self.coverage_failures = {}
+        self.new_ip_state = {}
 
     # ------------------------------------------------------------------ state
     def _load_state(self):
         try:
-            with open(self.state_file, encoding="utf-8") as f:
-                raw = json.load(f)
+            with open(self.state_file) as f:
+                return json.load(f)
         except Exception:
-            raw = {}
-        if isinstance(raw, dict) and raw.get("version") == STATE_VERSION \
-                and isinstance(raw.get("samples"), dict):
-            return raw
-
-        self.sequence_baseline_warmup = True
-
-        # Version 1 stored one aggregate sample as ``ip:vni|address``.  Keep
-        # it only as a quiet-age hint; there is no observer identity, so using
-        # it for a mobility delta would create false activity after a partial
-        # collection or topology change.
-        legacy = {}
-        if isinstance(raw, dict):
-            for key, value in raw.items():
-                if not isinstance(key, str) or not isinstance(value, dict):
-                    continue
-                seq, changed = value.get("seq"), value.get("ts")
-                if isinstance(seq, int) and isinstance(changed, (int, float)):
-                    legacy[key] = {
-                        "seq": seq,
-                        "changed_at": float(changed),
-                    }
-        return {
-            "version": STATE_VERSION,
-            "updated_at": 0,
-            "coverage_hosts": [],
-            "samples": {},
-            "legacy": legacy,
-        }
+            return {}
 
     def _load_ip_state(self):
         try:
-            with open(self.ip_state_file, encoding="utf-8") as f:
-                raw = json.load(f)
+            with open(self.ip_state_file) as f:
+                return json.load(f)
         except Exception:
-            raw = {}
-        if isinstance(raw, dict) and raw.get("version") == STATE_VERSION \
-                and isinstance(raw.get("evidence"), dict):
-            return raw
-
-        # Migrate the legacy ``vlan|ip -> {ports, macs, ts}`` shape.  These
-        # entries remain historical and keep their original timestamp; a
-        # current incident can consume them for context without refreshing
-        # their lifetime.
-        evidence = {}
-        if isinstance(raw, dict):
-            for key, value in raw.items():
-                if not isinstance(key, str) or not isinstance(value, dict):
-                    continue
-                ts = value.get("ts")
-                if not isinstance(ts, (int, float)):
-                    continue
-                macs = {
-                    str(mac).lower(): float(ts)
-                    for mac in (value.get("macs") or [])
-                    if isinstance(mac, str) and MAC_RE.fullmatch(mac)
-                }
-                ports = {}
-                for host, port in (value.get("ports") or {}).items():
-                    if isinstance(host, str) and isinstance(port, str):
-                        ports[f"{host}|{port}"] = float(ts)
-                evidence[f"legacy:{key}"] = {
-                    "scope": "legacy",
-                    "address": key.split("|", 1)[-1],
-                    "legacy_key": key,
-                    "macs": macs,
-                    "ports": ports,
-                }
-        return {
-            "version": STATE_VERSION,
-            "updated_at": 0,
-            "evidence": evidence,
-        }
+            return {}
 
     def _save_state(self):
-        self._atomic_json_dump(self.state_file, self.new_state)
-        self._atomic_json_dump(self.ip_state_file, self.new_ip_state)
-
-    @staticmethod
-    def _atomic_json_dump(path, value):
-        temp_path = None
         try:
-            with tempfile.NamedTemporaryFile(
-                mode="w",
-                encoding="utf-8",
-                dir=os.path.dirname(path),
-                prefix=".duplicate-state.",
-                delete=False,
-            ) as fh:
-                temp_path = fh.name
-                json.dump(value, fh)
-                fh.flush()
-                os.fsync(fh.fileno())
-            os.replace(temp_path, path)
+            with open(self.state_file, "w") as f:
+                json.dump(self.new_state, f)
         except Exception:
-            if temp_path:
-                try:
-                    os.unlink(temp_path)
-                except OSError:
-                    pass
-            raise
+            pass
+        try:
+            with open(self.ip_state_file, "w") as f:
+                json.dump(self.new_ip_state, f)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------ parse
     def _hosts(self):
-        candidates = {}
+        out = {}
         if not os.path.isdir(self.dup_dir):
-            return candidates
-        statuses, _asset_mtime, assets_available = self.asset_snapshot
-        snapshot_valid = asset_snapshot_is_valid(self.asset_snapshot)
-        assets_authoritative = asset_snapshot_is_authoritative(self.asset_snapshot)
-        if assets_available and not snapshot_valid:
-            self.collection_errors.append("asset snapshot is invalid or incomplete")
-            return candidates
-        if snapshot_valid:
-            self.expected_hosts = {canonical(host) for host in statuses}
-            self.unavailable_hosts = {
-                canonical(host): status
-                for host, status in statuses.items()
-                if status != "OK"
-            }
-            self.coverage_partial = bool(self.unavailable_hosts)
-            for host, status in sorted(self.unavailable_hosts.items()):
-                self.coverage_failures.setdefault(host, []).append(
-                    f"DEVICE_{status.replace('-', '_')}"
-                )
+            return out
         for fn in os.listdir(self.dup_dir):
             for suffix in ("_dup.txt", "_fdb.txt", "_neigh.txt"):
                 if fn.endswith(suffix):
                     host = fn[: -len(suffix)]
-                    path = os.path.join(self.dup_dir, fn)
-                    if assets_authoritative and host not in statuses:
-                        try:
-                            os.unlink(path)
-                        except OSError as exc:
-                            self.collection_errors.append(
-                                f"could not prune retired duplicate data {fn}: {exc}"
-                            )
-                        continue
-                    if snapshot_valid and host not in statuses:
-                        # Without a validated inventory we cannot prove that an
-                        # unlisted artifact is retired. Preserve but ignore it.
-                        continue
-                    candidates.setdefault(host, {})[suffix] = path
-
-        required = {"_dup.txt", "_fdb.txt", "_neigh.txt"}
-        current = {}
-        if snapshot_valid:
-            expected_current_hosts = {
-                host for host, status in statuses.items() if status == "OK"
-            }
-            for host in sorted(expected_current_hosts - set(candidates)):
-                self.collection_errors.append(
-                    f"{host}: missing duplicate collection bundle"
-                )
-        for host, files in candidates.items():
-            # A non-OK inventory member is unavailable for this run, not a
-            # parser error. Its old raw files remain LKG but are not consumed.
-            if snapshot_valid and statuses.get(host) != "OK":
-                continue
-            missing = required.difference(files)
-            if missing:
-                self.collection_errors.append(
-                    f"{host}: missing duplicate collection files {sorted(missing)}"
-                )
-                continue
-            stale = [
-                suffix for suffix, path in files.items()
-                if not is_current_collection(path, host, self.asset_snapshot)
-            ]
-            if stale:
-                self.collection_errors.append(
-                    f"{host}: non-current duplicate collection files {sorted(stale)}"
-                )
-                continue
-            current[host] = files
-        return current
+                    out.setdefault(host, {})[suffix] = os.path.join(self.dup_dir, fn)
+        return out
 
     def parse_all(self):
-        hosts = self._hosts()
-        if self.collection_errors:
-            return False
-        if not hosts:
-            statuses, _asset_mtime, _assets_available = self.asset_snapshot
-            expected_hosts = {
-                host for host, status in statuses.items() if status == "OK"
-            }
-            if asset_snapshot_is_valid(self.asset_snapshot) and not expected_hosts:
-                # No device produced a current bundle because the entire
-                # inventory is unavailable. Preserve mobility baselines and
-                # emit fresh state/report files without claiming a clean scan.
-                self.new_state = copy.deepcopy(self.prev_state)
-                self.new_state["version"] = STATE_VERSION
-                self.new_state["updated_at"] = self.analysis_epoch
-                self.new_state["coverage_hosts"] = []
-                self.new_ip_state = copy.deepcopy(self.prev_ip_state)
-                self.new_ip_state["version"] = STATE_VERSION
-                self.new_ip_state["updated_at"] = self.analysis_epoch
-                self._save_state()
-                self.collection_unavailable = True
-                return True
-            return False
-        self.current_hosts = {canonical(host) for host in hosts}
-        previous_coverage = self.prev_state.get("coverage_hosts", [])
-        if not isinstance(previous_coverage, (list, tuple, set)):
-            previous_coverage = []
-        previous_coverage_hosts = {
-            canonical(host)
-            for host in previous_coverage
-            if isinstance(host, str)
-        }
-        if self.sequence_baseline_warmup:
-            self.sequence_baseline_warmup_hosts = set(self.current_hosts)
-        else:
-            self.sequence_baseline_warmup_hosts = (
-                self.current_hosts - previous_coverage_hosts
-            )
-            if self.sequence_baseline_warmup_hosts:
-                self.sequence_baseline_warmup = True
-        if self.sequence_baseline_warmup:
-            self.coverage_partial = True
-            self.coverage_failures.setdefault("analysis", []).append(
-                "SEQUENCE_BASELINE_WARMUP"
-            )
-        self.new_state["coverage_hosts"] = sorted(self.current_hosts)
-        contents = {}
-        for host, files in hosts.items():
-            try:
-                observed_epoch = max(os.path.getmtime(path) for path in files.values())
-            except OSError:
-                observed_epoch = self.analysis_epoch
-            self.collection_times[canonical(host)] = min(
-                observed_epoch, self.analysis_epoch + FUTURE_CLOCK_SKEW_SEC
-            )
-            for suffix, path in files.items():
-                try:
-                    content = self._read(path)
-                except OSError as exc:
-                    self.collection_errors.append(f"{host}: could not read {suffix}: {exc}")
-                    continue
-                if "__LLDPQ_COLLECTION_ERROR__:" in content:
-                    self.collection_errors.append(
-                        f"{host}: device collection failed in {suffix}"
-                    )
-                    continue
-                contents[(host, suffix)] = content
-        if self.collection_errors:
-            return False
-        for host, files in hosts.items():
+        for host, files in self._hosts().items():
             ch = canonical(host)
             if "_dup.txt" in files:
-                self._parse_dup(ch, contents[(host, "_dup.txt")])
+                self._parse_dup(ch, self._read(files["_dup.txt"]))
             if "_fdb.txt" in files:
-                self._parse_fdb(ch, contents[(host, "_fdb.txt")])
+                self._parse_fdb(ch, self._read(files["_fdb.txt"]))
             if "_neigh.txt" in files:
-                self._parse_neigh(ch, contents[(host, "_neigh.txt")])
+                self._parse_neigh(ch, self._read(files["_neigh.txt"]))
         self._merge_arp_conflicts()
         self._finalize()
-        return True
 
     @staticmethod
     def _read(path):
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            return f.read()
+        try:
+            with open(path, "r", errors="replace") as f:
+                return f.read()
+        except Exception:
+            return ""
 
     def _split_sections(self, text):
         """Split a _dup.txt into the labelled sections."""
@@ -466,327 +178,25 @@ class DuplicateAnalyzer:
         return sections
 
     def _parse_dup(self, host, text):
-        coverage_records = re.findall(
-            r'^__LLDPQ_DUP_COVERAGE__:([A-Z0-9_]+):([A-Z]+)\s*$',
-            text,
-            re.MULTILINE,
-        )
-        for label, status in coverage_records:
-            if status != "OK":
-                suffix = "_TRUNCATED" if status == "TRUNCATED" else ""
-                self.coverage_failures.setdefault(host, []).append(label + suffix)
-        seen_coverage = {label for label, _status in coverage_records}
-        if not DUP_COVERAGE_SOURCES.issubset(seen_coverage):
-            self.coverage_failures.setdefault(host, []).append(
-                "COVERAGE_MARKERS_MISSING"
-            )
-        self._parse_collection_meta(host, text)
-        if not self.collection_meta.get(host, {}).get("collection_time_marker_seen"):
-            self.coverage_failures.setdefault(host, []).append(
-                "COLLECTION_TIMESTAMP_MARKER_MISSING"
-            )
-        sample_labels = set(
-            self.collection_meta.get(host, {}).get("samples", {})
-        )
-        missing_sample_meta = sorted(DUP_SAMPLE_META_SOURCES - sample_labels)
-        if missing_sample_meta:
-            self.coverage_failures.setdefault(host, []).append(
-                "SAMPLE_META_MISSING_" + "_".join(missing_sample_meta)
-            )
         sec = self._split_sections(text)
-        sample_sections = {
-            "CONFIG": "CONFIG",
-            "SELF": "SELF",
-            "FRR_LOG": "LOG",
-            "MAC_MOBILITY": "MACMOB",
-            "ARP_MOBILITY": "ARPMOB",
-        }
-        samples = self.collection_meta.get(host, {}).get("samples", {})
-        for label, section in sample_sections.items():
-            sample = samples.get(label)
-            if not sample or not str(sample.get("emitted", "")).isdigit():
-                continue
-            actual_emitted = sum(
-                1 for line in sec.get(section, [])
-                if line.strip() and not line.startswith("__LLDPQ_")
-            )
-            sample["actual_emitted"] = actual_emitted
-            if int(sample["emitted"]) != actual_emitted:
-                self.coverage_failures.setdefault(host, []).append(
-                    f"{label}_EMITTED_COUNT_MISMATCH"
-                )
-        vni_count = self._parse_vni_map(host, sec.get("VNI MAP", []))
+        self._parse_vni_map(sec.get("VNI MAP", []))
         self._parse_config(host, sec.get("CONFIG", []))
         self._parse_self(host, sec.get("SELF", []))
-        arp_count = self._parse_arp_dup(host, sec.get("ARP", []))
-        mac_count = self._parse_mac_dup(host, sec.get("MAC", []))
-        log_count = self._parse_log(host, sec.get("LOG", []))
-        mac_mob_count = self._parse_mac_mobility(host, sec.get("MACMOB", []))
-        arp_mob_count = self._parse_ip_mobility(host, sec.get("ARPMOB", []))
+        self._parse_arp_dup(host, sec.get("ARP", []))
+        self._parse_mac_dup(host, sec.get("MAC", []))
+        self._parse_log(sec.get("LOG", []))
+        self._parse_mac_mobility(host, sec.get("MACMOB", []))
+        self._parse_ip_mobility(host, sec.get("ARPMOB", []))
         self._parse_ifalias(host, sec.get("IFALIAS", []))
 
-        parser_counts = {
-            "VNI_MAP": vni_count,
-            "ARP_DUPLICATES": arp_count,
-            "MAC_DUPLICATES": mac_count,
-            "FRR_LOG": log_count,
-            "MAC_MOBILITY": mac_mob_count,
-            "ARP_MOBILITY": arp_mob_count,
-        }
-        self.collection_meta.setdefault(host, {}).setdefault(
-            "parsed", {}
-        ).update(parser_counts)
-        config_lines = [
-            line for line in sec.get("CONFIG", [])
-            if line.strip() and not line.startswith("__LLDPQ_")
-        ]
-        if config_lines and host not in self.dup_config:
-            self.coverage_failures.setdefault(host, []).append(
-                "CONFIG_SCHEMA_UNPARSED"
-            )
-        schema_checks = {
-            "ARP": ("ARP_DUPLICATES", arp_count,
-                    lambda line: bool(re.match(r'\s*(?:\d{1,3}\.){3}\d{1,3}\b', line))),
-            "MAC": ("MAC_DUPLICATES", mac_count,
-                    lambda line: bool(MAC_RE.match(line.strip()))),
-            "LOG": ("FRR_LOG", log_count,
-                    lambda line: "detected as duplicate" in line.lower()),
-        }
-        for section, (label, parsed_count, predicate) in schema_checks.items():
-            if not parsed_count and any(predicate(line) for line in sec.get(section, [])):
-                self.coverage_failures.setdefault(host, []).append(
-                    f"{label}_SCHEMA_UNPARSED"
-                )
-        section_names = {
-            "MACMOB": "MAC_MOBILITY",
-            "ARPMOB": "ARP_MOBILITY",
-        }
-        for section, label in section_names.items():
-            data_lines = [
-                line for line in sec.get(section, [])
-                if line.strip()
-                and not line.startswith("__LLDPQ_")
-            ]
-            # monitor.sh historically capped filtered output with head -800.
-            # Until the producer emits an explicit marker, an exact/full cap is
-            # conservatively reported as possible truncation.
-            if label not in sample_labels and len(data_lines) >= 800:
-                self.coverage_failures.setdefault(host, []).append(
-                    f"{label}_POSSIBLY_TRUNCATED"
-                )
-            candidates = sum(
-                1 for line in data_lines
-                if SEQ_RE.search(line) and (MAC_RE.search(line) or IPV4_RE.search(line))
-            )
-            if candidates and not parser_counts[label]:
-                self.coverage_failures.setdefault(host, []).append(
-                    f"{label}_SCHEMA_UNPARSED"
-                )
-
-    def _parse_collection_meta(self, host, text):
-        meta = self.collection_meta.setdefault(host, {})
-        for line in text.splitlines():
-            value = None
-            if line.startswith("__LLDPQ_DUP_COLLECTION_UTC__:"):
-                value = line.split(":", 1)[1].strip()
-            elif line.startswith("__LLDPQ_COLLECTION_TIME__:"):
-                value = line.split(":", 1)[1].strip()
-            else:
-                match = re.match(
-                    r'^__LLDPQ_DUP_META__:COLLECTION_TIME:(.+)$', line
-                )
-                if match:
-                    value = match.group(1).strip()
-            if value:
-                meta["collection_time_marker_seen"] = True
-                parsed = _parse_ts(value)
-                if parsed is None:
-                    try:
-                        epoch = float(value)
-                    except ValueError:
-                        self.coverage_failures.setdefault(host, []).append(
-                            "COLLECTION_TIME_INVALID"
-                        )
-                        continue
-                else:
-                    epoch = parsed.timestamp()
-                if epoch > self.analysis_epoch + FUTURE_CLOCK_SKEW_SEC:
-                    self.coverage_failures.setdefault(host, []).append(
-                        "COLLECTION_CLOCK_FUTURE"
-                    )
-                    continue
-                if self.analysis_epoch - epoch > max_data_age_seconds():
-                    self.coverage_failures.setdefault(host, []).append(
-                        "COLLECTION_TIME_STALE"
-                    )
-                    self.collection_time_stale_hosts.add(host)
-                    self.collection_times.pop(host, None)
-                    meta["stale_collection_time"] = epoch
-                    continue
-                self.collection_times[host] = epoch
-                meta["collection_time"] = epoch
-
-            sample = re.match(
-                r'^__LLDPQ_DUP_SAMPLE_META__:([A-Z0-9_]+):'
-                r'MATCHES=([^:]+):EMITTED=([^:]+):CAP=([^:]+):'
-                r'TRUNCATED=([^:]+)$',
-                line,
-            )
-            if sample:
-                label, matches, emitted, cap, truncated_value = sample.groups()
-                parsed_meta = {
-                    "matches": matches,
-                    "emitted": emitted,
-                    "cap": cap,
-                    "truncated": truncated_value,
-                }
-                meta.setdefault("samples", {})[label] = parsed_meta
-                if truncated_value == "YES":
-                    self.coverage_failures.setdefault(host, []).append(
-                        f"{label}_TRUNCATED"
-                    )
-                elif truncated_value != "NO":
-                    self.coverage_failures.setdefault(host, []).append(
-                        f"{label}_TRUNCATION_UNKNOWN"
-                    )
-                if matches.isdigit() and emitted.isdigit() and cap.isdigit():
-                    match_count, emitted_count, cap_count = map(
-                        int, (matches, emitted, cap)
-                    )
-                    metadata_valid = (
-                        cap_count > 0
-                        and emitted_count <= match_count
-                        and emitted_count <= cap_count
-                        and (
-                            (truncated_value == "YES" and match_count > cap_count
-                             and emitted_count == cap_count)
-                            or (truncated_value == "NO" and match_count == emitted_count
-                                and match_count <= cap_count)
-                            or truncated_value not in {"YES", "NO"}
-                        )
-                    )
-                    if not metadata_valid:
-                        self.coverage_failures.setdefault(host, []).append(
-                            f"{label}_SAMPLE_META_INVALID"
-                        )
-                elif not (matches == "UNKNOWN" and emitted.isdigit() and cap.isdigit()):
-                    self.coverage_failures.setdefault(host, []).append(
-                        f"{label}_SAMPLE_META_INVALID"
-                    )
-
-            truncated = re.match(
-                r'^__LLDPQ_DUP_(?:META__:)?TRUNCATED__:?'
-                r'([A-Z0-9_]+)(?::(.*))?$', line
-            )
-            if not truncated:
-                truncated = re.match(
-                    r'^__LLDPQ_DUP_META__:([A-Z0-9_]+):TRUNCATED(?::(.*))?$',
-                    line,
-                )
-            if truncated:
-                label = truncated.group(1)
-                self.coverage_failures.setdefault(host, []).append(
-                    f"{label}_TRUNCATED"
-                )
-                meta.setdefault("truncated", {})[label] = (
-                    truncated.group(2) or "true"
-                )
-
-    def _parse_vni_map(self, host, lines):
-        parsed = 0
-        detail_vni = None
+    def _parse_vni_map(self, lines):
         for line in lines:
-            detail = re.match(r'\s*VNI:\s*(\d+)\s*$', line, re.I)
-            if detail:
-                detail_vni = detail.group(1)
-                continue
-            detail_vlan = re.match(r'\s*Vlan:\s*(\d+)\s*$', line, re.I)
-            if detail_vlan and detail_vni:
-                self._record_vni_mapping(
-                    host, detail_vni, detail_vlan.group(1), None
-                )
-                parsed += 1
-                continue
             p = line.split()
-            if len(p) < 2 or not p[0].isdigit() or p[1].upper() not in ("L2", "L3"):
-                continue
-            # Cumulus variants that expose Tenant VLAN place it at the end.
-            # Do not invent VLAN=VNI when that optional column is absent.
-            vlan = p[-1] if len(p) >= 8 and p[-1].isdigit() else None
-            vrf = p[-2] if vlan and len(p) >= 3 and not p[-2].isdigit() else None
-            self._record_vni_mapping(host, p[0], vlan, vrf)
-            parsed += 1
-        has_candidate = any(
-            re.match(r'\s*(?:VNI:\s*)?\d+', line)
-            for line in lines if not line.startswith("__LLDPQ_")
-        )
-        if has_candidate and not parsed:
-            self.coverage_failures.setdefault(host, []).append(
-                "VNI_MAP_SCHEMA_UNPARSED"
-            )
-        return parsed
-
-    def _record_vni_mapping(self, host, vni, vlan, vrf):
-        vni = str(vni)
-        if vlan:
-            vlan = str(vlan)
-            previous = self.host_vni_to_vlan.get((host, vni))
-            if previous is not None and previous != vlan:
-                self.coverage_failures.setdefault(host, []).append(
-                    f"VNI_{vni}_VLAN_MAPPING_CONFLICT"
-                )
-            self.host_vni_to_vlan[(host, vni)] = vlan
-            self.host_vlan_to_vnis.setdefault((host, vlan), set()).add(vni)
-            self.vni_vlans.setdefault(vni, set()).add(vlan)
-            if len(self.vni_vlans[vni]) == 1:
-                self.vni_to_vlan[vni] = vlan
-            else:
-                self.vni_to_vlan.pop(vni, None)
-        if vrf and vrf.lower() not in ("n/a", "none", "default"):
-            self.host_vni_to_vrf[(host, vni)] = vrf
-            self.vni_vrfs.setdefault(vni, set()).add(vrf)
-            if len(self.vni_vrfs[vni]) > 1:
-                self.coverage_failures.setdefault(host, []).append(
-                    f"VNI_{vni}_VRF_MAPPING_CONFLICT"
-                )
-
-    @staticmethod
-    def _scope(vni=None, vlan=None):
-        if vni and str(vni).isdigit():
-            return f"vni:{vni}"
-        if vlan and str(vlan).isdigit():
-            return f"vlan:{vlan}"
-        return "unknown"
-
-    @staticmethod
-    def _scope_vni(scope):
-        return scope.split(":", 1)[1] if scope.startswith("vni:") else "unknown"
-
-    @staticmethod
-    def _scope_vlan(scope):
-        return scope.split(":", 1)[1] if scope.startswith("vlan:") else "unknown"
-
-    def _scope_for_vlan(self, host, vlan):
-        vnis = self.host_vlan_to_vnis.get((host, str(vlan)), set())
-        if len(vnis) == 1:
-            vni = next(iter(vnis))
-            return self._scope(vni=vni), vni
-        return self._scope(vlan=vlan), "unknown"
-
-    def _vlan_of(self, vni, host=None):
-        if host is not None:
-            return self.host_vni_to_vlan.get((host, str(vni)), "unknown")
-        vlans = self.vni_vlans.get(str(vni), set())
-        return next(iter(vlans)) if len(vlans) == 1 else "unknown"
-
-    def _vrf_of(self, vni, host=None):
-        if host is not None:
-            return self.host_vni_to_vrf.get((host, str(vni)))
-        vrfs = self.vni_vrfs.get(str(vni), set())
-        return next(iter(vrfs)) if len(vrfs) == 1 else None
+            if len(p) >= 8 and p[0].isdigit() and p[1] in ("L2", "L3"):
+                self.vni_to_vlan[p[0]] = p[7]
 
     def _parse_config(self, host, lines):
-        enabled, max_moves, t, freeze, warning_only = None, None, None, None, None
+        enabled, max_moves, t = None, None, None
         for line in lines:
             low = line.lower()
             if "duplicate address detection" in low:
@@ -794,27 +204,8 @@ class DuplicateAnalyzer:
             m = re.search(r'max-moves\s+(\d+),?\s+time\s+(\d+)', line, re.I)
             if m:
                 max_moves, t = int(m.group(1)), int(m.group(2))
-            freeze_match = re.search(r'\bfreeze\s*:?\s+(\S+)', line, re.I)
-            if freeze_match:
-                freeze = freeze_match.group(1).rstrip(",")
-            warning_match = re.search(
-                r'\bwarning[- ]only\s*:?\s*(enabled?|disabled?|yes|no|true|false|on|off)',
-                line,
-                re.I,
-            )
-            if warning_match:
-                warning_only = warning_match.group(1).lower() in {
-                    "enable", "enabled", "yes", "true", "on",
-                }
-        if (enabled is not None or max_moves is not None or freeze is not None
-                or warning_only is not None):
-            self.dup_config[host] = {
-                "enabled": bool(enabled) if enabled is not None else None,
-                "max_moves": max_moves,
-                "time": t,
-                "freeze": freeze,
-                "warning_only": warning_only,
-            }
+        if enabled is not None or max_moves is not None:
+            self.dup_config[host] = {"enabled": bool(enabled), "max_moves": max_moves, "time": t}
 
     def _parse_self(self, host, lines):
         """This switch's own EVPN VTEP IP(s) -> lets us resolve a remote VTEP back to a switch name."""
@@ -834,9 +225,11 @@ class DuplicateAnalyzer:
             if port and desc:
                 self.if_desc[(host, port)] = desc
 
+    def _vlan_of(self, vni):
+        return self.vni_to_vlan.get(str(vni), str(vni))
+
     def _parse_arp_dup(self, host, lines):
         vni = None
-        parsed = 0
         for line in lines:
             m = re.match(r'\s*VNI\s+(\d+)\s+#ARP', line)
             if m:
@@ -859,49 +252,24 @@ class DuplicateAnalyzer:
             vtep = ipv4s[-1] if (typ == "remote" and ipv4s) else ""
             seq_m = SEQ_RE.search(line)
             seq = max(int(seq_m.group(1)), int(seq_m.group(2))) if seq_m else 0
-            vlan = self._vlan_of(vni, host)
-            scope = self._scope(vni=vni)
-            rec = self.ip_dups.setdefault(
-                (scope, neighbor), self._blank_ip(scope, vlan, vni, neighbor)
-            )
-            self._add_location_context(rec, host, vni, vlan)
+            vlan = self._vlan_of(vni)
+            rec = self.ip_dups.setdefault((vlan, neighbor), self._blank_ip(vlan, vni, neighbor))
             rec["macs"].add(mac)
             rec["seq"] = max(rec["seq"], seq)
-            rec["seq_by_host"][host] = max(
-                rec["seq_by_host"].get(host, 0), seq
-            )
             rec["flagged"] = True
-            rec["dad_flagged"] = True
-            rec["flagged_hosts"].add(host)
-            rec["evidence_sources"].add("frr_dad_ip")
             if typ == "local":
                 rec["local_hosts"].add(host)
             if vtep:
                 rec["vteps"].add(vtep)
-            parsed += 1
-        return parsed
 
-    def _blank_ip(self, scope, vlan, vni, ip):
-        vlan_value = str(vlan) if vlan and str(vlan) != "unknown" else "unknown"
-        vni_value = str(vni) if vni and str(vni).isdigit() else "unknown"
-        return {"scope": scope, "vlan": vlan_value, "vlans": set(),
-                "vni": vni_value, "vrfs": set(), "ip": ip,
-                "macs": set(), "log_macs": set(), "seq": 0, "seq_by_host": {},
+    def _blank_ip(self, vlan, vni, ip):
+        return {"vlan": vlan, "vni": str(vni), "ip": ip, "macs": set(), "seq": 0,
                 "flagged": False, "local_hosts": set(), "vteps": set(),
                 "ports": set(), "apipa": False, "recency": None, "delta": None,
-                "events": 0, "latest": None, "mobility": False,
-                "flagged_hosts": set(), "dad_flagged": False,
-                "dad_event": False, "confirmed_conflict": False,
-                "suspected_conflict": False, "neighbor_conflict_strong": False,
-                "mobility_only": False, "incident_type": "unknown",
-                "activity": "settled", "seq_interval_sec": None,
-                "seq_rate_per_min": None, "seq_activity_threshold": None,
-                "sequence_active": False, "evidence_sources": set(),
-                "historical_macs": set(), "historical_ports": set()}
+                "events": 0, "latest": None, "mobility": False}
 
     def _parse_mac_dup(self, host, lines):
         vni = None
-        parsed = 0
         for line in lines:
             m = re.match(r'\s*VNI\s+(\d+)\s+#MAC', line)
             if m:
@@ -914,134 +282,53 @@ class DuplicateAnalyzer:
                 continue
             mac = mac_m.group(0).lower()
             typ = "remote" if re.search(r'\bremote\b', line) else "local"
-            port = self._port_from_evpn_line(line) if typ == "local" else None
+            port_m = re.search(r'\b(swp\S+|bond\S+)\b', line)
             vtep_m = IPV4_RE.search(line)
             seq_m = SEQ_RE.search(line)
             seq = max(int(seq_m.group(1)), int(seq_m.group(2))) if seq_m else 0
-            vlan = self._vlan_of(vni, host)
-            scope = self._scope(vni=vni)
-            rec = self.mac_dups.setdefault(
-                (scope, mac), self._blank_mac(scope, vlan, vni, mac)
-            )
-            self._add_location_context(rec, host, vni, vlan)
+            vlan = self._vlan_of(vni)
+            rec = self.mac_dups.setdefault((vlan, mac), self._blank_mac(vlan, vni, mac))
             rec["seq"] = max(rec["seq"], seq)
-            rec["seq_by_host"][host] = max(
-                rec["seq_by_host"].get(host, 0), seq
-            )
             rec["flagged"] = True
-            rec["dad_flagged"] = True
-            rec["flagged_hosts"].add(host)
-            rec["evidence_sources"].add("frr_dad_mac")
-            if typ == "local" and port:
-                rec["local_ports"].setdefault(host, set()).add(port)
+            if typ == "local" and port_m:
+                rec["local"].setdefault(host, port_m.group(1))
             elif vtep_m:
                 rec["vteps"].add(vtep_m.group(0))
-            parsed += 1
-        return parsed
 
-    def _blank_mac(self, scope, vlan, vni, mac):
-        vlan_value = str(vlan) if vlan and str(vlan) != "unknown" else "unknown"
-        vni_value = str(vni) if vni and str(vni).isdigit() else "unknown"
-        return {"scope": scope, "vlan": vlan_value, "vlans": set(),
-                "vni": vni_value, "vrfs": set(), "mac": mac,
-                "seq": 0, "seq_by_host": {},
-                "flagged": False, "flagged_hosts": set(),
-                "local": {}, "local_ports": {}, "vteps": set(),
+    def _blank_mac(self, vlan, vni, mac):
+        return {"vlan": vlan, "vni": str(vni), "mac": mac, "seq": 0,
+                "flagged": False, "local": {}, "vteps": set(),
                 "delta": None, "fdb_multi": False, "mobility": False,
-                "classification": "", "loop_count": 0,
-                "dad_flagged": False, "dad_event": False,
-                "confirmed_conflict": False, "mobility_only": False,
-                "possible_loop": False, "mh_possible": False,
-                "loop_correlation_id": "",
-                "incident_type": "unknown", "activity": "settled",
-                "seq_interval_sec": None, "seq_rate_per_min": None,
-                "seq_activity_threshold": None, "sequence_active": False,
-                "attachment_count": 0, "evidence_sources": set()}
+                "classification": "", "loop_count": 0}
 
-    def _add_location_context(self, rec, host, vni, vlan):
-        if vlan and str(vlan) != "unknown":
-            rec["vlans"].add(str(vlan))
-            rec["vlan"] = ", ".join(sorted(rec["vlans"], key=lambda x: int(x)))
-        vrf = self._vrf_of(vni, host) if vni and str(vni).isdigit() else None
-        if vrf:
-            rec["vrfs"].add(vrf)
-
-    @staticmethod
-    def _port_from_evpn_line(line):
-        parts = line.split()
-        try:
-            index = next(i for i, value in enumerate(parts) if value.lower() == "local")
-        except StopIteration:
-            return None
-        ignored = {
-            "active", "inactive", "local", "remote", "dynamic", "static",
-            "i", "p", "x", "n", "b", "-",
-        }
-        for token in parts[index + 1:]:
-            clean = token.strip(",")
-            if clean.lower() in ignored or re.fullmatch(r'\d+(?:/\d+)?', clean):
-                continue
-            if MAC_RE.fullmatch(clean) or IPV4_RE.fullmatch(clean):
-                continue
-            if re.fullmatch(r'[A-Za-z][A-Za-z0-9_.:@/-]*', clean):
-                return clean
-        return None
-
-    def _parse_log(self, host, lines):
-        parsed = 0
+    def _parse_log(self, lines):
         for line in lines:
-            if "detected as duplicate" not in line.lower():
+            m = LOG_RE.search(line)
+            if not m:
                 continue
-            ts_m, vni_m = LOG_TS_RE.search(line), LOG_VNI_RE.search(line)
-            mac_m, ip_m, vtep_m = (
-                LOG_MAC_RE.search(line), LOG_IP_RE.search(line), LOG_VTEP_RE.search(line)
-            )
-            if not vni_m or not mac_m:
-                continue
-            ts = _parse_ts(ts_m.group("ts")) if ts_m else None
-            vni = vni_m.group(1)
-            mac = mac_m.group(1).lower()
-            ip = ip_m.group(1).rstrip(",.;") if ip_m else None
-            vtep = vtep_m.group(1).rstrip(",.;") if vtep_m else ""
-            signature = (
-                ts.isoformat() if ts else "", vni, mac, ip or "", vtep
-            )
-            if signature in self.log_signatures:
-                continue
-            self.log_signatures.add(signature)
-            evm = self.log_events_mac.setdefault(
-                (vni, mac), {"count": 0, "latest": None, "vteps": set(),
-                             "ips": set(), "hosts": set()}
-            )
+            ts = _parse_ts(m.group("ts"))
+            vni = m.group("vni")
+            ip = m.group("ip")
+            mac = m.group("mac").lower()
+            vtep = m.group("vtep")
+            ev = self.log_events.setdefault((vni, ip), {"count": 0, "latest": None, "macs": set(), "vteps": set()})
+            ev["count"] += 1
+            ev["macs"].add(mac)
+            ev["vteps"].add(vtep)
+            evm = self.log_events_mac.setdefault((vni, mac), {"count": 0, "latest": None, "vteps": set(), "ips": set()})
             evm["count"] += 1
-            evm["hosts"].add(host)
-            if vtep:
-                evm["vteps"].add(vtep)
-            if ip:
-                evm["ips"].add(ip)
-                ev = self.log_events.setdefault(
-                    (vni, ip), {"count": 0, "latest": None, "macs": set(),
-                                "vteps": set(), "hosts": set()}
-                )
-                ev["count"] += 1
-                ev["hosts"].add(host)
-                ev["macs"].add(mac)
-                if vtep:
-                    ev["vteps"].add(vtep)
+            evm["vteps"].add(vtep)
+            evm["ips"].add(ip)
             if ts:
-                events = [evm]
-                if ip:
-                    events.append(ev)
-                for event in events:
-                    if event["latest"] is None or ts > event["latest"]:
-                        event["latest"] = ts
-            parsed += 1
-        return parsed
+                for e in (ev, evm):
+                    if e["latest"] is None or ts > e["latest"]:
+                        e["latest"] = ts
+                if self.global_now is None or ts > self.global_now:
+                    self.global_now = ts
 
     def _parse_mac_mobility(self, host, lines):
         """Parse non-zero-seq lines from 'show evpn mac vni all' (works even with DAD off)."""
         vni = None
-        parsed = 0
         for line in lines:
             m = re.match(r'\s*VNI\s+(\d+)\b', line)
             if m:
@@ -1057,34 +344,21 @@ class DuplicateAnalyzer:
             if seq < SEQ_WARN:
                 continue
             mac = mac_m.group(0).lower()
-            vlan = self._vlan_of(vni, host)
-            scope = self._scope(vni=vni)
-            rec = self.mac_mob.setdefault(
-                (scope, mac), {"scope": scope, "seq": 0, "seq_by_host": {},
-                               "hosts": set(), "vteps": set(), "ports": {},
-                               "vni": str(vni), "vlans": set(), "vrfs": set()}
-            )
+            vlan = self._vlan_of(vni)
+            rec = self.mac_mob.setdefault((vlan, mac),
+                                          {"seq": 0, "hosts": set(), "vteps": set(), "ports": {}, "vni": str(vni)})
             rec["seq"] = max(rec["seq"], seq)
-            rec["seq_by_host"][host] = max(rec["seq_by_host"].get(host, 0), seq)
             rec["hosts"].add(host)
-            if vlan != "unknown":
-                rec["vlans"].add(vlan)
-            vrf = self._vrf_of(vni, host)
-            if vrf:
-                rec["vrfs"].add(vrf)
-            port = self._port_from_evpn_line(line)
+            port_m = re.search(r'\b(swp\S+|bond\S+)\b', line)
             vtep_m = IPV4_RE.search(line)
-            if port and re.search(r'\blocal\b', line):
-                rec["ports"].setdefault(host, set()).add(port)
+            if port_m and re.search(r'\blocal\b', line):
+                rec["ports"][host] = port_m.group(1)
             elif vtep_m:
                 rec["vteps"].add(vtep_m.group(0))
-            parsed += 1
-        return parsed
 
     def _parse_ip_mobility(self, host, lines):
         """Parse non-zero-seq lines from 'show evpn arp-cache vni all' (works even with DAD off)."""
         vni = None
-        parsed = 0
         for line in lines:
             m = re.match(r'\s*VNI\s+(\d+)\b', line)
             if m:
@@ -1105,27 +379,14 @@ class DuplicateAnalyzer:
             seq = max(int(seq_m.group(1)), int(seq_m.group(2)))
             if seq < SEQ_WARN:
                 continue
-            vlan = self._vlan_of(vni, host)
-            scope = self._scope(vni=vni)
-            rec = self.ip_mob.setdefault(
-                (scope, neighbor), {"scope": scope, "seq": 0,
-                                    "seq_by_host": {}, "macs": set(),
-                                    "vteps": set(), "vni": str(vni),
-                                    "vlans": set(), "vrfs": set()}
-            )
+            vlan = self._vlan_of(vni)
+            rec = self.ip_mob.setdefault((vlan, neighbor),
+                                         {"seq": 0, "macs": set(), "vteps": set(), "vni": str(vni)})
             rec["seq"] = max(rec["seq"], seq)
-            rec["seq_by_host"][host] = max(rec["seq_by_host"].get(host, 0), seq)
             rec["macs"].add(mac_m.group(0).lower())
-            if vlan != "unknown":
-                rec["vlans"].add(vlan)
-            vrf = self._vrf_of(vni, host)
-            if vrf:
-                rec["vrfs"].add(vrf)
             for ip in IPV4_RE.findall(line):
                 if ip != neighbor:
                     rec["vteps"].add(ip)
-            parsed += 1
-        return parsed
 
     def _parse_fdb(self, host, text):
         for line in text.splitlines():
@@ -1142,18 +403,9 @@ class DuplicateAnalyzer:
             dev = dev_m.group(1)
             vlan = vlan_m.group(1)
             is_remote = ("extern_learn" in line) or dev.startswith("vxlan")
-            if is_remote or dev.startswith(("bridge", "br_", "vlan", "vrf", "lo")):
+            if is_remote or not (dev.startswith(("swp", "bond"))):
                 continue
-            scope, _vni = self._scope_for_vlan(host, vlan)
-            self.fdb_local.setdefault((scope, mac), {}).setdefault(host, set()).add(dev)
-
-    @staticmethod
-    def _vlan_from_interface(dev):
-        for pattern in (r'(?i)^vlan(\d+)(?:[_-].*)?$', r'^.+\.(\d+)$'):
-            match = re.match(pattern, dev)
-            if match:
-                return match.group(1)
-        return None
+            self.fdb_local.setdefault((vlan, mac), {})[host] = dev
 
     def _parse_neigh(self, host, text):
         ap = self.apipa.setdefault(host, {"total": 0, "per_vlan": {}})
@@ -1167,766 +419,817 @@ class DuplicateAnalyzer:
             dev_m = re.search(r'\bdev\s+(\S+)', line)
             mac_m = re.search(r'\blladdr\s+(' + MAC_RE.pattern + r')', line)
             dev = dev_m.group(1) if dev_m else ""
-            vlan = self._vlan_from_interface(dev)
-            state_match = re.search(
-                r'\b(INCOMPLETE|REACHABLE|STALE|DELAY|PROBE|FAILED|NOARP|PERMANENT)\b',
-                line, re.I,
-            )
-            state = state_match.group(1).upper() if state_match else "UNKNOWN"
-            extern = bool(re.search(r'\bextern_(?:learn|valid)\b', line))
-            mac = mac_m.group(1).lower() if mac_m else "unknown"
-            if vlan:
-                scope, vni = self._scope_for_vlan(host, vlan)
-            else:
-                scope, vni = f"interface:{host}:{dev or 'unknown'}", "unknown"
+            vm = re.match(r'vlan(\d+)$', dev)
+            vlan = vm.group(1) if vm else None
             if ip.startswith("169.254."):
                 ap["total"] += 1
                 if vlan:
                     ap["per_vlan"][vlan] = ap["per_vlan"].get(vlan, 0) + 1
-                key = (scope, ip, mac)
-                claim = self.apipa_claims.setdefault(
-                    key, {"scope": scope, "vni": vni, "ip": ip, "mac": mac,
-                          "vlans": set(), "vrfs": set(), "observers": set(),
-                          "interfaces": set(), "states": set(), "observations": set(),
-                          "local_observations": 0, "extern_observations": 0,
-                          "non_vlan_observations": 0, "observation_count": 0}
-                )
-                observation = (host, dev, state, extern)
-                if observation not in claim["observations"]:
-                    claim["observations"].add(observation)
-                    claim["observation_count"] += 1
-                    if extern:
-                        claim["extern_observations"] += 1
-                    else:
-                        claim["local_observations"] += 1
-                    if not vlan:
-                        claim["non_vlan_observations"] += 1
-                claim["observers"].add(host)
-                claim["interfaces"].add((host, dev))
-                claim["states"].add(state)
-                if vlan:
-                    claim["vlans"].add(vlan)
-                vrf = self._vrf_of(vni, host) if vni != "unknown" else None
-                if vrf:
-                    claim["vrfs"].add(vrf)
                 continue
-            if vlan and mac_m and state not in {"FAILED", "INCOMPLETE", "NOARP"}:
-                self.arp_pairs.setdefault((scope, ip), {}).setdefault(mac, set()).add(
-                    (host, vlan, state, extern)
-                )
+            if vlan and mac_m:
+                mac = mac_m.group(1).lower()
+                self.arp_pairs.setdefault((vlan, ip), {}).setdefault(mac, set()).add(host)
 
     def _merge_arp_conflicts(self):
         """Add IP duplicates seen via cross-device ARP (>=2 distinct MACs) that EVPN
         may not have flagged, so the page is complete even outside EVPN."""
-        for (scope, ip), mac_observations in self.arp_pairs.items():
-            if len(mac_observations) < 2:
+        for (vlan, ip), mac_hosts in self.arp_pairs.items():
+            if len(mac_hosts) < 2:
                 continue
-            vni = self._scope_vni(scope)
-            vlan = self._scope_vlan(scope)
-            all_vlans = {
-                observation[1]
-                for observations in mac_observations.values()
-                for observation in observations
-                if observation[1]
-            }
-            if vlan == "unknown" and len(all_vlans) == 1:
-                vlan = next(iter(all_vlans))
-            rec = self.ip_dups.get((scope, ip))
+            rec = self.ip_dups.get((vlan, ip))
             if rec is None:
-                rec = self._blank_ip(scope, vlan, vni, ip)
-                self.ip_dups[(scope, ip)] = rec
-            rec["vlans"].update(all_vlans)
-            if rec["vlans"]:
-                rec["vlan"] = ", ".join(sorted(rec["vlans"], key=lambda x: int(x)))
-            if vni != "unknown":
-                for observations in mac_observations.values():
-                    for observation in observations:
-                        vrf = self._vrf_of(vni, observation[0])
-                        if vrf:
-                            rec["vrfs"].add(vrf)
-            for mac, observations in mac_observations.items():
+                rec = self._blank_ip(vlan, vlan, ip)
+                self.ip_dups[(vlan, ip)] = rec
+            for mac, hosts in mac_hosts.items():
                 rec["macs"].add(mac)
-            active_states = {"REACHABLE", "PERMANENT", "DELAY", "PROBE"}
-            strong_macs = sum(
-                1 for observations in mac_observations.values()
-                if any(observation[2] in active_states for observation in observations)
-            )
-            rec["neighbor_conflict_strong"] = strong_macs >= 2
-            rec["suspected_conflict"] = not rec["neighbor_conflict_strong"]
-            rec["evidence_sources"].add("neighbor_multi_mac")
 
     # --------------------------------------------------------------- finalize
     def _recency(self, latest):
         if not latest:
             return None
+        now = self.global_now or datetime.now(timezone.utc)
         try:
-            if latest.tzinfo is None:
-                latest = latest.replace(tzinfo=timezone.utc)
-            seconds = (self.analysis_now - latest.astimezone(timezone.utc)).total_seconds()
+            return (now - latest).total_seconds()
         except Exception:
             return None
-        # A slightly future timestamp is normal clock skew. A timestamp farther
-        # in the future is not evidence of a current incident and must not turn
-        # into a permanent CRITICAL row.
-        if seconds < -FUTURE_CLOCK_SKEW_SEC:
+
+    def _seq_delta(self, kind, key, seq):
+        skey = "%s:%s" % (kind, key)
+        prev = self.prev_state.get(skey, {})
+        prev_seq = prev.get("seq")
+        now = time.time()
+        # "ts" = wall-clock of the last time this entry's sequence CHANGED (moved). If unchanged we
+        # keep the old timestamp, so we can tell how long a duplicate has been quiet (for aging out
+        # settled entries). Missing on old-format state -> start the clock now (conservative).
+        ts = now if (prev_seq is None or seq != prev_seq) else prev.get("ts", now)
+        self.new_state[skey] = {"seq": seq, "ts": ts}
+        if prev_seq is None or seq < prev_seq:   # reset/boot -> no meaningful delta
             return None
-        return max(0.0, seconds)
+        return seq - prev_seq
 
-    @staticmethod
-    def _sample_key(kind, scope, address, host):
-        return json.dumps([kind, scope, address, host], separators=(",", ":"))
-
-    def _dad_policy(self, host):
-        config = self.dup_config.get(host, {})
-        moves = config.get("max_moves")
-        window = config.get("time")
-        if not isinstance(moves, int) or moves < 2:
-            moves = DEFAULT_DAD_MOVES
-        if not isinstance(window, int) or window < 2:
-            window = DEFAULT_DAD_WINDOW_SEC
-        return moves, window
-
-    def _apply_sequence_sample(self, rec, kind, address):
-        """Compare each observer only with itself, exactly once per cycle."""
-        seq_by_host = dict(rec.get("seq_by_host") or {})
-        if not seq_by_host and rec.get("seq", 0):
-            seq_by_host["aggregate"] = rec["seq"]
-
-        prev_samples = self.prev_state.get("samples", {})
-        legacy = self.prev_state.get("legacy", {})
-        deltas = []
-        meaningful = []
-        changed_times = []
-        per_host = {}
-        for host, seq in sorted(seq_by_host.items()):
-            if not isinstance(seq, int) or seq < 0:
-                continue
-            if host in self.collection_time_stale_hosts:
-                moves, window = self._dad_policy(host)
-                per_host[host] = {
-                    "delta": None,
-                    "interval_sec": None,
-                    "rate_per_min": None,
-                    "threshold_moves": moves,
-                    "window_sec": window,
-                    "meaningful": False,
-                    "collection_time_stale": True,
-                }
-                continue
-            observed_at = self.collection_times.get(host, self.analysis_epoch)
-            observed_at = min(observed_at, self.analysis_epoch + FUTURE_CLOCK_SKEW_SEC)
-            key = self._sample_key(kind, rec["scope"], address, host)
-            previous = (
-                {} if host in self.sequence_baseline_warmup_hosts
-                else prev_samples.get(key, {})
-            )
-            if not isinstance(previous, dict):
-                previous = {}
-            prev_seq = previous.get("seq")
-            prev_observed = previous.get("observed_at")
-            interval = None
-            delta = None
-            changed_at = observed_at
-            if isinstance(prev_seq, int) and isinstance(prev_observed, (int, float)):
-                interval = observed_at - float(prev_observed)
-                if 0 < interval <= SEQ_SAMPLE_TTL_SEC and seq >= prev_seq:
-                    delta = seq - prev_seq
-                if seq == prev_seq and isinstance(previous.get("changed_at"), (int, float)):
-                    changed_at = float(previous["changed_at"])
-            elif rec.get("vni") != "unknown":
-                old = legacy.get(f"{kind}:{rec['vni']}|{address}", {})
-                if old.get("seq") == seq and isinstance(old.get("changed_at"), (int, float)):
-                    changed_at = float(old["changed_at"])
-
-            moves, window = self._dad_policy(host)
-            rate = None
-            is_meaningful = False
-            if delta is not None and interval and interval > 0:
-                rate = delta * 60.0 / interval
-                equivalent_window_moves = delta * window / interval
-                is_meaningful = (
-                    (interval <= window and delta >= moves)
-                    or (interval > window and equivalent_window_moves >= moves)
-                )
-                deltas.append((delta, interval, rate, moves, host))
-                if is_meaningful:
-                    meaningful.append(host)
-            changed_times.append(changed_at)
-            per_host[host] = {
-                "delta": delta,
-                "interval_sec": interval,
-                "rate_per_min": rate,
-                "threshold_moves": moves,
-                "window_sec": window,
-                "meaningful": is_meaningful,
-            }
-            self.new_state["samples"][key] = {
-                "seq": seq,
-                "observed_at": observed_at,
-                "changed_at": changed_at,
-            }
-
-        if deltas:
-            active_deltas = [item for item in deltas if item[4] in meaningful]
-            best = max(active_deltas or deltas, key=lambda item: item[2])
-            rec["delta"], rec["seq_interval_sec"], rec["seq_rate_per_min"] = best[:3]
-            rec["seq_activity_threshold"] = best[3]
-        else:
-            rec["delta"] = None
-            rec["seq_interval_sec"] = None
-            rec["seq_rate_per_min"] = None
-            rec["seq_activity_threshold"] = None
-        rec["sequence_active"] = bool(meaningful)
-        rec["seq_observers"] = per_host
-        rec["quiet_age"] = (
-            max(0.0, self.analysis_epoch - max(changed_times))
-            if changed_times else None
-        )
-
-    def _carry_sequence_state(self):
-        cutoff = self.analysis_epoch - SEQ_SAMPLE_TTL_SEC
-        for key, value in self.prev_state.get("samples", {}).items():
-            if key in self.new_state["samples"] or not isinstance(value, dict):
-                continue
-            if value.get("observed_at", 0) >= cutoff:
-                self.new_state["samples"][key] = value
-
-    def _event_window(self, rec):
-        hosts = set(rec.get("flagged_hosts", set())) | set(rec.get("seq_by_host", {}))
-        windows = [self._dad_policy(host)[1] for host in hosts]
-        return max(windows or [DEFAULT_DAD_WINDOW_SEC])
-
-    def _event_is_active(self, rec):
-        return (
-            rec.get("recency") is not None
-            and rec["recency"] <= self._event_window(rec)
-        )
-
-    def _merge_mobility_records(self):
-        for (scope, ip), mob in self.ip_mob.items():
-            vlan = next(iter(mob["vlans"])) if len(mob["vlans"]) == 1 else "unknown"
-            rec = self.ip_dups.setdefault(
-                (scope, ip), self._blank_ip(scope, vlan, mob["vni"], ip)
-            )
-            rec["mobility"] = True
-            rec["evidence_sources"].add("evpn_ip_mobility")
-            rec["macs"].update(mob["macs"])
-            rec["vteps"].update(mob["vteps"])
-            rec["vlans"].update(mob["vlans"])
-            rec["vrfs"].update(mob["vrfs"])
-            rec["seq"] = max(rec["seq"], mob["seq"])
-            for host, seq in mob["seq_by_host"].items():
-                rec["seq_by_host"][host] = max(rec["seq_by_host"].get(host, 0), seq)
-            if rec["vlans"]:
-                rec["vlan"] = ", ".join(sorted(rec["vlans"], key=lambda x: int(x)))
-
-        for (scope, mac), mob in self.mac_mob.items():
-            vlan = next(iter(mob["vlans"])) if len(mob["vlans"]) == 1 else "unknown"
-            rec = self.mac_dups.setdefault(
-                (scope, mac), self._blank_mac(scope, vlan, mob["vni"], mac)
-            )
-            rec["mobility"] = True
-            rec["evidence_sources"].add("evpn_mac_mobility")
-            rec["vteps"].update(mob["vteps"])
-            rec["vlans"].update(mob["vlans"])
-            rec["vrfs"].update(mob["vrfs"])
-            rec["seq"] = max(rec["seq"], mob["seq"])
-            for host, seq in mob["seq_by_host"].items():
-                rec["seq_by_host"][host] = max(rec["seq_by_host"].get(host, 0), seq)
-            for host, ports in mob.get("ports", {}).items():
-                rec["local_ports"].setdefault(host, set()).update(ports)
-            if rec["vlans"]:
-                rec["vlan"] = ", ".join(sorted(rec["vlans"], key=lambda x: int(x)))
-
-    def _merge_log_records(self):
-        for (vni, ip), event in self.log_events.items():
-            recency = self._recency(event.get("latest"))
-            key = (self._scope(vni=vni), ip)
-            rec = self.ip_dups.get(key)
-            if rec is None and (recency is None or recency > LOG_EVIDENCE_TTL_SEC):
-                continue
-            if rec is None:
-                vlan = self._vlan_of(vni)
-                rec = self._blank_ip(key[0], vlan, vni, ip)
-                self.ip_dups[key] = rec
-            rec["events"] = event["count"]
-            rec["latest"] = event.get("latest")
-            rec["recency"] = recency
-            if recency is not None and recency <= LOG_EVIDENCE_TTL_SEC:
-                rec["dad_event"] = True
-                rec["evidence_sources"].add("frr_dad_log")
-                rec["macs"].update(event["macs"])
-                rec["log_macs"].update(event["macs"])
-                rec["vteps"].update(event["vteps"])
-                rec["flagged_hosts"].update(event.get("hosts", set()))
-
-        for (vni, mac), event in self.log_events_mac.items():
-            recency = self._recency(event.get("latest"))
-            key = (self._scope(vni=vni), mac)
-            rec = self.mac_dups.get(key)
-            if rec is None and (recency is None or recency > LOG_EVIDENCE_TTL_SEC):
-                continue
-            if rec is None:
-                vlan = self._vlan_of(vni)
-                rec = self._blank_mac(key[0], vlan, vni, mac)
-                self.mac_dups[key] = rec
-            rec["events"] = event["count"]
-            rec["latest"] = event.get("latest")
-            rec["recency"] = recency
-            if recency is not None and recency <= LOG_EVIDENCE_TTL_SEC:
-                rec["dad_event"] = True
-                rec["evidence_sources"].add("frr_dad_log")
-                rec["vteps"].update(event["vteps"])
-                rec["flagged_hosts"].update(event.get("hosts", set()))
-
-    @staticmethod
-    def _port_is_mh_like(port):
-        low = port.lower()
-        return "bond" in low or "lag" in low or low.startswith("peerlink")
-
-    def _merge_fdb_records(self):
-        for (scope, mac), hosts in self.fdb_local.items():
-            points = {(host, port) for host, ports in hosts.items() for port in ports}
-            if len(points) < 2 and (scope, mac) not in self.mac_dups:
-                continue
-            vni, vlan = self._scope_vni(scope), self._scope_vlan(scope)
-            rec = self.mac_dups.setdefault(
-                (scope, mac), self._blank_mac(scope, vlan, vni, mac)
-            )
-            for host, ports in hosts.items():
-                rec["local_ports"].setdefault(host, set()).update(ports)
-            rec["attachment_count"] = len(
-                {(host, port) for host, ports in rec["local_ports"].items() for port in ports}
-            )
-            non_mh_points = {
-                (host, port) for host, ports in rec["local_ports"].items()
-                for port in ports if not self._port_is_mh_like(port)
-            }
-            same_host_multi = any(len(ports) >= 2 for ports in rec["local_ports"].values())
-            rec["fdb_multi"] = same_host_multi or len(non_mh_points) >= 2
-            rec["mh_possible"] = rec["attachment_count"] >= 2 and not rec["fdb_multi"]
-            if rec["fdb_multi"]:
-                rec["evidence_sources"].add("fdb_multi_attachment")
-            elif rec["mh_possible"]:
-                rec["evidence_sources"].add("fdb_multi_mh_possible")
-
-    @staticmethod
-    def _sync_mac_local_projection(rec):
-        rec["local"] = {
-            host: ", ".join(sorted(ports))
-            for host, ports in rec.get("local_ports", {}).items()
-            if ports
-        }
-
-    @staticmethod
-    def _loop_correlation_id(scope, endpoints):
-        """Return a stable, human-readable identity for one loop signal group."""
-        return "%s | %s" % (
-            scope or "unknown",
-            " <-> ".join(sorted(set(endpoints))) or "unknown endpoints",
-        )
-
-    def _resolve_ip_ports(self, rec):
-        for mac in rec["macs"]:
-            for host, ports in self.fdb_local.get((rec["scope"], mac), {}).items():
-                rec["local_hosts"].add(host)
-                for port in ports:
-                    rec["ports"].add(f"{host}:{port}")
-
-    def _apply_ip_evidence_memory(self, rec):
-        key = f"{rec['scope']}|{rec['ip']}"
-        previous = self.prev_ip_state.get("evidence", {}).get(key, {})
-        if not isinstance(previous, dict):
-            previous = {}
-        if not previous:
-            for vlan in rec.get("vlans", set()) | ({rec["vlan"]} if rec.get("vlan") != "unknown" else set()):
-                candidate = self.prev_ip_state.get("evidence", {}).get(
-                    f"legacy:{vlan}|{rec['ip']}"
-                )
-                if candidate:
-                    previous = candidate
-                    break
-        cutoff = self.analysis_epoch - EVIDENCE_TTL_SEC
-        current_macs = set(rec["macs"])
-        current_ports = set(rec["ports"])
-        macs = {mac: self.analysis_epoch for mac in current_macs}
-        ports = {port.replace(":", "|", 1): self.analysis_epoch for port in current_ports}
-        for mac, last_seen in (previous.get("macs") or {}).items():
-            if not isinstance(last_seen, (int, float)) or last_seen < cutoff:
-                continue
-            if mac not in current_macs:
-                rec["historical_macs"].add(mac)
-                macs[mac] = float(last_seen)
-        for encoded, last_seen in (previous.get("ports") or {}).items():
-            if not isinstance(last_seen, (int, float)) or last_seen < cutoff:
-                continue
-            display = encoded.replace("|", ":", 1)
-            if display not in current_ports:
-                rec["historical_ports"].add(display)
-                ports[encoded] = float(last_seen)
-        self.new_ip_state["evidence"][key] = {
-            "scope": rec["scope"], "address": rec["ip"],
-            "macs": macs, "ports": ports,
-        }
-
-    def _carry_ip_evidence(self):
-        cutoff = self.analysis_epoch - EVIDENCE_TTL_SEC
-        for key, value in self.prev_ip_state.get("evidence", {}).items():
-            if key in self.new_ip_state["evidence"] or not isinstance(value, dict):
-                continue
-            timestamps = list((value.get("macs") or {}).values()) + list(
-                (value.get("ports") or {}).values()
-            )
-            if any(isinstance(ts, (int, float)) and ts >= cutoff for ts in timestamps):
-                self.new_ip_state["evidence"][key] = value
-
-    def _is_frozen(self, rec):
-        for host in rec.get("flagged_hosts", set()):
-            value = self.dup_config.get(host, {}).get("freeze")
-            if value is None:
-                continue
-            if str(value).strip().lower() not in {
-                "", "0", "off", "false", "no", "none", "disabled", "disable",
-            }:
-                return True
-        return False
+    def _quiet_age(self, kind, key):
+        """Seconds since this entry's EVPN sequence last changed (moved), from persisted state.
+        None if unknown."""
+        ts = self.new_state.get("%s:%s" % (kind, key), {}).get("ts")
+        return (time.time() - ts) if ts else None
 
     def _finalize(self):
         for host, ips in self.self_vteps.items():
             for ip in ips:
                 self.vtep2host[ip] = host
 
-        self._merge_mobility_records()
-        self._merge_log_records()
-        self._merge_fdb_records()
-
-        remove_ips = []
-        for (scope, ip), rec in self.ip_dups.items():
-            self._resolve_ip_ports(rec)
-            self._apply_sequence_sample(rec, "ip", ip)
-            self._apply_ip_evidence_memory(rec)
-            current_nonlog_macs = rec["macs"] - rec.get("log_macs", set())
-            current_multi_mac = len(current_nonlog_macs) >= 2
-            rec["confirmed_conflict"] = bool(
-                current_multi_mac and (
-                    rec["dad_flagged"]
-                    or rec.get("neighbor_conflict_strong")
-                    or "evpn_ip_mobility" in rec["evidence_sources"]
-                )
-            )
-            rec["suspected_conflict"] = bool(
-                current_multi_mac and not rec["confirmed_conflict"]
-            )
-            rec["mobility_only"] = bool(
-                rec["mobility"] and not rec["confirmed_conflict"]
-                and not rec["dad_flagged"] and not rec["dad_event"]
-            )
-            if rec["confirmed_conflict"]:
-                rec["incident_type"] = "confirmed_ip_conflict"
-            elif rec["dad_flagged"]:
-                rec["incident_type"] = "dad_flagged_ip"
-            elif rec["dad_event"]:
-                rec["incident_type"] = "dad_event_ip"
-            elif rec["mobility"]:
-                rec["incident_type"] = "ip_mobility"
-            rec["frozen"] = self._is_frozen(rec)
-            rec["activity"] = (
-                "active" if rec["confirmed_conflict"] or rec["sequence_active"]
-                or self._event_is_active(rec) or rec["frozen"] else "settled"
-            )
+        for (vlan, ip), rec in self.ip_dups.items():
+            ev = self.log_events.get((rec["vni"], ip)) or self.log_events.get((vlan, ip))
+            rec["events"] = ev["count"] if ev else 0
+            rec["latest"] = ev["latest"] if ev else None
+            if ev:
+                rec["macs"].update(ev["macs"])
+                rec["vteps"].update(ev["vteps"])
+            rec["recency"] = self._recency(rec["latest"])
+            rec["delta"] = self._seq_delta("ip", "%s|%s" % (rec["vni"], ip), rec["seq"])
+            # owner port from FDB local for any of its MACs
+            for mac in rec["macs"]:
+                for h, port in self.fdb_local.get((vlan, mac), {}).items():
+                    rec["local_hosts"].add(h)
+                    rec["ports"].add("%s:%s" % (h, port))
             rec["severity"] = self._ip_sev(rec)
-            if (rec["incident_type"] == "ip_mobility"
-                    and not rec["sequence_active"] and rec["seq"] < SEQ_STORM):
-                remove_ips.append((scope, ip))
 
-        for key in remove_ips:
-            self.ip_dups.pop(key, None)
-
-        remove_macs = []
-        for (scope, mac), rec in self.mac_dups.items():
-            self._sync_mac_local_projection(rec)
-            self._apply_sequence_sample(rec, "mac", mac)
-            rec["confirmed_conflict"] = bool(rec["fdb_multi"])
-            rec["mobility_only"] = bool(
-                rec["mobility"] and not rec["confirmed_conflict"]
-                and not rec["dad_flagged"] and not rec["dad_event"]
-            )
-            if rec["confirmed_conflict"]:
-                rec["incident_type"] = "confirmed_mac_conflict"
-            elif rec["dad_flagged"]:
-                rec["incident_type"] = "dad_flagged_mac"
-            elif rec["dad_event"]:
-                rec["incident_type"] = "dad_event_mac"
-            elif rec["mobility"]:
-                rec["incident_type"] = "mac_mobility"
-            rec["frozen"] = self._is_frozen(rec)
-            rec["activity"] = (
-                "active" if rec["confirmed_conflict"] or rec["sequence_active"]
-                or self._event_is_active(rec) or rec["frozen"] else "settled"
-            )
+        for (vlan, mac), rec in self.mac_dups.items():
+            for h, port in self.fdb_local.get((vlan, mac), {}).items():
+                rec["local"].setdefault(h, port)
+            rec["fdb_multi"] = len(rec["local"]) >= 2
+            rec["delta"] = self._seq_delta("mac", "%s|%s" % (rec["vni"], mac), rec["seq"])
             rec["severity"] = self._mac_sev(rec)
-            if (rec["incident_type"] == "mac_mobility"
-                    and not rec["sequence_active"] and rec["seq"] < SEQ_STORM
-                    and not rec["mh_possible"]):
-                remove_macs.append((scope, mac))
 
-        for key in remove_macs:
-            self.mac_dups.pop(key, None)
-
-        # Loop evidence is scoped to the same broadcast domain and only counts
-        # MACs that are moving now or simultaneously present at multiple
-        # attachment points. Historical flat sequence values cannot accumulate
-        # into a loop diagnosis.
-        confirmed_ip_macs = {
-            (rec["scope"], mac)
-            for rec in self.ip_dups.values() if rec["confirmed_conflict"]
-            for mac in rec["macs"]
-        }
-        pair_count, endpoints_by_key = {}, {}
-        for key, rec in self.mac_dups.items():
-            hosts = set(rec["local_ports"])
-            hosts.update(
-                self.vtep2host[vtep] for vtep in rec["vteps"]
-                if vtep in self.vtep2host
-            )
-            endpoints = tuple(sorted(hosts))
-            endpoints_by_key[key] = endpoints
-            if len(endpoints) >= 2 and (rec["sequence_active"] or rec["fdb_multi"]):
-                pair_key = (rec["scope"], endpoints)
-                pair_count[pair_key] = pair_count.get(pair_key, 0) + 1
-
-        for key, rec in self.mac_dups.items():
-            endpoints = endpoints_by_key[key]
-            participates = (rec["scope"], rec["mac"]) in confirmed_ip_macs
-            rec["participates_in_ip_conflict"] = participates
-            if participates:
-                rec["classification"] = "ip-conflict-participant"
-            elif (not rec["confirmed_conflict"] and not rec["dad_flagged"]
-                  and len(endpoints) >= 2
-                  and pair_count.get((rec["scope"], endpoints), 0) >= LOOP_MIN_MACS):
-                rec["possible_loop"] = True
-                rec["classification"] = "loop"
-                rec["loop_count"] = pair_count[(rec["scope"], endpoints)]
-                rec["loop_correlation_id"] = self._loop_correlation_id(
-                    rec["scope"], endpoints
-                )
-                rec["incident_type"] = "possible_loop"
-                rec["activity"] = "active"
+        # FDB-only MAC duplicates: same MAC LOCAL on >=2 switches via PHYSICAL (swp) ports.
+        # Bonds are intentionally excluded: a bond is a LAG / EVPN-MH Ethernet Segment, so a
+        # dual-homed host's MAC is LOCAL on BOTH pair members BY DESIGN (FRR marks it
+        # peer-active "P", seq 0/0) -- that is NOT a duplicate. Real bond/ES-level conflicts
+        # are caught by FRR's own "show evpn mac vni all duplicate".
+        for (vlan, mac), hosts in self.fdb_local.items():
+            if (vlan, mac) in self.mac_dups:
+                continue
+            phys = {h: p for h, p in hosts.items() if p.startswith("swp")}
+            if len(phys) >= 2:
+                rec = self._blank_mac(vlan, vlan, mac)
+                rec["local"] = dict(phys)
+                rec["fdb_multi"] = True
                 rec["severity"] = "CRITICAL"
+                self.mac_dups[(vlan, mac)] = rec
 
-        for rec in list(self.ip_dups.values()) + list(self.mac_dups.values()):
-            rec["stale"] = bool(
-                rec.get("severity") == "WARNING"
-                and not rec.get("confirmed_conflict")
-                and not rec.get("dad_flagged")
-                and rec.get("quiet_age") is not None
-                and rec["quiet_age"] >= STALE_AGE_SEC
-                and (rec.get("recency") is None or rec["recency"] >= STALE_AGE_SEC)
-            )
-            if rec["stale"]:
-                rec["activity"] = "historical"
+        # Mobility-based detection (high EVPN sequence). Works even where dup-address-detection
+        # is OFF (EVPN-MH fabrics) because the mobility sequence is always tracked. A stable
+        # dual-homed entry is 0/0 (never collected); a climbing/high seq is a real duplicate.
+        for (vlan, ip), mob in self.ip_mob.items():
+            rec = self.ip_dups.get((vlan, ip))
+            if rec is None:
+                # Mobility-only sighting. Treat as a duplicate only with corroboration: 2+ distinct
+                # MACs (real IP conflict), a climbing sequence (active), or an extreme sequence
+                # (a past storm). A single MAC with a modest stable seq is ordinary EVPN-MH
+                # mobility churn, NOT a duplicate -> skip it.
+                delta = self._seq_delta("ip", "%s|%s" % (mob["vni"], ip), mob["seq"])
+                climbing = delta is not None and delta > 0
+                if not (len(mob["macs"]) >= 2 or climbing or mob["seq"] >= SEQ_STORM):
+                    continue
+                rec = self._blank_ip(vlan, mob["vni"], ip)
+                rec["macs"].update(mob["macs"])
+                rec["vteps"].update(mob["vteps"])
+                rec["mobility"] = True
+                rec["delta"] = delta
+                self.ip_dups[(vlan, ip)] = rec
+            rec["seq"] = max(rec["seq"], mob["seq"])
+            if rec["delta"] is None:
+                rec["delta"] = self._seq_delta("ip", "%s|%s" % (rec["vni"], ip), rec["seq"])
+            rec["severity"] = self._ip_sev(rec)
 
-        self._carry_sequence_state()
-        self._carry_ip_evidence()
+        for (vlan, mac), mob in self.mac_mob.items():
+            rec = self.mac_dups.get((vlan, mac))
+            if rec is None:
+                # Mobility-only: keep only if LOCAL on 2+ switches (real MAC conflict), climbing,
+                # or an extreme seq (past storm). A MAC that is local on one switch (and remote via
+                # its normal VTEP everywhere else) with a modest stable seq is ordinary MH churn.
+                delta = self._seq_delta("mac", "%s|%s" % (mob["vni"], mac), mob["seq"])
+                climbing = delta is not None and delta > 0
+                if not (len(mob.get("ports", {})) >= 2 or climbing or mob["seq"] >= SEQ_STORM):
+                    continue
+                rec = self._blank_mac(vlan, mob["vni"], mac)
+                rec["local"] = dict(mob.get("ports", {}))
+                rec["vteps"].update(mob["vteps"])
+                rec["mobility"] = True
+                rec["delta"] = delta
+                self.mac_dups[(vlan, mac)] = rec
+            rec["seq"] = max(rec["seq"], mob["seq"])
+            if rec["delta"] is None:
+                rec["delta"] = self._seq_delta("mac", "%s|%s" % (rec["vni"], mac), rec["seq"])
+            rec["severity"] = self._mac_sev(rec)
+
+        # Final reconciliation: attach zebra-log contenders ("last VTEP" = the OTHER end of the
+        # flap) + recency to every duplicate, then (re)compute severity.
+        for (vlan, ip), rec in self.ip_dups.items():
+            evm = self.log_events.get((rec["vni"], ip)) or self.log_events.get((vlan, ip))
+            if evm:
+                # The zebra log carries the OTHER contender MAC(s) for this IP. Merge them so a
+                # mobility/arp-detected IP dup (which only knows the currently-winning MAC) still
+                # links to the conflicting device -> its port resolves below.
+                rec["macs"].update(evm["macs"])
+                rec["vteps"].update(evm["vteps"])
+                if not rec["events"]:
+                    rec["events"] = evm["count"]
+                if rec["latest"] is None:
+                    rec["latest"] = evm["latest"]
+                    rec["recency"] = self._recency(evm["latest"])
+            # Resolve owner ports from FDB for ALL macs now assembled. Mobility/log-detected IP dups
+            # are added AFTER the early port pass, so without this they carry no port at all.
+            for mac in rec["macs"]:
+                for h, port in self.fdb_local.get((vlan, mac), {}).items():
+                    rec["local_hosts"].add(h)
+                    rec["ports"].add("%s:%s" % (h, port))
+            rec["severity"] = self._ip_sev(rec)
+        for (vlan, mac), rec in self.mac_dups.items():
+            evm = self.log_events_mac.get((rec["vni"], mac))
+            if evm:
+                rec["vteps"].update(evm["vteps"])
+                rec["events"] = evm["count"]
+                rec["latest"] = evm["latest"]
+                rec["recency"] = self._recency(evm["latest"])
+                rec["flagged"] = True
+            rec["severity"] = self._mac_sev(rec)
+
+        # Cross-cycle port/MAC memory for duplicate IPs: extreme flappers rarely have BOTH devices
+        # captured in one snapshot, so remember each duplicate IP's owner ports + MACs and merge
+        # with recent prior runs. This lets the Conflict column resolve the other end's port even
+        # when this run only caught one side.
+        now_ts = time.time()
+        for (vlan, ip), rec in self.ip_dups.items():
+            key = "%s|%s" % (vlan, ip)
+            ports = {}
+            for p in rec["ports"]:
+                if ":" in p:
+                    h, pt = p.split(":", 1)
+                    ports[h] = pt
+            prev = self.prev_ip_state.get(key, {})
+            if prev.get("ts", 0) >= now_ts - 21600:   # remember for up to 6h
+                for h, pt in (prev.get("ports") or {}).items():
+                    if h not in ports:
+                        ports[h] = pt
+                        rec["ports"].add("%s:%s" % (h, pt))
+                for m in (prev.get("macs") or []):
+                    rec["macs"].add(m)
+            self.new_ip_state[key] = {"ports": ports, "macs": sorted(rec["macs"]), "ts": now_ts}
+            rec["severity"] = self._ip_sev(rec)
+
+        # Classify each MAC duplicate: "duplicate" device (a duplicated IP rides on this MAC,
+        # e.g. two power shelves sharing MAC+IP) vs "loop" (many MACs flapping between the SAME
+        # pair of endpoints with no per-MAC IP duplicate = frames circulating).
+        dup_ip_macs = {}
+        for (vlan, ip), irec in self.ip_dups.items():
+            for m in irec["macs"]:
+                dup_ip_macs.setdefault(vlan, set()).add(m)
+
+        def _endpoints(rec):
+            hosts = set(rec["local"].keys())
+            for v in rec["vteps"]:
+                h = self.vtep2host.get(v)
+                if h:
+                    hosts.add(h)
+            return tuple(sorted(hosts))
+
+        pair_count, ep_by_mac = {}, {}
+        for key, rec in self.mac_dups.items():
+            ep = _endpoints(rec)
+            ep_by_mac[key] = ep
+            if len(ep) >= 2:
+                pair_count[ep] = pair_count.get(ep, 0) + 1
+
+        for (vlan, mac), rec in self.mac_dups.items():
+            has_dup_ip = mac in dup_ip_macs.get(vlan, set())
+            if not has_dup_ip:
+                evm = self.log_events_mac.get((rec["vni"], mac))
+                if evm:
+                    has_dup_ip = any((vlan, ip) in self.ip_dups for ip in evm["ips"])
+            ep = ep_by_mac[(vlan, mac)]
+            if has_dup_ip:
+                rec["classification"] = "duplicate"
+            elif len(ep) >= 2 and pair_count.get(ep, 0) >= LOOP_MIN_MACS:
+                rec["classification"] = "loop"
+                rec["loop_count"] = pair_count[ep]
+
+        # Age-out: a quiesced (WARNING) duplicate whose EVPN sequence has not moved for a long time
+        # AND has no recent log event is "stale" -- still real, just historical (e.g. storage VIPs
+        # that rebalanced long ago). The UI collapses these out of the main list by default so it
+        # stays focused on active + recently-settled duplicates. Needs to observe the entry for
+        # STALE_AGE_SEC first (the quiet clock starts when we first see it).
+        def _mark_stale(rec, kind, key):
+            qa = self._quiet_age(kind, "%s|%s" % (rec["vni"], key))
+            rec["quiet_age"] = qa
+            rec["stale"] = bool(rec.get("severity") == "WARNING" and qa is not None
+                                and qa >= STALE_AGE_SEC
+                                and (rec.get("recency") is None or rec["recency"] >= STALE_AGE_SEC))
+        for (vlan, ip), rec in self.ip_dups.items():
+            _mark_stale(rec, "ip", ip)
+        for (vlan, mac), rec in self.mac_dups.items():
+            _mark_stale(rec, "mac", mac)
 
         self._save_state()
 
     def _ip_sev(self, rec):
-        if rec.get("confirmed_conflict") or self._is_frozen(rec):
+        # "Active now" = a duplicate/mobility event within the last hour, or a sequence that climbed
+        # THIS collection cycle. Only an actively-moving duplicate is an urgent (CRITICAL) fire.
+        active = (rec["recency"] is not None and rec["recency"] <= ACTIVE_WINDOW_SEC) or \
+                 (rec["delta"] is not None and rec["delta"] > 0)
+        if active:
             return "CRITICAL"
-        if rec.get("sequence_active") or self._event_is_active(rec):
-            return "CRITICAL"
-        if (rec.get("dad_flagged") or rec.get("dad_event")
-                or rec.get("mobility") or rec.get("suspected_conflict")):
+        # Settled: a confirmed conflict (2+ MACs) or an EVPN-flagged / high-seq entry that is NOT
+        # moving right now is a QUIESCED duplicate -- real, but no longer flapping (e.g. storage VIP
+        # pools that have rebalanced and settled). Worth listing, not an active fire.
+        if len(rec["macs"]) >= 2 or rec["flagged"] or rec["seq"] >= SEQ_WARN:
             return "WARNING"
         return "OK"
 
     def _mac_sev(self, rec):
-        if rec.get("confirmed_conflict") or self._is_frozen(rec):
+        if (rec.get("recency") is not None and rec["recency"] <= ACTIVE_WINDOW_SEC) or \
+           (rec.get("delta") is not None and rec["delta"] > 0) or rec.get("fdb_multi"):
             return "CRITICAL"
-        if rec.get("sequence_active") or self._event_is_active(rec):
-            return "CRITICAL"
-        if (rec.get("dad_flagged") or rec.get("dad_event")
-                or rec.get("mobility") or rec.get("mh_possible")):
+        if rec.get("flagged") or rec.get("seq", 0) >= SEQ_WARN:
             return "WARNING"
         return "OK"
 
     # -------------------------------------------------------------- summary
     def summary(self):
-        ips = list(self.ip_dups.values())
-        macs = list(self.mac_dups.values())
-        count = lambda rows, **wanted: sum(
-            1 for row in rows if all(row.get(key) == value for key, value in wanted.items())
-        )
-        confirmed_ips = [row for row in ips if row.get("confirmed_conflict")]
-        confirmed_macs = [row for row in macs if row.get("confirmed_conflict")]
-        ip_mobility = [row for row in ips if row.get("incident_type") == "ip_mobility"]
-        mac_mobility = [row for row in macs if row.get("incident_type") == "mac_mobility"]
-        dad_ip_types = {"dad_flagged_ip", "dad_event_ip"}
-        dad_mac_types = {"dad_flagged_mac", "dad_event_mac"}
-        dad_findings = {}
-        dad_ip_participants = {}
-        for row in ips:
-            if row.get("incident_type") not in dad_ip_types:
-                continue
-            key = ("ip", row.get("scope", "unknown"), row.get("ip", "unknown"))
-            dad_findings[key] = row.get("activity") == "active"
-            for mac in row.get("macs", set()):
-                dad_ip_participants.setdefault(
-                    (row.get("scope", "unknown"), mac), set()
-                ).add(key)
-        for row in macs:
-            if row.get("incident_type") not in dad_mac_types:
-                continue
-            participant = (
-                row.get("scope", "unknown"), row.get("mac", "unknown")
-            )
-            linked_ip_findings = dad_ip_participants.get(participant, set())
-            if linked_ip_findings:
-                if row.get("activity") == "active":
-                    for key in linked_ip_findings:
-                        dad_findings[key] = True
-                continue
-            key = ("mac",) + participant
-            dad_findings[key] = row.get("activity") == "active"
-        mobility_incidents = {}
-        for row in ip_mobility:
-            keys = {
-                (row.get("scope", "unknown"), mac)
-                for mac in row.get("macs", set())
-            } or {
-                (row.get("scope", "unknown"), "ip:" + row.get("ip", "unknown"))
-            }
-            for key in keys:
-                mobility_incidents[key] = (
-                    "active" if row.get("activity") == "active"
-                    or mobility_incidents.get(key) == "active" else "settled"
-                )
-        for row in mac_mobility:
-            key = (row.get("scope", "unknown"), row.get("mac", "unknown"))
-            mobility_incidents[key] = (
-                "active" if row.get("activity") == "active"
-                or mobility_incidents.get(key) == "active" else "settled"
-            )
-        apipa_observations = sum(
-            claim["observation_count"] for claim in self.apipa_claims.values()
-        )
-        apipa_local = sum(
-            claim["local_observations"] for claim in self.apipa_claims.values()
-        )
-        apipa_extern = sum(
-            claim["extern_observations"] for claim in self.apipa_claims.values()
-        )
-        apipa_non_vlan = sum(
-            claim["non_vlan_observations"] for claim in self.apipa_claims.values()
-        )
-        resolved_apipa_claims = [
-            claim for claim in self.apipa_claims.values()
-            if claim.get("mac") != "unknown"
-            and bool(set(claim.get("states", set())) - {"FAILED", "INCOMPLETE"})
-        ]
-        affected_vnis = {
-            row["vni"] for row in ips + macs if row.get("vni") != "unknown"
-        } | {
-            claim["vni"] for claim in self.apipa_claims.values()
-            if claim.get("vni") != "unknown"
-        }
-        affected_vlans = set()
-        for row in ips + macs:
-            affected_vlans.update(row.get("vlans", set()))
-        for claim in self.apipa_claims.values():
-            affected_vlans.update(claim["vlans"])
+        ip_active = sum(1 for r in self.ip_dups.values() if r["severity"] == "CRITICAL")
+        ip_quiesced = sum(1 for r in self.ip_dups.values() if r["severity"] == "WARNING")
+        mac_total = len(self.mac_dups)
+        apipa_total = sum(a["total"] for a in self.apipa.values())
+        vlans = set(r["vlan"] for r in self.ip_dups.values()) | set(r["vlan"] for r in self.mac_dups.values())
+        for h, a in self.apipa.items():
+            vlans |= set(a["per_vlan"].keys())
         disabled = [h for h, c in self.dup_config.items() if c.get("enabled") is False]
-        confirmed_ip_active = count(confirmed_ips, activity="active")
-        confirmed_ip_settled = count(confirmed_ips, activity="settled") + count(
-            confirmed_ips, activity="historical"
-        )
-        confirmed_mac_active = count(confirmed_macs, activity="active")
-        confirmed_mac_settled = count(confirmed_macs, activity="settled") + count(
-            confirmed_macs, activity="historical"
-        )
-        standalone_active_macs = sum(
-            1 for row in confirmed_macs
-            if row.get("activity") == "active"
-            and not row.get("participates_in_ip_conflict")
-        )
-        confirmed_conflict_incident_active = confirmed_ip_active + standalone_active_macs
-        possible_loop_rows = [row for row in macs if row.get("possible_loop")]
-        possible_loop_incidents = set()
-        for row in possible_loop_rows:
-            endpoints = set(row.get("local_ports", {}))
-            endpoints.update(
-                self.vtep2host[vtep] for vtep in row.get("vteps", set())
-                if vtep in self.vtep2host
-            )
-            possible_loop_incidents.add(
-                row.get("loop_correlation_id")
-                or self._loop_correlation_id(row.get("scope", "unknown"), endpoints)
-            )
-        coverage_failure_count = sum(
-            len(set(labels)) for labels in self.coverage_failures.values()
-        )
         return {
-            "confirmed_ip_total": len(confirmed_ips),
-            "confirmed_ip_active": confirmed_ip_active,
-            "confirmed_ip_settled": confirmed_ip_settled,
-            "dad_flagged_ip_total": count(ips, incident_type="dad_flagged_ip"),
-            "dad_event_ip_total": count(ips, incident_type="dad_event_ip"),
-            "dad_flagged_ip_evidence_total": count(ips, dad_flagged=True),
-            "dad_finding_total": len(dad_findings),
-            "dad_finding_active": sum(dad_findings.values()),
-            "ip_mobility_total": len(ip_mobility),
-            "ip_mobility_active": count(ip_mobility, activity="active"),
-            "ip_mobility_settled": len(ip_mobility) - count(ip_mobility, activity="active"),
-            "confirmed_mac_total": len(confirmed_macs),
-            "confirmed_mac_active": confirmed_mac_active,
-            "confirmed_mac_standalone_active": standalone_active_macs,
-            "confirmed_mac_settled": confirmed_mac_settled,
-            "confirmed_conflict_incident_active": confirmed_conflict_incident_active,
-            "dad_flagged_mac_total": count(macs, incident_type="dad_flagged_mac"),
-            "dad_event_mac_total": count(macs, incident_type="dad_event_mac"),
-            "dad_flagged_mac_evidence_total": count(macs, dad_flagged=True),
-            "mac_mobility_total": len(mac_mobility),
-            "mac_mobility_active": count(mac_mobility, activity="active"),
-            "mac_mobility_settled": len(mac_mobility) - count(mac_mobility, activity="active"),
-            "mobility_incident_total": len(mobility_incidents),
-            "mobility_incident_active": sum(
-                1 for activity in mobility_incidents.values() if activity == "active"
-            ),
-            "mobility_incident_settled": sum(
-                1 for activity in mobility_incidents.values() if activity != "active"
-            ),
-            "possible_loops": len(possible_loop_incidents),
-            "possible_loop_mac_signals": len(possible_loop_rows),
-            "apipa_unique": len(resolved_apipa_claims),
-            "apipa_unresolved_unique": len(self.apipa_claims) - len(resolved_apipa_claims),
-            "apipa_observations": apipa_observations,
-            "apipa_local_observations": apipa_local,
-            "apipa_extern_observations": apipa_extern,
-            "apipa_non_vlan_observations": apipa_non_vlan,
-            "coverage_expected_hosts": len(self.expected_hosts),
-            "coverage_current_hosts": len(self.current_hosts),
-            "coverage_unavailable_hosts": sorted(self.unavailable_hosts),
-            "coverage_partial": self.coverage_partial or bool(coverage_failure_count),
-            "coverage_failures": coverage_failure_count,
-            "sequence_baseline_warmup": self.sequence_baseline_warmup,
-            "sequence_baseline_warmup_hosts": sorted(
-                self.sequence_baseline_warmup_hosts
-            ),
-            "affected_vnis": len(affected_vnis),
-            "affected_vlans": len(affected_vlans),
-            # Backwards-compatible keys now expose confirmed incidents rather
-            # than mixing mobility/APIPA observations into duplicate totals.
-            "ip_active": confirmed_ip_active,
-            "ip_quiesced": confirmed_ip_settled,
-            "mac_total": len(confirmed_macs),
-            "apipa_total": len(resolved_apipa_claims),
-            "vlans": len(affected_vlans),
-            "disabled": disabled,
-            "ip_total": len(confirmed_ips),
+            "ip_active": ip_active, "ip_quiesced": ip_quiesced,
+            "mac_total": mac_total, "apipa_total": apipa_total,
+            "vlans": len(vlans), "disabled": disabled,
+            "ip_total": len(self.ip_dups),
         }
 
     # ---------------------------------------------------------------- web
+    @staticmethod
+    def _ago(seconds):
+        if seconds is None:
+            return "&mdash;"
+        s = int(seconds)
+        if s < 0:
+            return "just now"
+        if s < 90:
+            return "%ds ago" % s
+        if s < 5400:
+            return "%dm ago" % (s // 60)
+        if s < 172800:
+            return "%dh ago" % (s // 3600)
+        return "%dd ago" % (s // 86400)
+
+    @staticmethod
+    def _sev_badge(sev):
+        cls = {"CRITICAL": "badge-red", "WARNING": "badge-orange", "OK": "badge-green"}.get(sev, "badge-gray")
+        return '<span class="badge %s">%s</span>' % (cls, sev)
+
+    @staticmethod
+    def _seq_cell(seq, delta):
+        if not seq:
+            return "&mdash;"
+        out = "{:,}".format(seq)
+        if delta is not None and delta > 0:
+            out += ' <span class="delta-up">(+%s)</span>' % "{:,}".format(delta)
+        return out
+
+    def _port_label(self, host, port):
+        """'host:port' with the interface description (ifalias) dimmed on a line below, so each
+        cell names the physically attached device (which box is duplicating)."""
+        base = "%s:%s" % (html.escape(host), html.escape(port))
+        desc = self.if_desc.get((host, port))
+        if desc:
+            base += "<span class='pdesc'>%s</span>" % html.escape(desc)
+        return base
+
+    def _vtep_cell(self, vteps, owner_hosts, port_map=None):
+        """Render the conflicting VTEPs as switch names (resolved via vtep2host), dropping the
+        owner's own VTEP so the column shows the OTHER end of the flap (the contender). When the
+        conflicting MAC/IP was also captured LOCAL on that switch (port_map), show switch:port
+        plus that port's interface description."""
+        seen = []
+        for v in sorted(vteps):
+            h = self.vtep2host.get(v)
+            if h and h in owner_hosts:
+                continue
+            if h:
+                label = self._port_label(h, port_map[h]) if (port_map and port_map.get(h)) else html.escape(h)
+            else:
+                label = html.escape(v)
+            if label not in seen:
+                seen.append(label)
+        return "<br>".join(seen) or "&mdash;"
+
     def export_html(self, output_file):
-        """Render the semantic duplicate report."""
-        return export_duplicate_report(self, output_file)
+        s = self.summary()
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        sev_rank = {"CRITICAL": 0, "WARNING": 1, "OK": 2}
+        all_devices = set()
+
+        # ---- IP duplicate rows
+        ip_rows = sorted(self.ip_dups.values(),
+                         key=lambda r: (sev_rank.get(r["severity"], 3), -(r["seq"]), -(r["events"])))
+        ip_html = []
+        for r in ip_rows:
+            macs = "<br>".join(html.escape(m) for m in sorted(r["macs"])) or "&mdash;"
+            owner_parts = []
+            for p in sorted(r["ports"]):
+                if ":" in p:
+                    _h, _pt = p.split(":", 1)
+                    owner_parts.append(self._port_label(_h, _pt))
+                else:
+                    owner_parts.append(html.escape(p))
+            owner = "<br>".join(owner_parts) or \
+                    ("<br>".join(html.escape(h) for h in sorted(r["local_hosts"])) or "&mdash;")
+            ip_ports = {}
+            for _m in r["macs"]:
+                for _h, _p in self.fdb_local.get((r["vlan"], _m), {}).items():
+                    ip_ports[_h] = _p
+            vteps = self._vtep_cell(r["vteps"], r["local_hosts"], ip_ports)
+            vlanvni = "vlan %s<br><span class='dim'>VNI %s</span>" % (html.escape(r["vlan"]), html.escape(r["vni"]))
+            devs = set(r["local_hosts"]) | set(p.split(":")[0] for p in r["ports"])
+            all_devices |= devs
+            if len(r["macs"]) >= 2:
+                note = "Confirmed &mdash; IP conflict"
+                if r["severity"] != "CRITICAL":
+                    note += " <span class='dim'>(quiesced)</span>"
+            elif r["flagged"]:
+                note = "Confirmed &mdash; EVPN/log"
+            elif r.get("mobility"):
+                # One MAC, one owner at this instant, but a very high EVPN mobility sequence: the
+                # SAME MAC/IP is rapidly re-registering between locations (a flapping endpoint), not
+                # two devices sharing an address. Label it distinctly so it is not read as a conflict.
+                note = ("Flapping endpoint &mdash; active (EVPN mobility)"
+                        if (r.get("delta") is not None and r["delta"] > 0)
+                        else "Flapping endpoint &mdash; settled (EVPN mobility)")
+            else:
+                note = "&mdash;"
+            if r.get("stale"):
+                note += " <span class='dim'>(aged %dd)</span>" % int((r.get("quiet_age") or 0) // 86400)
+            rowcls = " class='stale-row'" if r.get("stale") else ""
+            ip_html.append(
+                "<tr data-sev='%d' data-devices='%s'%s><td>%s</td><td>%s</td><td class='mono'>%s</td><td class='mono'>%s</td>"
+                "<td class='mono'>%s</td><td class='mono'>%s</td><td class='mono'>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>" % (
+                    sev_rank.get(r["severity"], 3), html.escape(" ".join(sorted(devs))), rowcls, self._sev_badge(r["severity"]), vlanvni,
+                    html.escape(r["ip"]), macs, owner, vteps,
+                    self._seq_cell(r["seq"], r["delta"]), self._ago(r["recency"]), r["events"] or "&mdash;", note))
+        if not ip_html:
+            ip_html.append("<tr><td colspan='10' class='empty'>No duplicate IPs detected &#10003;</td></tr>")
+
+        # ---- MAC duplicate rows
+        # Port map from related duplicate IPs: for a duplicate MAC the "other end" is often a
+        # DIFFERENT MAC on the same IP, so pull that device's port from the IP-dup record -> the
+        # Conflict column can then show switch:port (not just switch).
+        mac_ip_ports = {}
+        for (ivlan, iip), irec in self.ip_dups.items():
+            ports = {}
+            for p in irec["ports"]:
+                if ":" in p:
+                    h, pt = p.split(":", 1)
+                    ports[h] = pt
+            for m in irec["macs"]:
+                mac_ip_ports.setdefault((ivlan, m), {}).update(ports)
+        mac_rows = sorted(self.mac_dups.values(),
+                          key=lambda r: (sev_rank.get(r["severity"], 3), -(r["seq"])))
+        mac_html = []
+        for r in mac_rows:
+            local = "<br>".join(self._port_label(h, p) for h, p in sorted(r["local"].items())) or "&mdash;"
+            cport = dict(self.fdb_local.get((r["vlan"], r["mac"]), {}))
+            cport.update(mac_ip_ports.get((r["vlan"], r["mac"]), {}))
+            vteps = self._vtep_cell(r["vteps"], set(r["local"].keys()), cport)
+            vlanvni = "vlan %s<br><span class='dim'>VNI %s</span>" % (html.escape(r["vlan"]), html.escape(r["vni"]))
+            if r.get("classification") == "duplicate":
+                note = "Duplicate device"
+            elif r.get("classification") == "loop":
+                note = "Possible loop (%d MACs)" % r.get("loop_count", 0)
+            elif r.get("fdb_multi"):
+                note = "LOCAL on %d switches" % len(r["local"])
+            elif r.get("flagged"):
+                note = "EVPN flagged"
+            elif r.get("mobility"):
+                note = "high mobility seq"
+            else:
+                note = ""
+            note_html = html.escape(note)
+            if r.get("stale"):
+                note_html += " <span class='dim'>(aged %dd)</span>" % int((r.get("quiet_age") or 0) // 86400)
+            rowcls = " class='stale-row'" if r.get("stale") else ""
+            devs = set(r["local"].keys())
+            all_devices |= devs
+            mac_html.append(
+                "<tr data-sev='%d' data-devices='%s'%s><td>%s</td><td>%s</td><td class='mono'>%s</td><td class='mono'>%s</td>"
+                "<td class='mono'>%s</td><td class='mono'>%s</td><td>%s</td></tr>" % (
+                    sev_rank.get(r["severity"], 3), html.escape(" ".join(sorted(devs))), rowcls, self._sev_badge(r["severity"]), vlanvni,
+                    html.escape(r["mac"]), local, vteps,
+                    self._seq_cell(r["seq"], r.get("delta")), note_html))
+        if not mac_html:
+            mac_html.append("<tr><td colspan='7' class='empty'>No duplicate MACs detected &#10003;</td></tr>")
+
+        # ---- APIPA rows (real access VLANs only; baseline link-local filtered out)
+        apipa_rows = []
+        for host in sorted(self.apipa):
+            for vlan, cnt in sorted(self.apipa[host]["per_vlan"].items(), key=lambda kv: -kv[1]):
+                if cnt <= 0:
+                    continue
+                sev = "CRITICAL" if cnt >= APIPA_CRITICAL else "WARNING"
+                apipa_rows.append((sev_rank[sev], sev, host, vlan, cnt))
+        apipa_rows.sort()
+        apipa_html = []
+        for _, sev, host, vlan, cnt in apipa_rows:
+            all_devices.add(host)
+            apipa_html.append("<tr data-devices='%s'><td>%s</td><td class='mono'>%s</td><td>vlan %s</td><td class='mono'>%d</td></tr>" % (
+                html.escape(host), self._sev_badge(sev), html.escape(host), html.escape(vlan), cnt))
+        if not apipa_html:
+            apipa_html.append("<tr><td colspan='4' class='empty'>No APIPA (169.254/16) addresses &#10003;</td></tr>")
+
+        # ---- DAD / multihoming note (shown in the Thresholds modal, not as a banner)
+        dad_note = ""
+        if s["disabled"]:
+            dad_note = ("<br><b>DAD currently off on:</b> %s (EVPN multihoming active)."
+                        % html.escape(", ".join(sorted(s["disabled"]))))
+        cfg_txt = "n/a"
+        for c in self.dup_config.values():
+            if c.get("max_moves"):
+                cfg_txt = "%s moves / %ss" % (c["max_moves"], c["time"])
+                break
+
+        cards = [
+            ("card-critical", s["ip_active"], "ACTIVE IP DUPLICATES", "active"),
+            ("card-warning", s["ip_quiesced"], "QUIESCED IP DUPLICATES", "quiesced"),
+            ("card-critical" if s["mac_total"] else "card-excellent", s["mac_total"], "MAC DUPLICATES", "mac"),
+            ("card-warning" if s["apipa_total"] else "card-excellent", s["apipa_total"], "APIPA (DHCP FAILED)", "apipa"),
+            ("card-info", s["vlans"], "VLANS AFFECTED", ""),
+            ("card-warning" if s["disabled"] else "card-excellent", len(s["disabled"]), "DUP-DETECT DISABLED", "disabled"),
+        ]
+        cards_html = "".join(
+            "<div class='summary-card %s%s'%s><div class='metric'>%s</div><div class='metric-label'>%s</div></div>" % (
+                c, ("" if act else " noclick"),
+                (" onclick=\"cardFilter('%s', this)\"" % act) if act else "",
+                v, l)
+            for c, v, l, act in cards)
+
+        stale_count = sum(1 for r in self.ip_dups.values() if r.get("stale")) + \
+                      sum(1 for r in self.mac_dups.values() if r.get("stale"))
+        aged_btn = ("" if not stale_count else
+                    "<button id='agedBtn' class='btn btn-secondary' onclick='toggleAged()' "
+                    "title='Quiesced duplicates with no EVPN movement for &ge;%dd'>Show aged (%d)</button>"
+                    % (STALE_AGE_SEC // 86400, stale_count))
+
+        html_doc = _PAGE_TEMPLATE
+        html_doc = html_doc.replace("__NOW__", html.escape(now))
+        html_doc = html_doc.replace("__AGED_BTN__", aged_btn)
+        html_doc = html_doc.replace("__STALE_COUNT__", str(stale_count))
+        html_doc = html_doc.replace("__STALE_DAYS__", str(STALE_AGE_SEC // 86400))
+        html_doc = html_doc.replace("__CFG__", html.escape(cfg_txt))
+        html_doc = html_doc.replace("__APIPA_CRIT__", str(APIPA_CRITICAL))
+        html_doc = html_doc.replace("__DAD_NOTE__", dad_note)
+        html_doc = html_doc.replace("__SEQ_WARN__", str(SEQ_WARN))
+        html_doc = html_doc.replace("__SEQ_STORM__", "{:,}".format(SEQ_STORM))
+        html_doc = html_doc.replace("__LOOP_MIN__", str(LOOP_MIN_MACS))
+        html_doc = html_doc.replace("__CARDS__", cards_html)
+        html_doc = html_doc.replace("__IP_ROWS__", "\n".join(ip_html))
+        html_doc = html_doc.replace("__MAC_ROWS__", "\n".join(mac_html))
+        html_doc = html_doc.replace("__APIPA_ROWS__", "\n".join(apipa_html))
+        html_doc = html_doc.replace("__DEVICES__", json.dumps(sorted(all_devices)))
+        with open(output_file, "w") as f:
+            f.write(html_doc)
+
+
+_PAGE_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Duplicate IP / MAC Analysis</title>
+<link rel="shortcut icon" href="/png/favicon.ico">
+<link rel="stylesheet" type="text/css" href="/css/select2.min.css">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif; background:#1e1e1e; color:#d4d4d4; padding:20px; min-height:100vh; }
+.page-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; padding-bottom:15px; border-bottom:1px solid #404040; }
+.page-title { font-size:24px; font-weight:600; color:#76b900; }
+.header-right { display:flex; align-items:center; gap:14px; }
+.last-updated { font-size:13px; color:#888; }
+.btn { background:#333; color:#d4d4d4; border:1px solid #404040; padding:8px 14px; border-radius:6px; cursor:pointer; font-size:13px; }
+.btn:hover { background:#3c3c3c; border-color:#76b900; }
+.dashboard-section { background:#2d2d2d; border-radius:8px; margin-bottom:20px; overflow:hidden; }
+.section-header { padding:12px 16px; background:#333; font-weight:600; font-size:14px; color:#76b900; border-bottom:1px solid #404040; }
+.section-content { padding:16px; }
+.summary-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; }
+.summary-card { background:#252526; padding:15px; border-radius:6px; border-left:3px solid #76b900; }
+.card-excellent { border-left-color:#76b900; }
+.card-info { border-left-color:#4fc3f7; }
+.card-warning { border-left-color:#ff9800; }
+.card-critical { border-left-color:#f44336; }
+.metric { font-size:22px; font-weight:bold; color:#d4d4d4; }
+.metric-label { font-size:12px; color:#888; margin-top:4px; }
+table.dup-table { width:100%; border-collapse:collapse; font-size:13px; }
+.dup-table th, .dup-table td { border:1px solid #404040; padding:9px 11px; text-align:left; vertical-align:top; }
+.dup-table th { background:#333; color:#76b900; font-weight:600; font-size:12px; cursor:pointer; user-select:none; }
+.dup-table th:hover { background:#3c3c3c; }
+.dup-table tbody tr { background:#252526; }
+.dup-table tbody tr:hover { background:#2d2d2d; }
+.mono { font-family:'Consolas','Courier New',monospace; font-size:12px; }
+.dim { color:#888; font-size:11px; }
+.pdesc { display:block; color:#c8964a; font-size:10px; font-style:italic; margin-top:1px; white-space:nowrap; }
+tr.stale-row { opacity:0.55; }
+body:not(.show-aged) tr.stale-row { display:none !important; }
+.empty { text-align:center; color:#76b900; padding:18px; }
+.delta-up { color:#ff6b6b; font-weight:bold; }
+.badge { display:inline-block; padding:3px 9px; border-radius:4px; font-size:11px; font-weight:600; text-transform:uppercase; }
+.badge-green { background:rgba(118,185,0,0.2); color:#76b900; }
+.badge-red { background:rgba(244,67,54,0.2); color:#ff6b6b; }
+.badge-orange { background:rgba(255,152,0,0.2); color:#ffb74d; }
+.badge-gray { background:rgba(158,158,158,0.2); color:#999; }
+.modal { display:none; position:fixed; z-index:2000; left:0; top:0; width:100%; height:100%; background:rgba(0,0,0,0.7); }
+.modal.show { display:flex; justify-content:center; align-items:center; }
+.modal-box { background:#2d2d2d; border-radius:8px; width:90%; max-width:680px; max-height:82vh; overflow:auto; box-shadow:0 4px 20px rgba(0,0,0,0.5); }
+.modal-head { display:flex; justify-content:space-between; align-items:center; padding:14px 18px; background:#333; border-bottom:1px solid #444; }
+.modal-head h3 { color:#76b900; font-size:16px; margin:0; }
+.modal-close { background:none; border:none; color:#888; font-size:24px; cursor:pointer; }
+.modal-body { padding:18px; font-size:13px; line-height:1.6; }
+.modal-body h4 { color:#76b900; margin:12px 0 4px; font-size:13px; }
+.modal-body code { background:#1e1e1e; padding:1px 5px; border-radius:3px; color:#e0c64a; }
+.action-buttons { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.btn { padding:8px 14px; border:none; border-radius:4px; font-size:13px; font-weight:500; cursor:pointer; display:flex; align-items:center; gap:6px; }
+.btn-primary { background:linear-gradient(0deg,#76b900 0%,#5a8c00 100%); color:#fff; }
+.btn-primary:hover { background:linear-gradient(0deg,#8bd400 0%,#6ba000 100%); }
+.btn-secondary { background:linear-gradient(0deg,#4fc3f7 0%,#0288d1 100%); color:#fff; }
+.btn-secondary:hover { background:linear-gradient(0deg,#81d4fa 0%,#039be5 100%); }
+.device-search-container { display:flex; align-items:center; gap:8px; }
+.device-search-container .select2-container { min-width:180px; }
+.device-search-container .select2-container--default .select2-selection--single { height:34px; border:1px solid #555; border-radius:4px; background:#3c3c3c; display:flex; align-items:center; }
+.device-search-container .select2-container--default .select2-selection--single .select2-selection__rendered { line-height:34px; color:#d4d4d4; padding-left:10px; font-size:13px; }
+.device-search-container .select2-container--default .select2-selection--single .select2-selection__arrow { height:34px; }
+.select2-dropdown { background:#2d2d2d; border:1px solid #555; }
+.select2-container--default .select2-results__option { color:#d4d4d4; padding:8px 12px; }
+.select2-container--default .select2-results__option--highlighted[aria-selected] { background:#76b900; color:#000; }
+.select2-container--default .select2-search--dropdown .select2-search__field { background:#3c3c3c; border:1px solid #555; color:#d4d4d4; }
+.clear-search-btn { background:#f44336; color:#fff; border:none; padding:6px 10px; border-radius:4px; cursor:pointer; font-size:12px; display:none; }
+.summary-card { cursor:pointer; transition:all 0.15s; }
+.summary-card:hover { background:#2d2d2d; transform:translateY(-1px); }
+.summary-card.active { background:#333; border-left-width:6px; }
+.summary-card.noclick { cursor:default; }
+.summary-card.noclick:hover { background:#252526; transform:none; }
+.filter-info { display:none; text-align:center; padding:9px 14px; margin-bottom:16px; background:rgba(118,185,0,0.1); border:1px solid rgba(118,185,0,0.3); border-radius:6px; color:#76b900; font-size:13px; }
+.filter-info button { margin-left:10px; padding:4px 10px; background:#76b900; color:#000; border:none; border-radius:4px; cursor:pointer; }
+@keyframes spin { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="page-header">
+  <div>
+    <div class="page-title">Duplicate IP / MAC Analysis</div>
+    <div class="last-updated">Last Updated: __NOW__</div>
+  </div>
+  <div class="action-buttons">
+    <div class="device-search-container">
+      <select id="deviceSearch" style="width:200px;"><option value="">Search Device...</option></select>
+      <button id="clearSearchBtn" class="clear-search-btn" onclick="clearDeviceSearch()">&#10005;</button>
+    </div>
+    <button class="btn btn-secondary" onclick="document.getElementById('thr').classList.add('show')" title="Thresholds &amp; sources">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M3,17V19H9V17H3M3,5V7H13V5H3M13,21V19H21V17H13V15H11V21H13M7,9V11H3V13H7V15H9V9H7M21,13V11H11V13H21M15,9H17V7H21V5H17V3H15V9Z"/></svg>
+      Thresholds</button>
+    <button id="run-analysis" class="btn btn-secondary" onclick="runAnalysis()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4Z"/></svg>
+      Run Analysis</button>
+    __AGED_BTN__
+    <button class="btn btn-primary" onclick="downloadCSV()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/></svg>
+      Download CSV</button>
+  </div>
+</div>
+<div class="filter-info" id="filterInfo">Filtered &mdash; <span id="filterLabel"></span> <button onclick="showAllDup()">Show All</button></div>
+<div class="dashboard-section">
+  <div class="section-header">Summary</div>
+  <div class="section-content"><div class="summary-grid">__CARDS__</div></div>
+</div>
+<div class="dashboard-section">
+  <div class="section-header">Duplicate IPs (per VLAN / VNI)</div>
+  <div class="section-content">
+    <table class="dup-table" id="ipt">
+      <thead><tr><th>Severity</th><th>VLAN / VNI</th><th>IP</th><th>MAC(s)</th><th>Owner (local)</th><th>Conflict VTEP(s)</th><th>EVPN Seq (&#916;)</th><th>Last Dup Event</th><th>Events</th><th>Note</th></tr></thead>
+      <tbody>__IP_ROWS__</tbody>
+    </table>
+  </div>
+</div>
+<div class="dashboard-section">
+  <div class="section-header">Duplicate MACs (per VLAN / VNI)</div>
+  <div class="section-content">
+    <table class="dup-table" id="mact">
+      <thead><tr><th>Severity</th><th>VLAN / VNI</th><th>MAC</th><th>Local On (switch:port)</th><th>Conflict VTEP(s)</th><th>EVPN Seq (&#916;)</th><th>Note</th></tr></thead>
+      <tbody>__MAC_ROWS__</tbody>
+    </table>
+  </div>
+</div>
+<div class="dashboard-section">
+  <div class="section-header">APIPA / DHCP-failed (169.254.0.0/16) per switch &amp; VLAN</div>
+  <div class="section-content">
+    <table class="dup-table" id="apt">
+      <thead><tr><th>Severity</th><th>Switch</th><th>VLAN</th><th>APIPA Count</th></tr></thead>
+      <tbody>__APIPA_ROWS__</tbody>
+    </table>
+  </div>
+</div>
+
+<div class="modal" id="thr">
+  <div class="modal-box">
+    <div class="modal-head"><h3>Duplicate Detection &mdash; Thresholds &amp; Sources</h3>
+      <button class="modal-close" onclick="document.getElementById('thr').classList.remove('show')">&times;</button></div>
+    <div class="modal-body">
+      <h4>Data sources (collected per switch each cycle)</h4>
+      <code>show evpn arp-cache vni all duplicate</code> &mdash; authoritative duplicate IPs + EVPN mobility sequence.<br>
+      <code>show evpn mac vni all duplicate</code> &mdash; duplicate MACs (when FRR latches them).<br>
+      <code>show evpn mac / arp-cache vni all</code> &mdash; mobility-based detection (works with DAD off); a single-owner entry is only counted when climbing or seq &ge; __SEQ_STORM__.<br>
+      <code>bridge fdb show</code> &mdash; same MAC LOCAL on &ge;2 <i>physical</i> ports (bonds excluded = EVPN-MH dual-homing).<br>
+      <code>ip -4 neigh show</code> &mdash; APIPA (169.254/16 = DHCP failed) + IP&harr;multi-MAC.<br>
+      zebra log <code>"detected as duplicate"</code> &mdash; timestamped event history (recency &amp; rate).
+      <h4>Severity</h4>
+      <b>CRITICAL (active)</b> &mdash; moving right now: a duplicate event in the last hour, OR the EVPN
+      sequence <b>increased since the previous cycle</b> (climbing &#916;).<br>
+      <b>WARNING (quiesced)</b> &mdash; a real duplicate that is currently settled: EVPN-flagged, 2+ MACs
+      on one IP, or a high but flat sequence. A flat high sequence is NOT "active".<br>
+      <b>Aged</b> &mdash; a quiesced duplicate whose sequence has not moved for &ge;__STALE_DAYS__ days is
+      collapsed out of the list (use <i>Show aged</i> to reveal). These persist in FRR until the address is
+      removed / re-learned or <code>clear evpn dup-addr</code> is run &mdash; the tool only mirrors that state.<br>
+      APIPA &mdash; CRITICAL when &ge; __APIPA_CRIT__ APIPA addresses on one switch+VLAN, else WARNING.
+      <h4>EVPN duplicate-address-detection (DAD) &amp; multihoming</h4>
+      Configured threshold: <code>__CFG__</code> (max-moves / window). FRR <b>automatically disables DAD on
+      switches where EVPN multihoming (Ethernet Segments / dual-homed bonds) is enabled</b> &mdash; this is
+      normal, not a misconfiguration. There the EVPN <i>duplicate</i> flag &amp; zebra log are unavailable;
+      duplicates are instead caught by the mobility sequence below (always tracked).__DAD_NOTE__
+      <h4>Mobility sequence &amp; &#916; (works even with DAD off)</h4>
+      Every MAC/IP carries an EVPN mobility <b>sequence</b> that increments each time it moves between
+      owners. A stable / dual-homed entry stays at <code>0/0</code>. The <code>(+N)</code> next to a seq is
+      the increase since the previous run &mdash; a positive &#916; means it is moving <b>right now</b>.
+      To avoid false positives from ordinary EVPN-MH failover churn, a single-owner entry (one MAC, one
+      location, not climbing) is only reported when its sequence is extreme (&ge; __SEQ_STORM__).
+      <h4>Note column &mdash; conflict vs flapping (IP table)</h4>
+      <b>Confirmed &mdash; IP conflict</b> &mdash; 2+ distinct MACs claim the same IP (two devices), or
+      EVPN/zebra flagged it. <b>Flapping endpoint (EVPN mobility)</b> &mdash; a <i>single</i> MAC/IP whose
+      mobility sequence is very high: the same endpoint is rapidly re-registering between locations (e.g. a
+      BMC dual-pathed / not bonded), NOT two devices sharing an address. "active" = climbing now, "settled" =
+      high but flat. A flapping endpoint often also shows an APIPA (169.254) address because the churn breaks DHCP.
+      <h4>Note column &mdash; duplicate vs loop</h4>
+      <b>Duplicate device</b> &mdash; the same MAC also owns a duplicated IP (two devices sharing MAC+IP,
+      e.g. power shelves). <b>Possible loop</b> &mdash; &ge; __LOOP_MIN__ MACs flapping between the same
+      switch pair with no per-MAC IP duplicate (frames circulating, not a single device).
+    </div>
+  </div>
+</div>
+
+<script src="/css/jquery-3.5.1.min.js"></script>
+<script src="/css/select2.min.js"></script>
+<script>
+var DUP_DEVICES = __DEVICES__;
+var AGED_COUNT = __STALE_COUNT__;
+function toggleAged(){ var on=document.body.classList.toggle('show-aged'); var b=document.getElementById('agedBtn'); if(b){ b.textContent = on ? 'Hide aged' : ('Show aged ('+AGED_COUNT+')'); } }
+function sortTable(tid, col, numeric) {
+  var t = document.getElementById(tid), tb = t.tBodies[0];
+  var rows = Array.prototype.slice.call(tb.rows).filter(function(r){return !r.querySelector('.empty');});
+  if (!rows.length) return;
+  var asc = t.getAttribute('data-sc') != (col+(numeric?'n':''));
+  t.setAttribute('data-sc', asc ? (col+(numeric?'n':'')) : '');
+  rows.sort(function(a,b){
+    var x=a.cells[col].innerText.trim(), y=b.cells[col].innerText.trim();
+    if (numeric){ x=parseFloat(x.replace(/[^0-9.\\-]/g,''))||0; y=parseFloat(y.replace(/[^0-9.\\-]/g,''))||0; return asc?x-y:y-x; }
+    return asc ? x.localeCompare(y) : y.localeCompare(x);
+  });
+  rows.forEach(function(r){ tb.appendChild(r); });
+}
+['ipt','mact','apt'].forEach(function(tid){
+  var t=document.getElementById(tid); if(!t) return;
+  Array.prototype.forEach.call(t.tHead.rows[0].cells, function(th, i){
+    var num = /Count|Seq|Events/i.test(th.innerText);
+    th.addEventListener('click', function(){ sortTable(tid, i, num); });
+  });
+});
+document.getElementById('thr').addEventListener('click', function(e){ if(e.target===this) this.classList.remove('show'); });
+
+function allDupRows(){ return [].concat(
+  Array.prototype.slice.call(document.querySelectorAll('#ipt tbody tr')),
+  Array.prototype.slice.call(document.querySelectorAll('#mact tbody tr')),
+  Array.prototype.slice.call(document.querySelectorAll('#apt tbody tr'))); }
+function setFilterInfo(label){ var fi=document.getElementById('filterInfo'); if(fi){ document.getElementById('filterLabel').textContent=label; fi.style.display='block'; } }
+function showAllDup(){
+  allDupRows().forEach(function(r){ r.style.display=''; });
+  document.querySelectorAll('.summary-card').forEach(function(c){ c.classList.remove('active'); });
+  var fi=document.getElementById('filterInfo'); if(fi) fi.style.display='none';
+  var cs=document.getElementById('clearSearchBtn'); if(cs) cs.style.display='none';
+  if(window.jQuery && jQuery('#deviceSearch').data('select2')) jQuery('#deviceSearch').val('').trigger('change.select2');
+}
+function cardFilter(kind, card){
+  document.querySelectorAll('.summary-card').forEach(function(c){ c.classList.remove('active'); });
+  if(kind==='active'||kind==='quiesced'){
+    if(card) card.classList.add('active');
+    var sev = (kind==='active') ? '0' : '1';
+    Array.prototype.slice.call(document.querySelectorAll('#ipt tbody tr')).forEach(function(r){
+      if(r.querySelector('.empty')) return;
+      r.style.display = (r.getAttribute('data-sev')===sev) ? '' : 'none';
+    });
+    document.getElementById('ipt').scrollIntoView({behavior:'smooth', block:'start'});
+    setFilterInfo((kind==='active'?'Active':'Quiesced')+' IP duplicates');
+  } else if(kind==='mac'){
+    document.getElementById('mact').scrollIntoView({behavior:'smooth', block:'start'});
+  } else if(kind==='apipa'){
+    document.getElementById('apt').scrollIntoView({behavior:'smooth', block:'start'});
+  }
+}
+function filterByDevice(dev){
+  if(!dev) return;
+  dev = String(dev).toLowerCase();
+  document.querySelectorAll('.summary-card').forEach(function(c){ c.classList.remove('active'); });
+  allDupRows().forEach(function(r){
+    if(r.querySelector('.empty')) return;
+    var d=(r.getAttribute('data-devices')||'').toLowerCase().split(' ');
+    r.style.display = (d.indexOf(dev)>-1) ? '' : 'none';
+  });
+  var cs=document.getElementById('clearSearchBtn'); if(cs) cs.style.display='inline-block';
+  setFilterInfo('Device: '+dev);
+}
+function clearDeviceSearch(){ showAllDup(); }
+function runAnalysis(){
+  var b=document.getElementById('run-analysis'); var o=b.innerHTML;
+  b.disabled=true; b.innerHTML='<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="animation:spin 1s linear infinite"><path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4Z"/></svg> Running...';
+  fetch('/trigger-monitor',{method:'POST',headers:{'Content-Type':'application/json'}})
+    .then(function(r){return r.json();})
+    .then(function(d){ if(d && d.status==='success'){ setTimeout(function(){ location.reload(); }, 35000); } else { b.disabled=false; b.innerHTML=o; alert('Failed to trigger analysis.'); } })
+    .catch(function(){ b.disabled=false; b.innerHTML=o; alert('Error triggering analysis.'); });
+}
+function csvEsc(v){ v=(v==null?'':String(v)); return '"'+v.replace(/"/g,'""')+'"'; }
+function downloadCSV(){
+  var out=[['Severity','VLAN/VNI','IP','MAC(s)','Owner','Conflict VTEP(s)','EVPN Seq','Last Dup Event','Events','Note']];
+  Array.prototype.slice.call(document.querySelectorAll('#ipt tbody tr')).forEach(function(r){
+    if(r.style.display==='none' || r.querySelector('.empty')) return;
+    if(r.classList.contains('stale-row') && !document.body.classList.contains('show-aged')) return;
+    out.push(Array.prototype.slice.call(r.cells).map(function(c){ return (c.innerText||'').trim().replace(/\\s+/g,' '); }));
+  });
+  var csv=out.map(function(r){ return r.map(csvEsc).join(','); }).join('\\n');
+  var ts=new Date().toISOString().slice(0,16).replace('T','_').replace(/:/g,'-');
+  var blob=new Blob([csv],{type:'text/csv;charset=utf-8;'}); var a=document.createElement('a');
+  a.href=URL.createObjectURL(blob); a.download='Duplicate_Analysis_'+ts+'.csv'; document.body.appendChild(a); a.click(); a.remove();
+}
+document.addEventListener('DOMContentLoaded', function(){
+  if(window.jQuery){
+    var $s=jQuery('#deviceSearch'); var opts='<option value=""></option>';
+    DUP_DEVICES.forEach(function(dv){ opts+='<option value="'+dv+'">'+dv+'</option>'; });
+    $s.html(opts);
+    $s.select2({placeholder:'Search Device...', allowClear:true, width:'200px', dropdownAutoWidth:true});
+    $s.on('select2:select', function(e){ filterByDevice(e.params.data.id); });
+    $s.on('select2:clear', function(){ clearDeviceSearch(); });
+  }
+});
+</script>
+<script src="/p2p-alias.js"></script>
+<script src="/css/analysis-guard.js"></script>
+</body>
+</html>"""
+
