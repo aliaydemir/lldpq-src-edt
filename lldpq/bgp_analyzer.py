@@ -263,17 +263,34 @@ class BGPAnalyzer:
         for i, line in enumerate(lines):
             line = line.strip()
             
-            # Extract VRF information
-            vrf_match = re.search(r'^(.+?)\s+Summary \(VRF\s+([^\)]+)\)', line)
-            if vrf_match:
-                current_address_family = vrf_match.group(1).strip()
-                current_vrf = vrf_match.group(2).strip()
+            # FRR omits ``(VRF ...)`` from default-VRF headings, for example
+            # ``IPv4 Unicast Summary:`` and ``L2VPN EVPN Summary:``.  Reset
+            # both dimensions at every heading so the same peer in different
+            # address families is not collapsed under ``default/unknown``.
+            summary_match = re.fullmatch(
+                r'(.+?)\s+Summary(?:\s+\(VRF\s+([^\)]+)\))?:?',
+                line,
+                re.IGNORECASE,
+            )
+            if summary_match:
+                current_address_family = summary_match.group(1).strip()
+                current_vrf = (
+                    summary_match.group(2).strip()
+                    if summary_match.group(2) else "default"
+                )
                 continue
             
             # Extract local AS number
             asn_match = re.search(r'local AS number (\d+)', line)
             if asn_match:
                 local_asn = int(asn_match.group(1))
+                # Some FRR versions put the VRF only on the router-identifier
+                # line rather than in the preceding summary heading.
+                router_vrf_match = re.search(
+                    r'\bVRF\s+([^\s,)]+)', line, re.IGNORECASE
+                )
+                if router_vrf_match:
+                    current_vrf = router_vrf_match.group(1).rstrip(':')
                 continue
             
             # Parse neighbor entries (skip header lines)
