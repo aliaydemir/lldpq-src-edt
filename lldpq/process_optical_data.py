@@ -154,12 +154,28 @@ def process_optical_data_files(data_dir="monitor-results/optical-data"):
                 if any(skip_iface in interface.lower() for skip_iface in ['eth0', 'lo', 'bond', 'mgmt', 'vlan']):
                     continue
 
-                # A collected interface with no usable diagnostics is coverage,
-                # not a port that should disappear from the report.
+                # Empty interface sections do not prove that an optical module
+                # exists, so they must not become monitored optical ports.
                 if not optical_data or len(optical_data.strip()) < 10:
-                    record_optical_state(
-                        optical_analyzer, port_name, hostname, 'unknown', optical_data
-                    )
+                    continue
+
+                # The collector emits these markers for ordinary empty cages,
+                # down ports and interfaces without readable module EEPROM.
+                # Device-level collection coverage is tracked separately; an
+                # absent DOM sample is not an optical fault or a monitored port.
+                if (NO_TRANSCEIVER_DATA_RE.search(optical_data) or
+                    ("diagnostics-status          : N/A" in optical_data and
+                     "temperature" not in optical_data and "voltage" not in optical_data and
+                     "rx-power" not in optical_data and "tx-power" not in optical_data)):
+                    continue
+
+                # DAC/Copper cables do not provide optical diagnostics.  Keep
+                # this check before interface-state handling so a down DAC is
+                # not reclassified as a failed optical link.
+                if any(indicator in optical_data for indicator in [
+                    'Passive copper', 'Active copper', 'Copper cable',
+                    'Base-CR', 'DAC', 'Twinax', 'No separable connector'
+                ]):
                     continue
 
                 # Check for unplugged ports - add as "unplugged" status for troubleshooting
@@ -180,9 +196,17 @@ def process_optical_data_files(data_dir="monitor-results/optical-data"):
                     if state_match else None
                 )
                 if interface_state in {'down', 'lowerlayerdown', 'dormant'}:
-                    # Preserve any DOM values that remain readable while the
-                    # operational link state is down.  Copper/DAC or empty
-                    # sections still receive an explicit DOWN coverage row.
+                    # Preserve a DOWN row only when real DOM values remain
+                    # readable.  The no-data and DAC cases were excluded above.
+                    parsed = optical_analyzer.parse_optical_data(optical_data)
+                    usable_dom = parsed is not None and any(
+                        parsed.get(metric) is not None for metric in (
+                            'rx_power_dbm', 'tx_power_dbm', 'temperature_c',
+                            'voltage_v', 'bias_current_ma'
+                        )
+                    )
+                    if not usable_dom:
+                        continue
                     if optical_analyzer.update_optical_stats(port_name, optical_data):
                         current = optical_analyzer.current_optical_stats.get(port_name)
                         if current:
@@ -190,10 +214,6 @@ def process_optical_data_files(data_dir="monitor-results/optical-data"):
                         history = optical_analyzer.optical_history.get(port_name, [])
                         if history:
                             history[-1]['health'] = 'down'
-                    else:
-                        record_optical_state(
-                            optical_analyzer, port_name, hostname, 'down', optical_data
-                        )
                     continue
                 if interface_state == 'unknown':
                     record_optical_state(
@@ -209,24 +229,6 @@ def process_optical_data_files(data_dir="monitor-results/optical-data"):
                     record_optical_state(
                         optical_analyzer, port_name, hostname, 'unknown', optical_data
                     )
-                    continue
-
-                # Accept both collector marker spellings.  Lack of diagnostics
-                # is UNKNOWN unless the source explicitly said unplugged.
-                if (NO_TRANSCEIVER_DATA_RE.search(optical_data) or
-                    ("diagnostics-status          : N/A" in optical_data and
-                     "temperature" not in optical_data and "voltage" not in optical_data and
-                     "rx-power" not in optical_data and "tx-power" not in optical_data)):
-                    record_optical_state(
-                        optical_analyzer, port_name, hostname, 'unknown', optical_data
-                    )
-                    continue
-                
-                # Skip DAC/Copper cables - they don't have optical diagnostics
-                if any(indicator in optical_data for indicator in [
-                    'Passive copper', 'Active copper', 'Copper cable',
-                    'Base-CR', 'DAC', 'Twinax', 'No separable connector'
-                ]):
                     continue
 
                 # Update optical analyzer

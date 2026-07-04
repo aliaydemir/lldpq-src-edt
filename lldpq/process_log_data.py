@@ -264,7 +264,15 @@ class LogAnalyzer:
     def _is_placeholder_line(line):
         """Skip collector placeholders without swallowing real error text."""
         normalized = re.sub(r'\s+', ' ', line).strip().lower()
-        if normalized in {'-- no entries --', 'no entries', 'not available'}:
+        if normalized in {
+            '-- no entries --',
+            'no entries',
+            'not available',
+            'no system critical logs',
+            'no high priority journal logs',
+            'no critical hardware logs',
+            'no interface state changes',
+        }:
             return True
         return bool(re.fullmatch(
             r'(?:no recent .+|no .+ (?:issues|entries)|'

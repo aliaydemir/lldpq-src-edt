@@ -37,14 +37,21 @@ class BERGrade(Enum):
 class BERAnalyzer:
     """Professional BER Analysis System"""
     
-    # Interface error-event density and real PHY BER are different metrics and
-    # intentionally have separate contracts.  The PHY warning threshold is
-    # overridden by thresholds.network.ber_error_rate in notifications.yaml;
-    # critical is one decade above it.  Invalid/missing config keeps the
-    # documented defaults below.
+    # Interface error-event density, raw (pre-FEC) BER, and effective
+    # (post-FEC) BER are different metrics and intentionally have separate
+    # contracts. NVIDIA's cable-validation guidance accepts raw BER through
+    # 1e-6; applying the post-FEC service threshold to raw BER makes healthy
+    # high-speed FEC links appear critical. The configured network BER limit
+    # therefore applies only to effective BER.
     DEFAULT_CONFIG = {
         "frame_density_warning_threshold": 1.0E-6,
         "frame_density_critical_threshold": 1.0E-5,
+        "raw_phy_ber_warning_threshold": 1.0E-6,
+        "raw_phy_ber_critical_threshold": 1.0E-5,
+        "effective_phy_ber_warning_threshold": 1.0E-12,
+        "effective_phy_ber_critical_threshold": 1.0E-11,
+        # Compatibility aliases used by the processing summary and older
+        # callers; these always mirror the effective/post-FEC limits.
         "phy_ber_warning_threshold": 1.0E-12,
         "phy_ber_critical_threshold": 1.0E-11,
         "symbol_error_warning_delta": 1,
@@ -95,6 +102,8 @@ class BERAnalyzer:
                     return
                 threshold = float(value)
                 if math.isfinite(threshold) and threshold > 0:
+                    self.config['effective_phy_ber_warning_threshold'] = threshold
+                    self.config['effective_phy_ber_critical_threshold'] = threshold * 10.0
                     self.config['phy_ber_warning_threshold'] = threshold
                     self.config['phy_ber_critical_threshold'] = threshold * 10.0
                 return
@@ -546,15 +555,37 @@ class BERAnalyzer:
         else:
             return BERGrade.CRITICAL
 
-    def get_phy_ber_grade(self, ber_value: float) -> BERGrade:
-        """Determine Raw/Effective PHY BER grade from configured PHY limits."""
+    @staticmethod
+    def _get_phy_ber_grade(ber_value: float, warning_threshold: float,
+                           critical_threshold: float) -> BERGrade:
+        """Grade one PHY BER metric against its own engineering limits."""
         if ber_value == 0.0:
             return BERGrade.EXCELLENT
-        if ber_value < self.config['phy_ber_warning_threshold']:
+        if ber_value < warning_threshold:
             return BERGrade.GOOD
-        if ber_value < self.config['phy_ber_critical_threshold']:
+        if ber_value < critical_threshold:
             return BERGrade.WARNING
         return BERGrade.CRITICAL
+
+    def get_raw_phy_ber_grade(self, ber_value: float) -> BERGrade:
+        """Grade pre-FEC BER without treating normal FEC corrections as loss."""
+        return self._get_phy_ber_grade(
+            ber_value,
+            self.config['raw_phy_ber_warning_threshold'],
+            self.config['raw_phy_ber_critical_threshold'],
+        )
+
+    def get_effective_phy_ber_grade(self, ber_value: float) -> BERGrade:
+        """Grade post-FEC BER seen by the MAC/application layer."""
+        return self._get_phy_ber_grade(
+            ber_value,
+            self.config['effective_phy_ber_warning_threshold'],
+            self.config['effective_phy_ber_critical_threshold'],
+        )
+
+    def get_phy_ber_grade(self, ber_value: float) -> BERGrade:
+        """Compatibility alias for the service-impacting effective BER grade."""
+        return self.get_effective_phy_ber_grade(ber_value)
     
     def update_interface_ber(self, port_name: str, interface_stats: Dict[str, int]):
         """Update BER statistics for an interface"""
@@ -710,14 +741,14 @@ class BERAnalyzer:
 
         raw_grade = BERGrade.UNKNOWN.value
         if isinstance(raw_ber, (int, float)):
-            raw_grade = self.get_phy_ber_grade(raw_ber).value
+            raw_grade = self.get_raw_phy_ber_grade(raw_ber).value
             grades.append(raw_grade)
             if self._grade_priority(raw_grade) >= self._grade_priority(BERGrade.WARNING.value):
                 reasons.append(f"raw PHY BER {raw_ber:.2e}")
 
         effective_grade = BERGrade.UNKNOWN.value
         if isinstance(effective_ber, (int, float)):
-            effective_grade = self.get_phy_ber_grade(effective_ber).value
+            effective_grade = self.get_effective_phy_ber_grade(effective_ber).value
             grades.append(effective_grade)
             if self._grade_priority(effective_grade) >= self._grade_priority(BERGrade.WARNING.value):
                 reasons.append(f"effective PHY BER {effective_ber:.2e}")
@@ -839,8 +870,14 @@ class BERAnalyzer:
                         "frame_density_threshold": self.config[
                             "frame_density_critical_threshold"
                         ],
+                        "raw_phy_ber_threshold": self.config[
+                            "raw_phy_ber_critical_threshold"
+                        ],
+                        "effective_phy_ber_threshold": self.config[
+                            "effective_phy_ber_critical_threshold"
+                        ],
                         "phy_ber_threshold": self.config[
-                            "phy_ber_critical_threshold"
+                            "effective_phy_ber_critical_threshold"
                         ],
                         "delta_rx_errors": port_info.get('delta_rx_errors', 0),
                         "delta_tx_errors": port_info.get('delta_tx_errors', 0),
@@ -863,8 +900,14 @@ class BERAnalyzer:
                         "frame_density_threshold": self.config[
                             "frame_density_warning_threshold"
                         ],
+                        "raw_phy_ber_threshold": self.config[
+                            "raw_phy_ber_warning_threshold"
+                        ],
+                        "effective_phy_ber_threshold": self.config[
+                            "effective_phy_ber_warning_threshold"
+                        ],
                         "phy_ber_threshold": self.config[
-                            "phy_ber_warning_threshold"
+                            "effective_phy_ber_warning_threshold"
                         ],
                         "delta_rx_errors": port_info.get('delta_rx_errors', 0),
                         "delta_tx_errors": port_info.get('delta_tx_errors', 0),
@@ -1228,7 +1271,8 @@ class BERAnalyzer:
                 <tbody>
                     <tr><td>Excellent</td><td>Zero new errors</td><td>No new error events in the sample</td></tr>
                     <tr><td>Frame Density</td><td>Warning &ge; {self.config['frame_density_warning_threshold']:.0e}; Critical &ge; {self.config['frame_density_critical_threshold']:.0e}</td><td>Interface error events per observed bit volume</td></tr>
-                    <tr><td>Raw / Effective PHY BER</td><td>Warning &ge; {self.config['phy_ber_warning_threshold']:.0e}; Critical &ge; {self.config['phy_ber_critical_threshold']:.0e}</td><td>Configured by notifications.yaml network.ber_error_rate (critical is 10×)</td></tr>
+                    <tr><td>Raw PHY BER (pre-FEC)</td><td>Warning &ge; {self.config['raw_phy_ber_warning_threshold']:.0e}; Critical &ge; {self.config['raw_phy_ber_critical_threshold']:.0e}</td><td>Physical-link quality before FEC correction</td></tr>
+                    <tr><td>Effective PHY BER (post-FEC)</td><td>Warning &ge; {self.config['effective_phy_ber_warning_threshold']:.0e}; Critical &ge; {self.config['effective_phy_ber_critical_threshold']:.0e}</td><td>Configured by notifications.yaml network.ber_error_rate (critical is 10×)</td></tr>
                     <tr><td>PHY Symbol Δ</td><td>Warning &ge; {self.config['symbol_error_warning_delta']:,}; Critical &ge; {self.config['symbol_error_critical_delta']:,}</td><td>New symbol errors since the previous L1 sample</td></tr>
                     <tr><td>Analysis Method</td><td>Worst RX/TX direction</td><td>Interface error events per observed bit volume; this is not a physical BER</td></tr>
                 </tbody>

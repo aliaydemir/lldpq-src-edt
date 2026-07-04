@@ -108,9 +108,14 @@ def process_ber_data_files(data_dir="monitor-results/ber-data"):
         f"Critical >= {ber_analyzer.config['frame_density_critical_threshold']:.2e}"
     )
     print(
-        "Using PHY BER thresholds: "
-        f"Warning >= {ber_analyzer.config['phy_ber_warning_threshold']:.2e}, "
-        f"Critical >= {ber_analyzer.config['phy_ber_critical_threshold']:.2e}"
+        "Using raw/pre-FEC BER thresholds: "
+        f"Warning >= {ber_analyzer.config['raw_phy_ber_warning_threshold']:.2e}, "
+        f"Critical >= {ber_analyzer.config['raw_phy_ber_critical_threshold']:.2e}"
+    )
+    print(
+        "Using effective/post-FEC BER thresholds: "
+        f"Warning >= {ber_analyzer.config['effective_phy_ber_warning_threshold']:.2e}, "
+        f"Critical >= {ber_analyzer.config['effective_phy_ber_critical_threshold']:.2e}"
     )
     
     if not os.path.exists(data_dir):

@@ -575,7 +575,16 @@ def parse_resources_from_hardware_file(device_name):
                 results['memory_usage'] = max(0.0, min(100.0, usage_percent))
 
         # CPU load 5‑min average from CPU_INFO first line: "1.28 0.68 0.43 ..."
-        cpu_line = re.search(r'^CPU_INFO:\n([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s+', content, re.MULTILINE)
+        # Current collections include an explicit source-status marker between
+        # the heading and /proc/loadavg.  Keep accepting marker-free legacy
+        # samples, but never parse a value following an ERROR marker.
+        cpu_line = re.search(
+            r'^CPU_INFO:\n'
+            r'(?:__LLDPQ_HARDWARE_SOURCE_STATUS__:CPU_LOAD:OK\s*\n)?'
+            r'([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s+',
+            content,
+            re.MULTILINE,
+        )
         if cpu_line:
             results['cpu_load'] = float(cpu_line.group(2))
 
