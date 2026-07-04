@@ -197,6 +197,7 @@ class DuplicateAnalyzer:
     def _parse_dup(self, host, text):
         self._parse_collection_meta(host, text)
         sec = self._split_sections(text)
+        self.collection_meta[host]["arp_section_present"] = "ARP" in sec
         self._parse_vni_map(sec.get("VNI MAP", []))
         self._parse_config(host, sec.get("CONFIG", []))
         self._parse_self(host, sec.get("SELF", []))
@@ -306,6 +307,9 @@ class DuplicateAnalyzer:
                     failures.append("%s:%s_%s" % (
                         host, source, source_status or "MISSING",
                     ))
+            if not meta.get("arp_section_present"):
+                core_ok = False
+                failures.append("%s:ARP_SECTION_MISSING" % host)
 
             if core_ok:
                 current.add(host)
