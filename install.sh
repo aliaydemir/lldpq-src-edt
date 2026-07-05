@@ -1191,7 +1191,7 @@ def acquire_lock(lock_path, owner_metadata):
     return descriptor
 
 
-def classify_incomplete_legacy(filename, job, metadata):
+def classify_legacy(filename, job, metadata, expected_complete):
     if current_schema_fields.intersection(job):
         return None, 'current-schema upgrade job'
     if any(
@@ -1205,7 +1205,8 @@ def classify_incomplete_legacy(filename, job, metadata):
         return None, 'unknown upgrade job schema'
     if job.get('id') != filename[:-5] or not uuid_json.fullmatch(filename):
         return None, 'job filename/id mismatch'
-    if job.get('complete') is not False or not isinstance(job.get('cancelled'), bool):
+    if job.get('complete') is not expected_complete or \
+            not isinstance(job.get('cancelled'), bool):
         return None, 'invalid legacy completion state'
     if not isinstance(job.get('stop_on_failure'), bool) or \
             not isinstance(job.get('base_config_after'), bool):
@@ -1222,6 +1223,9 @@ def classify_incomplete_legacy(filename, job, metadata):
     for device in devices:
         if not isinstance(device, dict) or device.get('status') not in legacy_device_statuses:
             return None, 'invalid legacy device state'
+    if expected_complete and any(
+            device['status'] not in terminal_statuses for device in devices):
+        return None, 'completed legacy job has nonterminal devices'
     try:
         # Cancellation/status writes can race a launch-before-save window. A
         # recently touched terminal-looking record therefore remains inside
@@ -1233,14 +1237,20 @@ def classify_incomplete_legacy(filename, job, metadata):
             numeric_timestamp(job['worker_started_at'])
         for key in ('worker_heartbeat', 'completed_at'):
             if job.get(key) is not None:
-                numeric_timestamp(job[key])
+                value = numeric_timestamp(job[key])
+                if expected_complete:
+                    activity.append(value)
         for device in devices:
             if device.get('started_at') is not None:
                 activity.append(numeric_timestamp(device['started_at']))
             if device.get('last_check') is not None:
-                numeric_timestamp(device['last_check'])
+                value = numeric_timestamp(device['last_check'])
+                if expected_complete:
+                    activity.append(value)
         if metadata.st_mtime > now + 300:
             return None, 'legacy job file timestamp is unexpectedly in the future'
+        if expected_complete:
+            activity.append(numeric_timestamp(metadata.st_mtime))
         timeout_seconds = int(job.get('timeout_seconds', 3600))
         if timeout_seconds <= 0 or timeout_seconds > 7 * 86400:
             return None, 'invalid legacy timeout'
@@ -1248,9 +1258,11 @@ def classify_incomplete_legacy(filename, job, metadata):
         return None, 'invalid legacy timestamps'
     effective_stale_seconds = max(stale_seconds, timeout_seconds + 3600)
     last_activity = max(activity)
-    if now - last_activity < effective_stale_seconds:
-        return None, 'legacy job is still inside its expiry window'
-    return (last_activity, effective_stale_seconds), None
+    return (
+        last_activity,
+        effective_stale_seconds,
+        now - last_activity < effective_stale_seconds,
+    ), None
 
 
 def load_authorized_targets():
@@ -1516,7 +1528,8 @@ def resolve_probe(job, device, evidence, superseding_operations=None):
 
 # Phase 1: classify the complete directory before acquiring or mutating any
 # candidate. One current/recent/corrupt/ambiguous incomplete job means zero
-# legacy migrations and lets the normal active-job guard fail the update closed.
+# legacy migrations. Recent completed legacy jobs are candidates for the same
+# live proof instead of being blocked solely by their completion timestamp.
 candidates = []
 resumable_current_jobs = []
 blockers = []
@@ -1548,6 +1561,27 @@ for entry in job_entries:
         blockers.append(f'{entry.name}: unsupported upgrade job schema version')
         continue
     if job['complete']:
+        if schema_version == supported_schema_version or \
+                current_schema_fields.intersection(job):
+            continue
+        classification, reason = classify_legacy(
+            entry.name, job, metadata, True
+        )
+        if classification is None:
+            blockers.append(f'{entry.name}: {reason}')
+            continue
+        # Old completed jobs outside the conservative safety window need no
+        # rewrite. Recent pre-schema completions are live-probed instead of
+        # blindly delaying the installer for a fixed day.
+        if not classification[2]:
+            continue
+        candidates.append({
+            'kind': 'legacy-reconciliation',
+            'name': entry.name, 'path': entry.path, 'original': original,
+            'metadata': metadata, 'job': job,
+            'last_activity': classification[0],
+            'stale_after': classification[1],
+        })
         continue
     if schema_version == supported_schema_version and allow_current_incomplete:
         # Docker image recreation has already switched code before entrypoint
@@ -1580,9 +1614,16 @@ for entry in job_entries:
         })
         resumable_current_jobs.append(job)
         continue
-    classification, reason = classify_incomplete_legacy(entry.name, job, metadata)
+    classification, reason = classify_legacy(
+        entry.name, job, metadata, False
+    )
     if classification is None:
         blockers.append(f'{entry.name}: {reason}')
+        continue
+    if classification[2]:
+        blockers.append(
+            f'{entry.name}: legacy job is still inside its expiry window'
+        )
         continue
     candidates.append({
         'kind': 'legacy-reconciliation',
@@ -1895,7 +1936,7 @@ try:
             )
         else:
             print(
-                f"  Reconciled expired legacy upgrade {candidate['job']['id']}; "
+                f"  Reconciled historical legacy upgrade {candidate['job']['id']}; "
                 f"original saved as {os.path.basename(candidate['backup_path'])}"
             )
 finally:

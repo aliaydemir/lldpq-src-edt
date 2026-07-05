@@ -730,6 +730,10 @@ job as a timestamped backup. A recent, running, unreachable, malformed or
 otherwise ambiguous upgrade still stops the update safely. Docker startup uses
 the same check and promotes the previous release's fully validated resumable
 job format to the current schema so an interrupted job can continue.
+Recently completed pre-schema records are not delayed solely by a fixed safety
+timer: the updater applies the same read-only live proof and converts a stale
+timeout result when the target version and deployment markers are already
+verified.
 
 An optional full data/configuration snapshot can be requested with
 `./install.sh --backup` and is created at
