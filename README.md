@@ -720,6 +720,17 @@ or cron step fails, the installer restores that snapshot automatically. It is
 deleted after a successful update. A root-owned transaction marker and boot
 recovery service cover SIGKILL, reboot and power-loss interruptions that cannot
 run the installer's normal EXIT handler.
+
+Before replacing Provision code, the updater also reconciles expired upgrade
+records left by older LLDPq releases. It takes the scheduler/job locks, verifies
+the current inventory and device identity, and uses read-only SSH evidence
+(running ONIE process, installed version and deployment markers) before making
+an old record terminal. The byte-exact original JSON is retained beside the
+job as a timestamped backup. A recent, running, unreachable, malformed or
+otherwise ambiguous upgrade still stops the update safely. Docker startup uses
+the same check and promotes the previous release's fully validated resumable
+job format to the current schema so an interrupted job can continue.
+
 An optional full data/configuration snapshot can be requested with
 `./install.sh --backup` and is created at
 `~/lldpq-backup-YYYY-MM-DD_HH-MM-SS/`. A `COMPLETE` marker is written only

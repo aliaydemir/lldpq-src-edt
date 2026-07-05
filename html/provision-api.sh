@@ -148,6 +148,10 @@ INVENTORY_FILE = f'{WEB_ROOT}/inventory.json'
 SERIAL_MAPPING_FILE = f'{WEB_ROOT}/serial-mapping.txt'
 GENERATED_CONFIGS_DIR = f'{WEB_ROOT}/generated_config_folder'
 UPGRADE_JOBS_DIR = '/var/lib/lldpq/upgrade-jobs'
+UPGRADE_JOB_SCHEMA_VERSION = 2
+UPGRADE_JOB_ID_PATTERN = (
+    r'[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}'
+)
 DISCOVERY_JOBS_DIR = '/var/lib/lldpq/provision-jobs'
 UPGRADE_JOB_ID = os.environ.get('UPGRADE_JOB_ID', '')
 DISCOVERY_JOB_ID = os.environ.get('DISCOVERY_JOB_ID', '')
@@ -1270,7 +1274,7 @@ def get_server_ip():
 def is_valid_server_ref(value):
     if not value or '__' in value or '_' in value:
         return False
-    return re.match(r'^[A-Za-z0-9.-]+(:[0-9]{1,5})?$', value) is not None
+    return re.fullmatch(r'[A-Za-z0-9.-]+(?::[0-9]{1,5})?', value) is not None
 
 def action_list_bindings():
     """Load inventory from inventory.json (primary) or dhcpd.hosts (fallback).
@@ -4701,6 +4705,203 @@ def upgrade_coordinator_lock():
         yield
 
 
+def validate_upgrade_job_state(job, expected_id):
+    """Validate persisted state at every list/load boundary.
+
+    Missing schema_version is accepted only for completed historical jobs. An
+    unfinished unversioned job must be reconciled by the installer before this
+    runtime is activated; otherwise a direct status/worker call could bypass
+    list_upgrade_jobs() and execute an unknown state-machine contract.
+    """
+    if not isinstance(job, dict) or job.get('id') != expected_id or \
+            not isinstance(job.get('devices'), list) or not job['devices']:
+        raise ValueError('job schema/id mismatch')
+    if not isinstance(job.get('complete'), bool):
+        raise ValueError('job complete flag is invalid')
+    schema_version = job.get('schema_version')
+    if schema_version is None:
+        if not job['complete']:
+            raise ValueError('unfinished upgrade job has no supported schema version')
+        # Truly old terminal records remain displayable. The immediately
+        # previous current contract is field-compatible with v2 and is fully
+        # validated below even though it predates the explicit version tag.
+        if not {
+                'image_size', 'image_sha256', 'ready', 'aliases_published',
+                'onie_alias_snapshot', 'ztp_artifact', 'ztp_size',
+                'ztp_sha256',
+        }.intersection(job):
+            return
+    elif isinstance(schema_version, bool) or not isinstance(schema_version, int) or \
+            schema_version != UPGRADE_JOB_SCHEMA_VERSION:
+        raise ValueError('unsupported upgrade job schema version')
+
+    # Installer-reconciled pre-v4 jobs are immutable terminal history, not
+    # resumable v2 worker state. Keep that deliberately narrow subtype
+    # viewable while requiring every native v2 job to carry the full contract.
+    reconciliation = job.get('legacy_reconciliation')
+    if reconciliation is not None:
+        if not job['complete'] or not isinstance(reconciliation, dict) or \
+                reconciliation.get('action') != 'expired-job-reconciled-for-update' or \
+                not re.fullmatch(r'[0-9a-f]{64}', str(reconciliation.get('original_sha256', ''))) or \
+                not isinstance(reconciliation.get('backup_file'), str) or \
+                '/' in reconciliation['backup_file'] or '\\' in reconciliation['backup_file'] or \
+                any(not isinstance(item, dict) or item.get('status') not in
+                    ('done', 'failed', 'cancelled', 'blocked')
+                    for item in job['devices']):
+            raise ValueError('invalid reconciled legacy upgrade state')
+        return
+
+    required = {
+        'created_at', 'target_version', 'image_name', 'image_size',
+        'image_sha256', 'server_ip', 'batch_size', 'stop_on_failure',
+        'base_config_after', 'timeout_seconds', 'cancelled', 'ready',
+        'aliases_published', 'onie_alias_snapshot', 'worker_started_at',
+        'worker_heartbeat', 'ztp_artifact', 'ztp_size', 'ztp_sha256',
+    }
+    missing = sorted(required.difference(job))
+    if missing:
+        raise ValueError('upgrade job is missing: ' + ', '.join(missing))
+
+    def positive_int(value, label, maximum=None):
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0 or \
+                (maximum is not None and value > maximum):
+            raise ValueError(f'invalid {label}')
+
+    def timestamp_int(value, label):
+        positive_int(value, label)
+        if value > int(time.time()) + 300:
+            raise ValueError(f'invalid {label}')
+
+    timestamp_int(job['created_at'], 'created_at')
+    timestamp_int(job['worker_started_at'], 'worker_started_at')
+    timestamp_int(job['worker_heartbeat'], 'worker_heartbeat')
+    positive_int(job['image_size'], 'image_size')
+    positive_int(job['ztp_size'], 'ztp_size')
+    positive_int(job['batch_size'], 'batch_size', 100)
+    positive_int(job['timeout_seconds'], 'timeout_seconds', 7 * 86400)
+    if job['complete']:
+        timestamp_int(job.get('completed_at'), 'completed_at')
+    for key in ('stop_on_failure', 'base_config_after', 'cancelled',
+                'ready', 'aliases_published'):
+        if not isinstance(job[key], bool):
+            raise ValueError(f'invalid {key}')
+    if job['ready'] != job['aliases_published']:
+        raise ValueError('inconsistent readiness/alias state')
+    if not re.fullmatch(r'[0-9][A-Za-z0-9._-]{0,99}', str(job['target_version'])) or \
+            not re.fullmatch(r'[A-Za-z0-9_.-]+\.(?:bin|img|iso)', str(job['image_name'])) or \
+            not re.fullmatch(r'[0-9a-f]{64}', str(job['image_sha256'])) or \
+            not re.fullmatch(r'[0-9a-f]{64}', str(job['ztp_sha256'])) or \
+            not is_valid_server_ref(str(job['server_ip'])):
+        raise ValueError('invalid upgrade image/server metadata')
+    expected_ztp = (
+        f'provision-uploads/ztp-artifacts/{expected_id}.ztp'
+    )
+    if job['ztp_artifact'] != expected_ztp:
+        raise ValueError('invalid upgrade ZTP artifact reference')
+    snapshot = job['onie_alias_snapshot']
+    expected_snapshot = {
+        f'{scope}:{name}'
+        for scope in ('uploads', 'web') for name in ONIE_ALIAS_NAMES
+    }
+    if not isinstance(snapshot, dict) or set(snapshot) != expected_snapshot or any(
+            value is not None and (
+                not isinstance(value, str) or
+                not re.fullmatch(r'(?:provision-uploads/)?[A-Za-z0-9_.-]+', value)
+            ) for value in snapshot.values()):
+        raise ValueError('invalid ONIE alias rollback snapshot')
+
+    statuses = {
+        'queued', 'starting', 'upgrading', 'waiting_reboot',
+        'done', 'failed', 'cancelled', 'blocked',
+    }
+    seen_ips = set()
+    for item in job['devices']:
+        if not isinstance(item, dict) or item.get('status') not in statuses:
+            raise ValueError('invalid upgrade device state')
+        try:
+            ip = str(ipaddress.IPv4Address(str(item.get('ip', ''))))
+        except ipaddress.AddressValueError as exc:
+            raise ValueError('invalid upgrade device IP') from exc
+        if ip in seen_ips:
+            raise ValueError('duplicate upgrade device IP')
+        seen_ips.add(ip)
+        if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,252}',
+                            str(item.get('hostname', ''))) or \
+                not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_.-]{0,31}',
+                                 str(item.get('username', ''))) or \
+                item.get('target_version') != job['target_version']:
+            raise ValueError('invalid upgrade device identity')
+        raw_expected_mac = str(item.get('expected_mac', '') or '')
+        expected_mac = normalize_identity_mac(raw_expected_mac)
+        expected_serial = normalize_identity_serial(item.get('expected_serial', ''))
+        if raw_expected_mac.strip() and not expected_mac:
+            raise ValueError('upgrade device has invalid MAC identity evidence')
+        if not expected_mac and not expected_serial:
+            raise ValueError('upgrade device has no identity evidence')
+        if item['status'] in ('starting', 'upgrading', 'waiting_reboot') and (
+                not re.fullmatch(UPGRADE_JOB_ID_PATTERN,
+                                 str(item.get('operation_id', ''))) or
+                item.get('claimed_at') is None):
+            raise ValueError('invalid active upgrade device state')
+        for key in ('claimed_at', 'remote_prepared_at', 'launch_attempted_at',
+                    'started_at', 'last_check'):
+            if item.get(key) is not None:
+                timestamp_int(item[key], key)
+        if item['status'] in ('upgrading', 'waiting_reboot') and any(
+                item.get(key) is None
+                for key in ('remote_prepared_at', 'launch_attempted_at', 'started_at')):
+            raise ValueError('invalid launched upgrade device state')
+    all_terminal = all(
+        item['status'] in ('done', 'failed', 'cancelled', 'blocked')
+        for item in job['devices']
+    )
+    if job['complete'] and not all_terminal:
+        raise ValueError('upgrade completion/device states disagree')
+
+
+def strict_upgrade_json_object(pairs):
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError(f'duplicate JSON key: {key}')
+        value[key] = item
+    return value
+
+
+def read_upgrade_job_state(path):
+    """Read one stable regular job without following a replacement symlink."""
+    before = os.lstat(path)
+    if not stat.S_ISREG(before.st_mode):
+        raise ValueError('upgrade job is not a regular file')
+    flags = os.O_RDONLY | getattr(os, 'O_CLOEXEC', 0)
+    flags |= getattr(os, 'O_NOFOLLOW', 0)
+    descriptor = os.open(path, flags)
+    try:
+        opened = os.fstat(descriptor)
+        if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+            raise ValueError('upgrade job changed while opening')
+        chunks = []
+        total = 0
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > 16 * 1024 * 1024:
+                raise ValueError('upgrade job is unexpectedly large')
+            chunks.append(chunk)
+        after = os.lstat(path)
+        if (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns) != (
+                after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns):
+            raise ValueError('upgrade job changed while reading')
+        return json.loads(
+            b''.join(chunks).decode('utf-8'),
+            object_pairs_hook=strict_upgrade_json_object,
+        )
+    finally:
+        os.close(descriptor)
+
+
 def list_upgrade_jobs(unfinished_only=False, strict=False):
     ensure_upgrade_jobs_dir()
     jobs = []
@@ -4713,15 +4914,18 @@ def list_upgrade_jobs(unfinished_only=False, strict=False):
             ) from exc
         return jobs
     for name in names:
-        match = re.fullmatch(r'([a-f0-9-]{36})\.json', name)
+        match = re.fullmatch(f'({UPGRADE_JOB_ID_PATTERN})\\.json', name)
         if not match:
+            if strict and name.endswith('.json'):
+                raise RuntimeError(
+                    f'Upgrade job state has an invalid filename: {name}'
+                )
             continue
         try:
-            with open(os.path.join(UPGRADE_JOBS_DIR, name), 'r') as handle:
-                job = json.load(handle)
-            if not isinstance(job, dict) or job.get('id') != match.group(1) or \
-                    not isinstance(job.get('devices'), list):
-                raise ValueError('job schema/id mismatch')
+            job = read_upgrade_job_state(
+                os.path.join(UPGRADE_JOBS_DIR, name)
+            )
+            validate_upgrade_job_state(job, match.group(1))
         except Exception as exc:
             if strict:
                 raise RuntimeError(
@@ -4788,7 +4992,7 @@ def sha256_file(path):
 
 
 def upgrade_ztp_artifact_name(job_id):
-    if not re.fullmatch(r'[a-f0-9-]{36}', str(job_id or '')):
+    if not re.fullmatch(UPGRADE_JOB_ID_PATTERN, str(job_id or '')):
         raise ValueError('Invalid upgrade job id for ZTP artifact')
     return f'{job_id}.ztp'
 
@@ -4878,7 +5082,7 @@ def gc_upgrade_ztp_artifacts(jobs=None, now=None):
     removed = []
     errors = []
     for name in os.listdir(ZTP_ARTIFACTS_DIR):
-        if not re.fullmatch(r'[a-f0-9-]{36}\.ztp', name) or name in keep:
+        if not re.fullmatch(f'{UPGRADE_JOB_ID_PATTERN}\\.ztp', name) or name in keep:
             continue
         path = os.path.join(ZTP_ARTIFACTS_DIR, name)
         try:
@@ -4900,7 +5104,7 @@ def gc_upgrade_ztp_artifacts(jobs=None, now=None):
     return {'removed': removed, 'errors': errors}
 
 def job_path(job_id):
-    if not re.match(r'^[a-f0-9-]{36}$', job_id):
+    if not re.fullmatch(UPGRADE_JOB_ID_PATTERN, str(job_id or '')):
         error_json('Invalid job id')
     return os.path.join(UPGRADE_JOBS_DIR, f'{job_id}.json')
 
@@ -4923,6 +5127,7 @@ def upgrade_job_lock(job_id):
 
 def save_upgrade_job(job):
     ensure_upgrade_jobs_dir()
+    validate_upgrade_job_state(job, str(job.get('id', '')))
     path = job_path(job['id'])
     fd, tmp = tempfile.mkstemp(prefix=f'.{job["id"]}.', suffix='.tmp', dir=UPGRADE_JOBS_DIR)
     try:
@@ -4950,8 +5155,12 @@ def load_upgrade_job(job_id):
     path = job_path(job_id)
     if not os.path.exists(path):
         error_json('Upgrade job not found')
-    with open(path, 'r') as f:
-        return json.load(f)
+    try:
+        job = read_upgrade_job_state(path)
+        validate_upgrade_job_state(job, job_id)
+        return job
+    except Exception as exc:
+        error_json(f'Upgrade job state is invalid: {exc}')
 
 def launch_upgrade_worker(job_id):
     """Start a browser-independent worker; its lifetime lock prevents duplicates."""
@@ -5672,6 +5881,11 @@ def action_upgrade_start():
     server_ip = data.get('server_ip', '').strip()
     if not devices or not target_version or not image_name or not server_ip:
         error_json('devices, target_version, image_name and server_ip are required')
+    if not re.fullmatch(r'[0-9][A-Za-z0-9._-]{0,99}', target_version):
+        error_json('Invalid target version')
+    for flag in ('stop_on_failure', 'base_config_after'):
+        if flag in data and not isinstance(data[flag], bool):
+            error_json(f'{flag} must be true or false')
     if not valid_os_image_name(image_name):
         error_json('Invalid image filename')
     if not is_valid_server_ref(server_ip):
@@ -5679,6 +5893,8 @@ def action_upgrade_start():
     image_path = resolve_os_image_path(image_name)
     if not image_path:
         error_json('Selected image not found on server')
+    if os.path.getsize(image_path) <= 0:
+        error_json('Selected image is empty')
     detected_version = image_version_from_name(image_name)
     if detected_version and detected_version != target_version:
         error_json(f'Target version {target_version} does not match selected image version {detected_version}')
@@ -5784,6 +6000,7 @@ def action_upgrade_start():
 
         now = int(time.time())
         job = {
+            'schema_version': UPGRADE_JOB_SCHEMA_VERSION,
             'id': str(uuid.uuid4()),
             'created_at': now,
             'target_version': target_version,

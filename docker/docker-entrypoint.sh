@@ -6,6 +6,7 @@
 set -e
 
 BACKUP_IMPORT_HELPER=/usr/local/libexec/lldpq-backup-import.py
+INSTALL_LIBRARY=/usr/local/libexec/lldpq-install-library.sh
 
 echo "╔══════════════════════════════════════╗"
 echo "║      LLDPq Network Monitoring        ║"
@@ -640,6 +641,67 @@ chmod 2770 /var/lib/lldpq/provision-jobs
 chmod 2770 /var/lib/lldpq/lldp-jobs
 chmod 2770 /var/lib/lldpq/assets-jobs
 _prepare_shared_lock_files /var/lib/lldpq/ssh-key.lock
+
+# A Docker image update replaces application code before the persistent
+# upgrade-jobs volume is mounted. Reconcile only expired pre-schema records
+# here, using the same root-owned implementation as native install.sh. Current
+# schema-v2 jobs remain untouched and are resumed by the scheduler below. Run
+# this unconditionally: a .json symlink/FIFO/directory is itself unsafe state
+# and must not bypass validation merely because `find -type f` ignores it.
+if [ -L "$INSTALL_LIBRARY" ] || [ ! -f "$INSTALL_LIBRARY" ] || \
+   [ "$(stat -c '%u:%g:%a' -- "$INSTALL_LIBRARY" 2>/dev/null || true)" != "0:0:755" ]; then
+    echo "ERROR: root-owned LLDPq install library is missing or unsafe; rebuild the image" >&2
+    exit 1
+fi
+echo "  Checking persistent Provision upgrade state..."
+RECONCILE_DEVICES_FILE=/home/lldpq/lldpq/devices.yaml
+RECONCILE_INVENTORY_FILE=/var/www/html/inventory.json
+for reconcile_name in devices inventory; do
+    if [ "$reconcile_name" = devices ]; then
+        reconcile_path="$RECONCILE_DEVICES_FILE"
+    else
+        reconcile_path="$RECONCILE_INVENTORY_FILE"
+    fi
+    if [ -L "$reconcile_path" ]; then
+        reconcile_resolved="$(readlink -f -- "$reconcile_path" 2>/dev/null || true)"
+        case "$reconcile_resolved" in
+            "$CONFIG_DIR"/*) ;;
+            *)
+                echo "ERROR: managed Provision input points outside $CONFIG_DIR: $reconcile_path" >&2
+                exit 1
+                ;;
+        esac
+        if [ ! -f "$reconcile_resolved" ] || [ -L "$reconcile_resolved" ]; then
+            echo "ERROR: managed Provision input is not a regular file: $reconcile_path" >&2
+            exit 1
+        fi
+        if [ "$reconcile_name" = devices ]; then
+            RECONCILE_DEVICES_FILE="$reconcile_resolved"
+        else
+            RECONCILE_INVENTORY_FILE="$reconcile_resolved"
+        fi
+    fi
+done
+if ! (
+    export LLDPQ_INSTALL_LIB_ONLY=true
+    export LLDPQ_TEST_NO_SUDO=true
+    export LLDPQ_RECONCILE_ALLOW_CURRENT_INCOMPLETE=true
+    export LLDPQ_INSTALL_DIR=/home/lldpq/lldpq
+    export LLDPQ_DIR=/home/lldpq/lldpq
+    export LLDPQ_USER=lldpq
+    export WEB_ROOT=/var/www/html
+    export LLDPQ_RECONCILE_DEVICES_FILE="$RECONCILE_DEVICES_FILE"
+    export LLDPQ_RECONCILE_INVENTORY_FILE="$RECONCILE_INVENTORY_FILE"
+    # shellcheck disable=SC1090
+    source "$INSTALL_LIBRARY"
+    reconcile_stale_legacy_upgrade_jobs /var/lib/lldpq/upgrade-jobs || exit 1
+    verify_upgrade_jobs_runtime_compatible /var/lib/lldpq/upgrade-jobs || exit 1
+); then
+    echo "ERROR: persistent Provision upgrade state is not compatible with this image" >&2
+    echo "       Originals were retained; inspect the reported job before restarting." >&2
+    exit 1
+fi
+echo "✓ Persistent Provision upgrade state verified"
 
 # Migrate legacy Ask-AI state out of the nginx document root. Move only when
 # the private destination does not already exist, then remove the public copy.

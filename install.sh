@@ -847,6 +847,1513 @@ release_update_provision_locks() {
     UPDATE_PROVISION_LOCK_FDS=()
 }
 
+reconcile_stale_legacy_upgrade_jobs() {
+    local upgrade_dir="$1"
+    local stale_seconds="${LLDPQ_LEGACY_UPGRADE_STALE_SECONDS:-86400}"
+    local devices_file="${LLDPQ_RECONCILE_DEVICES_FILE:-${LLDPQ_INSTALL_DIR:-${LLDPQ_DIR:-}}/devices.yaml}"
+    local inventory_file="${LLDPQ_RECONCILE_INVENTORY_FILE:-${WEB_ROOT:-/var/www/html}/inventory.json}"
+    local service_user="${LLDPQ_USER:-$(id -un)}"
+    local allow_current_incomplete="${LLDPQ_RECONCILE_ALLOW_CURRENT_INCOMPLETE:-false}"
+    case "$stale_seconds" in
+        ''|*[!0-9]*)
+            echo "[!] Invalid LLDPQ_LEGACY_UPGRADE_STALE_SECONDS: '$stale_seconds'" >&2
+            return 1
+            ;;
+    esac
+    if ((stale_seconds < 3600 || stale_seconds > 2592000)); then
+        echo "[!] LLDPQ_LEGACY_UPGRADE_STALE_SECONDS must be between 3600 and 2592000" >&2
+        return 1
+    fi
+    case "$allow_current_incomplete" in
+        true|false) ;;
+        *)
+            echo "[!] Invalid LLDPQ_RECONCILE_ALLOW_CURRENT_INCOMPLETE: '$allow_current_incomplete'" >&2
+            return 1
+            ;;
+    esac
+
+    root_run python3 - "$upgrade_dir" "$stale_seconds" "$service_user" \
+        "$devices_file" "$inventory_file" "$allow_current_incomplete" <<'PYTHON'
+import concurrent.futures
+import datetime
+import fcntl
+import hashlib
+import ipaddress
+import json
+import math
+import os
+import pwd
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+
+directory = os.path.abspath(sys.argv[1])
+stale_seconds = int(sys.argv[2])
+service_user = sys.argv[3]
+devices_file = os.path.abspath(sys.argv[4])
+inventory_file = os.path.abspath(sys.argv[5])
+allow_current_incomplete = sys.argv[6] == 'true'
+now = int(time.time())
+supported_schema_version = 2
+uuid_json = re.compile(r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.json$')
+
+# This is the exact pre-v4 persisted job contract. New/current jobs carry one
+# or more immutable-launch/initialization fields below and are never rewritten
+# by the installer, regardless of age.
+legacy_required = {
+    'id', 'created_at', 'target_version', 'image_name', 'server_ip',
+    'batch_size', 'stop_on_failure', 'base_config_after', 'timeout_seconds',
+    'complete', 'cancelled', 'devices',
+}
+# The first persisted pre-v4 writer did not emit worker_started_at. The later
+# pre-v4 worker added it without changing the rest of the contract; both exact
+# historical variants are intentionally recognized.
+legacy_optional = {
+    'worker_started_at', 'worker_heartbeat', 'worker_error', 'completed_at',
+}
+current_schema_fields = {
+    'schema_version', 'image_size', 'image_sha256', 'ready', 'aliases_published',
+    'onie_alias_snapshot', 'ztp_artifact', 'ztp_size', 'ztp_sha256',
+}
+current_device_fields = {
+    'operation_id', 'claimed_at', 'remote_prepared_at',
+    'launch_attempted_at', 'launch_uncertain',
+}
+legacy_device_statuses = {
+    'queued', 'upgrading', 'waiting_reboot',
+    'done', 'failed', 'cancelled', 'blocked',
+}
+terminal_statuses = {'done', 'failed', 'cancelled', 'blocked'}
+current_required = legacy_required | {
+    'image_size', 'image_sha256', 'ready', 'aliases_published',
+    'onie_alias_snapshot', 'worker_started_at', 'worker_heartbeat',
+    'ztp_artifact', 'ztp_size', 'ztp_sha256',
+}
+current_statuses = legacy_device_statuses | {'starting'}
+
+
+def strict_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f'duplicate JSON key: {key}')
+        result[key] = value
+    return result
+
+
+def numeric_timestamp(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError('timestamp is not numeric')
+    result = float(value)
+    if not math.isfinite(result) or result <= 0 or result > now + 300:
+        raise ValueError('timestamp is invalid')
+    return result
+
+
+def positive_integer(value, label, maximum=None):
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0 or \
+            (maximum is not None and value > maximum):
+        raise ValueError(f'invalid {label}')
+
+
+def validate_resumable_current(filename, job, metadata):
+    """Recognize only the exact resumable contract from the previous release."""
+    missing = sorted(current_required.difference(job))
+    if missing:
+        raise ValueError('current upgrade state is missing: ' + ', '.join(missing))
+    if job.get('id') != filename[:-5] or job.get('complete') is not False:
+        raise ValueError('invalid current upgrade identity/completion state')
+    positive_integer(job['created_at'], 'created_at')
+    positive_integer(job['worker_started_at'], 'worker_started_at')
+    positive_integer(job['worker_heartbeat'], 'worker_heartbeat')
+    positive_integer(job['image_size'], 'image_size')
+    positive_integer(job['ztp_size'], 'ztp_size')
+    positive_integer(job['batch_size'], 'batch_size', 100)
+    positive_integer(job['timeout_seconds'], 'timeout_seconds', 7 * 86400)
+    for value in (
+            job['created_at'], job['worker_started_at'], job['worker_heartbeat'],
+            metadata.st_mtime):
+        numeric_timestamp(value)
+    for key in (
+            'stop_on_failure', 'base_config_after', 'cancelled', 'ready',
+            'aliases_published'):
+        if not isinstance(job.get(key), bool):
+            raise ValueError(f'invalid {key}')
+    if job['ready'] != job['aliases_published']:
+        raise ValueError('inconsistent current readiness/alias state')
+    if not re.fullmatch(r'[0-9][A-Za-z0-9._-]{0,99}', str(job['target_version'])) or \
+            not re.fullmatch(r'[A-Za-z0-9_.-]+\.(?:bin|img|iso)', str(job['image_name'])) or \
+            not re.fullmatch(r'[0-9a-f]{64}', str(job['image_sha256'])) or \
+            not re.fullmatch(r'[0-9a-f]{64}', str(job['ztp_sha256'])) or \
+            not re.fullmatch(r'[A-Za-z0-9.-]+(?::[0-9]{1,5})?', str(job['server_ip'])):
+        raise ValueError('invalid current image/server metadata')
+    expected_ztp = (
+        f"provision-uploads/ztp-artifacts/{job['id']}.ztp"
+    )
+    if job['ztp_artifact'] != expected_ztp:
+        raise ValueError('invalid current ZTP artifact reference')
+    snapshot = job['onie_alias_snapshot']
+    expected_snapshot = {
+        f'{scope}:{name}'
+        for scope in ('uploads', 'web')
+        for name in ('onie-installer-x86_64',
+                     'onie-installer-x86_64-mlnx', 'onie-installer')
+    }
+    if not isinstance(snapshot, dict) or set(snapshot) != expected_snapshot or any(
+            value is not None and (
+                not isinstance(value, str) or
+                not re.fullmatch(r'(?:provision-uploads/)?[A-Za-z0-9_.-]+', value)
+            ) for value in snapshot.values()):
+        raise ValueError('invalid current ONIE alias snapshot')
+    if not isinstance(job['devices'], list) or not job['devices']:
+        raise ValueError('current upgrade has no devices')
+    seen_ips = set()
+    for device in job['devices']:
+        if not isinstance(device, dict) or device.get('status') not in current_statuses:
+            raise ValueError('invalid current device state')
+        try:
+            ip = str(ipaddress.IPv4Address(str(device.get('ip', ''))))
+        except ipaddress.AddressValueError as exc:
+            raise ValueError('invalid current device IP') from exc
+        if ip in seen_ips:
+            raise ValueError('duplicate current device IP')
+        seen_ips.add(ip)
+        if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,252}',
+                            str(device.get('hostname', ''))) or \
+                not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_.-]{0,31}',
+                                 str(device.get('username', ''))) or \
+                device.get('target_version') != job['target_version']:
+            raise ValueError('invalid current device identity')
+        raw_mac = str(device.get('expected_mac', '')).strip().lower()
+        mac = raw_mac if re.fullmatch(r'(?:[0-9a-f]{2}:){5}[0-9a-f]{2}', raw_mac) else ''
+        serial = str(device.get('expected_serial', '')).strip()
+        if serial.lower() in ('na', 'n/a', 'not specified', 'none'):
+            serial = ''
+        if (raw_mac and not mac) or (not mac and not serial):
+            raise ValueError('current device identity evidence is invalid')
+        for key in ('claimed_at', 'remote_prepared_at',
+                    'launch_attempted_at', 'started_at', 'last_check'):
+            if device.get(key) is not None:
+                positive_integer(device[key], key)
+                numeric_timestamp(device[key])
+        if device['status'] in ('starting', 'upgrading', 'waiting_reboot') and (
+                not re.fullmatch(
+                    r'[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}',
+                                 str(device.get('operation_id', ''))) or
+                device.get('claimed_at') is None):
+            raise ValueError('invalid current active-device claim')
+        if device['status'] in ('upgrading', 'waiting_reboot') and (
+                device.get('remote_prepared_at') is None or
+                device.get('launch_attempted_at') is None or
+                device.get('started_at') is None):
+            raise ValueError('invalid current launched-device evidence')
+
+
+def read_stable_regular(path):
+    before = os.lstat(path)
+    if not stat.S_ISREG(before.st_mode):
+        raise ValueError('job is not a regular file')
+    flags = os.O_RDONLY | getattr(os, 'O_CLOEXEC', 0) | getattr(os, 'O_NOFOLLOW', 0)
+    descriptor = os.open(path, flags)
+    try:
+        opened = os.fstat(descriptor)
+        if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+            raise ValueError('job changed while opening')
+        chunks = []
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        after_fd = os.fstat(descriptor)
+        after_path = os.lstat(path)
+        identity = (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns)
+        if identity != (
+                after_fd.st_dev, after_fd.st_ino,
+                after_fd.st_size, after_fd.st_mtime_ns,
+        ) or identity != (
+                after_path.st_dev, after_path.st_ino,
+                after_path.st_size, after_path.st_mtime_ns,
+        ):
+            raise ValueError('job changed while reading')
+        return b''.join(chunks), opened
+    finally:
+        os.close(descriptor)
+
+
+def fsync_directory():
+    descriptor = os.open(directory, os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0))
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def atomic_write(path, content, metadata):
+    descriptor, temporary = tempfile.mkstemp(prefix='.legacy-upgrade.', dir=directory)
+    try:
+        os.fchmod(descriptor, stat.S_IMODE(metadata.st_mode))
+        try:
+            os.fchown(descriptor, metadata.st_uid, metadata.st_gid)
+        except PermissionError:
+            # A non-root installer normally owns these files.  If it is not a
+            # member of the historical group, the 0664-compatible mode still
+            # keeps completed records readable by the web UI.
+            pass
+        with os.fdopen(descriptor, 'wb') as handle:
+            descriptor = -1
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        fsync_directory()
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+
+
+def unique_backup_path(filename, label='legacy-stale'):
+    stamp = datetime.datetime.fromtimestamp(
+        now, datetime.timezone.utc
+    ).strftime('%Y%m%dT%H%M%SZ')
+    base = os.path.join(directory, f'{filename}.{label}-{stamp}.bak')
+    candidate = base
+    suffix = 0
+    while os.path.lexists(candidate):
+        suffix += 1
+        candidate = f'{base}.{suffix}'
+    return candidate
+
+
+def exclusive_backup(path, content, metadata):
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    flags |= getattr(os, 'O_CLOEXEC', 0) | getattr(os, 'O_NOFOLLOW', 0)
+    descriptor = os.open(path, flags, stat.S_IMODE(metadata.st_mode))
+    created = True
+    try:
+        try:
+            os.fchown(descriptor, metadata.st_uid, metadata.st_gid)
+        except PermissionError:
+            pass
+        with os.fdopen(descriptor, 'wb') as handle:
+            descriptor = -1
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        fsync_directory()
+        verified, _ = read_stable_regular(path)
+        if verified != content:
+            raise OSError('backup verification failed')
+    except Exception:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if created:
+            try:
+                os.unlink(path)
+                fsync_directory()
+            except OSError:
+                pass
+        raise
+
+
+def acquire_lock(lock_path, owner_metadata):
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, 'O_CLOEXEC', 0)
+    flags |= getattr(os, 'O_NOFOLLOW', 0)
+    descriptor = os.open(lock_path, flags, 0o664)
+    metadata = os.fstat(descriptor)
+    if not stat.S_ISREG(metadata.st_mode):
+        os.close(descriptor)
+        raise ValueError('lock is not a regular file')
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(descriptor)
+        return None
+    try:
+        current = os.lstat(lock_path)
+        if (current.st_dev, current.st_ino) != (metadata.st_dev, metadata.st_ino):
+            raise ValueError('lock path changed while opening')
+        os.fchown(descriptor, owner_metadata.st_uid, owner_metadata.st_gid)
+        os.fchmod(descriptor, 0o664)
+        os.fsync(descriptor)
+    except Exception:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+        raise
+    return descriptor
+
+
+def classify_incomplete_legacy(filename, job, metadata):
+    if current_schema_fields.intersection(job):
+        return None, 'current-schema upgrade job'
+    if any(
+            isinstance(device, dict) and current_device_fields.intersection(device)
+            for device in job.get('devices', [])
+    ):
+        return None, 'current-schema device state'
+    keys = set(job)
+    if not legacy_required.issubset(keys) or not keys.issubset(
+            legacy_required | legacy_optional):
+        return None, 'unknown upgrade job schema'
+    if job.get('id') != filename[:-5] or not uuid_json.fullmatch(filename):
+        return None, 'job filename/id mismatch'
+    if job.get('complete') is not False or not isinstance(job.get('cancelled'), bool):
+        return None, 'invalid legacy completion state'
+    if not isinstance(job.get('stop_on_failure'), bool) or \
+            not isinstance(job.get('base_config_after'), bool):
+        return None, 'invalid legacy job flags'
+    if isinstance(job.get('batch_size'), bool) or \
+            not isinstance(job.get('batch_size'), int) or job['batch_size'] <= 0:
+        return None, 'invalid legacy batch size'
+    if not isinstance(job.get('target_version'), str) or \
+            not job['target_version'].strip():
+        return None, 'invalid legacy target version'
+    devices = job.get('devices')
+    if not isinstance(devices, list) or not devices:
+        return None, 'legacy job has no devices'
+    for device in devices:
+        if not isinstance(device, dict) or device.get('status') not in legacy_device_statuses:
+            return None, 'invalid legacy device state'
+    try:
+        # Cancellation/status writes can race a launch-before-save window. A
+        # recently touched terminal-looking record therefore remains inside
+        # the safety window as well. The installer already holds scheduler,
+        # coordinator and per-job worker locks, so an actually running legacy
+        # writer is rejected rather than allowed to extend this forever.
+        activity = [numeric_timestamp(job['created_at'])]
+        if job.get('worker_started_at') is not None:
+            numeric_timestamp(job['worker_started_at'])
+        for key in ('worker_heartbeat', 'completed_at'):
+            if job.get(key) is not None:
+                numeric_timestamp(job[key])
+        for device in devices:
+            if device.get('started_at') is not None:
+                activity.append(numeric_timestamp(device['started_at']))
+            if device.get('last_check') is not None:
+                numeric_timestamp(device['last_check'])
+        if metadata.st_mtime > now + 300:
+            return None, 'legacy job file timestamp is unexpectedly in the future'
+        timeout_seconds = int(job.get('timeout_seconds', 3600))
+        if timeout_seconds <= 0 or timeout_seconds > 7 * 86400:
+            return None, 'invalid legacy timeout'
+    except (TypeError, ValueError):
+        return None, 'invalid legacy timestamps'
+    effective_stale_seconds = max(stale_seconds, timeout_seconds + 3600)
+    last_activity = max(activity)
+    if now - last_activity < effective_stale_seconds:
+        return None, 'legacy job is still inside its expiry window'
+    return (last_activity, effective_stale_seconds), None
+
+
+def load_authorized_targets():
+    devices_raw, _ = read_stable_regular(devices_file)
+    parser = (
+        'import json,sys; from ruamel.yaml import YAML; '
+        'json.dump(YAML(typ="safe").load(sys.stdin.read()) or {}, sys.stdout)'
+    )
+    yaml_command = [sys.executable, '-c', parser]
+    try:
+        service_uid = pwd.getpwnam(service_user).pw_uid
+    except KeyError as exc:
+        raise ValueError('configured LLDPq service user does not exist') from exc
+    if os.geteuid() != service_uid:
+        sudo_binary = shutil.which('sudo')
+        if not sudo_binary:
+            raise ValueError('sudo is unavailable for devices.yaml validation')
+        yaml_command = [
+            sudo_binary, '-n', '-H', '-u', service_user, '--',
+        ] + yaml_command
+    parsed = subprocess.run(
+        yaml_command, input=devices_raw.decode('utf-8'),
+        capture_output=True, text=True, timeout=15,
+    )
+    if parsed.returncode != 0:
+        detail = (parsed.stderr or 'ruamel.yaml parser failed').strip()[:200]
+        raise ValueError('devices.yaml could not be safely parsed: ' + detail)
+    payload = json.loads(parsed.stdout, object_pairs_hook=strict_object)
+    if not isinstance(payload, dict):
+        raise ValueError('devices.yaml is not an object')
+    defaults = payload.get('defaults', {})
+    if not isinstance(defaults, dict):
+        raise ValueError('devices.yaml defaults are invalid')
+    default_username = str(defaults.get('username', 'cumulus')).strip()
+    configured = payload.get('devices', payload)
+    if not isinstance(configured, dict):
+        raise ValueError('devices.yaml devices are invalid')
+    by_ip = {}
+    for raw_ip, info in configured.items():
+        if raw_ip in ('defaults', 'endpoint_hosts'):
+            continue
+        try:
+            ip = str(ipaddress.IPv4Address(str(raw_ip)))
+        except ipaddress.AddressValueError as exc:
+            raise ValueError(f'invalid devices.yaml IP: {raw_ip}') from exc
+        if isinstance(info, dict):
+            hostname = str(info.get('hostname', ip)).strip()
+            username = str(info.get('username', default_username)).strip()
+        elif isinstance(info, str):
+            hostname = info.split('@', 1)[0].strip()
+            username = default_username
+        else:
+            raise ValueError(f'invalid devices.yaml entry for {ip}')
+        if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,252}', hostname):
+            raise ValueError(f'invalid devices.yaml hostname for {ip}')
+        if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_.-]{0,31}', username):
+            raise ValueError(f'invalid devices.yaml username for {ip}')
+        if ip in by_ip:
+            raise ValueError(f'duplicate devices.yaml IP: {ip}')
+        by_ip[ip] = {'hostname': hostname, 'username': username}
+
+    inventory_raw, _ = read_stable_regular(inventory_file)
+    inventory = json.loads(
+        inventory_raw.decode('utf-8'), object_pairs_hook=strict_object
+    )
+    if not isinstance(inventory, dict) or not isinstance(inventory.get('bindings'), list):
+        raise ValueError('inventory.json bindings are invalid')
+    bindings = {}
+    for binding in inventory['bindings']:
+        if not isinstance(binding, dict) or binding.get('commented'):
+            continue
+        raw_ip = str(binding.get('ip', '')).strip()
+        if not raw_ip:
+            continue
+        try:
+            ip = str(ipaddress.IPv4Address(raw_ip))
+        except ipaddress.AddressValueError as exc:
+            raise ValueError('inventory.json contains an invalid IP') from exc
+        hostname = str(binding.get('hostname', '')).strip()
+        if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,252}', hostname):
+            raise ValueError(f'invalid inventory hostname for {ip}')
+        mac = re.sub(r'[^0-9a-f]', '', str(binding.get('mac', '')).lower())
+        if mac and len(mac) != 12:
+            raise ValueError(f'invalid inventory MAC for {ip}')
+        serial = str(binding.get('serial', '')).strip()
+        if serial.lower() in ('na', 'n/a', 'not specified', 'none'):
+            serial = ''
+        if not mac and not serial:
+            raise ValueError(f'inventory identity is missing for {ip}')
+        if ip in bindings:
+            raise ValueError(f'duplicate inventory IP: {ip}')
+        bindings[ip] = {'hostname': hostname, 'mac': mac, 'serial': serial}
+    return by_ip, bindings
+
+
+def authorize_probe_target(device, configured, bindings):
+    hostname = str(device.get('hostname', '')).strip()
+    username = str(device.get('username', 'cumulus')).strip()
+    try:
+        ip = str(ipaddress.IPv4Address(str(device.get('ip', '')).strip()))
+    except ipaddress.AddressValueError as exc:
+        raise ValueError('legacy device IP is invalid') from exc
+    current = configured.get(ip)
+    binding = bindings.get(ip)
+    if current is None or binding is None:
+        raise ValueError(f'{hostname or ip} is absent from current devices/inventory')
+    if current['hostname'].lower() != hostname.lower() or \
+            binding['hostname'].lower() != hostname.lower():
+        raise ValueError(f'{hostname or ip} no longer matches current inventory hostname')
+    if current['username'] != username:
+        raise ValueError(f'{hostname or ip} no longer matches current SSH username')
+    return {
+        'ip': ip, 'hostname': current['hostname'], 'username': username,
+        'expected_mac': binding['mac'], 'expected_serial': binding['serial'],
+    }
+
+
+remote_probe = r'''set +e
+printf 'LLDPQ_LEGACY_PROBE_V1_BEGIN\n'
+version="$(grep '^VERSION_ID=' /etc/os-release 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\"' || true)"
+printf 'VERSION=%s\n' "$(printf '%s' "$version" | tr -cd 'A-Za-z0-9._+~:-' | head -c 100)"
+test -s /etc/nvue.d/startup.yaml && echo STARTUP=1 || echo STARTUP=0
+test -f /etc/lldpq-base-deployed && echo BASE=1 || echo BASE=0
+if command -v pgrep >/dev/null 2>&1; then
+  pgrep -f '[o]nie-install' >/dev/null 2>&1 && echo ONIE=active || echo ONIE=inactive
+else
+  echo ONIE=unknown
+fi
+operation="$(cat /tmp/lldpq-upgrade.operation 2>/dev/null | tr -cd 'A-Za-z0-9._+~:-' | head -c 100 || true)"
+printf 'OPERATION=%s\n' "$operation"
+if test -s /tmp/lldpq-upgrade.exit; then
+  upgrade_exit="$(cat /tmp/lldpq-upgrade.exit 2>/dev/null | tr -cd '0-9-' | head -c 12)"
+  test -n "$upgrade_exit" && printf 'EXIT=%s\n' "$upgrade_exit" || echo EXIT=invalid
+else
+  echo EXIT=missing
+fi
+mac="$(cat /sys/class/net/eth0/address 2>/dev/null | tr -cd '0-9A-Fa-f' | tr 'A-F' 'a-f' | head -c 12 || true)"
+printf 'MAC=%s\n' "$mac"
+serial="$(sudo -n dmidecode -s system-serial-number 2>/dev/null | head -1 | tr -cd 'A-Za-z0-9._+~:-' | head -c 100 || true)"
+printf 'SERIAL=%s\n' "$serial"
+printf 'LLDPQ_LEGACY_PROBE_V1_END\n'
+'''
+
+
+def probe_device(target):
+    ssh_binary = shutil.which('ssh')
+    if not ssh_binary:
+        return None, 'ssh client is unavailable'
+    command = [
+        ssh_binary, '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
+        '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null',
+        '-o', 'LogLevel=ERROR', f"{target['username']}@{target['ip']}",
+        remote_probe,
+    ]
+    try:
+        service_uid = pwd.getpwnam(service_user).pw_uid
+    except KeyError:
+        return None, 'configured LLDPq service user does not exist'
+    if os.geteuid() != service_uid:
+        sudo_binary = shutil.which('sudo')
+        if not sudo_binary:
+            return None, 'sudo is unavailable for the LLDPq service account probe'
+        command = [sudo_binary, '-n', '-u', service_user, '--'] + command
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, f'SSH probe failed: {exc}'
+    lines = [line.strip() for line in result.stdout.splitlines()]
+    try:
+        begin = lines.index('LLDPQ_LEGACY_PROBE_V1_BEGIN')
+        end = lines.index('LLDPQ_LEGACY_PROBE_V1_END', begin + 1)
+    except ValueError:
+        detail = (result.stderr or 'no authenticated probe response').strip()[:160]
+        return None, f'SSH probe unavailable: {detail}'
+    if result.returncode != 0:
+        return None, f'SSH probe exited with status {result.returncode}'
+    values = {}
+    for line in lines[begin + 1:end]:
+        if '=' not in line:
+            return None, 'SSH probe returned malformed evidence'
+        key, value = line.split('=', 1)
+        if key in values or key not in {
+                'VERSION', 'STARTUP', 'BASE', 'ONIE', 'OPERATION',
+                'EXIT', 'MAC', 'SERIAL',
+        }:
+            return None, 'SSH probe returned ambiguous evidence'
+        values[key] = value
+    if set(values) != {
+            'VERSION', 'STARTUP', 'BASE', 'ONIE', 'OPERATION',
+            'EXIT', 'MAC', 'SERIAL',
+    }:
+        return None, 'SSH probe evidence is incomplete'
+    observed_mac = re.sub(r'[^0-9a-f]', '', values['MAC'].lower())
+    observed_serial = values['SERIAL'].strip()
+    matches = 0
+    if target['expected_mac'] and observed_mac:
+        if target['expected_mac'] != observed_mac:
+            return None, 'live MAC does not match current inventory'
+        matches += 1
+    if target['expected_serial'] and observed_serial:
+        if target['expected_serial'].lower() != observed_serial.lower():
+            return None, 'live serial does not match current inventory'
+        matches += 1
+    if matches == 0:
+        return None, 'live device identity could not be verified'
+    return values, None
+
+
+def version_relation(current, target):
+    if current == target:
+        return 0
+    current_match = re.match(r'^(\d+(?:\.\d+)+)', current)
+    target_match = re.match(r'^(\d+(?:\.\d+)+)', target)
+    if not current_match or not target_match:
+        return None
+    current_parts = [int(part) for part in current_match.group(1).split('.')]
+    target_parts = [int(part) for part in target_match.group(1).split('.')]
+    width = max(len(current_parts), len(target_parts))
+    current_parts.extend([0] * (width - len(current_parts)))
+    target_parts.extend([0] * (width - len(target_parts)))
+    return (current_parts > target_parts) - (current_parts < target_parts)
+
+
+def resolve_probe(job, device, evidence, superseding_operations=None):
+    superseding_operations = superseding_operations or set()
+    operation = evidence['OPERATION']
+    if operation and operation in superseding_operations:
+        return 'failed', (
+            'Expired legacy state was superseded by a validated resumable '
+            'current upgrade operation for this device.'
+        )
+    relation = version_relation(evidence['VERSION'], job['target_version'])
+    if evidence['ONIE'] != 'inactive':
+        return None, 'ONIE installer activity is active or could not be determined'
+    if relation is None:
+        return None, 'device version cannot be safely compared with the legacy target'
+    if relation >= 0:
+        if relation == 0 and evidence['OPERATION']:
+            return None, 'exact target has an unrelated upgrade operation marker'
+        missing = []
+        if evidence['STARTUP'] != '1':
+            missing.append('startup configuration')
+        if job.get('base_config_after') and evidence['BASE'] != '1':
+            missing.append('base deployment')
+        if missing:
+            return 'failed', (
+                'OS upgrade version was verified, but required ' +
+                ' and '.join(missing) + ' marker evidence is missing.'
+            )
+        return 'done', (
+            'Legacy upgrade completion verified from the live target/newer '
+            'version and required configuration markers.'
+        )
+    if evidence['OPERATION']:
+        return None, 'older version has an unrelated upgrade operation marker'
+    if evidence['EXIT'] == 'invalid':
+        return None, 'older version has an invalid upgrade exit marker'
+    return 'failed', (
+        'Expired legacy upgrade verified as stopped: the device is reachable '
+        'on an older version with no ONIE process or operation marker.'
+    )
+
+
+# Phase 1: classify the complete directory before acquiring or mutating any
+# candidate. One current/recent/corrupt/ambiguous incomplete job means zero
+# legacy migrations and lets the normal active-job guard fail the update closed.
+candidates = []
+resumable_current_jobs = []
+blockers = []
+job_entries = sorted(
+    (entry for entry in os.scandir(directory) if entry.name.endswith('.json')),
+    key=lambda item: item.name,
+)
+initial_job_names = [entry.name for entry in job_entries]
+for entry in job_entries:
+    try:
+        original, metadata = read_stable_regular(entry.path)
+        job = json.loads(original.decode('utf-8'), object_pairs_hook=strict_object)
+        if not isinstance(job, dict):
+            raise ValueError('job is not an object')
+        if not uuid_json.fullmatch(entry.name) or job.get('id') != entry.name[:-5]:
+            raise ValueError('job filename/id mismatch')
+        if not isinstance(job.get('devices'), list):
+            raise ValueError('job devices are invalid')
+        if not isinstance(job.get('complete'), bool):
+            raise ValueError('job complete flag is invalid')
+    except Exception as exc:
+        blockers.append(f'{entry.name}: corrupt/unsafe state ({exc})')
+        continue
+    schema_version = job.get('schema_version')
+    if schema_version is not None and (
+            isinstance(schema_version, bool) or
+            not isinstance(schema_version, int) or
+            schema_version != supported_schema_version):
+        blockers.append(f'{entry.name}: unsupported upgrade job schema version')
+        continue
+    if job['complete']:
+        continue
+    if schema_version == supported_schema_version and allow_current_incomplete:
+        # Docker image recreation has already switched code before entrypoint
+        # runs. Supported current jobs must remain intact so the new scheduler
+        # can resume them; only unversioned legacy state needs reconciliation.
+        try:
+            validate_resumable_current(entry.name, job, metadata)
+        except Exception as exc:
+            blockers.append(
+                f'{entry.name}: incompatible schema-v2 upgrade state ({exc})'
+            )
+            continue
+        resumable_current_jobs.append(job)
+        continue
+    if schema_version is None and current_schema_fields.intersection(job):
+        if not allow_current_incomplete:
+            blockers.append(f'{entry.name}: current-schema upgrade job')
+            continue
+        try:
+            validate_resumable_current(entry.name, job, metadata)
+        except Exception as exc:
+            blockers.append(
+                f'{entry.name}: incompatible current upgrade state ({exc})'
+            )
+            continue
+        candidates.append({
+            'kind': 'current-schema-promotion',
+            'name': entry.name, 'path': entry.path, 'original': original,
+            'metadata': metadata, 'job': job,
+        })
+        resumable_current_jobs.append(job)
+        continue
+    classification, reason = classify_incomplete_legacy(entry.name, job, metadata)
+    if classification is None:
+        blockers.append(f'{entry.name}: {reason}')
+        continue
+    candidates.append({
+        'kind': 'legacy-reconciliation',
+        'name': entry.name, 'path': entry.path, 'original': original,
+        'metadata': metadata, 'job': job,
+        'last_activity': classification[0],
+        'stale_after': classification[1],
+    })
+
+if blockers:
+    print('[!] Legacy upgrade reconciliation was skipped: ' + '; '.join(blockers), file=sys.stderr)
+    raise SystemExit(0)
+if not candidates:
+    raise SystemExit(0)
+
+superseding_operations = {}
+for current_job in resumable_current_jobs:
+    for device in current_job['devices']:
+        operation = str(device.get('operation_id', '')).strip()
+        if operation and device.get('status') in (
+                'starting', 'upgrading', 'waiting_reboot'):
+            superseding_operations.setdefault(str(device['ip']), set()).add(
+                operation
+            )
+
+# Phase 2: use the historical worker->job lock order for every candidate. Keep
+# all locks until every backup and commit is durable so mixed generations are
+# never created by a concurrent legacy worker/API reader.
+locks = []
+lock_failure = None
+try:
+    for candidate in candidates:
+        for suffix in ('.worker.lock', '.lock'):
+            descriptor = acquire_lock(
+                candidate['path'] + suffix, candidate['metadata']
+            )
+            if descriptor is None:
+                lock_failure = f"{candidate['name']}{suffix} is active"
+                break
+            locks.append(descriptor)
+        if lock_failure:
+            break
+    if lock_failure:
+        print(f'[!] Legacy upgrade reconciliation was skipped: {lock_failure}', file=sys.stderr)
+        raise SystemExit(0)
+
+    # Phase 3: all candidates must still be byte-for-byte and inode-identical.
+    for candidate in candidates:
+        current, metadata = read_stable_regular(candidate['path'])
+        original_metadata = candidate['metadata']
+        if current != candidate['original'] or (
+            metadata.st_dev, metadata.st_ino, metadata.st_size, metadata.st_mtime_ns
+        ) != (
+            original_metadata.st_dev, original_metadata.st_ino,
+            original_metadata.st_size, original_metadata.st_mtime_ns,
+        ):
+            print(
+                f"[!] Legacy upgrade reconciliation was skipped: {candidate['name']} changed",
+                file=sys.stderr,
+            )
+            raise SystemExit(0)
+
+    active = []
+    for candidate in candidates:
+        if candidate['kind'] != 'legacy-reconciliation':
+            continue
+        for index, device in enumerate(candidate['job']['devices']):
+            # Both legacy implementations could persist queued before a later
+            # status/worker pass launched the next batch remotely. A crash
+            # between launch and the following save can therefore leave a
+            # genuinely launched device looking queued. Only queued entries in
+            # a durably cancelled job are known never to be launched afterward.
+            # Every state except a positively completed `done` can hide a
+            # launch-before-save crash (including failed/blocked/cancelled
+            # terminal-looking rows). Read-only live proof closes that gap.
+            if device['status'] != 'done':
+                active.append((candidate, index, device))
+
+    # Phase 4: authorize every SSH destination against two current canonical
+    # sources before making any network connection, then collect read-only live
+    # proof in parallel. Ambiguity leaves every original byte untouched.
+    resolutions = {}
+    if active:
+        try:
+            configured, bindings = load_authorized_targets()
+            authorized = []
+            unique_targets = {}
+            for candidate, index, device in active:
+                target = authorize_probe_target(device, configured, bindings)
+                target_key = (
+                    target['ip'], target['username'], target['hostname'].lower(),
+                    target['expected_mac'], target['expected_serial'].lower(),
+                )
+                unique_targets.setdefault(target_key, target)
+                authorized.append((candidate, index, target_key, target))
+        except Exception as exc:
+            print(f'[!] Legacy upgrade reconciliation was skipped: {exc}', file=sys.stderr)
+            raise SystemExit(0)
+        with concurrent.futures.ThreadPoolExecutor(
+                max_workers=min(8, len(unique_targets))) as executor:
+            futures = {
+                executor.submit(probe_device, target): target_key
+                for target_key, target in unique_targets.items()
+            }
+            probe_results = {}
+            for future in concurrent.futures.as_completed(futures):
+                probe_results[futures[future]] = future.result()
+            probe_blockers = []
+            for candidate, index, target_key, target in authorized:
+                evidence, error = probe_results[target_key]
+                if error:
+                    probe_blockers.append(
+                        f"{candidate['name']}:{target['hostname']}: {error}"
+                    )
+                    continue
+                status, detail = resolve_probe(
+                    candidate['job'], candidate['job']['devices'][index],
+                    evidence, superseding_operations.get(target['ip'], set()),
+                )
+                if status is None:
+                    probe_blockers.append(
+                        f"{candidate['name']}:{target['hostname']}: {detail}"
+                    )
+                    continue
+                resolutions[(candidate['name'], index)] = (status, detail, evidence)
+            if probe_blockers:
+                print(
+                    '[!] Legacy upgrade reconciliation was skipped: ' +
+                    '; '.join(sorted(probe_blockers)), file=sys.stderr,
+                )
+                raise SystemExit(0)
+
+    # Probes can take several minutes on a large fabric. Revalidate both the
+    # complete directory membership and every candidate immediately before
+    # rendering/backing up state, even though compliant writers are already
+    # excluded by the coordinator and per-job locks.
+    current_job_names = sorted(
+        entry.name for entry in os.scandir(directory)
+        if entry.name.endswith('.json')
+    )
+    if current_job_names != initial_job_names:
+        print(
+            '[!] Legacy upgrade reconciliation was skipped: upgrade job set changed',
+            file=sys.stderr,
+        )
+        raise SystemExit(0)
+    for candidate in candidates:
+        current, metadata = read_stable_regular(candidate['path'])
+        original_metadata = candidate['metadata']
+        if current != candidate['original'] or (
+            metadata.st_dev, metadata.st_ino, metadata.st_size, metadata.st_mtime_ns
+        ) != (
+            original_metadata.st_dev, original_metadata.st_ino,
+            original_metadata.st_size, original_metadata.st_mtime_ns,
+        ):
+            print(
+                f"[!] Legacy upgrade reconciliation was skipped: {candidate['name']} changed during probes",
+                file=sys.stderr,
+            )
+            raise SystemExit(0)
+
+    # Phase 5: render everything in memory, then durably verify every original
+    # backup before the first job file is replaced.
+    reason = (
+        'Expired pre-v4 upgrade state was reconciled by the LLDPq update '
+        'bootstrap using live read-only device evidence.'
+    )
+    for candidate in candidates:
+        job = candidate['job']
+        if candidate['kind'] == 'current-schema-promotion':
+            backup_path = unique_backup_path(candidate['name'], 'schema-v2')
+            candidate['backup_path'] = backup_path
+            job['schema_version'] = supported_schema_version
+            job['schema_migration'] = {
+                'action': 'previous-current-job-promoted-for-runtime',
+                'migrated_at': now,
+                'original_sha256': hashlib.sha256(
+                    candidate['original']
+                ).hexdigest(),
+                'backup_file': os.path.basename(backup_path),
+            }
+            candidate['rendered'] = (
+                json.dumps(job, indent=2, sort_keys=True) + '\n'
+            ).encode('utf-8')
+            continue
+        evidence_summary = []
+        for index, device in enumerate(job['devices']):
+            previous = device['status']
+            if previous in terminal_statuses and \
+                    (candidate['name'], index) not in resolutions:
+                continue
+            device['legacy_status'] = previous
+            status, detail, evidence = resolutions[(candidate['name'], index)]
+            if status == 'failed' and previous in ('queued', 'cancelled'):
+                if candidate['job'].get('cancelled') or previous == 'cancelled':
+                    status = 'cancelled'
+                    detail = (
+                        'Expired legacy cancellation was verified: the device '
+                        'remained below the target version with no active ONIE '
+                        'process or upgrade operation marker.'
+                    )
+                else:
+                    status = 'blocked'
+                    detail = (
+                        'Expired legacy queued launch is no longer active; the '
+                        'device remained below the requested target version.'
+                    )
+            elif status == 'failed' and previous in ('failed', 'blocked'):
+                status = previous
+                detail = (
+                    'Expired legacy terminal state was verified: the device '
+                    'remained below the target version with no active ONIE '
+                    'process or upgrade operation marker.'
+                )
+            device['status'] = status
+            if status == 'done':
+                device['message'] = detail
+                device.pop('error', None)
+            else:
+                device['error'] = detail
+            probe_record = {
+                'probed_at': now,
+                'version': evidence['VERSION'],
+                'startup_config': evidence['STARTUP'] == '1',
+                'base_deployed': evidence['BASE'] == '1',
+                'onie_process': evidence['ONIE'],
+                'operation_marker': evidence['OPERATION'],
+                'exit_marker': evidence['EXIT'],
+                'observed_mac': evidence['MAC'],
+                'observed_serial': evidence['SERIAL'],
+                'result': status,
+            }
+            device['legacy_reconciliation_probe'] = probe_record
+            evidence_summary.append({
+                'hostname': device.get('hostname', device.get('ip', '')),
+                **probe_record,
+            })
+        if not all(item['status'] in terminal_statuses for item in job['devices']):
+            raise RuntimeError(f"{candidate['name']} did not resolve to terminal state")
+        backup_path = unique_backup_path(candidate['name'])
+        candidate['backup_path'] = backup_path
+        # The live record has now been deterministically converted to the
+        # current terminal contract. The byte-exact pre-v4 source remains in
+        # the verified backup referenced below.
+        job['schema_version'] = supported_schema_version
+        job['complete'] = True
+        job['completed_at'] = now
+        # A completed reconciled job has no retrying worker. Preserve the
+        # original worker_error in the verified backup/audit hash, but do not
+        # make the existing UI display the contradictory “worker retrying”.
+        job.pop('worker_error', None)
+        job['legacy_reconciliation'] = {
+            'schema': 'pre-v4-upgrade-job',
+            'action': 'expired-job-reconciled-for-update',
+            'reconciled_at': now,
+            'last_launch_activity_at': int(candidate['last_activity']),
+            'stale_after_seconds': candidate['stale_after'],
+            'original_sha256': hashlib.sha256(candidate['original']).hexdigest(),
+            'backup_file': os.path.basename(backup_path),
+            'device_evidence': evidence_summary,
+        }
+        candidate['rendered'] = (
+            json.dumps(job, indent=2, sort_keys=True) + '\n'
+        ).encode('utf-8')
+
+    created_backups = []
+    try:
+        for candidate in candidates:
+            exclusive_backup(
+                candidate['backup_path'], candidate['original'], candidate['metadata']
+            )
+            created_backups.append(candidate['backup_path'])
+    except Exception as exc:
+        for backup in created_backups:
+            try:
+                os.unlink(backup)
+            except OSError:
+                pass
+        fsync_directory()
+        raise RuntimeError(f'could not create verified legacy backup: {exc}') from exc
+
+    attempted = []
+    try:
+        for candidate in candidates:
+            # Include an in-progress candidate in rollback even if replace()
+            # succeeds but a following fsync/readback raises.
+            attempted.append(candidate)
+            atomic_write(candidate['path'], candidate['rendered'], candidate['metadata'])
+            verified, _ = read_stable_regular(candidate['path'])
+            if verified != candidate['rendered']:
+                raise OSError('terminal state verification failed')
+    except Exception as exc:
+        rollback_errors = []
+        for candidate in reversed(attempted):
+            try:
+                atomic_write(candidate['path'], candidate['original'], candidate['metadata'])
+            except Exception as rollback_exc:
+                rollback_errors.append(f"{candidate['name']}: {rollback_exc}")
+        detail = f'could not commit reconciled legacy state: {exc}'
+        if rollback_errors:
+            detail += '; rollback failed: ' + '; '.join(rollback_errors)
+        raise RuntimeError(detail) from exc
+
+    for candidate in candidates:
+        if candidate['kind'] == 'current-schema-promotion':
+            print(
+                f"  Promoted resumable upgrade {candidate['job']['id']} to "
+                f"schema v{supported_schema_version}; original saved as "
+                f"{os.path.basename(candidate['backup_path'])}"
+            )
+        else:
+            print(
+                f"  Reconciled expired legacy upgrade {candidate['job']['id']}; "
+                f"original saved as {os.path.basename(candidate['backup_path'])}"
+            )
+finally:
+    for descriptor in reversed(locks):
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+PYTHON
+}
+
+verify_no_active_upgrade_jobs() {
+    local upgrade_dir="$1"
+    local legacy_stale_seconds="${LLDPQ_LEGACY_UPGRADE_STALE_SECONDS:-86400}"
+    python3 - "$upgrade_dir" "$legacy_stale_seconds" <<'PYTHON'
+import fcntl
+import hashlib
+import json
+import math
+import os
+import re
+import stat
+import sys
+import time
+
+uuid_json = re.compile(r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.json$')
+supported_schema_version = 2
+artifact_grace_seconds = 86400
+legacy_stale_seconds = int(sys.argv[2])
+now = time.time()
+current_schema_fields = {
+    'schema_version', 'image_size', 'image_sha256', 'ready',
+    'aliases_published', 'onie_alias_snapshot', 'ztp_artifact',
+    'ztp_size', 'ztp_sha256',
+}
+
+def strict_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f'duplicate JSON key: {key}')
+        result[key] = value
+    return result
+
+def read_regular(path):
+    before = os.lstat(path)
+    if not stat.S_ISREG(before.st_mode):
+        raise ValueError('job is not a regular file')
+    flags = os.O_RDONLY | getattr(os, 'O_CLOEXEC', 0) | getattr(os, 'O_NOFOLLOW', 0)
+    descriptor = os.open(path, flags)
+    try:
+        opened = os.fstat(descriptor)
+        if (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino):
+            raise ValueError('job changed while opening')
+        chunks = []
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        after = os.lstat(path)
+        if (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns) != (
+                after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns):
+            raise ValueError('job changed while reading')
+        return b''.join(chunks), opened.st_mtime
+    finally:
+        os.close(descriptor)
+
+def finite_timestamp(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError('invalid upgrade timestamp')
+    value = float(value)
+    if not math.isfinite(value) or value <= 0 or value > now + 300:
+        raise ValueError('invalid upgrade timestamp')
+    return value
+
+def promoted_resume_is_quiesced(job, job_path):
+    migration = job.get('schema_migration')
+    if not isinstance(migration, dict) or \
+            migration.get('action') != 'previous-current-job-promoted-for-runtime' or \
+            not re.fullmatch(r'[0-9a-f]{64}', str(migration.get('original_sha256', ''))):
+        return False
+    try:
+        finite_timestamp(migration.get('migrated_at'))
+        backup_name = migration.get('backup_file')
+        if not isinstance(backup_name, str) or os.path.basename(backup_name) != backup_name or \
+                '.schema-v2-' not in backup_name:
+            return False
+        backup_path = os.path.join(os.path.dirname(job_path), backup_name)
+        backup_raw, _ = read_regular(backup_path)
+        if hashlib.sha256(backup_raw).hexdigest() != migration['original_sha256']:
+            return False
+        original = json.loads(
+            backup_raw.decode('utf-8'), object_pairs_hook=strict_object
+        )
+        if not isinstance(original, dict) or original.get('id') != job.get('id') or \
+                original.get('complete') is not False or \
+                original.get('schema_version') is not None:
+            return False
+    except Exception:
+        return False
+
+    descriptors = []
+    try:
+        for suffix in ('.worker.lock', '.lock'):
+            lock_path = job_path + suffix
+            before = os.lstat(lock_path)
+            if not stat.S_ISREG(before.st_mode):
+                return False
+            flags = os.O_RDWR | getattr(os, 'O_CLOEXEC', 0)
+            flags |= getattr(os, 'O_NOFOLLOW', 0)
+            descriptor = os.open(lock_path, flags)
+            descriptors.append(descriptor)
+            opened = os.fstat(descriptor)
+            if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+                return False
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return False
+        return True
+    except OSError:
+        return False
+    finally:
+        for descriptor in reversed(descriptors):
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            finally:
+                os.close(descriptor)
+
+def holds_provision_resources(job, file_mtime, job_path):
+    if job.get('alias_rollback_failed'):
+        return True
+    if not job['complete']:
+        if promoted_resume_is_quiesced(job, job_path):
+            return False
+        return True
+    uncertain = any(
+        item.get('launch_attempted_at') and (
+            item.get('launch_uncertain') or
+            'timeout' in str(item.get('error', '')).lower()
+        )
+        for item in job['devices'] if isinstance(item, dict)
+    )
+    if uncertain:
+        completed_at = job.get('completed_at')
+        if completed_at is None:
+            return True
+        return now - finite_timestamp(completed_at) < artifact_grace_seconds
+
+    # Completed pre-v4 jobs had a launch-before-save crash window. Do not
+    # replace runtime code while such an unversioned completion is still inside
+    # the same conservative timeout+grace window used for stale reconciliation.
+    if job.get('schema_version') is None and not current_schema_fields.intersection(job):
+        activity = [
+            finite_timestamp(job.get('created_at')),
+            finite_timestamp(file_mtime),
+        ]
+        for key in ('worker_started_at', 'worker_heartbeat', 'completed_at'):
+            if job.get(key) is not None:
+                activity.append(finite_timestamp(job[key]))
+        for item in job['devices']:
+            if not isinstance(item, dict):
+                raise ValueError('invalid legacy device state')
+            for key in ('started_at', 'last_check'):
+                if item.get(key) is not None:
+                    activity.append(finite_timestamp(item[key]))
+        timeout_seconds = int(job.get('timeout_seconds', 3600))
+        if timeout_seconds <= 0 or timeout_seconds > 7 * 86400:
+            raise ValueError('invalid legacy timeout')
+        return now - max(activity) < max(
+            legacy_stale_seconds, timeout_seconds + 3600
+        )
+    return False
+
+active_job = None
+for entry in sorted(os.scandir(sys.argv[1]), key=lambda item: item.name):
+    if not entry.name.endswith('.json'):
+        continue
+    name = entry.name
+    try:
+        raw, file_mtime = read_regular(entry.path)
+        job = json.loads(raw.decode('utf-8'), object_pairs_hook=strict_object)
+        if not isinstance(job, dict):
+            raise ValueError('job is not an object')
+        if not uuid_json.fullmatch(name):
+            raise ValueError('unexpected upgrade job filename')
+        if job.get('id') != name[:-5] or not isinstance(job.get('devices'), list):
+            raise ValueError('job schema/id mismatch')
+        if not isinstance(job.get('complete'), bool):
+            raise ValueError('complete must be boolean')
+        schema_version = job.get('schema_version')
+        if schema_version is not None and (
+                isinstance(schema_version, bool) or
+                not isinstance(schema_version, int) or
+                schema_version != supported_schema_version):
+            raise ValueError('unsupported upgrade job schema version')
+    except Exception as exc:
+        print(f'corrupt upgrade job {name}: {exc}')
+        raise SystemExit(11)
+    try:
+        holds_resources = holds_provision_resources(job, file_mtime, entry.path)
+    except Exception as exc:
+        print(f'corrupt upgrade job {name}: {exc}')
+        raise SystemExit(11)
+    if holds_resources and active_job is None:
+        active_job = job.get('id') or name
+if active_job is not None:
+    print(active_job)
+    raise SystemExit(10)
+PYTHON
+}
+
+verify_upgrade_jobs_runtime_compatible() {
+    local upgrade_dir="$1"
+    local legacy_stale_seconds="${LLDPQ_LEGACY_UPGRADE_STALE_SECONDS:-86400}"
+    python3 - "$upgrade_dir" "$legacy_stale_seconds" <<'PYTHON'
+import ipaddress
+import json
+import math
+import os
+import re
+import stat
+import sys
+import time
+
+directory = sys.argv[1]
+legacy_stale_seconds = int(sys.argv[2])
+supported_schema_version = 2
+now = time.time()
+uuid_json = re.compile(
+    r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.json$'
+)
+current_schema_fields = {
+    'image_size', 'image_sha256', 'ready', 'aliases_published',
+    'onie_alias_snapshot', 'ztp_artifact', 'ztp_size', 'ztp_sha256',
+}
+terminal_statuses = {'done', 'failed', 'cancelled', 'blocked'}
+current_statuses = terminal_statuses | {
+    'queued', 'starting', 'upgrading', 'waiting_reboot',
+}
+
+def strict_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f'duplicate JSON key: {key}')
+        result[key] = value
+    return result
+
+def read_regular(path):
+    before = os.lstat(path)
+    if not stat.S_ISREG(before.st_mode):
+        raise ValueError('job is not a regular file')
+    flags = os.O_RDONLY | getattr(os, 'O_CLOEXEC', 0)
+    flags |= getattr(os, 'O_NOFOLLOW', 0)
+    descriptor = os.open(path, flags)
+    try:
+        opened = os.fstat(descriptor)
+        if (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino):
+            raise ValueError('job changed while opening')
+        content = b''
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            content += chunk
+        after = os.lstat(path)
+        if (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns) != (
+                after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns):
+            raise ValueError('job changed while reading')
+        return content, opened.st_mtime
+    finally:
+        os.close(descriptor)
+
+def timestamp(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError('invalid legacy timestamp')
+    value = float(value)
+    if not math.isfinite(value) or value <= 0 or value > now + 300:
+        raise ValueError('invalid legacy timestamp')
+    return value
+
+def positive_integer(value, label, maximum=None):
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0 or \
+            (maximum is not None and value > maximum):
+        raise ValueError(f'invalid {label}')
+
+def validate_schema_v2(job, name):
+    reconciliation = job.get('legacy_reconciliation')
+    if reconciliation is not None:
+        if not job['complete'] or not job['devices'] or \
+                not isinstance(reconciliation, dict) or \
+                reconciliation.get('action') != 'expired-job-reconciled-for-update' or \
+                not re.fullmatch(r'[0-9a-f]{64}', str(reconciliation.get('original_sha256', ''))) or \
+                not isinstance(reconciliation.get('backup_file'), str) or \
+                '/' in reconciliation['backup_file'] or '\\' in reconciliation['backup_file'] or \
+                any(not isinstance(item, dict) or
+                    item.get('status') not in terminal_statuses
+                    for item in job['devices']):
+            raise ValueError('invalid reconciled legacy upgrade state')
+        return
+
+    required = {
+        'created_at', 'target_version', 'image_name', 'image_size',
+        'image_sha256', 'server_ip', 'batch_size', 'stop_on_failure',
+        'base_config_after', 'timeout_seconds', 'cancelled', 'ready',
+        'aliases_published', 'onie_alias_snapshot', 'worker_started_at',
+        'worker_heartbeat', 'ztp_artifact', 'ztp_size', 'ztp_sha256',
+    }
+    missing = sorted(required.difference(job))
+    if missing:
+        raise ValueError('upgrade job is missing: ' + ', '.join(missing))
+    positive_integer(job['created_at'], 'created_at')
+    positive_integer(job['worker_started_at'], 'worker_started_at')
+    positive_integer(job['worker_heartbeat'], 'worker_heartbeat')
+    positive_integer(job['image_size'], 'image_size')
+    positive_integer(job['ztp_size'], 'ztp_size')
+    positive_integer(job['batch_size'], 'batch_size', 100)
+    positive_integer(job['timeout_seconds'], 'timeout_seconds', 7 * 86400)
+    for key in ('created_at', 'worker_started_at', 'worker_heartbeat'):
+        timestamp(job[key])
+    if job['complete']:
+        positive_integer(job.get('completed_at'), 'completed_at')
+        timestamp(job['completed_at'])
+    for key in ('stop_on_failure', 'base_config_after', 'cancelled',
+                'ready', 'aliases_published'):
+        if not isinstance(job[key], bool):
+            raise ValueError(f'invalid {key}')
+    if job['ready'] != job['aliases_published']:
+        raise ValueError('inconsistent readiness/alias state')
+    if not re.fullmatch(r'[0-9][A-Za-z0-9._-]{0,99}', str(job['target_version'])) or \
+            not re.fullmatch(r'[A-Za-z0-9_.-]+\.(?:bin|img|iso)', str(job['image_name'])) or \
+            not re.fullmatch(r'[0-9a-f]{64}', str(job['image_sha256'])) or \
+            not re.fullmatch(r'[0-9a-f]{64}', str(job['ztp_sha256'])) or \
+            not re.fullmatch(r'[A-Za-z0-9.-]+(?::[0-9]{1,5})?', str(job['server_ip'])):
+        raise ValueError('invalid upgrade image/server metadata')
+    expected_ztp = f'provision-uploads/ztp-artifacts/{name[:-5]}.ztp'
+    if job['ztp_artifact'] != expected_ztp:
+        raise ValueError('invalid upgrade ZTP artifact reference')
+    snapshot = job['onie_alias_snapshot']
+    expected_snapshot = {
+        f'{scope}:{alias}' for scope in ('uploads', 'web') for alias in (
+            'onie-installer-x86_64', 'onie-installer-x86_64-mlnx',
+            'onie-installer',
+        )
+    }
+    if not isinstance(snapshot, dict) or set(snapshot) != expected_snapshot or any(
+            value is not None and (
+                not isinstance(value, str) or
+                not re.fullmatch(r'(?:provision-uploads/)?[A-Za-z0-9_.-]+', value)
+            ) for value in snapshot.values()):
+        raise ValueError('invalid ONIE alias rollback snapshot')
+    if not job['devices']:
+        raise ValueError('upgrade job has no devices')
+    seen_ips = set()
+    for item in job['devices']:
+        if not isinstance(item, dict) or item.get('status') not in current_statuses:
+            raise ValueError('invalid upgrade device state')
+        try:
+            ip = str(ipaddress.IPv4Address(str(item.get('ip', ''))))
+        except ipaddress.AddressValueError as exc:
+            raise ValueError('invalid upgrade device IP') from exc
+        if ip in seen_ips:
+            raise ValueError('duplicate upgrade device IP')
+        seen_ips.add(ip)
+        if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,252}',
+                            str(item.get('hostname', ''))) or \
+                not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_.-]{0,31}',
+                                 str(item.get('username', ''))) or \
+                item.get('target_version') != job['target_version']:
+            raise ValueError('invalid upgrade device identity')
+        raw_mac = str(item.get('expected_mac', '')).strip().lower()
+        mac = raw_mac if re.fullmatch(r'(?:[0-9a-f]{2}:){5}[0-9a-f]{2}', raw_mac) else ''
+        serial = str(item.get('expected_serial', '')).strip()
+        if serial.lower() in ('na', 'n/a', 'not specified', 'none'):
+            serial = ''
+        if (raw_mac and not mac) or (not mac and not serial):
+            raise ValueError('upgrade device identity evidence is invalid')
+        for key in ('claimed_at', 'remote_prepared_at', 'launch_attempted_at',
+                    'started_at', 'last_check'):
+            if item.get(key) is not None:
+                positive_integer(item[key], key)
+                timestamp(item[key])
+        if item['status'] in ('starting', 'upgrading', 'waiting_reboot') and (
+                not re.fullmatch(
+                    r'[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}',
+                                 str(item.get('operation_id', ''))) or
+                item.get('claimed_at') is None):
+            raise ValueError('invalid active upgrade device claim')
+        if item['status'] in ('upgrading', 'waiting_reboot') and (
+                item.get('remote_prepared_at') is None or
+                item.get('launch_attempted_at') is None or
+                item.get('started_at') is None):
+            raise ValueError('invalid launched upgrade device evidence')
+    all_terminal = all(
+        item['status'] in terminal_statuses for item in job['devices']
+    )
+    if job['complete'] and not all_terminal:
+        raise ValueError('upgrade completion/device states disagree')
+
+for entry in sorted(os.scandir(directory), key=lambda item: item.name):
+    if not entry.name.endswith('.json'):
+        continue
+    try:
+        if not uuid_json.fullmatch(entry.name):
+            raise ValueError('unexpected upgrade job filename')
+        raw, file_mtime = read_regular(entry.path)
+        job = json.loads(raw.decode('utf-8'), object_pairs_hook=strict_object)
+        if not isinstance(job, dict) or job.get('id') != entry.name[:-5] or \
+                not isinstance(job.get('devices'), list) or \
+                not isinstance(job.get('complete'), bool):
+            raise ValueError('job schema/id mismatch')
+        schema_version = job.get('schema_version')
+        if schema_version is not None:
+            if isinstance(schema_version, bool) or \
+                    not isinstance(schema_version, int) or \
+                    schema_version != supported_schema_version:
+                raise ValueError('unsupported upgrade job schema version')
+            validate_schema_v2(job, entry.name)
+            continue
+        if not job['complete']:
+            raise ValueError(
+                'unfinished pre-schema job could not be safely reconciled'
+            )
+        if current_schema_fields.intersection(job):
+            # Completed jobs written immediately before schema_version was
+            # introduced use the current state machine and remain readable.
+            validate_schema_v2(job, entry.name)
+            continue
+        activity = [timestamp(job.get('created_at')), timestamp(file_mtime)]
+        for key in ('worker_started_at', 'worker_heartbeat', 'completed_at'):
+            if job.get(key) is not None:
+                activity.append(timestamp(job[key]))
+        for device in job['devices']:
+            if not isinstance(device, dict):
+                raise ValueError('legacy device state is invalid')
+            for key in ('started_at', 'last_check'):
+                if device.get(key) is not None:
+                    activity.append(timestamp(device[key]))
+        timeout_seconds = int(job.get('timeout_seconds', 3600))
+        if timeout_seconds <= 0 or timeout_seconds > 7 * 86400:
+            raise ValueError('invalid legacy timeout')
+        if now - max(activity) < max(
+                legacy_stale_seconds, timeout_seconds + 3600):
+            raise ValueError(
+                'recent pre-schema completion remains inside its safety window'
+            )
+    except Exception as exc:
+        print(
+            f'[!] Upgrade job is incompatible with this runtime: '
+            f'{entry.name}: {exc}',
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+PYTHON
+}
+
 acquire_update_provision_locks() {
     local jobs_dir="${LLDPQ_PROVISION_JOBS_DIR:-/var/lib/lldpq/provision-jobs}"
     local upgrade_dir="${LLDPQ_UPGRADE_JOBS_DIR:-/var/lib/lldpq/upgrade-jobs}"
@@ -897,24 +2404,21 @@ acquire_update_provision_locks() {
     # Holding the upgrade coordinator prevents a new web job from appearing
     # between this check and the end of the update transaction.
     if [[ -d "$upgrade_dir" ]]; then
-        if active_job=$(python3 - "$upgrade_dir" <<'PYTHON'
-import glob
-import json
-import os
-import sys
-
-for path in glob.glob(os.path.join(sys.argv[1], '*.json')):
-    try:
-        with open(path, encoding='utf-8') as handle:
-            job = json.load(handle)
-    except Exception as exc:
-        print(f'corrupt upgrade job {os.path.basename(path)}: {exc}')
-        raise SystemExit(11)
-    if not job.get('complete'):
-        print(job.get('id') or os.path.basename(path))
-        raise SystemExit(10)
-PYTHON
-        ); then
+        # A previous-release current-contract job has no compatible scheduler
+        # until this update is installed. Promote that exact, lock-quiesced
+        # format to v2; verify_no_active_upgrade_jobs independently rechecks
+        # its byte-exact backup and worker/job locks before allowing takeover.
+        if ! LLDPQ_RECONCILE_ALLOW_CURRENT_INCOMPLETE=true \
+                reconcile_stale_legacy_upgrade_jobs "$upgrade_dir"; then
+            release_update_provision_locks
+            return 1
+        fi
+        if ! verify_upgrade_jobs_runtime_compatible "$upgrade_dir"; then
+            echo "[!] Persisted Provision upgrade state is incompatible with this update" >&2
+            release_update_provision_locks
+            return 1
+        fi
+        if active_job=$(verify_no_active_upgrade_jobs "$upgrade_dir"); then
             :
         else
             active_status=$?

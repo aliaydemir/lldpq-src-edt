@@ -123,9 +123,13 @@ RUN chown -R lldpq:lldpq /home/lldpq/ \
 RUN install -d -o root -g root -m 0755 /usr/local/libexec \
     && rm -f /home/lldpq/lldpq/backup_import.py
 COPY --chown=root:root lldpq/backup_import.py /usr/local/libexec/lldpq-backup-import.py
+COPY --chown=root:root install.sh /usr/local/libexec/lldpq-install-library.sh
 RUN chmod 0755 /usr/local/libexec/lldpq-backup-import.py \
+        /usr/local/libexec/lldpq-install-library.sh \
     && test ! -L /usr/local/libexec/lldpq-backup-import.py \
-    && test "$(stat -c '%u:%g:%a' /usr/local/libexec/lldpq-backup-import.py)" = "0:0:755"
+    && test ! -L /usr/local/libexec/lldpq-install-library.sh \
+    && test "$(stat -c '%u:%g:%a' /usr/local/libexec/lldpq-backup-import.py)" = "0:0:755" \
+    && test "$(stat -c '%u:%g:%a' /usr/local/libexec/lldpq-install-library.sh)" = "0:0:755"
 
 # Setup topology files: real files in web root, symlinks in lldpq dir
 # Same pattern as native install - web UI edits files in /var/www/html/
