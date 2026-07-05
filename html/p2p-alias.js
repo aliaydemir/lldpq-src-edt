@@ -12,6 +12,8 @@
  *     enP22p3s0f0np0 -> M1). Renderers can opt in explicitly with data-p2p-key and
  *     can provide the canonical display value in data-p2p-orig. This is useful for
  *     compound cells such as "switch:port", where host and port are separate spans.
+ *     Renderers can set data-p2p-namespace="devices" or "interfaces" when the
+ *     column name does not make the namespace clear.
  *     The canonical value is retained so toggling OFF and CSV exports remain stable.
  *   - Re-applies after client-side table rebuilds (MutationObserver, debounced).
  *   - State lives in localStorage ('lldpq_port_alias_on') so it is shared across every
@@ -26,30 +28,53 @@
     var KEY = 'lldpq_port_alias_on';
     var on = true;                                  // default ON
     try { on = localStorage.getItem(KEY) !== 'false'; } catch (e) {}
-    var amap = {};                                   // lower(realName) -> alias (devices + interfaces)
+    var deviceMap = {};                              // lower(realName) -> device alias
+    var interfaceMap = {};                           // lower(realName) -> interface alias
+    var fallbackMap = {};                            // only keys unambiguous across both maps
     var loaded = false;
     var observer = null;
     var pending = false;
+    var aliasLoadSeq = 0;
 
     function loadAliases(done) {
+        var seq = ++aliasLoadSeq;
         fetch('/display-aliases.json', { cache: 'no-store' })
             .then(function (r) { return r.ok ? r.json() : {}; })
             .then(function (d) {
+                if (seq !== aliasLoadSeq) return;
                 d = (d && typeof d === 'object') ? d : {};
-                var m = {};
+                var devices = {};
+                var interfaces = {};
                 // Key by lower(realName) so matching is case-INSENSITIVE. This fully
                 // decouples the alias from the server-side canonical casing
                 // (device_names.py rewrites device cells to the topology.dot spelling):
                 // the alias matches whether the cell shows MEL01-... or mel01-...
-                ['interfaces', 'devices'].forEach(function (sec) {
-                    var o = d[sec];
-                    if (o && typeof o === 'object') {
-                        Object.keys(o).forEach(function (k) { if (k && o[k]) m[String(k).toLowerCase()] = o[k]; });
+                var rawDevices = d.devices;
+                var rawInterfaces = d.interfaces;
+                if (rawDevices && typeof rawDevices === 'object') {
+                    Object.keys(rawDevices).forEach(function (k) { if (k && rawDevices[k]) devices[String(k).toLowerCase()] = rawDevices[k]; });
+                }
+                if (rawInterfaces && typeof rawInterfaces === 'object') {
+                    Object.keys(rawInterfaces).forEach(function (k) { if (k && rawInterfaces[k]) interfaces[String(k).toLowerCase()] = rawInterfaces[k]; });
+                }
+                var fallback = {};
+                var keys = Object.keys(devices).concat(Object.keys(interfaces));
+                keys.forEach(function (key) {
+                    var inDevices = Object.prototype.hasOwnProperty.call(devices, key);
+                    var inInterfaces = Object.prototype.hasOwnProperty.call(interfaces, key);
+                    // If both namespaces define the same canonical text differently,
+                    // an untyped cell is intentionally left canonical.
+                    if (!inDevices || !inInterfaces || devices[key] === interfaces[key]) {
+                        fallback[key] = inDevices ? devices[key] : interfaces[key];
                     }
                 });
-                amap = m; loaded = true; if (done) done();
+                deviceMap = devices; interfaceMap = interfaces; fallbackMap = fallback;
+                loaded = true; if (done) done();
             })
-            .catch(function () { amap = {}; loaded = true; if (done) done(); });
+            .catch(function () {
+                if (seq !== aliasLoadSeq) return;
+                deviceMap = {}; interfaceMap = {}; fallbackMap = {}; loaded = true; if (done) done();
+            });
     }
 
     // Explicitly tagged elements may live inside a compound table cell. Untagged
@@ -112,6 +137,69 @@
         return clone.textContent || '';
     }
 
+    function normalizeNamespace(value) {
+        value = String(value || '').toLowerCase();
+        if (value === 'device' || value === 'devices' || value === 'host' || value === 'hosts') return 'devices';
+        if (value === 'interface' || value === 'interfaces' || value === 'port' || value === 'ports') return 'interfaces';
+        return '';
+    }
+
+    function headerTextForCell(cell) {
+        if (!cell || typeof cell.cellIndex !== 'number') return '';
+        var table = cell.closest ? cell.closest('table') : null;
+        if (!table) return '';
+        var rows = table.querySelectorAll('thead tr');
+        if (!rows.length) return '';
+        var headerRow = rows[rows.length - 1];
+        var header = headerRow.cells && headerRow.cells[cell.cellIndex];
+        return header ? (header.textContent || '') : '';
+    }
+
+    function namespaceForElement(el) {
+        if (!el) return '';
+        var owner = el.closest ? el.closest('[data-p2p-namespace]') : null;
+        var explicit = normalizeNamespace(owner && owner.getAttribute('data-p2p-namespace'));
+        if (explicit) return explicit;
+        var cell = el.closest ? el.closest('td,th') : null;
+        var hint = [
+            el.id || '', el.className || '',
+            cell ? (cell.id || '') : '', cell ? (cell.className || '') : '',
+            headerTextForCell(cell)
+        ].join(' ').toLowerCase();
+        if (/(^|[^a-z])(port|ports|interface|interfaces|ifname|iface)([^a-z]|$)/.test(hint)) return 'interfaces';
+        if (/(^|[^a-z])(device|devices|switch|switches|host|hostname|neighbor|node|peer)([^a-z]|$)/.test(hint)) return 'devices';
+        return '';
+    }
+
+    function aliasForElement(el, canonical) {
+        var key = String(canonical || '').toLowerCase();
+        var namespace = namespaceForElement(el);
+        if (namespace === 'devices') return deviceMap[key] || '';
+        if (namespace === 'interfaces') return interfaceMap[key] || '';
+        return fallbackMap[key] || '';
+    }
+
+    function restoreAppliedElement(el) {
+        if (!el || el.getAttribute('data-p2p-applied') !== 'true') return;
+        el.textContent = el.getAttribute('data-p2p-orig');
+        el.removeAttribute('data-p2p-applied');
+        restoreTitle(el);
+        if (el.getAttribute('data-p2p-orig-auto') === 'true') {
+            el.removeAttribute('data-p2p-orig');
+            el.removeAttribute('data-p2p-orig-auto');
+        }
+        if (el.getAttribute('data-p2p-csv-auto') === 'true') {
+            el.removeAttribute('data-csv-value');
+            el.removeAttribute('data-p2p-csv-auto');
+        }
+    }
+
+    function restoreAllApplied() {
+        if (observer) observer.disconnect();
+        var applied = document.querySelectorAll('[data-p2p-applied="true"]');
+        for (var i = 0; i < applied.length; i++) restoreAppliedElement(applied[i]);
+    }
+
     function apply() {
         if (!loaded) return;
         if (observer) observer.disconnect();      // avoid reacting to our own edits
@@ -125,7 +213,7 @@
                     ? el.getAttribute('data-p2p-orig')
                     : el.textContent;
                 var t = (explicitKey || original || '').trim();
-                var alias = t ? amap[t.toLowerCase()] : '';     // case-insensitive lookup
+                var alias = t ? aliasForElement(el, t) : '';    // case-insensitive, namespace-aware lookup
                 if (alias) {
                     if (!el.hasAttribute('data-p2p-orig')) {
                         el.setAttribute('data-p2p-orig', original);
@@ -139,19 +227,7 @@
                     el.setAttribute('data-p2p-applied', 'true');
                     saveTitle(el, original);
                 }
-            } else if (el.getAttribute('data-p2p-applied') === 'true') {
-                el.textContent = el.getAttribute('data-p2p-orig');
-                el.removeAttribute('data-p2p-applied');
-                restoreTitle(el);
-                if (el.getAttribute('data-p2p-orig-auto') === 'true') {
-                    el.removeAttribute('data-p2p-orig');
-                    el.removeAttribute('data-p2p-orig-auto');
-                }
-                if (el.getAttribute('data-p2p-csv-auto') === 'true') {
-                    el.removeAttribute('data-csv-value');
-                    el.removeAttribute('data-p2p-csv-auto');
-                }
-            }
+            } else if (el.getAttribute('data-p2p-applied') === 'true') restoreAppliedElement(el);
         }
         connectObserver();
     }
@@ -172,6 +248,12 @@
         try { localStorage.setItem(KEY, on ? 'true' : 'false'); } catch (e) {}
         updateBtn();
         apply();
+    }
+
+    function reloadAliases() {
+        restoreAllApplied();
+        loaded = false;
+        loadAliases(apply);
     }
 
     function updateBtn() {
@@ -226,14 +308,23 @@
     // Live sync across tabs/pages sharing the same browser.
     window.addEventListener('storage', function (e) {
         if (e.key === KEY) { on = (e.newValue !== 'false'); updateBtn(); apply(); }
+        else if (e.key === 'lldpq_aliases_revision') reloadAliases();
     });
+    window.addEventListener('lldpq-aliases-updated', reloadAliases);
+    try {
+        var aliasChannel = new BroadcastChannel('lldpq-aliases');
+        aliasChannel.onmessage = function (e) {
+            if (e && e.data && e.data.type === 'updated') reloadAliases();
+        };
+    } catch (e) { /* BroadcastChannel is optional; storage events remain available. */ }
 
     // Stable public hook for CSV/table exporters. It deliberately returns canonical
     // text without toggling the visible page or the persisted user preference.
     window.LLDPqP2P = {
         canonicalText: canonicalText,
         isEnabled: function () { return on; },
-        apply: apply
+        apply: apply,
+        reload: reloadAliases
     };
 
     function init() {

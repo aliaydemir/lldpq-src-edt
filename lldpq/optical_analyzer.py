@@ -817,6 +817,14 @@ class OpticalAnalyzer:
                 f' data-coverage-expected="{expected_hosts}"'
                 f' data-coverage-current="{current_hosts}"'
             )
+        # Machine-readable categories keep dashboard/alert consumers from
+        # treating an intentionally empty cage as missing diagnostics. They are
+        # attributes only and do not alter the report's visual layout.
+        coverage_attrs += (
+            f' data-optical-total="{summary["total_ports"]}"'
+            f' data-optical-unplugged="{len(summary["unplugged_ports"])}"'
+            f' data-optical-unknown="{len(summary["unknown_ports"])}"'
+        )
 
         html_content = f"""<!DOCTYPE html>
 <html lang="en">
@@ -1493,7 +1501,9 @@ class OpticalAnalyzer:
                 document.body.appendChild(notification);
 
                 if (typeof window.waitForLldpqAnalysisCompletion === 'function') {
-                    await window.waitForLldpqAnalysisCompletion(baseline);
+                    await window.waitForLldpqAnalysisCompletion(
+                        baseline, {{ pipelineId: data.trigger_id }}
+                    );
                 } else {
                     // Compatibility fallback for older installations that do
                     // not yet provide analysis-guard.js completion polling.

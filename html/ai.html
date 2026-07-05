@@ -181,12 +181,12 @@
     </div>
     <div class="header-right">
         <span class="provider-badge" id="providerBadge">--</span>
-        <button class="btn btn-secondary btn-sm" onclick="runAnalysis()" title="Run fabric health analysis">
+        <button class="btn btn-secondary btn-sm" onclick="runAnalysis()" title="Run fabric health analysis" id="btnAnalyze">
             <svg viewBox="0 0 24 24"><path d="M19.35 10.04A7.49 7.49 0 0012 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 000 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/></svg>
             Analyze
             <span class="analysis-badge" id="analysisBadge">!</span>
         </button>
-        <button class="btn btn-secondary btn-sm" onclick="exportChat()" title="Export chat as markdown">
+        <button class="btn btn-secondary btn-sm" onclick="exportChat()" title="Export chat as markdown" aria-label="Export chat as markdown">
             <svg viewBox="0 0 24 24" style="width:14px;height:14px;"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
         </button>
         <button class="btn btn-secondary btn-sm" onclick="openMemory()" title="What the AI remembers about this site (teach it with: remember: ...)">
@@ -194,7 +194,7 @@
             Memory
         </button>
         <button class="btn btn-secondary btn-sm" onclick="clearChat()">Clear</button>
-        <button class="btn-icon" onclick="toggleSettings()" title="Settings">
+        <button class="btn-icon" onclick="toggleSettings()" title="Settings" aria-label="AI settings">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.488.488 0 00-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1115.6 12 3.6 3.6 0 0112 15.6z"/></svg>
         </button>
     </div>
@@ -207,7 +207,7 @@
 </div>
 
 <!-- Chat area -->
-<div class="chat-area" id="chatArea">
+<div class="chat-area" id="chatArea" aria-live="polite">
     <div class="msg msg-system">Ask about your fabric — device status, BGP, LLDP, topology, troubleshooting, or anything else.</div>
     <div id="suggestions"></div>
 </div>
@@ -215,12 +215,12 @@
 <!-- Input area -->
 <div class="input-area">
     <div class="input-wrapper">
-        <textarea id="chatInput" placeholder="Ask about your fabric..." rows="1" onkeydown="handleKeydown(event)" oninput="autoResize(this)"></textarea>
+        <textarea id="chatInput" placeholder="Ask about your fabric..." aria-label="Ask AI about your fabric" rows="1" onkeydown="handleKeydown(event)" oninput="autoResize(this)"></textarea>
     </div>
-    <button id="btnAttachLogs" onclick="toggleAttachLogs()" title="Attach critical/error logs to next message" style="height: 42px; width: 42px; padding: 0; flex-shrink: 0; background: #333; border: 1px solid #555; border-radius: 6px; color: #888; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s;">
+    <button id="btnAttachLogs" onclick="toggleAttachLogs()" title="Attach critical/error logs to next message" aria-label="Attach critical or error logs to next message" aria-pressed="false" style="height: 42px; width: 42px; padding: 0; flex-shrink: 0; background: #333; border: 1px solid #555; border-radius: 6px; color: #888; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s;">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm-1 9h-2v3c0 1.1-.9 2-2 2s-2-.9-2-2v-4c0-1.66 1.34-3 3-3s3 1.34 3 3v1zm-3-7V3.5L18.5 9H14c-.55 0-1-.45-1-1V4z"/></svg>
     </button>
-    <button class="btn btn-primary" onclick="sendMessage()" id="btnSend" style="height: 42px; padding: 0 16px; flex-shrink: 0;">
+    <button class="btn btn-primary" onclick="sendMessage()" id="btnSend" aria-label="Send message" style="height: 42px; padding: 0 16px; flex-shrink: 0;">
         <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
     </button>
 </div>
@@ -229,7 +229,7 @@
 <div class="settings-panel" id="settingsPanel">
     <div class="settings-header">
         <h3>AI Settings</h3>
-        <button class="btn-icon" onclick="toggleSettings()"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
+        <button class="btn-icon" onclick="toggleSettings()" aria-label="Close AI settings"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
     </div>
     <div class="settings-body">
         <div class="settings-field">
@@ -277,7 +277,7 @@
         </div>
         <div style="margin-top: 15px;">
             <button class="btn btn-secondary btn-sm" onclick="testConnection()" id="btnTest">Test Connection</button>
-            <span id="testResult" style="font-size: 12px; margin-left: 10px;"></span>
+            <span id="testResult" role="status" aria-live="polite" style="font-size: 12px; margin-left: 10px;"></span>
         </div>
     </div>
     <div class="settings-footer">
@@ -291,7 +291,7 @@
     <div style="background:#252526; border:1px solid #3c3c3c; border-radius:8px; width:600px; max-width:92vw; max-height:85vh; display:flex; flex-direction:column;">
         <div style="display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-bottom:1px solid #3c3c3c;">
             <h3 style="color:#76b900; font-size:16px; margin:0;">AI Memory — site facts</h3>
-            <button class="btn-icon" onclick="closeMemory()"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
+            <button class="btn-icon" onclick="closeMemory()" aria-label="Close AI memory"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
         </div>
         <div style="padding:12px 18px 4px; color:#888; font-size:13px;">
             Facts the AI keeps across chats and injects into context. You can also teach it inline in chat: <code style="color:#76b900;">remember: spine MTU is 9216</code>.
@@ -309,12 +309,16 @@
 </div>
 
 <!-- Toast -->
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
 // ===================== STATE =====================
 let chatHistory = [];
 let isStreaming = false;
+let isAnalysisRunning = false;
+let requestGeneration = 0;
+let chatRequestController = null;
+let analysisRequestController = null;
 const STORAGE_KEY = 'lldpq_ai_chat_history';
 
 // ===================== LOCALSTORAGE =====================
@@ -330,7 +334,20 @@ function loadChatFromStorage() {
     try {
         const saved = localStorage.getItem(STORAGE_KEY);
         if (saved) {
-            chatHistory = JSON.parse(saved);
+            const parsed = JSON.parse(saved);
+            chatHistory = Array.isArray(parsed) ? parsed
+                .filter(msg => msg && typeof msg === 'object' &&
+                    (msg.role === 'user' || msg.role === 'assistant') &&
+                    typeof msg.content === 'string')
+                .slice(-50)
+                .map(msg => {
+                    const clean = { role: msg.role, content: msg.content };
+                    if (msg.analysis === true) clean.analysis = true;
+                    ['tools', 'fixes', 'followups', 'consoles'].forEach(key => {
+                        if (Array.isArray(msg[key])) clean[key] = msg[key];
+                    });
+                    return clean;
+                }) : [];
             if (chatHistory.length > 0) {
                 // Restore messages to UI
                 const area = document.getElementById('chatArea');
@@ -339,6 +356,7 @@ function loadChatFromStorage() {
                 chatHistory.forEach(msg => {
                     // Re-render through addMessage so restored answers keep their agent-activity
                     // trace, one-click fix buttons, device links and copy/re-ask actions.
+                    if (msg.analysis) addMessage('system', 'Autonomous fabric health analysis:');
                     addMessage(msg.role, msg.content, { tools: msg.tools, fixes: msg.fixes, followups: msg.followups, consoles: msg.consoles });
                 });
                 area.scrollTop = area.scrollHeight;
@@ -384,9 +402,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 // ===================== API =====================
-async function apiCall(action, data = null) {
+async function apiCall(action, data = null, options = {}) {
     try {
         const opts = {};
+        if (options.signal) opts.signal = options.signal;
         if (data) {
             opts.method = 'POST';
             opts.headers = { 'Content-Type': 'application/json' };
@@ -395,6 +414,7 @@ async function apiCall(action, data = null) {
         const resp = await fetch(`/ai-api.sh?action=${action}`, opts);
         return await resp.json();
     } catch (e) {
+        if (e && e.name === 'AbortError') return { success: false, aborted: true };
         return { success: false, error: e.message };
     }
 }
@@ -429,6 +449,8 @@ function showTypingIndicator() {
     const div = document.createElement('div');
     div.className = 'typing-indicator';
     div.id = 'typingIndicator';
+    div.setAttribute('role', 'status');
+    div.setAttribute('aria-label', 'AI is responding');
     div.innerHTML = '<div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div>';
     area.appendChild(div);
     area.scrollTop = area.scrollHeight;
@@ -462,13 +484,21 @@ async function loadConfig() {
     if (data.success) {
         document.getElementById('cfgProvider').value = data.provider || 'ollama';
         document.getElementById('cfgOllamaUrl').value = data.ollama_url || 'http://localhost:11434';
-        document.getElementById('cfgApiUrl').value = data.api_url || 'https://api.openai.com/v1';
+        // Let onProviderChange choose a provider-specific default only when
+        // the server has no saved URL; never replace a saved value on load.
+        document.getElementById('cfgApiUrl').value = data.api_url || '';
         document.getElementById('cfgModel').value = data.model || 'llama3.2';
         document.getElementById('cfgModelCloud').value = data.model || '';
         document.getElementById('cfgSearchModel').value = data.search_model || '';
         document.getElementById('cfgProxyUrl').value = data.proxy_url || '';
+        const keyInput = document.getElementById('cfgApiKey');
+        keyInput.value = '';
+        keyInput.dataset.hasSavedKey = data.has_key ? 'true' : 'false';
+        keyInput.placeholder = data.has_key
+            ? `Saved key ${data.api_key_masked || ''} — leave blank to keep`
+            : 'sk-... or key-...';
         updateProviderBadge(data.provider, data.model);
-        onProviderChange();
+        onProviderChange(false);
     }
 }
 
@@ -482,32 +512,34 @@ function updateProviderBadge(provider, model) {
 // sensible defaults); false/undefined when called from loadConfig (keep saved values).
 function onProviderChange(userInitiated) {
     const provider = document.getElementById('cfgProvider').value;
+    const apiUrl = document.getElementById('cfgApiUrl');
+    const cloudModel = document.getElementById('cfgModelCloud');
     document.getElementById('cfgOllamaGroup').style.display = provider === 'ollama' ? '' : 'none';
     document.getElementById('cfgCloudGroup').style.display = provider !== 'ollama' ? '' : 'none';
     if (provider === 'gemini') {
-        document.getElementById('cfgApiUrl').value = 'https://generativelanguage.googleapis.com';
-        document.getElementById('cfgApiUrl').disabled = true;
-        document.getElementById('cfgModelCloud').value = 'gemini-2.0-flash';
-        document.getElementById('cfgModelCloud').placeholder = 'gemini-2.0-flash / gemini-1.5-pro';
+        if (userInitiated || !apiUrl.value) apiUrl.value = 'https://generativelanguage.googleapis.com';
+        apiUrl.disabled = true;
+        if (userInitiated || !cloudModel.value) cloudModel.value = 'gemini-2.0-flash';
+        cloudModel.placeholder = 'gemini-2.0-flash / gemini-1.5-pro';
     } else if (provider === 'openai') {
-        document.getElementById('cfgApiUrl').value = 'https://api.openai.com/v1';
-        document.getElementById('cfgApiUrl').disabled = false;
-        document.getElementById('cfgModelCloud').placeholder = 'gpt-4o / gpt-4o-mini';
+        if (userInitiated || !apiUrl.value) apiUrl.value = 'https://api.openai.com/v1';
+        apiUrl.disabled = false;
+        cloudModel.placeholder = 'gpt-4o / gpt-4o-mini';
     } else if (provider === 'claude') {
-        document.getElementById('cfgApiUrl').value = 'https://api.anthropic.com/v1';
-        document.getElementById('cfgApiUrl').disabled = false;
-        document.getElementById('cfgModelCloud').placeholder = 'claude-sonnet-4-20250514 / claude-3-haiku-20240307';
+        if (userInitiated || !apiUrl.value) apiUrl.value = 'https://api.anthropic.com/v1';
+        apiUrl.disabled = false;
+        cloudModel.placeholder = 'claude-sonnet-4-20250514 / claude-3-haiku-20240307';
     } else if (provider === 'custom') {
-        document.getElementById('cfgApiUrl').disabled = false;
-        document.getElementById('cfgApiUrl').placeholder = 'https://your-server/v1';
-        document.getElementById('cfgModelCloud').placeholder = 'model-name';
+        apiUrl.disabled = false;
+        apiUrl.placeholder = 'https://your-server/v1';
+        cloudModel.placeholder = 'model-name';
     } else if (provider === 'nvidia') {
         // NVIDIA Inference proxy (OpenAI-compatible / LiteLLM). URL is fixed; only the key is needed.
-        document.getElementById('cfgApiUrl').value = 'https://inference-api.nvidia.com';
-        document.getElementById('cfgApiUrl').disabled = true;
-        document.getElementById('cfgModelCloud').placeholder = 'e.g. aws/anthropic/bedrock-claude-opus-4-8';
+        if (userInitiated || !apiUrl.value) apiUrl.value = 'https://inference-api.nvidia.com';
+        apiUrl.disabled = true;
+        cloudModel.placeholder = 'e.g. aws/anthropic/bedrock-claude-opus-4-8';
         // Sensible Nvidia-inference defaults: fill on an explicit switch, or when empty.
-        const _m = document.getElementById('cfgModelCloud');
+        const _m = cloudModel;
         const _s = document.getElementById('cfgSearchModel');
         if (userInitiated || !_m.value) _m.value = 'aws/anthropic/bedrock-claude-opus-4-8';
         if (userInitiated || !_s.value) _s.value = 'perplexity/perplexity/sonar-pro';
@@ -522,7 +554,8 @@ async function saveSettings() {
         config.model = document.getElementById('cfgModel').value.trim();
     } else {
         config.api_url = document.getElementById('cfgApiUrl').value.trim();
-        config.api_key = document.getElementById('cfgApiKey').value.trim();
+        const apiKey = document.getElementById('cfgApiKey').value.trim();
+        if (apiKey) config.api_key = apiKey;
         config.model = document.getElementById('cfgModelCloud').value.trim();
     }
     config.proxy_url = document.getElementById('cfgProxyUrl').value.trim();
@@ -530,7 +563,9 @@ async function saveSettings() {
     const data = await apiCall('save-config', config);
     if (data.success) {
         showToast('Settings saved', 'success');
-        updateProviderBadge(provider, config.model);
+        // Re-read server state so a provider/endpoint switch immediately
+        // reflects that the previous provider's saved key was cleared.
+        await loadConfig();
         toggleSettings();
     } else {
         showToast('Save failed: ' + (data.error || ''), 'error');
@@ -541,7 +576,7 @@ async function testConnection() {
     const btn = document.getElementById('btnTest');
     const result = document.getElementById('testResult');
     btn.disabled = true;
-    result.innerHTML = '<span style="color:#888;">Testing...</span>';
+    setStatusText(result, 'Testing...', '#888');
     
     const provider = document.getElementById('cfgProvider').value;
     const payload = { provider };
@@ -550,29 +585,55 @@ async function testConnection() {
         payload.model = document.getElementById('cfgModel').value.trim();
     } else {
         payload.api_url = document.getElementById('cfgApiUrl').value.trim();
-        payload.api_key = document.getElementById('cfgApiKey').value.trim();
+        // An empty field means "use the already saved key". Omitting the
+        // property preserves the server-side fallback; sending "" defeats it.
+        const apiKey = document.getElementById('cfgApiKey').value.trim();
+        if (apiKey) payload.api_key = apiKey;
         payload.model = document.getElementById('cfgModelCloud').value.trim();
     }
     payload.proxy_url = document.getElementById('cfgProxyUrl').value.trim();
     
     const data = await apiCall('test-connection', payload);
     if (data.success) {
-        result.innerHTML = `<span style="color:#4caf50;">Connected! "${data.reply}" (${data.elapsed}s)</span>`;
+        setStatusText(result, `Connected! "${data.reply || ''}" (${data.elapsed ?? '?'}s)`, '#4caf50');
     } else {
-        result.innerHTML = `<span style="color:#f44336;">${data.error || 'Failed'} (${data.elapsed || '?'}s)</span>`;
+        setStatusText(result, `${data.error || 'Failed'} (${data.elapsed ?? '?'}s)`, '#f44336');
     }
     btn.disabled = false;
+}
+
+function setStatusText(container, message, color) {
+    const span = document.createElement('span');
+    span.style.color = color;
+    span.textContent = String(message ?? '');
+    container.replaceChildren(span);
 }
 
 async function fetchOllamaModels() {
     const data = await apiCall('list-models');
     const container = document.getElementById('ollamaModelList');
+    container.replaceChildren();
     if (data.models && data.models.length > 0) {
-        container.innerHTML = data.models.map(m => 
-            `<span onclick="document.getElementById('cfgModel').value='${m}'" style="cursor:pointer;padding:2px 6px;border-radius:3px;background:#1a1a1a;margin:2px;display:inline-block;color:#76b900;">${m}</span>`
-        ).join(' ');
+        data.models.forEach(model => {
+            const name = String(model ?? '');
+            const choice = document.createElement('span');
+            choice.style.cssText = 'cursor:pointer;padding:2px 6px;border-radius:3px;background:#1a1a1a;margin:2px;display:inline-block;color:#76b900;';
+            choice.textContent = name;
+            choice.setAttribute('role', 'button');
+            choice.setAttribute('tabindex', '0');
+            choice.setAttribute('aria-label', `Use Ollama model ${name}`);
+            const select = () => { document.getElementById('cfgModel').value = name; };
+            choice.onclick = select;
+            choice.onkeydown = event => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    select();
+                }
+            };
+            container.appendChild(choice);
+        });
     } else {
-        container.innerHTML = '<span style="color:#f44336;">No models found. Is Ollama running?</span>';
+        setStatusText(container, 'No models found. Is Ollama running?', '#f44336');
     }
 }
 
@@ -697,17 +758,28 @@ function renderToolTrace(tools) {
     det.appendChild(sum);
     const body = document.createElement('div');
     body.className = 'tool-trace-body';
-    tools.forEach(t => {
+    tools.forEach(rawTool => {
+        const t = rawTool && typeof rawTool === 'object' ? rawTool : {};
         let kind = 'RUN', label = '', failed = (t.ok === false);
         if ('dispatch' in t) { kind = 'RUNALL'; label = `${t.dispatch} (${t.devices} devices): ${t.command}`; }
         else if ('promqlrange' in t) { kind = 'TREND'; label = `${t.promqlrange}  [${t.range}]`; }
         else if ('promql' in t) { kind = 'PROMQL'; label = t.promql; }
         else if ('path' in t) { kind = 'PATH'; label = t.path; }
+        else if ('search' in t) { kind = 'SEARCH'; label = t.search; }
         else { kind = 'RUN'; label = `${t.device}: ${t.command}`; }
         const row = document.createElement('div');
         row.className = 'tool-row' + (failed ? ' fail' : '');
-        row.innerHTML = `<span class="tool-kind">${kind}</span><code>${escHtml(label)}</code>` +
-                        `<span class="tool-status">${failed ? 'FAIL' : 'OK'}</span>`;
+        const kindEl = document.createElement('span');
+        kindEl.className = 'tool-kind';
+        kindEl.textContent = kind;
+        const code = document.createElement('code');
+        code.textContent = String(label ?? '');
+        const status = document.createElement('span');
+        status.className = 'tool-status';
+        status.textContent = failed ? 'FAIL' : 'OK';
+        row.appendChild(kindEl);
+        row.appendChild(code);
+        row.appendChild(status);
         body.appendChild(row);
     });
     det.appendChild(body);
@@ -720,12 +792,21 @@ function renderFixes(fixes) {
     box.className = 'fix-suggestions';
     box.innerHTML = '<div class="fix-title">Suggested fixes</div>';
     fixes.forEach(f => {
+        f = f && typeof f === 'object' ? f : {};
         const b = document.createElement('button');
         b.className = 'fix-btn';
         b.title = 'Open in Commands (prefilled — review, then run)';
-        b.innerHTML = `<span class="fix-dev">${escHtml(f.device)}</span>` +
-                      `<code>${escHtml(f.command)}</code>` +
-                      `<span class="fix-go">Run in Commands &rsaquo;</span>`;
+        const device = document.createElement('span');
+        device.className = 'fix-dev';
+        device.textContent = String(f.device ?? '');
+        const command = document.createElement('code');
+        command.textContent = String(f.command ?? '');
+        const go = document.createElement('span');
+        go.className = 'fix-go';
+        go.textContent = 'Run in Commands ›';
+        b.appendChild(device);
+        b.appendChild(command);
+        b.appendChild(go);
         b.onclick = () => openInCommands(f.device, f.command);
         box.appendChild(b);
     });
@@ -745,12 +826,21 @@ function renderConsoleBtns(consoles) {
     box.className = 'fix-suggestions console-suggestions';
     box.innerHTML = '<div class="fix-title">Live console</div>';
     consoles.forEach(dev => {
+        dev = String(dev ?? '');
         const b = document.createElement('button');
         b.className = 'fix-btn';
         b.title = 'Open an interactive SSH console to this device';
-        b.innerHTML = `<span class="fix-dev">${escHtml(dev)}</span>` +
-                      `<code>interactive terminal</code>` +
-                      `<span class="fix-go">Open Console &rsaquo;</span>`;
+        const device = document.createElement('span');
+        device.className = 'fix-dev';
+        device.textContent = dev;
+        const command = document.createElement('code');
+        command.textContent = 'interactive terminal';
+        const go = document.createElement('span');
+        go.className = 'fix-go';
+        go.textContent = 'Open Console ›';
+        b.appendChild(device);
+        b.appendChild(command);
+        b.appendChild(go);
         b.onclick = () => openInConsole(dev);
         box.appendChild(b);
     });
@@ -865,12 +955,25 @@ function toggleAttachLogs() {
     btn.style.color = attachLogsActive ? '#000' : '#888';
     btn.style.borderColor = attachLogsActive ? '#76b900' : '#555';
     btn.title = attachLogsActive ? 'Logs will be attached to next message (click to cancel)' : 'Attach critical/error logs to next message';
+    btn.setAttribute('aria-pressed', attachLogsActive ? 'true' : 'false');
 }
 
 async function sendMessage() {
     const input = document.getElementById('chatInput');
     const message = input.value.trim();
-    if (!message || isStreaming) return;
+    if (!message || isStreaming || isAnalysisRunning) return;
+
+    // Claim the operation before any await (including log attachment) so a
+    // fast double click cannot create two requests. Clear increments the
+    // generation and aborts this controller, making late responses harmless.
+    isStreaming = true;
+    const generation = ++requestGeneration;
+    const controller = new AbortController();
+    chatRequestController = controller;
+    const btn = document.getElementById('btnSend');
+    btn.disabled = true;
+    btn.setAttribute('aria-busy', 'true');
+    showTypingIndicator();
     
     // Remove suggestions on first message
     const suggestions = document.getElementById('suggestions');
@@ -880,7 +983,8 @@ async function sendMessage() {
     let finalMessage = message;
     if (attachLogsActive) {
         try {
-            const logData = await apiCall('get-log-messages');
+            const logData = await apiCall('get-log-messages', null, { signal: controller.signal });
+            if (generation !== requestGeneration || controller.signal.aborted) return;
             if (logData.success && logData.messages && Object.keys(logData.messages).length > 0) {
                 let logText = '[ATTACHED: Fabric Log Messages]\n';
                 const totals = logData.totals || {};
@@ -902,7 +1006,10 @@ async function sendMessage() {
         abtn.style.background = '#333';
         abtn.style.color = '#888';
         abtn.style.borderColor = '#555';
+        abtn.setAttribute('aria-pressed', 'false');
     }
+
+    if (generation !== requestGeneration || controller.signal.aborted) return;
     
     // Conversation history (PRIOR turns only) sent to the model — role+content only.
     const historyPayload = chatHistory.slice(-10).map(m => ({ role: m.role, content: m.content }));
@@ -913,33 +1020,32 @@ async function sendMessage() {
     input.value = '';
     autoResize(input);
     
-    // Show typing indicator while waiting for LLM response
-    isStreaming = true;
-    const btn = document.getElementById('btnSend');
-    btn.disabled = true;
-    showTypingIndicator();
-    
     try {
-        const data = await apiCall('chat', { message: finalMessage, history: historyPayload });
-        removeTypingIndicator();
+        const data = await apiCall('chat', { message: finalMessage, history: historyPayload }, { signal: controller.signal });
+        if (generation !== requestGeneration || controller.signal.aborted || data.aborted) return;
         
         if (data.success && data.response) {
             const _info = { tools: data.tools_used, fixes: data.fixes, followups: data.followups, consoles: data.consoles };
-            const assistantDiv = addMessage('assistant', data.response, _info);
-            linkDeviceNames(assistantDiv);
+            addMessage('assistant', data.response, _info);
             chatHistory.push(Object.assign({ role: 'assistant', content: data.response }, _info));
             saveChatToStorage();
         } else {
             addMessage('system', 'Error: ' + (data.error || 'No response from AI'));
         }
     } catch (e) {
-        removeTypingIndicator();
-        addMessage('system', 'Connection error: ' + e.message);
+        if (generation === requestGeneration && !controller.signal.aborted) {
+            addMessage('system', 'Connection error: ' + e.message);
+        }
+    } finally {
+        if (generation === requestGeneration && chatRequestController === controller) {
+            removeTypingIndicator();
+            chatRequestController = null;
+            isStreaming = false;
+            btn.disabled = false;
+            btn.removeAttribute('aria-busy');
+            input.focus();
+        }
     }
-    
-    isStreaming = false;
-    btn.disabled = false;
-    input.focus();
 }
 
 function sendSuggestion(el) {
@@ -948,6 +1054,22 @@ function sendSuggestion(el) {
 }
 
 function clearChat() {
+    ++requestGeneration;
+    if (chatRequestController) chatRequestController.abort();
+    if (analysisRequestController) analysisRequestController.abort();
+    chatRequestController = null;
+    analysisRequestController = null;
+    isStreaming = false;
+    isAnalysisRunning = false;
+    removeTypingIndicator();
+    const sendButton = document.getElementById('btnSend');
+    sendButton.disabled = false;
+    sendButton.removeAttribute('aria-busy');
+    const analyzeButton = document.getElementById('btnAnalyze');
+    if (analyzeButton) {
+        analyzeButton.disabled = false;
+        analyzeButton.removeAttribute('aria-busy');
+    }
     chatHistory = [];
     try { localStorage.removeItem(STORAGE_KEY); } catch(e) {}
     const area = document.getElementById('chatArea');
@@ -975,20 +1097,43 @@ async function loadAnalysisBadge() {
 }
 
 async function runAnalysis() {
+    if (isStreaming || isAnalysisRunning) return;
+    isAnalysisRunning = true;
+    const generation = ++requestGeneration;
+    const controller = new AbortController();
+    analysisRequestController = controller;
+    const btn = document.getElementById('btnAnalyze');
+    if (btn) {
+        btn.disabled = true;
+        btn.setAttribute('aria-busy', 'true');
+    }
     showToast('Running fabric health analysis...', 'info');
-    const data = await apiCall('analyze');
-    if (data.success && data.analysis) {
-        // Remove suggestions if present
-        const suggestions = document.getElementById('suggestions');
-        if (suggestions) suggestions.remove();
-        
-        addMessage('system', 'Autonomous fabric health analysis:');
-        addMessage('assistant', data.analysis);
-        chatHistory.push({ role: 'assistant', content: data.analysis });
-        document.getElementById('analysisBadge').style.display = 'none';
-        showToast('Analysis complete', 'success');
-    } else {
-        showToast('Analysis failed: ' + (data.error || ''), 'error');
+    try {
+        const data = await apiCall('analyze', null, { signal: controller.signal });
+        if (generation !== requestGeneration || controller.signal.aborted || data.aborted) return;
+        if (data.success && data.analysis) {
+            // Remove suggestions if present
+            const suggestions = document.getElementById('suggestions');
+            if (suggestions) suggestions.remove();
+
+            addMessage('system', 'Autonomous fabric health analysis:');
+            addMessage('assistant', data.analysis);
+            chatHistory.push({ role: 'assistant', content: data.analysis, analysis: true });
+            saveChatToStorage();
+            document.getElementById('analysisBadge').style.display = 'none';
+            showToast('Analysis complete', 'success');
+        } else {
+            showToast('Analysis failed: ' + (data.error || ''), 'error');
+        }
+    } finally {
+        if (generation === requestGeneration && analysisRequestController === controller) {
+            analysisRequestController = null;
+            isAnalysisRunning = false;
+            if (btn) {
+                btn.disabled = false;
+                btn.removeAttribute('aria-busy');
+            }
+        }
     }
 }
 
@@ -1073,12 +1218,19 @@ function getSuggestionsHTML() {
         html += '<div style="display:flex;flex-wrap:nowrap;gap:6px;">';
         cat.prompts.forEach(p => {
             const escaped = p.full.replace(/'/g, "\\'").replace(/"/g, '&quot;');
-            html += `<div class="suggestion-chip" onclick="sendPrompt('${escaped}')">${p.chip}</div>`;
+            html += `<div class="suggestion-chip" role="button" tabindex="0" onclick="sendPrompt('${escaped}')" onkeydown="handleSuggestionKey(event,this)">${p.chip}</div>`;
         });
         html += '</div></td></tr>';
     });
     html += '</table></div>';
     return html;
+}
+
+function handleSuggestionKey(event, element) {
+    if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        element.click();
+    }
 }
 
 function sendPrompt(fullPrompt) {
@@ -1095,12 +1247,27 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ===================== MARKDOWN RENDERER =====================
-function renderMarkdown(text) {
-    if (!text) return '';
-    // Code blocks
-    text = text.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code class="lang-$1">$2</code></pre>');
-    // Inline code
-    text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
+function renderMarkdown(markdown) {
+    if (!markdown) return '';
+    let text = String(markdown);
+
+    // Pull code aside before the global escape so markdown syntax inside code
+    // is kept literal. Every stored fragment is independently escaped.
+    const codeBlocks = [];
+    text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_match, language, code) => {
+        codeBlocks.push(`<pre><code class="lang-${escHtml(language)}">${escHtml(code)}</code></pre>`);
+        return `\x00CB${codeBlocks.length - 1}\x00`;
+    });
+    const inlineCodes = [];
+    text = text.replace(/`([^`\n]+)`/g, (_match, code) => {
+        inlineCodes.push(`<code>${escHtml(code)}</code>`);
+        return `\x00IC${inlineCodes.length - 1}\x00`;
+    });
+
+    // Security boundary: raw provider/LLM HTML is always text. Only tags
+    // emitted by the markdown transformations below can reach innerHTML.
+    text = escHtml(text);
+
     // Headers
     text = text.replace(/^### (.+)$/gm, '<h3>$1</h3>');
     text = text.replace(/^## (.+)$/gm, '<h2>$1</h2>');
@@ -1131,6 +1298,10 @@ function renderMarkdown(text) {
     text = text.replace(/\n\n/g, '</p><p>');
     text = text.replace(/\n/g, '<br>');
     text = '<p>' + text + '</p>';
+    // Restore only the escaped code fragments created above. They were held
+    // out of newline processing, so code block formatting remains unchanged.
+    text = text.replace(/\x00CB(\d+)\x00/g, (_match, index) => codeBlocks[Number(index)] || '');
+    text = text.replace(/\x00IC(\d+)\x00/g, (_match, index) => inlineCodes[Number(index)] || '');
     // Clean up empty paragraphs
     text = text.replace(/<p><\/p>/g, '');
     text = text.replace(/<p>(<h[123]>)/g, '$1');
@@ -1145,8 +1316,9 @@ function renderMarkdown(text) {
 }
 
 function escHtml(s) {
-    if (!s) return '';
-    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 </script>
 </body>

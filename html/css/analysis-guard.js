@@ -74,6 +74,7 @@
     }
 
     async function readPipelineState() {
+        var observedAt = Date.now() / 1000;
         var marker = null;
         var manifest = null;
         try {
@@ -88,7 +89,7 @@
             });
             if (manifestResponse.ok) manifest = await manifestResponse.json();
         } catch (error) {}
-        return { marker: marker, manifest: manifest };
+        return { marker: marker, manifest: manifest, observedAt: observedAt };
     }
 
     function manifestIdentity(manifest) {
@@ -115,22 +116,28 @@
         var baselineIdentity = manifestIdentity(baseline && baseline.manifest);
         var baselineMarkerIdentity = markerIdentity(baseline && baseline.marker);
         var baselineMarkerStatus = baseline && baseline.marker && baseline.marker.status;
-        var sawCollection = baselineMarkerStatus === 'collecting';
+        var baselineObservedAt = Number(baseline && baseline.observedAt) || (Date.now() / 1000);
+        var requestedPipelineId = String(options.pipelineId || '');
+        var sawCollection = false;
 
         while (Date.now() - startedAt < timeoutMs) {
             var state = await readPipelineState();
             var markerStatus = state.marker && state.marker.status;
             var currentMarkerIdentity = markerIdentity(state.marker);
             var markerChanged = currentMarkerIdentity !== baselineMarkerIdentity;
+            var markerPipelineId = String((state.marker && state.marker.pipeline_id) || '');
+            var markerBelongsToRequest = requestedPipelineId && markerPipelineId === requestedPipelineId;
             if (markerStatus === 'collecting' &&
-                    (markerChanged || baselineMarkerStatus !== 'stale')) {
+                    (markerBelongsToRequest ||
+                     (!requestedPipelineId && markerChanged && baselineMarkerStatus !== 'collecting'))) {
                 sawCollection = true;
             }
             // A stale marker that already existed before the click describes
             // the previous failed run.  Ignore that exact marker until this
             // trigger starts or publishes a different failure marker.
             if (markerStatus === 'stale' &&
-                    (sawCollection || markerChanged || baselineMarkerStatus !== 'stale')) {
+                    (markerBelongsToRequest ||
+                     (!requestedPipelineId && sawCollection && markerChanged))) {
                 throw new Error((state.marker && state.marker.reason) || 'Monitoring run failed');
             }
 
@@ -139,7 +146,12 @@
                 state.manifest.status === 'current' &&
                 state.manifest.pipeline_complete === true;
             var isNewManifest = currentIdentity && currentIdentity !== baselineIdentity;
-            if (!markerStatus && manifestCurrent && (isNewManifest || sawCollection || !baselineIdentity)) {
+            var manifestStartedAt = Number(state.manifest && state.manifest.pipeline_started_at) || 0;
+            var manifestBelongsToRequest = requestedPipelineId && currentIdentity === requestedPipelineId;
+            var fallbackManifestIsNewRun = !requestedPipelineId && isNewManifest &&
+                manifestStartedAt >= Math.floor(baselineObservedAt) && sawCollection;
+            if (!markerStatus && manifestCurrent &&
+                    (manifestBelongsToRequest || fallbackManifestIsNewRun)) {
                 return state.manifest;
             }
             await delay(pollMs);

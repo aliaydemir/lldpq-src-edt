@@ -13,6 +13,7 @@
 # What it removes:
 #   - LLDPq cron entries (/etc/crontab + /etc/cron.d/lldpq)
 #   - lldpq-trigger daemon process
+#   - Console PTY bridge systemd service
 #   - retained-import recovery systemd service + path watcher
 #   - root-owned backup/import helper and validated native recovery remnants
 #   - /usr/local/bin/{lldpq, lldpq-config, lldpq-trigger, lldpq-ai-analyze, zzh, pping, send-cmd, get-conf}
@@ -30,6 +31,11 @@ set -u
 set -o pipefail
 
 LLDPQ_BACKUP_IMPORT_HELPER="/usr/local/libexec/lldpq-backup-import.py"
+LLDPQ_UPDATE_RECOVERY_HELPER="/usr/local/libexec/lldpq-update-recovery.py"
+LLDPQ_UPDATE_RECOVERY_SERVICE="/etc/systemd/system/lldpq-update-recovery.service"
+LLDPQ_UPDATE_RECOVERY_STATE="/var/lib/lldpq/update-rollback"
+LLDPQ_UPDATE_RECOVERY_MARKER="$LLDPQ_UPDATE_RECOVERY_STATE/active.json"
+UNINSTALL_UPDATE_LOCK_FD=""
 
 load_lldpq_uninstall_config() {
     local config_file="${1:-/etc/lldpq.conf}"
@@ -140,6 +146,7 @@ filter_legacy_lldpq_crontab() {
             return line ~ /\/usr\/local\/bin\/lldpq([[:space:]]|$)/ ||
                    line ~ /\/usr\/local\/bin\/lldpq-trigger([[:space:]]|$)/ ||
                    line ~ /\/usr\/local\/bin\/lldpq-ai-analyze([[:space:]]|$)/ ||
+                   line ~ /\/usr\/local\/bin\/lldpq-provision-scheduler([[:space:]]|$)/ ||
                    line ~ /\/usr\/local\/bin\/get-conf([[:space:]]|$)/ ||
                    index(line, install_dir "/fabric-scan.sh") > 0 ||
                    (index(line, "cd " install_dir) > 0 && index(line, "./fabric-scan.sh") > 0) ||
@@ -213,6 +220,61 @@ step() {
     echo -e "${CYAN}→ $1${NC}"
 }
 
+acquire_uninstall_update_lock() {
+    local lock_file="${LLDPQ_MONITOR_LOCK_FILE:-/tmp/lldpq-monitor.lock}"
+    local wait_seconds="${LLDPQ_UNINSTALL_LOCK_TIMEOUT:-600}"
+    if $DRY_RUN; then
+        echo "DRY-RUN  wait for and hold LLDPq update/collection lock: $lock_file"
+        return 0
+    fi
+    [[ "$lock_file" == /* && "$lock_file" != *$'\n'* && "$lock_file" != *$'\r'* ]] || {
+        echo "[!] Unsafe LLDPq update lock path: $lock_file" >&2
+        return 1
+    }
+    case "$wait_seconds" in
+        ''|*[!0-9]*|0) return 1 ;;
+    esac
+    exec {UNINSTALL_UPDATE_LOCK_FD}>"$lock_file" || return 1
+    if ! flock -w "$wait_seconds" "$UNINSTALL_UPDATE_LOCK_FD"; then
+        echo "[!] Timed out waiting for an active LLDPq update" >&2
+        exec {UNINSTALL_UPDATE_LOCK_FD}>&-
+        UNINSTALL_UPDATE_LOCK_FD=""
+        return 1
+    fi
+}
+
+recover_interrupted_update_before_uninstall() {
+    [[ -e "$LLDPQ_UPDATE_RECOVERY_MARKER" || \
+       -L "$LLDPQ_UPDATE_RECOVERY_MARKER" ]] || return 0
+    if $DRY_RUN; then
+        echo "DRY-RUN  recover active interrupted LLDPq update before uninstall"
+        return 0
+    fi
+    local helper_metadata
+    helper_metadata=$(sudo stat -c '%u:%g:%a' -- \
+        "$LLDPQ_UPDATE_RECOVERY_HELPER" 2>/dev/null || true)
+    if [[ ! -f "$LLDPQ_UPDATE_RECOVERY_HELPER" || \
+          -L "$LLDPQ_UPDATE_RECOVERY_HELPER" || \
+          "$helper_metadata" != "0:0:755" ]]; then
+        echo "[!] Active update recovery marker exists but its root-owned helper is unsafe or missing" >&2
+        return 1
+    fi
+    sudo "$LLDPQ_UPDATE_RECOVERY_HELPER" || return 1
+    if [[ -e "$LLDPQ_UPDATE_RECOVERY_MARKER" || \
+          -L "$LLDPQ_UPDATE_RECOVERY_MARKER" ]]; then
+        echo "[!] Interrupted update recovery did not clear its authority; uninstall stopped" >&2
+        return 1
+    fi
+}
+
+# Serialize against install.sh before reading mutable path configuration. A
+# live update finishes first; a killed update leaves a durable authority that
+# must be consumed before uninstall decides which tree is authoritative.
+if ! acquire_uninstall_update_lock || \
+   ! recover_interrupted_update_before_uninstall; then
+    exit 1
+fi
+
 # ─── Detect install paths ─────────────────────────────────────────────
 LLDPQ_INSTALL_DIR=""
 LLDPQ_USER=""
@@ -281,13 +343,141 @@ fi
 
 # ─── 1. Stop running processes ────────────────────────────────────────
 step "Stopping LLDPq processes..."
-for proc in lldpq-trigger lldpq-ai-analyze fabric-scan.sh monitor.sh check-lldp.sh assets.sh; do
+# Disable cron first so a once-per-minute Provision scheduler cannot recreate a
+# detached worker between pkill and state removal. This is intentionally early
+# and fail-closed; the later generic cron section remains idempotent.
+if [[ -f /etc/crontab ]]; then
+    if $DRY_RUN; then
+        echo "DRY-RUN  disable LLDPq cron sources before worker quiesce"
+    else
+        _quiesce_cron_tmp=$(mktemp "${TMPDIR:-/tmp}/lldpq-uninstall-quiesce.XXXXXX")
+        filter_legacy_lldpq_crontab /etc/crontab "$_quiesce_cron_tmp" "$LLDPQ_INSTALL_DIR"
+        if ! cmp -s /etc/crontab "$_quiesce_cron_tmp"; then
+            if ! sudo install -o root -g root -m 644 \
+                "$_quiesce_cron_tmp" /etc/crontab; then
+                rm -f "$_quiesce_cron_tmp"
+                echo "[!] Could not disable legacy LLDPq cron entries" >&2
+                exit 1
+            fi
+        fi
+        rm -f "$_quiesce_cron_tmp"
+    fi
+fi
+if ! run "sudo rm -f /etc/cron.d/lldpq"; then
+    echo "[!] Could not disable /etc/cron.d/lldpq" >&2
+    exit 1
+fi
+if ! $DRY_RUN && [[ -e /etc/cron.d/lldpq ]]; then
+    echo "[!] Provision scheduler cron source is still present" >&2
+    exit 1
+fi
+if ! $DRY_RUN && [[ -f /etc/crontab ]] && \
+   grep -q '/usr/local/bin/lldpq-provision-scheduler\([[:space:]]\|$\)' /etc/crontab; then
+    echo "[!] Provision scheduler remains in /etc/crontab" >&2
+    exit 1
+fi
+
+for proc in lldpq-trigger lldpq-ai-analyze lldpq-provision-scheduler fabric-scan.sh monitor.sh check-lldp.sh assets.sh; do
     if pgrep -f "/usr/local/bin/$proc" >/dev/null 2>&1 || \
        pgrep -f "$LLDPQ_INSTALL_DIR/$proc" >/dev/null 2>&1; then
         run "sudo pkill -f '$proc' 2>/dev/null || true"
         echo "  killed $proc"
     fi
 done
+
+quiesce_provision_workers() {
+    local pattern pid remaining=false
+    local -a patterns=(
+        "lldpq-provision-scheduler"
+        "provision-api.sh --discovery-worker"
+        "provision-api.sh --discovery-schedule"
+        "provision-api.sh --upgrade-worker"
+        "provision-api.sh --upgrade-resume"
+    )
+    terminate_process_tree() {
+        local parent="$1" child
+        while IFS= read -r child; do
+            [[ -n "$child" ]] && terminate_process_tree "$child"
+        done < <(pgrep -P "$parent" 2>/dev/null || true)
+        sudo kill -TERM "$parent" 2>/dev/null || true
+        sleep 0.05
+        if kill -0 "$parent" 2>/dev/null; then
+            sudo kill -KILL "$parent" 2>/dev/null || true
+        fi
+    }
+    for pattern in "${patterns[@]}"; do
+        if $DRY_RUN; then
+            run "sudo pkill -f -- '$pattern' 2>/dev/null || true"
+            continue
+        fi
+        # Detached workers are shell session leaders whose Python/SSH children
+        # no longer contain provision-api.sh in argv. Kill the captured tree
+        # leaf-first so no orphan can write state after its parent disappears.
+        while IFS= read -r pid; do
+            [[ -n "$pid" && "$pid" != "$$" ]] && terminate_process_tree "$pid"
+        done < <(pgrep -f -- "$pattern" 2>/dev/null || true)
+    done
+    $DRY_RUN && return 0
+    for _attempt in {1..50}; do
+        remaining=false
+        for pattern in "${patterns[@]}"; do
+            if pgrep -f -- "$pattern" >/dev/null 2>&1; then
+                remaining=true
+                break
+            fi
+        done
+        $remaining || return 0
+        sleep 0.1
+    done
+    echo "[!] Provision scheduler/worker processes did not quiesce" >&2
+    return 1
+}
+
+if ! quiesce_provision_workers; then
+    exit 1
+fi
+
+# Stop and remove the native Console bridge before its executable tree goes
+# away. Keep every mutation behind run() so --dry-run remains side-effect free.
+step "Removing Console service..."
+run "sudo systemctl disable --now lldpq-console.service 2>/dev/null || true"
+if ! $DRY_RUN && systemctl is-active --quiet lldpq-console.service 2>/dev/null; then
+    echo "[!] Console service is still active; cleanup stopped" >&2
+    exit 1
+fi
+if ! run "sudo rm -f '/etc/systemd/system/lldpq-console.service' '/etc/systemd/system/multi-user.target.wants/lldpq-console.service'"; then
+    echo "[!] Could not remove Console service unit" >&2
+    exit 1
+fi
+run "sudo systemctl daemon-reload 2>/dev/null || true"
+echo "  Console service removed"
+
+# The shared update/collection lock is held for the entire uninstall, so no new
+# update authority can appear after the preflight recovery check. Remove the
+# boot guard only after verifying the marker is gone.
+step "Removing interrupted-update recovery guard..."
+if ! $DRY_RUN && \
+   { [[ -e "$LLDPQ_UPDATE_RECOVERY_MARKER" ]] || \
+     [[ -L "$LLDPQ_UPDATE_RECOVERY_MARKER" ]]; }; then
+    echo "[!] Active update recovery authority remains; cleanup stopped" >&2
+    exit 1
+fi
+run "sudo systemctl disable --now lldpq-update-recovery.service 2>/dev/null || true"
+if ! $DRY_RUN && \
+   systemctl is-active --quiet lldpq-update-recovery.service 2>/dev/null; then
+    echo "[!] Interrupted-update recovery service is still active" >&2
+    exit 1
+fi
+if ! run "sudo rm -f '$LLDPQ_UPDATE_RECOVERY_SERVICE' '/etc/systemd/system/multi-user.target.wants/lldpq-update-recovery.service' '$LLDPQ_UPDATE_RECOVERY_HELPER'"; then
+    echo "[!] Could not remove interrupted-update recovery guard" >&2
+    exit 1
+fi
+if ! run "sudo rm -rf '$LLDPQ_UPDATE_RECOVERY_STATE'"; then
+    echo "[!] Could not remove inactive update recovery state" >&2
+    exit 1
+fi
+run "sudo systemctl daemon-reload 2>/dev/null || true"
+echo "  interrupted-update recovery guard removed"
 
 # Stop the watcher before removing either the lock or the executable tree. An
 # authority published by an interrupted import must not start a now-orphaned
@@ -325,6 +515,15 @@ if ! $DRY_RUN && \
    { systemctl is-active --quiet fcgiwrap.socket 2>/dev/null || \
      systemctl is-active --quiet fcgiwrap.service 2>/dev/null; }; then
     echo "[!] fcgiwrap could not be quiesced; recovery authority was not purged" >&2
+    exit 1
+fi
+
+# A CGI request could have launched a detached Provision worker during the
+# short interval between the initial cron/process quiesce and stopping the
+# shared fcgi socket. With request creation now closed, make a final verified
+# pass before deleting any job state or executable.
+if ! quiesce_provision_workers; then
+    echo "[!] Provision workers are still active; state cleanup stopped" >&2
     exit 1
 fi
 
@@ -394,7 +593,7 @@ fi
 
 # ─── 4. Bin scripts ───────────────────────────────────────────────────
 step "Removing CLI tools..."
-for bin in lldpq lldpq-config lldpq-trigger lldpq-ai-analyze zzh pping send-cmd get-conf netprobe-ai; do
+for bin in lldpq lldpq-config lldpq-trigger lldpq-ai-analyze lldpq-provision-scheduler zzh pping send-cmd get-conf netprobe-ai; do
     if [[ -e "/usr/local/bin/$bin" ]]; then
         run "sudo rm -f /usr/local/bin/$bin"
         echo "  removed /usr/local/bin/$bin"
@@ -453,7 +652,8 @@ WEB_TARGETS=(
     "$WEB_ROOT/fabric-api.sh" "$WEB_ROOT/fabric-config.html" "$WEB_ROOT/fabric-deploy.html"
     "$WEB_ROOT/fabric-editor.html" "$WEB_ROOT/fabric-exit.html"
     "$WEB_ROOT/auth-api.sh" "$WEB_ROOT/ansible-api.sh"
-    "$WEB_ROOT/ai-api.sh" "$WEB_ROOT/ai.html"
+    "$WEB_ROOT/ai-api.sh" "$WEB_ROOT/ai.html" "$WEB_ROOT/ai_command_policy.py"
+    "$WEB_ROOT/assets-api.sh" "$WEB_ROOT/setup_safety.py"
     "$WEB_ROOT/provision.html" "$WEB_ROOT/provision-api.sh"
     "$WEB_ROOT/search.html" "$WEB_ROOT/search-api.sh"
     "$WEB_ROOT/setup-api.sh" "$WEB_ROOT/telemetry.html"
@@ -468,11 +668,12 @@ WEB_TARGETS=(
     "$WEB_ROOT/device-cache.json" "$WEB_ROOT/fabric-scan-cache.json"
     "$WEB_ROOT/discovery-cache.json" "$WEB_ROOT/inventory.json"
     "$WEB_ROOT/ai-analysis.json"
+    "$WEB_ROOT/.inventory.lock" "$WEB_ROOT/.dhcp-operation.lock"
 )
 WEB_DIRS=(
     "$WEB_ROOT/css" "$WEB_ROOT/png" "$WEB_ROOT/topology"
     "$WEB_ROOT/configs" "$WEB_ROOT/hstr" "$WEB_ROOT/monitor-results"
-    "$WEB_ROOT/generated_config_folder" "$WEB_ROOT/monaco"
+    "$WEB_ROOT/generated_config_folder" "$WEB_ROOT/provision-uploads" "$WEB_ROOT/monaco"
 )
 
 for f in "${WEB_TARGETS[@]}"; do

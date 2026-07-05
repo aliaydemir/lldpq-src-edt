@@ -2,9 +2,10 @@
 # Single container: nginx + fcgiwrap + python3 + ssh + cron
 FROM ubuntu:22.04
 
+ARG LLDPQ_VERSION=4.0.0
 LABEL maintainer="ali@lldpq.dev"
 LABEL description="LLDPq Network Monitoring"
-LABEL version="3.5.5"
+LABEL version="${LLDPQ_VERSION}"
 
 # Prevent interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
@@ -58,7 +59,7 @@ RUN useradd -m -s /bin/bash -G www-data lldpq \
 
 # Allow www-data to run only the commands needed by CGI workflows.
 RUN echo "www-data ALL=(lldpq) NOPASSWD: /usr/bin/timeout, /usr/bin/ssh, /usr/bin/scp, /usr/bin/mkdir, /usr/bin/rm, /usr/bin/tee, /usr/bin/cat, /usr/bin/ssh-keygen, /usr/bin/bash, /bin/bash" > /etc/sudoers.d/www-data-lldpq \
-    && echo "www-data ALL=(root) NOPASSWD: /usr/bin/systemctl start isc-dhcp-server, /usr/bin/systemctl stop isc-dhcp-server, /usr/bin/systemctl restart isc-dhcp-server, /usr/bin/systemctl disable isc-dhcp-server, /usr/bin/systemctl enable isc-dhcp-server, /usr/bin/tee /etc/dhcp/dhcpd.conf, /usr/bin/tee /etc/dhcp/dhcpd.hosts, /usr/bin/tee /etc/default/isc-dhcp-server, /usr/bin/tee /etc/lldpq.conf, /usr/bin/cp, /usr/bin/mkdir, /usr/bin/rm, /usr/bin/pkill -x dhcpd, /usr/sbin/dhcpd, /usr/bin/cat /etc/dhcp/dhcpd.conf, /usr/bin/chmod, /usr/bin/chown" > /etc/sudoers.d/www-data-provision \
+    && echo "www-data ALL=(root) NOPASSWD: /usr/bin/systemctl start isc-dhcp-server, /usr/bin/systemctl stop isc-dhcp-server, /usr/bin/systemctl restart isc-dhcp-server, /usr/bin/systemctl disable isc-dhcp-server, /usr/bin/systemctl enable isc-dhcp-server, /usr/bin/tee /etc/dhcp/dhcpd.conf, /usr/bin/tee /etc/dhcp/dhcpd.hosts, /usr/bin/tee /etc/default/isc-dhcp-server, /usr/bin/tee /etc/lldpq.conf, /usr/bin/cp, /usr/bin/mkdir, /usr/bin/rm, /usr/bin/mv -fT -- /etc/lldpq.conf.lldpq-root-stage /etc/lldpq.conf, /usr/bin/mv -fT -- /etc/dhcp/dhcpd.conf.lldpq-root-stage /etc/dhcp/dhcpd.conf, /usr/bin/mv -fT -- /etc/dhcp/dhcpd.hosts.lldpq-root-stage /etc/dhcp/dhcpd.hosts, /usr/bin/mv -fT -- /etc/dhcp/dhcpd.host.lldpq-root-stage /etc/dhcp/dhcpd.host, /usr/bin/mv -fT -- /etc/default/isc-dhcp-server.lldpq-root-stage /etc/default/isc-dhcp-server, /usr/bin/sync -f /etc/lldpq.conf.lldpq-root-stage, /usr/bin/sync -f /etc/dhcp/dhcpd.conf.lldpq-root-stage, /usr/bin/sync -f /etc/dhcp/dhcpd.hosts.lldpq-root-stage, /usr/bin/sync -f /etc/dhcp/dhcpd.host.lldpq-root-stage, /usr/bin/sync -f /etc/default/isc-dhcp-server.lldpq-root-stage, /usr/bin/sync -f /etc, /usr/bin/sync -f /etc/dhcp, /usr/bin/sync -f /etc/default, /usr/bin/mv -fT -- /etc/crontab.lldpq-root-stage /etc/crontab, /usr/bin/mv -fT -- /etc/cron.d/lldpq.lldpq-root-stage /etc/cron.d/lldpq, /usr/bin/pkill -x dhcpd, /usr/sbin/dhcpd, /usr/bin/cat /etc/dhcp/dhcpd.conf, /usr/bin/chmod, /usr/bin/chown" > /etc/sudoers.d/www-data-provision \
     && chmod 440 /etc/sudoers.d/www-data-lldpq /etc/sudoers.d/www-data-provision
 
 # Create directory structure
@@ -170,6 +171,7 @@ RUN printf '%s\n' \
     'TRANSCEIVER_FW_MIN_INTERVAL=1800' \
     'TRANSCEIVER_FW_SSH_TIMEOUT=300' \
     'TRANSCEIVER_FW_UNKNOWN_MODEL_POLICY=skip' \
+    'AI_FALLBACK_MODEL=' \
     > /etc/lldpq.conf
 
 # Create auth users file + sessions directory
@@ -180,20 +182,27 @@ RUN ADMIN_HASH=$(echo -n "admin" | openssl dgst -sha256 | awk '{print $2}') \
     && echo "operator:$OPERATOR_HASH:operator" >> /etc/lldpq-users.conf \
     && chmod 600 /etc/lldpq-users.conf \
     && chown www-data:www-data /etc/lldpq-users.conf \
-    && mkdir -p /var/lib/lldpq/sessions /var/lib/lldpq/upgrade-jobs \
+    && mkdir -p /var/lib/lldpq/sessions /var/lib/lldpq/upgrade-jobs /var/lib/lldpq/ai \
     && chown -R www-data:www-data /var/lib/lldpq \
-    && chown lldpq:www-data /var/lib/lldpq/upgrade-jobs \
+    && chown lldpq:www-data /var/lib/lldpq/upgrade-jobs /var/lib/lldpq/ai \
     && chmod 700 /var/lib/lldpq/sessions \
-    && chmod 775 /var/lib/lldpq/upgrade-jobs
+    && chmod 775 /var/lib/lldpq/upgrade-jobs \
+    && chmod 2770 /var/lib/lldpq/ai
 
-# Create cache files with correct permissions (assets.sh, fabric-scan, provision, AI need these)
-RUN for f in device-cache.json fabric-scan-cache.json discovery-cache.json inventory.json ai-analysis.json; do \
+# Create public cache files with correct permissions. AI state is deliberately
+# kept outside the nginx document root under /var/lib/lldpq/ai.
+RUN for f in device-cache.json fabric-scan-cache.json discovery-cache.json inventory.json; do \
         echo '{}' > /var/www/html/$f; \
     done \
     && chown lldpq:www-data /var/www/html/device-cache.json /var/www/html/fabric-scan-cache.json \
-       /var/www/html/discovery-cache.json /var/www/html/inventory.json /var/www/html/ai-analysis.json \
+       /var/www/html/discovery-cache.json /var/www/html/inventory.json \
     && chmod 664 /var/www/html/device-cache.json /var/www/html/fabric-scan-cache.json \
-       /var/www/html/discovery-cache.json /var/www/html/inventory.json /var/www/html/ai-analysis.json
+       /var/www/html/discovery-cache.json /var/www/html/inventory.json \
+    && printf '{}\n' > /var/lib/lldpq/ai/analysis.json \
+    && printf '[]\n' > /var/lib/lldpq/ai/learnings.json \
+    && printf '{}\n' > /var/lib/lldpq/ai/analysis-snapshot.json \
+    && chown lldpq:www-data /var/lib/lldpq/ai/*.json \
+    && chmod 660 /var/lib/lldpq/ai/*.json
 
 # Copy entrypoint
 COPY docker/docker-entrypoint.sh /docker-entrypoint.sh

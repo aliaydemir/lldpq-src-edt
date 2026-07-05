@@ -1250,28 +1250,118 @@ function toggleProblems(show) {
 /**
  * Run LLDP check
  */
-function runLLDPCheck() {
+const TOPOLOGY_LLDP_JOB_KEY = 'lldpq_topology_lldp_job';
+let topologyLLDPJobToken = null;
+let topologyLLDPPollGeneration = 0;
+
+function setStoredTopologyLLDPJob(token) {
+    try {
+        if (token) sessionStorage.setItem(TOPOLOGY_LLDP_JOB_KEY, token);
+        else sessionStorage.removeItem(TOPOLOGY_LLDP_JOB_KEY);
+    } catch (error) {}
+}
+
+function finishTopologyLLDPJob(token, generation, succeeded) {
+    if (token !== topologyLLDPJobToken || generation !== topologyLLDPPollGeneration) return;
+    const button = document.getElementById('runLLDPCheck');
+    topologyLLDPJobToken = null;
+    setStoredTopologyLLDPJob('');
+    if (succeeded) {
+        button.textContent = '✓ Done! Refreshing...';
+        setTimeout(() => location.reload(), 5000);
+    } else {
+        button.textContent = '❌ Error';
+        button.disabled = false;
+    }
+}
+
+async function pollTopologyLLDPJob(token, generation) {
+    if (token !== topologyLLDPJobToken || generation !== topologyLLDPPollGeneration) return;
+    try {
+        const response = await fetch(`/trigger-lldp?token=${encodeURIComponent(token)}`, {
+            method: 'GET',
+            cache: 'no-store',
+            headers: { 'Accept': 'application/json', 'Cache-Control': 'no-cache' }
+        });
+        const data = await response.json();
+        if (token !== topologyLLDPJobToken || generation !== topologyLLDPPollGeneration) return;
+        if (data.status === 'error' && data.message === 'LLDP job was not found') {
+            finishTopologyLLDPJob(token, generation, false);
+            return;
+        }
+        if (!response.ok || data.status === 'error' || data.token !== token) {
+            throw new Error(data.message || 'LLDP job status is unavailable');
+        }
+        if (data.status === 'success') {
+            finishTopologyLLDPJob(token, generation, true);
+            return;
+        }
+        if (data.status === 'failure' && !data.retry_scheduled) {
+            console.error('LLDP topology refresh failed:', data.reason || data.exit_code);
+            finishTopologyLLDPJob(token, generation, false);
+            return;
+        }
+        const delay = data.next_retry_at
+            ? Math.max(2000, Math.min(15000, data.next_retry_at * 1000 - Date.now() + 500))
+            : (data.status === 'running' ? 2000 : 5000);
+        setTimeout(() => pollTopologyLLDPJob(token, generation), delay);
+    } catch (error) {
+        // A transient status read must never be mistaken for completion. Keep the
+        // same opaque token and retry without reloading the old topology.
+        console.error('LLDP topology status unavailable:', error);
+        setTimeout(() => pollTopologyLLDPJob(token, generation), 5000);
+    }
+}
+
+function trackTopologyLLDPJob(token) {
+    if (!/^[a-f0-9]{32}$/.test(token || '')) return false;
+    topologyLLDPJobToken = token;
+    topologyLLDPPollGeneration += 1;
+    const generation = topologyLLDPPollGeneration;
+    setStoredTopologyLLDPJob(token);
+    const button = document.getElementById('runLLDPCheck');
+    if (button) {
+        button.disabled = true;
+        button.textContent = '⏳ Running...';
+    }
+    setTimeout(() => pollTopologyLLDPJob(token, generation), 250);
+    return true;
+}
+
+async function runLLDPCheck() {
     const button = document.getElementById('runLLDPCheck');
     button.disabled = true;
     button.textContent = '⏳ Running...';
-    
-    fetch('/trigger-lldp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-    })
-    .then(response => response.json())
-    .then(data => {
-        button.textContent = '✓ Done! Refreshing...';
-        setTimeout(() => location.reload(), 5000);
-    })
-    .catch(error => {
+
+    topologyLLDPPollGeneration += 1;
+    topologyLLDPJobToken = null;
+    try {
+        const response = await fetch('/trigger-lldp', {
+            method: 'POST',
+            cache: 'no-store',
+            headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' }
+        });
+        const data = await response.json();
+        if (!response.ok || data.status !== 'started' || !trackTopologyLLDPJob(data.token)) {
+            throw new Error(data.message || 'LLDP job could not be queued');
+        }
+    } catch (error) {
+        console.error('Could not start LLDP topology refresh:', error);
+        setStoredTopologyLLDPJob('');
         button.textContent = '❌ Error';
         button.disabled = false;
-    });
+    }
+}
+
+function resumeTopologyLLDPJob() {
+    let token = '';
+    try { token = sessionStorage.getItem(TOPOLOGY_LLDP_JOB_KEY) || ''; } catch (error) {}
+    if (token) trackTopologyLLDPJob(token);
 }
 
 // CodeMirror editor instances
 let configEditorCM = null;
+let configEditorRevision = null;
 
 /**
  * Open config editor modal (topology_config.yaml)
@@ -1289,6 +1379,12 @@ function openConfigEditor() {
     .then(response => response.json())
     .then(data => {
         if (data.success) {
+            if (typeof data.revision !== 'string') {
+                configEditorRevision = null;
+                status.textContent = 'Error: server revision is unavailable';
+                return;
+            }
+            configEditorRevision = data.revision;
             // Initialize CodeMirror if not already done
             if (!configEditorCM) {
                 configEditorCM = CodeMirror(document.getElementById('configEditorContainer'), {
@@ -1332,17 +1428,22 @@ function closeConfigEditorModal() {
 function saveConfigOnly() {
     const status = document.getElementById('configEditorStatus');
     const content = configEditorCM ? configEditorCM.getValue() : '';
+    if (typeof configEditorRevision !== 'string') {
+        status.textContent = 'Error: reload the current config before saving';
+        return;
+    }
     
     status.textContent = 'Saving...';
     
     fetch('/edit-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: content })
+        body: JSON.stringify({ content: content, expected_revision: configEditorRevision })
     })
     .then(response => response.json())
     .then(data => {
         if (data.success) {
+            configEditorRevision = data.revision || configEditorRevision;
             status.textContent = 'Saved successfully!';
         } else {
             status.textContent = 'Error: ' + (data.error || 'Save failed');
@@ -1359,17 +1460,22 @@ function saveConfigOnly() {
 function saveConfig() {
     const content = configEditorCM ? configEditorCM.getValue() : '';
     const status = document.getElementById('configEditorStatus');
+    if (typeof configEditorRevision !== 'string') {
+        status.textContent = 'Error: reload the current config before saving';
+        return;
+    }
     
     status.textContent = 'Saving...';
     
     fetch('/edit-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: content })
+        body: JSON.stringify({ content: content, expected_revision: configEditorRevision })
     })
     .then(response => response.json())
     .then(data => {
         if (data.success) {
+            configEditorRevision = data.revision || configEditorRevision;
             status.textContent = 'Saved! Running LLDPq...';
             closeConfigEditorModal();
             runLLDPCheck();
@@ -1710,3 +1816,4 @@ function updateIconOverlays() {
 
 // Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', initCytoscape);
+document.addEventListener('DOMContentLoaded', resumeTopologyLLDPJob);

@@ -399,6 +399,7 @@ mark_reports_stale() {
         printf 'status=stale\n'
         printf 'timestamp=%s\n' "$failure_time"
         printf 'reason=%s\n' "$reason"
+        printf 'pipeline_id=%s\n' "${LLDPQ_PIPELINE_ID:-}"
     } > "$stale_marker"
     printf '%s %s\n' "$failure_time" "$reason" >> "$SCRIPT_DIR/monitor-failures.log"
     echo "Monitoring failed; last-known-good web reports were preserved: $reason" >&2
@@ -417,6 +418,7 @@ mark_reports_in_progress() {
         printf 'status=collecting\n'
         printf 'timestamp=%s\n' "$started_at"
         printf 'reason=monitoring_in_progress\n'
+        printf 'pipeline_id=%s\n' "${LLDPQ_PIPELINE_ID:-}"
     } > "$stale_marker" || return 1
     if [[ -d "$WEB_ROOT/monitor-results" ]]; then
         if [[ ! "$stale_marker" -ef "$WEB_ROOT/monitor-results/.lldpq-stale" ]]; then
@@ -445,9 +447,11 @@ write_current_manifest() {
         "${LLDPQ_PIPELINE_STARTED_AT:-}" \
         "${LLDPQ_ASSETS_FILE:-$SCRIPT_DIR/assets.ini}" \
         "$SCRIPT_DIR/lldp-results/lldp_results.ini" \
+        "${MONITOR_DATA_MAX_AGE_MINUTES:-30}" \
         "${analysis_labels[@]}" <<'PYTHON'
 import hashlib
 import json
+import math
 import os
 import re
 import sys
@@ -461,6 +465,14 @@ source_paths = {
     "assets": Path(sys.argv[7]),
     "lldp": Path(sys.argv[8]),
 }
+
+try:
+    max_age_minutes = float(sys.argv[9])
+except ValueError:
+    raise SystemExit("invalid monitor data maximum age")
+if not math.isfinite(max_age_minutes) or max_age_minutes < 0:
+    raise SystemExit("invalid monitor data maximum age")
+max_age_seconds = max_age_minutes * 60
 
 if bool(pipeline_id) != bool(pipeline_started):
     raise SystemExit("incomplete pipeline identity")
@@ -552,11 +564,12 @@ payload = {
     "status": "current",
     "completed_at": sys.argv[2],
     "device_count": int(sys.argv[3]),
-    "analyses": sys.argv[9:],
+    "analyses": sys.argv[10:],
     "skipped": ["optical"] if sys.argv[4] == "true" else [],
     "pipeline_complete": pipeline_complete,
     "pipeline_id": pipeline_id or None,
     "pipeline_started_at": started_epoch,
+    "max_age_seconds": max_age_seconds,
     "sources": sources,
 }
 temporary = destination.with_name(

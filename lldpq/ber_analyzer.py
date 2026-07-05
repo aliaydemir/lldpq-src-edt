@@ -1750,7 +1750,8 @@ class BERAnalyzer:
                 document.body.appendChild(notification);
 
                 if (typeof window.waitForLldpqAnalysisCompletion === 'function') {
-                    await window.waitForLldpqAnalysisCompletion(baseline);
+                    await window.waitForLldpqAnalysisCompletion(
+                        baseline, {{ pipelineId: data.trigger_id }});
                 } else {
                     await new Promise(resolve => setTimeout(resolve, 35000));
                 }

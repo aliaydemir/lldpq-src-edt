@@ -13,7 +13,7 @@ import re
 import json
 import time
 import html
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Dict, List, Any, Optional, NamedTuple
 from dataclasses import dataclass
@@ -593,7 +593,7 @@ class BGPAnalyzer:
             "down_neighbors": len([n for n in neighbors if n.state != BGPState.ESTABLISHED]),
             "warning_neighbors": warning_neighbors,
             "critical_neighbors": critical_neighbors,
-            "last_update": datetime.now().isoformat()
+            "last_update": datetime.now(timezone.utc).isoformat()
         }
         
         # Add to history (keep last 50 entries per device)
@@ -601,7 +601,7 @@ class BGPAnalyzer:
             self.bgp_history[hostname] = []
         
         history_entry = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "total_neighbors": len(neighbors),
             "established_count": len([n for n in neighbors if n.state == BGPState.ESTABLISHED]),
             "down_count": len([n for n in neighbors if n.state != BGPState.ESTABLISHED]),
@@ -747,7 +747,7 @@ class BGPAnalyzer:
             "route_cap": stats.route_cap,
             "routes_truncated": stats.routes_truncated,
             "route_metadata_status": stats.route_metadata_status,
-            "last_update": datetime.now().isoformat()
+            "last_update": datetime.now(timezone.utc).isoformat()
         }
     
     def get_evpn_summary(self) -> Dict[str, Any]:
@@ -796,7 +796,7 @@ class BGPAnalyzer:
             "truncated_devices": truncated_devices,
             "unique_vni_details": list(unique_vnis.values()),
             "per_device": self.current_evpn_stats,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
 
     def set_collection_coverage(
@@ -876,7 +876,7 @@ class BGPAnalyzer:
                 if total_neighbors > 0 else None
             ),
             "collection_coverage": dict(self.collection_coverage),
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
     
     def detect_bgp_anomalies(self) -> List[Dict[str, Any]]:
@@ -2142,7 +2142,8 @@ class BGPAnalyzer:
                     `;
                     document.body.appendChild(notification);
                     const completion = typeof window.waitForLldpqAnalysisCompletion === 'function'
-                        ? window.waitForLldpqAnalysisCompletion(baseline)
+                        ? window.waitForLldpqAnalysisCompletion(
+                            baseline, {{ pipelineId: data.trigger_id }})
                         : new Promise(resolve => setTimeout(resolve, 35000));
                     Promise.resolve(completion)
                         .then(() => window.location.reload())

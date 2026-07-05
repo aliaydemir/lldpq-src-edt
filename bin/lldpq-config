@@ -68,6 +68,7 @@ ALLOWED_KEYS = frozenset({
     # AI provider and optional search backend.
     "AI_PROVIDER",
     "AI_MODEL",
+    "AI_FALLBACK_MODEL",
     "AI_API_KEY",
     "AI_API_URL",
     "OLLAMA_URL",

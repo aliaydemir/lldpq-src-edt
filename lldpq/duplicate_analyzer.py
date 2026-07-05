@@ -1381,13 +1381,30 @@ function filterByDevice(dev){
   setFilterInfo('Device: '+dev);
 }
 function clearDeviceSearch(){ showAllDup(); }
-function runAnalysis(){
+async function runAnalysis(){
   var b=document.getElementById('run-analysis'); var o=b.innerHTML;
   b.disabled=true; b.innerHTML='<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="animation:spin 1s linear infinite"><path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4Z"/></svg> Running...';
-  fetch('/trigger-monitor',{method:'POST',headers:{'Content-Type':'application/json'}})
-    .then(function(r){return r.json();})
-    .then(function(d){ if(d && d.status==='success'){ setTimeout(function(){ location.reload(); }, 35000); } else { b.disabled=false; b.innerHTML=o; alert('Failed to trigger analysis.'); } })
-    .catch(function(){ b.disabled=false; b.innerHTML=o; alert('Error triggering analysis.'); });
+  try {
+    var baseline = typeof window.lldpqCapturePipelineState === 'function'
+      ? await window.lldpqCapturePipelineState() : null;
+    var response = await fetch('/trigger-monitor',{
+      method:'POST', headers:{'Content-Type':'application/json'}
+    });
+    var data = await response.json();
+    if(!response.ok || !data || data.status!=='success' || !data.trigger_id){
+      throw new Error((data && data.message) || 'Failed to trigger analysis.');
+    }
+    if(typeof window.waitForLldpqAnalysisCompletion === 'function'){
+      await window.waitForLldpqAnalysisCompletion(
+        baseline, {pipelineId:data.trigger_id});
+    }else{
+      await new Promise(function(resolve){ setTimeout(resolve,35000); });
+    }
+    location.reload();
+  }catch(error){
+    b.disabled=false; b.innerHTML=o;
+    alert('Analysis did not complete: '+(error.message||error));
+  }
 }
 function csvEsc(v){ v=(v==null?'':String(v)); return '"'+v.replace(/"/g,'""')+'"'; }
 function downloadCSV(){

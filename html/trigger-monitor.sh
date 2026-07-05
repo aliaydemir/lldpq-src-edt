@@ -34,7 +34,8 @@ TRIGGER_TEMP="${TRIGGER_FILE}.tmp.$$.$RANDOM"
 # Try to create the trigger file
 if printf '%s\n' "$TRIGGER_VALUE" > "$TRIGGER_TEMP" 2>/dev/null &&
    mv -f "$TRIGGER_TEMP" "$TRIGGER_FILE" 2>/dev/null; then
-    echo '{"status": "success", "message": "Monitor analysis triggered successfully"}'
+    printf '{"status":"success","trigger_id":"%s","message":"Monitor analysis triggered successfully"}\n' \
+        "$TRIGGER_VALUE"
 else
     rm -f "$TRIGGER_TEMP" 2>/dev/null || true
     echo '{"status": "error", "message": "Failed to create trigger file"}'

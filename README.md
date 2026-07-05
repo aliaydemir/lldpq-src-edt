@@ -56,7 +56,7 @@ Then open `http://localhost`.
 5. Click **Run Setup** → SSH keys are generated and distributed to all devices automatically
 6. Failed devices can be retried with a different password
 
-> Prefer a guided flow? The admin **Setup** page chains inventory → SSH keys → topology → notifications → run (and adds backup & maintenance) in the recommended order — see [[03b] guided web setup](#03b-guided-web-setup-setup-page).
+> Prefer a guided flow? The admin **Setup** page chains inventory → SSH keys → topology → topology config → display aliases → Ansible → notifications → run (and adds backup & maintenance) in the recommended order — see [[03b] guided web setup](#03b-guided-web-setup-setup-page).
 
 **What you need:**
 - Your switch hostnames and management IPs — entered via the web UI
@@ -220,6 +220,7 @@ copy_tree_optional /var/lib/dhcp/. "$backup/dhcp-state/"
 copy_tree_required /var/www/html/. "$backup/web-root/"
 copy_optional /home/lldpq/lldpq/devices.yaml "$backup/app-config/devices.yaml"
 copy_optional /home/lldpq/lldpq/notifications.yaml "$backup/app-config/notifications.yaml"
+copy_optional /var/www/html/inventory.json "$backup/app-config/inventory.json"
 copy_optional /var/www/html/topology.dot "$backup/app-config/topology.dot"
 copy_optional /var/www/html/topology_config.yaml "$backup/app-config/topology_config.yaml"
 copy_optional /etc/lldpq-users.conf "$backup/app-config/lldpq-users.conf"
@@ -239,6 +240,12 @@ persistent_args=(
   -v lldpq-data:/home/lldpq/lldpq/monitor-results
   -v lldpq-lldp-data:/home/lldpq/lldpq/lldp-results
   -v lldpq-alert-state:/home/lldpq/lldpq/alert-states
+  -v lldpq-lldp-jobs:/var/lib/lldpq/lldp-jobs
+  -v lldpq-assets-jobs:/var/lib/lldpq/assets-jobs
+  -v lldpq-upgrade-jobs:/var/lib/lldpq/upgrade-jobs
+  -v lldpq-ai-state:/var/lib/lldpq/ai
+  -v lldpq-provision-jobs:/var/lib/lldpq/provision-jobs
+  -v lldpq-provision-state:/var/lib/lldpq/provision-state
   -v lldpq-dhcp-state:/var/lib/dhcp
   -v lldpq-configs:/var/www/html/configs
   -v lldpq-hstr:/var/www/html/hstr
@@ -628,7 +635,7 @@ patterns are matched against devices found in LLDP neighbor data.
 
 ## [03b] guided web setup (Setup page)
 
-Admin-only **Setup** page (`http://<server>/setup.html`) — a guided, 10-step wizard that walks you through the whole lifecycle, from a fresh install to day-2 maintenance. A numbered progress rail marks completed steps. Every step is also reachable on its own, but the wizard chains them in the recommended order.
+Admin-only **Setup** page (`http://<server>/setup.html`) — a guided, 11-step wizard that walks you through the whole lifecycle, from a fresh install to day-2 maintenance. A numbered rail shows the current step. Every step is also reachable directly with `setup.html?step=<name>`, while Next/Back follows the recommended order.
 
 | # | Step | What it does |
 |---|------|--------------|
@@ -636,14 +643,21 @@ Admin-only **Setup** page (`http://<server>/setup.html`) — a guided, 10-step w
 | 2 | SSH Keys | Generate the collector key, authorize it on devices + passwordless sudo |
 | 3 | Topology | Edit `topology.dot` — expected cabling |
 | 4 | Topology Config | Edit `topology_config.yaml` — layout / layer / icon rules |
-| 5 | Integrate Ansible | Optional — point to the Ansible dir for VLAN/VRF/Fabric features |
-| 6 | Notifications | Slack alerts — webhook, channel, alert types, thresholds, Test button |
-| 7 | Run LLDPq | Collect data & validate, with live streaming output |
-| 8 | Backup & Restore | Export / import a full config bundle |
-| 9 | Maintenance | Disk-usage report & safe cleanup of old update backups |
-| 10 | Update LLDPq | `git pull` + reinstall, with live streaming output |
+| 5 | Display Aliases | Optional — edit device/interface P2P and field display names |
+| 6 | Integrate Ansible | Optional — point to the Ansible dir for VLAN/VRF/Fabric features |
+| 7 | Notifications | Slack alerts — webhook, channel, alert types, thresholds, Test button |
+| 8 | Run LLDPq | Collect data & validate, with live streaming output |
+| 9 | Backup & Restore | Export / import a full config bundle |
+| 10 | Maintenance | Disk-usage report & safe cleanup of old update backups |
+| 11 | Update LLDPq | `git pull` + reinstall, with live streaming output |
 
-### Notifications (step 6)
+### Display Aliases (step 5)
+
+Edit `display-aliases.json` without leaving Setup. Device names and interface/port names are separate maps from canonical names to display labels. The editor supports structured rows, bulk paste (`display-label<TAB>canonical-name`), and JSON upload/download. Aliases affect presentation only; collected source data and topology validation remain unchanged.
+
+The same alias editor remains available from the LLDP page. Saving either editor reloads the server-normalized mapping and notifies other open LLDPq tabs.
+
+### Notifications (step 7)
 
 Configure Slack alerting entirely from the web UI — no manual YAML editing:
 - **Master enable/disable** toggle
@@ -653,17 +667,17 @@ Configure Slack alerting entirely from the web UI — no manual YAML editing:
 - **Key thresholds** (temperature, link-flap count, …) editable inline
 - **Test alert** button — sends a sample message to verify the webhook end-to-end
 
-Changes are written back to `notifications.yaml` with existing comments preserved.
+Changes are validated and written atomically; existing comments and unrelated YAML keys are preserved. If the file changes elsewhere while the form is open, Setup keeps the form contents and asks you to reload/review instead of silently overwriting the newer file.
 
-### Backup & Restore (step 8)
+### Backup & Restore (step 9)
 
 Export a portable configuration bundle (`.tar.gz`) and re-import it on a new install for painless migration:
 - **Included:** `devices.yaml`, `topology.dot`, `topology_config.yaml`, `notifications.yaml`, `display-aliases.json`, and a whitelist of **portable** `/etc/lldpq.conf` preferences (schedules, parallelism, feature toggles, AI settings)
 - **Excluded from portable prefs:** host-specific paths and secrets (e.g. the AI API key)
-- **SSH key** (optional checkbox, on by default): includes the collector key pair so the restored install can reach devices immediately. *The bundle becomes sensitive when the key is included — store it securely.*
+- **SSH key** (optional checkbox, on by default): includes the collector key pair so the restored install can reach devices immediately. Bundles can already contain notification webhooks; always store them securely, especially when the private key is included.
 - **Import** restores every file to the right location, merges the portable prefs into `/etc/lldpq.conf`, and applies any schedule changes to cron.
 
-### Maintenance (step 9)
+### Maintenance (step 10)
 
 - **Disk usage** report for `monitor-results/` and the old update backups, plus total free space
 - **Safe purge** of old update backups (the `~/lldpq-backup-*` snapshots `install.sh` creates on every update — see [05]) behind a two-click guard: frees space without touching live config or monitoring data
@@ -703,7 +717,9 @@ Runtime monitoring data and user configuration are preserved automatically.
 Every update also creates a temporary same-filesystem rollback snapshot of the
 previous runtime plus critical system configuration. If a later DHCP, service
 or cron step fails, the installer restores that snapshot automatically. It is
-deleted after a successful update.
+deleted after a successful update. A root-owned transaction marker and boot
+recovery service cover SIGKILL, reboot and power-loss interruptions that cannot
+run the installer's normal EXIT handler.
 An optional full data/configuration snapshot can be requested with
 `./install.sh --backup` and is created at
 `~/lldpq-backup-YYYY-MM-DD_HH-MM-SS/`. A `COMPLETE` marker is written only
@@ -712,7 +728,7 @@ installation is stopped:
 
 ### what gets backed up & preserved:
 - **config files**: devices.yaml, notifications.yaml, topology.dot, topology_config.yaml
-- **monitoring data**: monitor-results/, lldp-results/, alert-states/
+- **monitoring data**: assets.ini, monitor-results/, lldp-results/, alert-states/
 - **system configs**: /etc/lldpq.conf, /etc/lldpq-users.conf
 - **DHCP configs**: /etc/dhcp/dhcpd.conf, /etc/dhcp/dhcpd.hosts
 - **provisioning state**: DHCP leases, ZTP/serial/display-alias settings,
@@ -876,7 +892,7 @@ get real-time alerts for network issues via Slack.
 
 ### web UI (recommended)
 
-The **Setup → Notifications** step (see [03b]) configures everything from the browser: master enable/disable, webhook URL + channel, alert mode, minimum repeat interval, per-type toggles, key thresholds, and a **Test alert** button. Changes are saved back to `notifications.yaml` (comments preserved).
+The **Setup → Notifications** step (see [03b]) configures everything from the browser: master enable/disable, webhook URL + channel, alert mode, minimum repeat interval, per-type toggles, key thresholds, and a **Test alert** button. Changes are validated and written atomically while preserving existing comments and unrelated YAML keys.
 
 ### manual (CLI)
 

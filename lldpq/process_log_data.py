@@ -1169,7 +1169,8 @@ class LogAnalyzer:
                     return;
                 }
 
-                await window.waitForLldpqAnalysisCompletion(baseline);
+                await window.waitForLldpqAnalysisCompletion(
+                    baseline, {{ pipelineId: data.trigger_id }});
                 window.location.reload();
             } catch (error) {
                 console.error('❌ Analysis did not complete:', error);

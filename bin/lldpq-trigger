@@ -273,6 +273,7 @@ write_trigger_report_marker() {
         printf 'status=%s\n' "$marker_status"
         printf 'timestamp=%s\n' "$timestamp"
         printf 'reason=%s\n' "$reason"
+        printf 'pipeline_id=%s\n' "${LLDPQ_PIPELINE_ID:-}"
     } > "$temporary" || ! chmod 0644 "$temporary" || \
        ! mv -f "$temporary" "$TRIGGER_STALE_MARKER"; then
         rm -f "$temporary"
@@ -633,7 +634,7 @@ process_assets_jobs() {
 }
 
 refresh_monitor() (
-    local report_state=collecting status
+    local requested_pipeline_id=${1-} report_state=collecting status
 
     trigger_monitor_exit_guard() {
         local exit_status=$?
@@ -647,7 +648,12 @@ refresh_monitor() (
     trap trigger_monitor_exit_guard EXIT
 
     cd "$LLDPQ_DIR" || return 1
-    export LLDPQ_PIPELINE_ID="$(date -u '+%Y%m%dT%H%M%SZ')-$$-$RANDOM"
+    if [[ ! "$requested_pipeline_id" =~ ^[A-Za-z0-9_.:-]{1,128}$ ]]; then
+        mark_trigger_reports_stale "invalid web analysis request identity" || true
+        report_state=stale
+        return 1
+    fi
+    export LLDPQ_PIPELINE_ID="$requested_pipeline_id"
     export LLDPQ_PIPELINE_STARTED_AT="$(date +%s)"
     if ! write_trigger_report_marker collecting web_analysis_collection_in_progress; then
         mark_trigger_reports_stale \
@@ -751,7 +757,7 @@ while true; do
             MONITOR_NOW=$(date +%s)
             if (( MONITOR_NOW < MONITOR_NEXT_RETRY_AT )); then
                 : # Pending; bounded retry window has not elapsed yet
-            elif run_under_monitor_lock refresh_monitor && \
+            elif run_under_monitor_lock refresh_monitor "$MONITOR_PENDING_TRIGGER_TIME" && \
                  write_trigger_timestamp "$MONITOR_LAST_CHECK_FILE" "$MONITOR_TRIGGER_TIME"; then
                 MONITOR_PENDING_TRIGGER_TIME=0
                 MONITOR_NEXT_RETRY_AT=0
