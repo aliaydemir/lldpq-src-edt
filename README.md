@@ -432,6 +432,7 @@ cd lldpq-src
 - **optical diagnostics**: power levels, temperature, bias current, link margins  
 - **link flap detection**: carrier transitions on all interfaces (including breakouts), with time-windowed flap counts (1h / 12h / 24h)
 - **Link error / BER**: directional frame-error density from interface counters, plus separately graded raw/effective PHY BER and PHY symbol-error deltas
+- **PFC/ECN**: telemetry-free static analysis of exact traffic-class 3 `ecn-marked-frames` and switch-priority 3 `rx-pause-frames` / `tx-pause-frames`; the first run establishes a counter baseline, and subsequent runs show reset-safe deltas and rates
 - **hardware health**: cpu/asic temperatures, memory usage, fan speeds, psu efficiency
 - **topology validation**: lldp neighbor verification against expected topology
 

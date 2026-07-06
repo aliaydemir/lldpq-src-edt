@@ -62,6 +62,14 @@ case "$MAX_PARALLEL" in
     ''|*[!0-9]*|0) MAX_PARALLEL=100 ;;
 esac
 SSH_TIMEOUT=60   # SSH connection timeout in seconds
+PFC_ECN_COLLECTION_BUDGET_SECONDS="${PFC_ECN_COLLECTION_BUDGET_SECONDS:-60}"
+PFC_ECN_PORT_TIMEOUT_SECONDS="${PFC_ECN_PORT_TIMEOUT_SECONDS:-5}"
+case "$PFC_ECN_COLLECTION_BUDGET_SECONDS" in
+    ''|*[!0-9]*|0) PFC_ECN_COLLECTION_BUDGET_SECONDS=60 ;;
+esac
+case "$PFC_ECN_PORT_TIMEOUT_SECONDS" in
+    ''|*[!0-9]*|0) PFC_ECN_PORT_TIMEOUT_SECONDS=5 ;;
+esac
 
 mkdir -p \
     "$SCRIPT_DIR/monitor-results/flap-data" \
@@ -70,6 +78,7 @@ mkdir -p \
     "$SCRIPT_DIR/monitor-results/dup-data" \
     "$SCRIPT_DIR/monitor-results/optical-data" \
     "$SCRIPT_DIR/monitor-results/ber-data" \
+    "$SCRIPT_DIR/monitor-results/pfc-ecn-data" \
     "$SCRIPT_DIR/monitor-results/hardware-data" \
     "$SCRIPT_DIR/monitor-results/log-data" || exit 1
 
@@ -88,6 +97,22 @@ analysis_transaction_active=false
 recovery_bundle_must_be_preserved=false
 
 analysis_artifacts=(
+    .lldpq-current.json
+    .pipeline-inputs/assets.ini .pipeline-inputs/lldp_results.ini
+    bgp-analysis.html bgp_history.json
+    link-flap-analysis.html flap_history.json
+    optical-analysis.html optical_history.json
+    ber-analysis.html ber_history.json ber_baseline.json
+    pfc-ecn-analysis.html pfc_ecn_baseline.json pfc_ecn_history.json
+    hardware-analysis.html
+    log-analysis.html log_summary.json
+    duplicate-analysis.html dup-data/dup_seq_state.json dup-data/dup_ip_state.json
+)
+
+# A retained analyzer rollback snapshot can predate the PFC/ECN feature.  Keep
+# that exact schema recoverable, while still rejecting arbitrary or partial
+# manifests.  New snapshots always use analysis_artifacts above.
+analysis_artifacts_legacy_v1=(
     .lldpq-current.json
     .pipeline-inputs/assets.ini .pipeline-inputs/lldp_results.ini
     bgp-analysis.html bgp_history.json
@@ -274,6 +299,7 @@ PYTHON
 validate_analysis_backup_manifest() {
     local manifest="$analysis_backup_dir/manifest"
     local status relative extra expected expected_artifact backup count=0 valid=true
+    local current_schema=true legacy_schema=true
     local -A seen=()
     [[ -f "$manifest" && ! -L "$manifest" ]] || return 1
 
@@ -303,11 +329,16 @@ validate_analysis_backup_manifest() {
         fi
     done < "$manifest" || return 1
 
-    [[ "$valid" == "true" && "$count" -eq "${#analysis_artifacts[@]}" ]] || return 1
+    [[ "$valid" == "true" ]] || return 1
+    [[ "$count" -eq "${#analysis_artifacts[@]}" ]] || current_schema=false
     for expected_artifact in "${analysis_artifacts[@]}"; do
-        [[ -n "${seen[$expected_artifact]+x}" ]] || return 1
+        [[ -n "${seen[$expected_artifact]+x}" ]] || current_schema=false
     done
-    return 0
+    [[ "$count" -eq "${#analysis_artifacts_legacy_v1[@]}" ]] || legacy_schema=false
+    for expected_artifact in "${analysis_artifacts_legacy_v1[@]}"; do
+        [[ -n "${seen[$expected_artifact]+x}" ]] || legacy_schema=false
+    done
+    [[ "$current_schema" == "true" || "$legacy_schema" == "true" ]]
 }
 
 commit_analysis_state() {
@@ -737,6 +768,7 @@ clear_current_device_artifacts() {
         "$SCRIPT_DIR/monitor-results/ber-data/${hostname}_interface_errors.txt" \
         "$SCRIPT_DIR/monitor-results/ber-data/${hostname}_detailed_counters.txt" \
         "$SCRIPT_DIR/monitor-results/ber-data/${hostname}_l1_show.txt" \
+        "$SCRIPT_DIR/monitor-results/pfc-ecn-data/${hostname}_pfc_ecn.txt" \
         "$SCRIPT_DIR/monitor-results/hardware-data/${hostname}_hardware.txt" \
         "$SCRIPT_DIR/monitor-results/log-data/${hostname}_logs.txt"
 }
@@ -768,7 +800,7 @@ from pathlib import Path
 sections = (
     "HTML_OUTPUT", "BGP_DATA", "EVPN_DATA", "DUP_DATA", "FDB_DATA",
     "NEIGH_DATA", "CARRIER_DATA", "OPTICAL_DATA", "BER_DATA", "L1_DATA",
-    "HARDWARE_DATA", "LOG_DATA",
+    "PFC_ECN_DATA", "HARDWARE_DATA", "LOG_DATA",
 )
 try:
     lines = Path(sys.argv[1]).read_text(
@@ -892,7 +924,8 @@ try:
     payload = json.loads(marker_bytes.decode("utf-8"))
     if set(payload) != {"version", "status", "hostname", "records"}:
         fail("device recovery marker has an unexpected schema")
-    if payload["version"] != 1 or payload["status"] != "rollback-required":
+    version = payload["version"]
+    if version not in {1, 2} or payload["status"] != "rollback-required":
         fail("device recovery marker has an unsupported state")
     hostname = payload["hostname"]
     if not isinstance(hostname, str) or not re.fullmatch(
@@ -900,12 +933,12 @@ try:
     ) or ".." in hostname:
         fail("device recovery hostname is invalid")
 
-    source_names = [
+    legacy_source_names = [
         "device.html", "bgp.txt", "evpn.txt", "dup.txt", "fdb.txt",
         "neigh.txt", "carrier.txt", "optical.txt", "ber.txt", "l1.txt",
         "hardware.txt", "logs.txt",
     ]
-    destinations = [
+    legacy_destinations = [
         f"monitor-results/{hostname}.html",
         f"monitor-results/bgp-data/{hostname}_bgp.txt",
         f"monitor-results/evpn-data/{hostname}_evpn.txt",
@@ -920,6 +953,16 @@ try:
         f"monitor-results/log-data/{hostname}_logs.txt",
         f"monitor-results/ber-data/{hostname}_detailed_counters.txt",
     ]
+    if version == 1:
+        source_names = legacy_source_names
+        destinations = legacy_destinations
+    else:
+        source_names = legacy_source_names[:10] + ["pfc-ecn.txt"] + legacy_source_names[10:]
+        destinations = (
+            legacy_destinations[:10]
+            + [f"monitor-results/pfc-ecn-data/{hostname}_pfc_ecn.txt"]
+            + legacy_destinations[10:]
+        )
     destinations = [os.path.join(script_dir, value) for value in destinations]
     records = payload["records"]
     if not isinstance(records, list) or len(records) != len(destinations):
@@ -1073,6 +1116,7 @@ commit_device_bundle() {
         "$stage_dir/optical.txt"
         "$stage_dir/ber.txt"
         "$stage_dir/l1.txt"
+        "$stage_dir/pfc-ecn.txt"
         "$stage_dir/hardware.txt"
         "$stage_dir/logs.txt"
     )
@@ -1087,6 +1131,7 @@ commit_device_bundle() {
         "$SCRIPT_DIR/monitor-results/optical-data/${hostname}_optical.txt"
         "$SCRIPT_DIR/monitor-results/ber-data/${hostname}_interface_errors.txt"
         "$SCRIPT_DIR/monitor-results/ber-data/${hostname}_l1_show.txt"
+        "$SCRIPT_DIR/monitor-results/pfc-ecn-data/${hostname}_pfc_ecn.txt"
         "$SCRIPT_DIR/monitor-results/hardware-data/${hostname}_hardware.txt"
         "$SCRIPT_DIR/monitor-results/log-data/${hostname}_logs.txt"
         # Retired legacy extract: back it up for rollback, but do not replace it.
@@ -1181,7 +1226,7 @@ descriptor, temporary = tempfile.mkstemp(
 try:
     with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
         json.dump({
-            "version": 1,
+            "version": 2,
             "status": "rollback-required",
             "hostname": hostname,
             "records": records,
@@ -1236,7 +1281,7 @@ if len(marker_bytes) != marker_stat.st_size:
     raise SystemExit("device recovery authority changed while being read")
 payload = json.loads(marker_bytes.decode("utf-8"))
 records = payload.get("records")
-if (payload.get("version") != 1 or payload.get("status") != "rollback-required"
+if (payload.get("version") != 2 or payload.get("status") != "rollback-required"
         or not isinstance(records, list) or len(records) != len(destinations)):
     raise SystemExit("invalid device recovery authority")
 for index, (record, destination) in enumerate(zip(records, destinations)):
@@ -1344,7 +1389,7 @@ with open(marker, "r", encoding="utf-8") as handle:
     payload = json.load(handle)
 records = payload.get("records")
 if (set(payload) != {"version", "status", "hostname", "records"}
-        or payload.get("version") != 1
+        or payload.get("version") != 2
         or payload.get("status") != "rollback-required"
         or not isinstance(records, list) or len(records) != len(destinations)):
     raise SystemExit("invalid device recovery authority before backup sync")
@@ -1543,6 +1588,8 @@ EOF
         HOSTNAME_VAR="'"$hostname"'"
         SKIP_OPTICAL="'"$SKIP_OPTICAL"'"
         SKIP_L1="'"$SKIP_L1"'"
+        PFC_ECN_COLLECTION_BUDGET_SECONDS="'"$PFC_ECN_COLLECTION_BUDGET_SECONDS"'"
+        PFC_ECN_PORT_TIMEOUT_SECONDS="'"$PFC_ECN_PORT_TIMEOUT_SECONDS"'"
         
         # =====================================================================
         # SECTION 1: Interface Overview (for HTML)
@@ -1901,7 +1948,79 @@ EOF
         echo "===L1_DATA_END==="
         
         # =====================================================================
-        # SECTION 7: Hardware Health (with fallback)
+        # SECTION 7: PFC/ECN QoS Counters
+        # =====================================================================
+        echo "===PFC_ECN_DATA_START==="
+        _pfc_ecn_collection_utc=$(date -u "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || true)
+        echo "__LLDPQ_PFC_ECN_COLLECTION_UTC__:${_pfc_ecn_collection_utc:-UNKNOWN}"
+        _pfc_ecn_inventory=$(
+            for _pfc_ecn_path in /sys/class/net/*; do
+                [ -e "$_pfc_ecn_path" ] || continue
+                _pfc_ecn_name=${_pfc_ecn_path##*/}
+                if printf "%s\n" "$_pfc_ecn_name" | grep -Eq "^swp[0-9]+(s[0-9]+)?$"; then
+                    printf "%s\n" "$_pfc_ecn_name"
+                fi
+            done | sort -V
+        )
+        _pfc_ecn_port_count=0
+        for _pfc_ecn_port in $_pfc_ecn_inventory; do
+            _pfc_ecn_port_count=$((_pfc_ecn_port_count + 1))
+        done
+        if [ "$_pfc_ecn_port_count" -gt 0 ]; then
+            echo "__LLDPQ_PFC_ECN_INVENTORY_STATUS__:OK:${_pfc_ecn_port_count}"
+        else
+            echo "__LLDPQ_PFC_ECN_INVENTORY_STATUS__:EMPTY:0"
+        fi
+        # Keep the reads sequential inside this single SSH session.  A failed
+        # port is represented in-band and must not invalidate other ports or
+        # the complete device collection bundle.  Bound both each command and
+        # the whole QoS section so a stuck NVUE daemon cannot consume the
+        # device-wide 300-second SSH budget and suppress every other report.
+        _pfc_ecn_deadline=$(($(date +%s) + PFC_ECN_COLLECTION_BUDGET_SECONDS))
+        _pfc_ecn_has_nv=true
+        _pfc_ecn_has_timeout=true
+        command -v nv >/dev/null 2>&1 || _pfc_ecn_has_nv=false
+        command -v timeout >/dev/null 2>&1 || _pfc_ecn_has_timeout=false
+        for _pfc_ecn_port in $_pfc_ecn_inventory; do
+            echo "__LLDPQ_PFC_ECN_PORT_START__:${_pfc_ecn_port}"
+            if [ "$_pfc_ecn_has_nv" != "true" ]; then
+                _pfc_ecn_output="nv command is not available"
+                _pfc_ecn_status=127
+            elif [ "$_pfc_ecn_has_timeout" != "true" ]; then
+                _pfc_ecn_output="timeout command is not available; QoS read skipped"
+                _pfc_ecn_status=125
+            else
+                _pfc_ecn_remaining=$((_pfc_ecn_deadline - $(date +%s)))
+                if [ "$_pfc_ecn_remaining" -le 0 ]; then
+                    _pfc_ecn_output="PFC/ECN collection budget exhausted"
+                    _pfc_ecn_status=124
+                else
+                    _pfc_ecn_limit=$PFC_ECN_PORT_TIMEOUT_SECONDS
+                    if [ "$_pfc_ecn_remaining" -lt "$_pfc_ecn_limit" ]; then
+                        _pfc_ecn_limit=$_pfc_ecn_remaining
+                    fi
+                    _pfc_ecn_output=$(timeout -k 1s "${_pfc_ecn_limit}s" \
+                        nv show interface "$_pfc_ecn_port" counters qos -o json 2>&1)
+                    _pfc_ecn_status=$?
+                fi
+            fi
+            if [ "$_pfc_ecn_status" -eq 0 ]; then
+                echo "__LLDPQ_PFC_ECN_PORT_STATUS__:${_pfc_ecn_port}:OK:0"
+            else
+                echo "__LLDPQ_PFC_ECN_PORT_STATUS__:${_pfc_ecn_port}:ERROR:${_pfc_ecn_status}"
+            fi
+            printf "%s\n" "$_pfc_ecn_output"
+            echo "__LLDPQ_PFC_ECN_PORT_END__:${_pfc_ecn_port}"
+        done
+        unset _pfc_ecn_collection_utc _pfc_ecn_inventory _pfc_ecn_path \
+            _pfc_ecn_name _pfc_ecn_port_count _pfc_ecn_port \
+            _pfc_ecn_output _pfc_ecn_status _pfc_ecn_deadline \
+            _pfc_ecn_has_nv _pfc_ecn_has_timeout _pfc_ecn_remaining \
+            _pfc_ecn_limit
+        echo "===PFC_ECN_DATA_END==="
+
+        # =====================================================================
+        # SECTION 8: Hardware Health (with fallback)
         # =====================================================================
         echo "===HARDWARE_DATA_START==="
         echo "HARDWARE_HEALTH:"
@@ -2004,7 +2123,7 @@ EOF
         echo "===HARDWARE_DATA_END==="
         
         # =====================================================================
-        # SECTION 8: System Logs (comprehensive)
+        # SECTION 9: System Logs (comprehensive)
         # =====================================================================
         echo "===LOG_DATA_START==="
         echo "=== COMPREHENSIVE SYSTEM LOGS ==="
@@ -2271,6 +2390,8 @@ EOF
             "$bundle_stage/ber.txt" ||
        ! extract_collection_section "$raw_file" L1_DATA \
             "$bundle_stage/l1.txt" ||
+       ! extract_collection_section "$raw_file" PFC_ECN_DATA \
+            "$bundle_stage/pfc-ecn.txt" ||
        ! extract_collection_section "$raw_file" HARDWARE_DATA \
             "$bundle_stage/hardware.txt" ||
        ! extract_collection_section "$raw_file" LOG_DATA \
@@ -2568,12 +2689,14 @@ validate_analysis_outputs() {
         bgp-analysis.html bgp_history.json
         link-flap-analysis.html flap_history.json
         ber-analysis.html ber_history.json ber_baseline.json
+        pfc-ecn-analysis.html pfc_ecn_baseline.json pfc_ecn_history.json
         hardware-analysis.html
         log-analysis.html log_summary.json
         duplicate-analysis.html dup-data/dup_seq_state.json dup-data/dup_ip_state.json
     )
     local -a json_files=(
         bgp_history.json flap_history.json ber_history.json ber_baseline.json
+        pfc_ecn_baseline.json pfc_ecn_history.json
         log_summary.json dup-data/dup_seq_state.json dup-data/dup_ip_state.json
     )
     if [[ "$SKIP_OPTICAL" != "true" ]]; then
@@ -2614,6 +2737,7 @@ if [[ "$SKIP_OPTICAL" != "true" ]]; then
     start_analysis optical python3 process_optical_data.py
 fi
 start_analysis ber python3 process_ber_data.py
+start_analysis pfc-ecn python3 process_pfc_ecn_data.py
 start_analysis hardware python3 process_hardware_data.py
 start_analysis log python3 process_log_data.py
 start_analysis duplicate python3 process_duplicate_data.py
