@@ -85,13 +85,25 @@ class BERHistoryTests(unittest.TestCase):
             analyzer.cleanup_old_history()
             retained = analyzer.ber_history["leaf-01:swp1"]
 
-            self.assertEqual(len(retained), 13)
+            # The ten newest analyzed records overlap the two newest context
+            # records, so the old symbol baseline is the eleventh retained
+            # entry; 13 is the maximum, not a forced size.
+            self.assertEqual(len(retained), 11)
             self.assertEqual(retained[0]["symbol_errors"], 1234)
+            current = {"timestamp": time.time(), "symbol_errors": 1400}
+            analyzer.ber_history["leaf-01:swp1"].append(current)
             self.assertEqual(
-                analyzer._previous_symbol_errors(
-                    "leaf-01:swp1", {"timestamp": time.time(), "symbol_errors": 1400}
+                analyzer._previous_symbol_errors("leaf-01:swp1", current), 1234
+            )
+
+            self.assertTrue(analyzer.save_ber_history())
+            reloaded = BERAnalyzer(temporary)
+            reloaded_current = {"timestamp": time.time() + 1, "symbol_errors": 1500}
+            self.assertEqual(
+                reloaded._previous_symbol_errors(
+                    "leaf-01:swp1", reloaded_current
                 ),
-                1234,
+                1400,
             )
 
     def test_atomic_history_failure_keeps_previous_file(self):
