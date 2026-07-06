@@ -58,6 +58,8 @@ SEQ_WARN = 10                  # EVPN mobility seq >= this = the entry has moved
 SEQ_STORM = 10000
 DEFAULT_DAD_MOVES = 5          # FRR default/fallback when per-switch policy is unavailable
 DEFAULT_DAD_WINDOW_SEC = 180
+MAC_OBSERVER_STATE_VERSION = 1
+MAC_OBSERVER_STATE_TTL_SEC = 7 * 86400
 LOOP_MIN_MACS = 10             # >= this many MACs flapping between the SAME endpoint pair (no dup IP) = likely L2 loop
 STALE_AGE_SEC = 7 * 86400      # a quiesced dup whose EVPN sequence has not moved for this long = aged/stale
                                # (collapsed out of the main list; still available via the "aged" toggle)
@@ -104,7 +106,8 @@ class DuplicateAnalyzer:
         self.analysis_now = datetime.now(timezone.utc)
         self.collection_meta = {}      # host -> collector timestamp/source status
         self.coverage = {
-            "expected": set(), "current": set(), "failures": [], "partial": True,
+            "expected": set(), "current": set(), "mac_current": set(),
+            "failures": [], "partial": True,
         }
         self.prev_state = self._load_state()
         self.new_state = {}
@@ -162,7 +165,13 @@ class DuplicateAnalyzer:
             if "_dup.txt" in files:
                 self._parse_dup(ch, self._read(files["_dup.txt"]))
             if "_fdb.txt" in files:
-                self._parse_fdb(ch, self._read(files["_fdb.txt"]))
+                fdb_text = self._read(files["_fdb.txt"])
+                fdb_ok = "__LLDPQ_COLLECTION_ERROR__:FDB" not in fdb_text
+                self.collection_meta[ch]["sources"]["FDB_LOCAL"] = (
+                    "OK" if fdb_ok else "ERROR"
+                )
+                if fdb_ok:
+                    self._parse_fdb(ch, fdb_text)
             if "_neigh.txt" in files:
                 self._parse_neigh(ch, self._read(files["_neigh.txt"]))
         self._finalize_coverage()
@@ -275,8 +284,10 @@ class DuplicateAnalyzer:
             max_age = 30 * 60
 
         current = set()
+        mac_current = set()
         failures = []
-        required = ("COLLECTION_TIMESTAMP", "ARP_DUPLICATES")
+        ip_required = ("ARP_DUPLICATES",)
+        mac_required = ("MAC_DUPLICATES", "MAC_MOBILITY", "FDB_LOCAL")
         for host in sorted(expected):
             status = asset_statuses.get(host)
             if status is not None and status != "OK":
@@ -302,20 +313,38 @@ class DuplicateAnalyzer:
                     failures.append("%s:COLLECTION_TIME_FUTURE" % host)
 
             sources = meta.get("sources", {})
-            core_ok = timestamp_ok
-            for source in required:
+            collection_status = sources.get("COLLECTION_TIMESTAMP")
+            base_ok = timestamp_ok and collection_status == "OK"
+            if collection_status != "OK":
+                failures.append("%s:COLLECTION_TIMESTAMP_%s" % (
+                    host, collection_status or "MISSING",
+                ))
+
+            ip_ok = base_ok
+            for source in ip_required:
                 source_status = sources.get(source)
                 if source_status != "OK":
-                    core_ok = False
+                    ip_ok = False
                     failures.append("%s:%s_%s" % (
                         host, source, source_status or "MISSING",
                     ))
             if not meta.get("arp_section_present"):
-                core_ok = False
+                ip_ok = False
                 failures.append("%s:ARP_SECTION_MISSING" % host)
 
-            if core_ok:
+            mac_ok = base_ok
+            for source in mac_required:
+                source_status = sources.get(source)
+                if source_status != "OK":
+                    mac_ok = False
+                    failures.append("%s:%s_%s" % (
+                        host, source, source_status or "MISSING",
+                    ))
+
+            if ip_ok:
                 current.add(host)
+            if mac_ok:
+                mac_current.add(host)
 
         # Inventory is the authority for expected devices.  Without a valid
         # snapshot we may parse rows for diagnostics, but must not publish a
@@ -323,13 +352,17 @@ class DuplicateAnalyzer:
         if snapshot_problem:
             failures.append("inventory:%s" % snapshot_problem)
             current.clear()
+            mac_current.clear()
 
         failures = sorted(set(failures))
         self.coverage = {
             "expected": expected,
             "current": current,
+            "mac_current": mac_current,
             "failures": failures,
-            "partial": bool(failures or current != expected),
+            "partial": bool(
+                failures or current != expected or mac_current != expected
+            ),
         }
 
     def _parse_vni_map(self, lines):
@@ -655,6 +688,10 @@ class DuplicateAnalyzer:
     def _mac_observer_state_key(vni, mac, host):
         return "mac-observer:%s|%s|%s" % (vni, mac, host)
 
+    def _mac_current_hosts(self):
+        """Hosts with complete MAC DAD, mobility and FDB evidence."""
+        return set(self.coverage.get("mac_current", self.coverage.get("current", set())))
+
     def _apply_mac_sequence_sample(self, rec):
         """Compare MAC mobility sequence only against the same observing switch.
 
@@ -664,7 +701,7 @@ class DuplicateAnalyzer:
         per observer and rate-normalised to the configured DAD window.
         """
         samples = []
-        current_hosts = set(self.coverage.get("current", set()))
+        current_hosts = self._mac_current_hosts()
         seq_by_host = {
             host: seq for host, seq in (rec.get("seq_by_host") or {}).items()
             if host in current_hosts and isinstance(seq, int) and seq >= 0
@@ -753,7 +790,7 @@ class DuplicateAnalyzer:
         rec["sequence_active"] = bool(active)
 
     def _finalize_mac_semantics(self, vlan, mac, rec):
-        current_hosts = set(self.coverage.get("current", set()))
+        current_hosts = self._mac_current_hosts()
         current_fdb = {
             host: port
             for host, port in self.fdb_local.get((vlan, mac), {}).items()
@@ -826,7 +863,7 @@ class DuplicateAnalyzer:
 
         for (vlan, mac), rec in self.mac_dups.items():
             for h, port in self.fdb_local.get((vlan, mac), {}).items():
-                if h in self.coverage["current"]:
+                if h in self._mac_current_hosts():
                     rec["local"].setdefault(h, port)
 
         # FDB-only MAC duplicates: same MAC LOCAL on >=2 switches via PHYSICAL (swp) ports.
@@ -839,7 +876,7 @@ class DuplicateAnalyzer:
                 continue
             phys = {
                 h: p for h, p in hosts.items()
-                if h in self.coverage["current"] and p.startswith("swp")
+                if h in self._mac_current_hosts() and p.startswith("swp")
             }
             if len(phys) >= 2:
                 rec = self._blank_mac(vlan, vlan, mac)
@@ -880,7 +917,7 @@ class DuplicateAnalyzer:
             elif rec["vni"] == str(vlan) and str(mob["vni"]).isdigit():
                 rec["vni"] = str(mob["vni"])
             for host, port in mob.get("ports", {}).items():
-                if host in self.coverage["current"]:
+                if host in self._mac_current_hosts():
                     rec["local"].setdefault(host, port)
             rec["vteps"].update(mob["vteps"])
             rec["mobility"] = True
@@ -1093,7 +1130,11 @@ class DuplicateAnalyzer:
             "vlans": len(vlans), "disabled": disabled,
             "ip_total": ip_active + ip_quiesced,
             "coverage_expected": len(self.coverage["expected"]),
-            "coverage_current": len(self.coverage["current"]),
+            "coverage_ip_current": len(self.coverage["current"]),
+            "coverage_current": min(
+                len(self.coverage["current"]), len(self._mac_current_hosts())
+            ),
+            "coverage_mac_current": len(self._mac_current_hosts()),
             "coverage_failures": len(self.coverage["failures"]),
             "coverage_partial": self.coverage["partial"],
         }
@@ -1373,6 +1414,8 @@ class DuplicateAnalyzer:
             ' data-mac-mobility-total="%d"'
             ' data-coverage-expected="%d"'
             ' data-coverage-current="%d"'
+            ' data-coverage-ip-current="%d"'
+            ' data-coverage-mac-current="%d"'
             ' data-coverage-failures="%d"'
             ' data-coverage-partial="%s"'
             ' data-coverage-failure-details="%s" style="display:none"></div>'
@@ -1382,6 +1425,8 @@ class DuplicateAnalyzer:
             s["confirmed_mac_total"], s["mac_dad_total"],
             s["mac_mobility_active"], s["mac_mobility_total"],
             s["coverage_expected"], s["coverage_current"],
+            s["coverage_ip_current"],
+            s["coverage_mac_current"],
             s["coverage_failures"], str(s["coverage_partial"]).lower(),
             html.escape(json.dumps(self.coverage["failures"]), quote=True),
         )
