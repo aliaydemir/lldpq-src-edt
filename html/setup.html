@@ -1611,9 +1611,12 @@ async function pollUpdateLog(epoch = updatePollEpoch) {
 async function showUpdateLog(retryEpoch) {
     const isRetry = Number.isInteger(retryEpoch);
     const epoch = isRetry ? retryEpoch : ++updatePollEpoch;
+    // A timer that is currently firing is no longer pending. Clear its stored
+    // id even when the operator has left this step, so re-entering can start a
+    // fresh status discovery without a hard refresh.
+    if (isRetry && updatePollTimer) { clearTimeout(updatePollTimer); updatePollTimer = null; }
     if (epoch !== updatePollEpoch || (isRetry && !updateStepIsVisible())) return;
     if (!isRetry) clearUpdatePolling();
-    else if (updatePollTimer) { clearTimeout(updatePollTimer); updatePollTimer = null; }
     try {
         const d = await fetchUpdateLog({ action:'update-log' });
         if (epoch !== updatePollEpoch) return;
@@ -1640,6 +1643,11 @@ async function showUpdateLog(retryEpoch) {
                 setStatus('update-status', 'The previous update was interrupted before an exit status was recorded.', 'err');
                 markDone('update', false);
             }
+        } else {
+            updateJobId = null;
+            updateActive = false;
+            setUpdateButtons(false);
+            setStatus('update-status', '', 'info');
         }
     } catch (e) {
         if (epoch === updatePollEpoch && updateStepIsVisible()) {
