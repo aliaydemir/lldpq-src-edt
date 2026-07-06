@@ -146,6 +146,84 @@ snapshot_system_lldpq_config() {
     printf '%s\n' "$snapshot"
 }
 
+normalize_installed_lldpq_config_access() {
+    local config_file="/etc/lldpq.conf" lock_file="/etc/lldpq.conf.lock" reader
+    local current_uid runtime_uid
+
+    [[ -f "$config_file" ]] || {
+        echo "[!] Installed LLDPq configuration is missing: $config_file" >&2
+        return 1
+    }
+    if [[ ! "${LLDPQ_USER:-}" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] || \
+       ! runtime_uid=$(id -u "$LLDPQ_USER" 2>/dev/null); then
+        echo "[!] Invalid or unavailable LLDPq runtime user: '${LLDPQ_USER:-}'" >&2
+        return 1
+    fi
+    current_uid=$(id -u) || return 1
+    # The runtime account owns the data file so a first-install shell can use
+    # the CLI immediately; www-data retains the intended web write access.
+    # The stable lock inode stays root-owned and grants only this runtime UID a
+    # named ACL. Atomic config replacements therefore need no ACL propagation.
+    sudo chown "$LLDPQ_USER:www-data" "$config_file" || return 1
+    sudo chmod 660 "$config_file" || return 1
+    prepare_shared_lock_files "$lock_file" || return 1
+    command -v setfacl >/dev/null 2>&1 || {
+        echo "[!] setfacl is required to grant narrow runtime lock access" >&2
+        return 1
+    }
+    if [[ "$LLDPQ_USER" != "root" ]]; then
+        sudo setfacl -m "u:${LLDPQ_USER}:rw" "$lock_file" || return 1
+        sudo usermod -a -G www-data "$LLDPQ_USER" || return 1
+    fi
+    if ! sudo -u "$LLDPQ_USER" /usr/local/bin/lldpq-config --require-config \
+       --require-key LLDPQ_DIR --require-key LLDPQ_USER --require-key WEB_ROOT \
+       --config "$config_file" >/dev/null; then
+        echo "[!] Runtime user '$LLDPQ_USER' cannot read the installed LLDPq configuration" >&2
+        return 1
+    fi
+    if (( current_uid == runtime_uid )) && \
+       ! /usr/local/bin/lldpq-config --require-config \
+           --require-key LLDPQ_DIR --require-key LLDPQ_USER --require-key WEB_ROOT \
+           --config "$config_file" >/dev/null; then
+        echo "[!] The current runtime shell still cannot read the installed LLDPq configuration" >&2
+        return 1
+    fi
+    if ! sudo -u www-data /usr/local/bin/lldpq-config --require-config \
+       --require-key LLDPQ_DIR --require-key LLDPQ_USER --require-key WEB_ROOT \
+       --config "$config_file" >/dev/null; then
+        echo "[!] Web worker cannot read the installed LLDPq configuration" >&2
+        return 1
+    fi
+    for reader in "$LLDPQ_USER" www-data; do
+        if ! sudo -u "$reader" python3 -c '
+import os, stat, sys
+flags = os.O_RDWR | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+descriptor = os.open(sys.argv[1], flags)
+try:
+    if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+        raise SystemExit(1)
+finally:
+    os.close(descriptor)
+' "$lock_file"; then
+            echo "[!] '$reader' cannot open the LLDPq configuration lock read-write" >&2
+            return 1
+        fi
+    done
+    if (( current_uid == runtime_uid )) && ! python3 -c '
+import os, stat, sys
+flags = os.O_RDWR | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+descriptor = os.open(sys.argv[1], flags)
+try:
+    if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+        raise SystemExit(1)
+finally:
+    os.close(descriptor)
+' "$lock_file"; then
+        echo "[!] The current runtime shell still cannot open the LLDPq configuration lock" >&2
+        return 1
+    fi
+}
+
 # Read legacy KEY=value configuration without executing it as shell code.  The
 # file is intentionally writable by the shared web/CLI group, so `source` would
 # turn a configuration write into arbitrary code execution during install.
@@ -792,39 +870,41 @@ clear_update_recovery_marker() {
 acquire_update_config_lock() {
     local lock_file="/etc/lldpq.conf.lock"
     local wait_seconds="${LLDPQ_UPDATE_LOCK_TIMEOUT:-600}"
-    local invoker_gid
+    local invoker_uid runtime_uid
     [[ -z "$UPDATE_CONFIG_LOCK_FD" ]] || return 0
     command -v flock >/dev/null 2>&1 || return 1
     case "$wait_seconds" in
         ''|*[!0-9]*|0) return 1 ;;
     esac
-    invoker_gid=$(id -g) || return 1
+    invoker_uid=$(id -u) || return 1
+    runtime_uid=$(id -u "$LLDPQ_USER") || return 1
     # On a first upgrade the invoking shell may not yet see its newly-added
-    # www-data supplementary group. Temporarily grant its existing primary
-    # group access to this same verified inode, open it in the parent, then
-    # immediately normalize ownership back to root:www-data. A SIGKILL closes
-    # the parent FD in-kernel, so no orphan process can retain the flock.
-    sudo python3 - "$lock_file" "$invoker_gid" <<'PYTHON' || return 1
-import os
-import stat
-import sys
-
-path, gid_text = sys.argv[1:]
-flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0)
-flags |= getattr(os, "O_NOFOLLOW", 0)
-descriptor = os.open(path, flags, 0o660)
-try:
-    metadata = os.fstat(descriptor)
-    if not stat.S_ISREG(metadata.st_mode):
-        raise SystemExit("configuration lock is not a regular file")
-    os.fchown(descriptor, 0, int(gid_text))
-    os.fchmod(descriptor, 0o660)
-    os.fsync(descriptor)
-finally:
-    os.close(descriptor)
-PYTHON
-    exec {UPDATE_CONFIG_LOCK_FD}<>"$lock_file" || return 1
+    # www-data supplementary group. Keep the canonical root:www-data metadata
+    # intact and grant only this invoking UID temporary access to the stable
+    # inode. This avoids a crash window with an unrelated group owner.
     if ! prepare_shared_lock_files "$lock_file"; then
+        return 1
+    fi
+    if (( invoker_uid != 0 )) && \
+       ! sudo setfacl -m "u:${invoker_uid}:rw" "$lock_file"; then
+        return 1
+    fi
+    if ! exec {UPDATE_CONFIG_LOCK_FD}<>"$lock_file"; then
+        (( invoker_uid == 0 )) || sudo setfacl -x "u:${invoker_uid}" "$lock_file" 2>/dev/null || true
+        UPDATE_CONFIG_LOCK_FD=""
+        return 1
+    fi
+    # Apply the durable runtime ACL before retiring a different admin's
+    # temporary entry, so every ordinary failure/rollback path remains usable.
+    if (( runtime_uid != 0 )) && \
+       ! sudo setfacl -m "u:${runtime_uid}:rw" "$lock_file"; then
+        exec {UPDATE_CONFIG_LOCK_FD}>&-
+        UPDATE_CONFIG_LOCK_FD=""
+        (( invoker_uid == 0 )) || sudo setfacl -x "u:${invoker_uid}" "$lock_file" 2>/dev/null || true
+        return 1
+    fi
+    if (( invoker_uid != 0 && invoker_uid != runtime_uid )) && \
+       ! sudo setfacl -x "u:${invoker_uid}" "$lock_file"; then
         exec {UPDATE_CONFIG_LOCK_FD}>&-
         UPDATE_CONFIG_LOCK_FD=""
         return 1
@@ -3678,6 +3758,12 @@ fi
 # TELEMETRY-ONLY MODE (early exit — no other changes needed)
 # ============================================================================
 if [[ "$ENABLE_TELEMETRY" == "true" ]] || [[ "$DISABLE_TELEMETRY" == "true" ]]; then
+    if [[ ! -f "$LLDPQ_CONFIG_FILE" ]] || \
+       [[ ! "${LLDPQ_USER:-}" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] || \
+       ! id "$LLDPQ_USER" >/dev/null 2>&1; then
+        echo "[!] Telemetry-only mode requires a valid existing LLDPq installation" >&2
+        exit 1
+    fi
     # LLDPQ_DIR was loaded as data above; do not source the group-writable file.
     LLDPQ_INSTALL_DIR="${LLDPQ_DIR:-}"
     if [[ -z "$LLDPQ_INSTALL_DIR" ]]; then
@@ -3719,13 +3805,13 @@ if [[ "$ENABLE_TELEMETRY" == "true" ]] || [[ "$DISABLE_TELEMETRY" == "true" ]]; 
             echo "docker-compose installed"
         fi
 
-        if grep -q "^TELEMETRY_ENABLED=" /etc/lldpq.conf 2>/dev/null; then
+        if [[ -n "${TELEMETRY_ENABLED+x}" ]]; then
             sudo sed -i 's/^TELEMETRY_ENABLED=.*/TELEMETRY_ENABLED=true/' /etc/lldpq.conf
         else
             echo "TELEMETRY_ENABLED=true" | sudo tee -a /etc/lldpq.conf > /dev/null
         fi
 
-        if ! grep -q "^PROMETHEUS_URL=" /etc/lldpq.conf 2>/dev/null; then
+        if [[ -z "${PROMETHEUS_URL+x}" ]]; then
             echo "PROMETHEUS_URL=http://localhost:9090" | sudo tee -a /etc/lldpq.conf > /dev/null
         fi
 
@@ -3791,7 +3877,7 @@ if [[ "$ENABLE_TELEMETRY" == "true" ]] || [[ "$DISABLE_TELEMETRY" == "true" ]]; 
         sudo sed -i '/^TELEMETRY_COLLECTOR_PORT=/d' /etc/lldpq.conf 2>/dev/null || true
         sudo sed -i '/^TELEMETRY_COLLECTOR_VRF=/d' /etc/lldpq.conf 2>/dev/null || true
 
-        if grep -q "^TELEMETRY_ENABLED=" /etc/lldpq.conf 2>/dev/null; then
+        if [[ -n "${TELEMETRY_ENABLED+x}" ]]; then
             sudo sed -i 's/^TELEMETRY_ENABLED=.*/TELEMETRY_ENABLED=false/' /etc/lldpq.conf
         else
             echo "TELEMETRY_ENABLED=false" | sudo tee -a /etc/lldpq.conf > /dev/null
@@ -3800,6 +3886,7 @@ if [[ "$ENABLE_TELEMETRY" == "true" ]] || [[ "$DISABLE_TELEMETRY" == "true" ]]; 
         echo "Telemetry support disabled"
     fi
 
+    normalize_installed_lldpq_config_access || exit 1
     exit 0
 fi
 
@@ -4874,45 +4961,7 @@ for f in device-cache.json fabric-scan-cache.json discovery-cache.json inventory
     sudo chmod 664 "$WEB_ROOT/$f"
 done
 
-# Use the configured runtime account's primary group, never the invoking
-# administrator's group.  This keeps a first-install shell able to run `lldpq`
-# immediately (usermod cannot refresh that parent shell's supplementary group
-# list), while the restarted web worker receives access through group
-# membership.  A root runtime uses the dedicated web group rather than adding
-# www-data to the privileged root group.
-CONFIG_GROUP=$(id -gn "$LLDPQ_USER") || {
-    echo "[!] Could not resolve the runtime group for '$LLDPQ_USER'" >&2
-    exit 1
-}
-[[ "$CONFIG_GROUP" == "root" ]] && CONFIG_GROUP="www-data"
-sudo chown root:"$CONFIG_GROUP" /etc/lldpq.conf
-sudo chmod 660 /etc/lldpq.conf
-prepare_shared_lock_files /etc/lldpq.conf.lock
-sudo chown root:"$CONFIG_GROUP" /etc/lldpq.conf.lock
-sudo chmod 660 /etc/lldpq.conf.lock
-if [[ "$CONFIG_GROUP" != "www-data" ]]; then
-    if ! sudo usermod -a -G "$CONFIG_GROUP" www-data; then
-        echo "[!] Could not grant the web worker access to the LLDPq configuration group" >&2
-        exit 1
-    fi
-fi
-if [[ "$LLDPQ_USER" != "root" ]] && \
-   ! sudo usermod -a -G www-data "$LLDPQ_USER"; then
-    echo "[!] Could not grant '$LLDPQ_USER' access to the LLDPq web/runtime group" >&2
-    exit 1
-fi
-if ! sudo -u "$LLDPQ_USER" /usr/local/bin/lldpq-config --require-config \
-   --require-key LLDPQ_DIR --require-key LLDPQ_USER --require-key WEB_ROOT \
-   --config /etc/lldpq.conf >/dev/null; then
-    echo "[!] Runtime user '$LLDPQ_USER' cannot read the installed LLDPq configuration" >&2
-    exit 1
-fi
-if ! sudo -u www-data /usr/local/bin/lldpq-config --require-config \
-   --require-key LLDPQ_DIR --require-key LLDPQ_USER --require-key WEB_ROOT \
-   --config /etc/lldpq.conf >/dev/null; then
-    echo "[!] Web worker cannot read the installed LLDPq configuration" >&2
-    exit 1
-fi
+normalize_installed_lldpq_config_access || exit 1
 echo "  Configuration saved to /etc/lldpq.conf"
 
 # ============================================================================
@@ -5818,6 +5867,11 @@ HOOKEOF
     echo "  Git repository initialized with initial commit"
     echo "  Git hooks created (permissions preserved after git operations)"
 fi
+
+# Fresh telemetry choices use privileged in-place editors after the initial
+# config write. Reassert and verify canonical metadata here as the final
+# authority for both fresh installs and updates.
+normalize_installed_lldpq_config_access || exit 1
 
 # ============================================================================
 # TELEMETRY DOCKER ACCESS (self-healing on every install/update)

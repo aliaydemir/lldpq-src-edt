@@ -117,6 +117,8 @@ import ipaddress
 import io
 import socket
 import shutil
+import pwd
+import grp
 from urllib.parse import urlparse
 from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -361,8 +363,21 @@ def fsync_directory(path, strict=False):
 
 def atomic_write_text(path, content, mode=0o664):
     """Write text with same-directory replace; fail loudly on every fallback."""
-    if os.path.islink(path):
-        path = os.path.realpath(path)
+    logical_path = os.path.abspath(path)
+    if os.path.islink(logical_path):
+        path = os.path.realpath(logical_path)
+    normalized_path = os.path.abspath(path)
+    is_lldpq_config = logical_path == '/etc/lldpq.conf'
+    expected_owner = None
+    if is_lldpq_config:
+        mode = 0o660
+        try:
+            expected_owner = (
+                pwd.getpwnam(LLDPQ_USER).pw_uid,
+                grp.getgrnam('www-data').gr_gid,
+            )
+        except KeyError as exc:
+            raise OSError(f'Could not resolve LLDPq config ownership: {exc}') from exc
     directory = os.path.dirname(path) or '.'
     encoded = content.encode('utf-8')
     tmp_path = None
@@ -374,15 +389,37 @@ def atomic_write_text(path, content, mode=0o664):
             handle.flush()
             os.fsync(handle.fileno())
         os.chmod(tmp_path, mode)
+        if expected_owner is not None:
+            chown = subprocess.run(
+                ['sudo', 'chown', f'{expected_owner[0]}:{expected_owner[1]}', tmp_path],
+                capture_output=True, text=True, timeout=5,
+            )
+            if chown.returncode != 0:
+                raise OSError(
+                    chown.stderr.strip() or f'Could not chown stage for {path}'
+                )
         os.replace(tmp_path, path)
         tmp_path = None
-        os.chmod(path, mode)
+        if expected_owner is None:
+            os.chmod(path, mode)
+        if expected_owner is not None:
+            installed = os.stat(path, follow_symlinks=False)
+            if (
+                (installed.st_uid, installed.st_gid) != expected_owner
+                or stat.S_IMODE(installed.st_mode) != mode
+            ):
+                raise OSError(f'Atomic replacement metadata mismatch for {path}')
         fsync_directory(directory)
         return
-    except OSError:
+    except (OSError, subprocess.SubprocessError):
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
         tmp_path = None
+        # Docker persists /etc/lldpq.conf through a symlink into a writable
+        # system-config volume. Replacing the logical symlink through the
+        # privileged fallback would sever persistence; fail instead.
+        if is_lldpq_config and logical_path != normalized_path:
+            raise
 
     # Root-owned compatibility path.  Never copy directly over the live file:
     # that truncates it before the new bytes are durable and can leave a
@@ -395,12 +432,11 @@ def atomic_write_text(path, content, mode=0o664):
         '/etc/dhcp/dhcpd.host',
         '/etc/default/isc-dhcp-server',
     }
-    normalized_path = os.path.abspath(path)
-    if normalized_path not in privileged_targets:
+    if logical_path not in privileged_targets:
         raise OSError(
             f'Atomic replacement is not permitted for root-owned target {path}'
         )
-    root_stage = normalized_path + '.lldpq-root-stage'
+    root_stage = logical_path + '.lldpq-root-stage'
     fd, staged = tempfile.mkstemp(prefix='lldpq-write-', suffix='.tmp')
     try:
         with os.fdopen(fd, 'wb') as handle:
@@ -417,6 +453,15 @@ def atomic_write_text(path, content, mode=0o664):
                                capture_output=True, text=True, timeout=5)
         if chmod.returncode != 0:
             raise OSError(chmod.stderr.strip() or f'Could not chmod stage for {path}')
+        if expected_owner is not None:
+            chown = subprocess.run(
+                ['sudo', 'chown', f'{expected_owner[0]}:{expected_owner[1]}', root_stage],
+                capture_output=True, text=True, timeout=5,
+            )
+            if chown.returncode != 0:
+                raise OSError(
+                    chown.stderr.strip() or f'Could not chown stage for {path}'
+                )
         synced = subprocess.run(
             ['sudo', 'sync', '-f', root_stage], capture_output=True,
             text=True, timeout=15,
@@ -426,7 +471,7 @@ def atomic_write_text(path, content, mode=0o664):
                 synced.stderr.strip() or f'Could not sync stage for {path}'
             )
         replace = subprocess.run(
-            ['sudo', 'mv', '-fT', '--', root_stage, normalized_path],
+            ['sudo', 'mv', '-fT', '--', root_stage, logical_path],
             capture_output=True, text=True, timeout=15,
         )
         if replace.returncode != 0:
@@ -434,7 +479,7 @@ def atomic_write_text(path, content, mode=0o664):
                 replace.stderr.strip() or f'Could not atomically replace {path}'
             )
         parent_synced = subprocess.run(
-            ['sudo', 'sync', '-f', os.path.dirname(normalized_path) or '/'],
+            ['sudo', 'sync', '-f', os.path.dirname(logical_path) or '/'],
             capture_output=True, text=True, timeout=15,
         )
         if parent_synced.returncode != 0:
@@ -442,8 +487,15 @@ def atomic_write_text(path, content, mode=0o664):
                 parent_synced.stderr.strip() or
                 f'Could not sync parent directory for {path}'
             )
-        if _read_text_with_privileged_fallback(normalized_path) != content:
+        if _read_text_with_privileged_fallback(logical_path) != content:
             raise OSError(f'Atomic replacement readback mismatch for {path}')
+        if expected_owner is not None:
+            installed = os.stat(logical_path, follow_symlinks=False)
+            if (
+                (installed.st_uid, installed.st_gid) != expected_owner
+                or stat.S_IMODE(installed.st_mode) != mode
+            ):
+                raise OSError(f'Atomic replacement metadata mismatch for {path}')
     finally:
         try:
             os.unlink(staged)

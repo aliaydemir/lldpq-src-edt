@@ -2452,7 +2452,11 @@ def restore_bundle(
                 "target": conf_target,
                 "content": _render_conf(original_conf, pref_values).encode(),
                 "mode": 0o660,
-                "uid": 0,
+                # CLI access must not depend on a just-added supplementary
+                # group becoming visible in the caller's existing shell.
+                # Docker's persistent system-config writer already uses the
+                # same service-account ownership for atomic replacements.
+                "uid": account.pw_uid,
                 "gid": config_group.gr_gid,
                 "snapshot": conf_snapshot,
                 "stage": None,

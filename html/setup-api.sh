@@ -571,6 +571,7 @@ if not isinstance(post_data, dict):
 lldpq_user = os.environ.get('LLDPQ_USER', 'lldpq')
 lldpq_dir = os.environ.get('LLDPQ_DIR', '/home/lldpq/lldpq')
 web_root = os.environ.get('WEB_ROOT', '/var/www/html')
+config_owner = f'{lldpq_user}:www-data'
 devices_yaml = os.path.join(lldpq_dir, 'devices.yaml')
 
 # /etc/lldpq.conf keys that are portable (safe to carry in a backup): tunable knobs only.
@@ -643,14 +644,14 @@ def write_conf(pairs):
     output.extend('%s=%s' % (key, value) for key, value in pairs.items())
     if install_text_as_root(
         '\n'.join(output) + '\n', '/etc/lldpq.conf', '.lldpq.conf.setup.tmp',
-        '660', 'root:www-data'
+        '660', config_owner
     ):
         return True
     # A copy can succeed before a later chmod/chown failure. Restore the exact
     # original bytes before reporting failure so callers get a transaction.
     install_text_as_root(
         original, '/etc/lldpq.conf', '.lldpq.conf.setup.rollback.tmp',
-        '660', 'root:www-data'
+        '660', config_owner
     )
     return False
 

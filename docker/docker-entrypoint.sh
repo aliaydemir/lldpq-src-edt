@@ -136,7 +136,7 @@ for path in sys.argv[1:]:
 PYTHON
 }
 
-_persist_system_file lldpq.conf /etc/lldpq.conf root:www-data 660
+_persist_system_file lldpq.conf /etc/lldpq.conf lldpq:www-data 660
 _persist_system_file dhcpd.conf /etc/dhcp/dhcpd.conf lldpq:www-data 664
 _persist_system_file dhcpd.hosts /etc/dhcp/dhcpd.hosts lldpq:www-data 664
 _persist_system_file isc-dhcp-server /etc/default/isc-dhcp-server lldpq:www-data 664
@@ -252,7 +252,7 @@ echo "  ✓ Fabric Editor: $(grep '^EDITOR_ROOT=' /etc/lldpq.conf | cut -d= -f2)
 # ─── Shared config permissions ───
 usermod -aG lldpq www-data 2>/dev/null || true
 usermod -aG www-data lldpq 2>/dev/null || true
-chown root:www-data /etc/lldpq.conf
+chown lldpq:www-data /etc/lldpq.conf
 chmod 660 /etc/lldpq.conf
 _prepare_shared_lock_files /etc/lldpq.conf.lock
 
