@@ -847,6 +847,18 @@ lldpq - -s                         # verbose + skip optical
 
 **Skip optical**: The `-s` flag skips optical transceiver DOM data (ethtool -m) and transceiver firmware checks (mlxlink). These are the slowest monitoring sections — skipping them can cut monitoring time by 50%+. To make it permanent, set `SKIP_OPTICAL=true` in `/etc/lldpq.conf`.
 
+**Monitoring performance controls**: collection remains fail-closed and keeps
+last-known-good reports when a timeout is reached. The following optional
+environment/config values tune bounded read-only collection without changing
+report content:
+
+- `PFC_ECN_MAX_PARALLEL=4` — concurrent per-device NVUE QoS reads (`1..8`)
+- `PFC_ECN_COLLECTION_BUDGET_SECONDS=60` — total QoS collection budget
+- `PFC_ECN_PORT_TIMEOUT_SECONDS=5` — timeout for one QoS read
+- `OPTICAL_COLLECTION_BUDGET_SECONDS=120` — total DOM collection budget
+- `OPTICAL_PORT_TIMEOUT_SECONDS=10` — timeout for one DOM read
+- `MONITOR_TIMING=true` — emit detailed per-device section timings for profiling
+
 ## [10] authentication
 
 web interface is protected with session-based authentication:
