@@ -1693,9 +1693,9 @@ finally:
 PYTHON_REMOVE_WEB_RUNTIME
 
     if $DRY_RUN; then
-        echo "DRY-RUN  validated managed support downloads and monitor web stages"
+        echo "DRY-RUN  validated managed support downloads under $web_root/downloads and monitor web stages"
     else
-        echo "  managed support downloads and monitor web stages cleaned"
+        echo "  managed support downloads under $web_root/downloads and monitor web stages cleaned"
     fi
 }
 
