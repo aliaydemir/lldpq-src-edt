@@ -522,6 +522,9 @@ let updateLogShown = false;  // update log fetched once on entering the step
 let updatePollTimer = null;
 let updateJobId = null;
 let updatePollEpoch = 0;
+let updatePollController = null;
+let updateReloadScheduled = false;
+const UPDATE_LOG_TIMEOUT_MS = 10000;
 let aliasesLoaded = false;
 let aliasesDirty = false;
 let aliasesRevision = null;
@@ -556,6 +559,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (sp) { var si = STEPS.findIndex(function (s) { return s.key === sp; }); if (si >= 0) startIdx = si; }
     } catch (e) {}
     goStep(startIdx);
+    // A successful self-update reloads with a one-use cache-busting query so
+    // the browser cannot keep executing the pre-update inline JavaScript.
+    try {
+        const refreshed = new URL(location.href);
+        if (refreshed.searchParams.has('_updated')) {
+            refreshed.searchParams.delete('_updated');
+            history.replaceState(null, '', refreshed.pathname + refreshed.search);
+        }
+    } catch (e) { /* URL cleanup is non-critical */ }
 });
 
 function renderSteps() {
@@ -603,7 +615,10 @@ function goStep(i) {
     if (key === 'run' && !parallelLoaded) { parallelLoaded = true; loadParallel(); }
     if (key === 'update') {
         checkDockerForUpdate();
-        if (!updateLogShown) { updateLogShown = true; showUpdateLog(); }
+        if (!updateLogShown || (!updateActive && !updatePollTimer && !updatePollController)) {
+            updateLogShown = true;
+            showUpdateLog();
+        }
     }
     if (key === 'notifications' && !notifLoaded) { notifLoaded = true; loadNotifications(); }
     if (key === 'maintenance' && !maintLoaded) { maintLoaded = true; loadMaintenance(); }
@@ -1411,11 +1426,69 @@ function setUpdateButtons(disabled) {
     ['update-btn', 'offline-upload-btn'].forEach(function (id) { const b = document.getElementById(id); if (b) b.disabled = disabled; });
 }
 
+function cancelUpdateLogRequest() {
+    if (!updatePollController) return;
+    updatePollController.abort();
+    updatePollController = null;
+}
+
+function clearUpdatePolling() {
+    if (updatePollTimer) { clearTimeout(updatePollTimer); updatePollTimer = null; }
+    cancelUpdateLogRequest();
+}
+
+function updateStepIsVisible() {
+    return !!(STEPS[current] && STEPS[current].key === 'update');
+}
+
+async function fetchUpdateLog(payload) {
+    // nginx/fcgiwrap intentionally restart during an update. A request caught
+    // in that window can remain pending instead of rejecting, which used to
+    // stop the polling loop until a hard refresh aborted it.
+    cancelUpdateLogRequest();
+    const controller = new AbortController();
+    updatePollController = controller;
+    const timeout = setTimeout(function () { controller.abort(); }, UPDATE_LOG_TIMEOUT_MS);
+    try {
+        const r = await fetch('/setup-api.sh', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify(payload),
+            cache:'no-store',
+            signal:controller.signal
+        });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const d = await r.json();
+        if (!d || d.success !== true) throw new Error((d && d.error) || 'Update log is temporarily unavailable');
+        return d;
+    } finally {
+        clearTimeout(timeout);
+        if (updatePollController === controller) updatePollController = null;
+    }
+}
+
+function reloadUpdatedSetup(jobId) {
+    if (updateReloadScheduled) return;
+    if (hasUnsavedSetupChanges()) {
+        setStatus('update-status', 'Update finished \u2713 \u2014 unsaved Setup edits were kept; reload when ready to use the updated UI.', 'ok');
+        return;
+    }
+    updateReloadScheduled = true;
+    setStatus('update-status', 'Update finished \u2713 \u2014 loading the updated UI\u2026', 'ok');
+    setTimeout(function () {
+        const target = new URL(location.href);
+        target.searchParams.set('step', 'update');
+        target.searchParams.set('_updated', jobId || String(Date.now()));
+        location.replace(target.pathname + target.search);
+    }, 700);
+}
+
 async function updateLLDPq() {
     const backup = document.getElementById('update-backup').checked;
     const epoch = ++updatePollEpoch;
     updateJobId = null;
-    if (updatePollTimer) { clearTimeout(updatePollTimer); updatePollTimer = null; }
+    updateReloadScheduled = false;
+    clearUpdatePolling();
     setUpdateButtons(true);
     updateActive = true;
     setStatus('update-status', 'Starting update' + (backup ? ' (with backup)' : '') + '\u2026', 'info');
@@ -1442,7 +1515,8 @@ async function uploadAndUpdate() {
     const backup = document.getElementById('offline-backup').checked;
     const epoch = ++updatePollEpoch;
     updateJobId = null;
-    if (updatePollTimer) { clearTimeout(updatePollTimer); updatePollTimer = null; }
+    updateReloadScheduled = false;
+    clearUpdatePolling();
     setUpdateButtons(true);
     updateActive = true;
     const mb = Math.max(1, Math.round(file.size / 1048576));
@@ -1483,10 +1557,12 @@ async function pollUpdateLog(epoch = updatePollEpoch) {
     try {
         const payload = { action: 'update-log' };
         if (updateJobId) payload.job_id = updateJobId;
-        const r = await fetch('/setup-api.sh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-        const d = await r.json().catch(() => ({}));
+        const d = await fetchUpdateLog(payload);
         if (epoch !== updatePollEpoch) return;
-        if (updateJobId && d.job_id !== updateJobId) {
+        // A restart proxy response can temporarily have no usable job state.
+        // Only an explicit different id means another job really replaced it.
+        if (updateJobId && !d.job_id) throw new Error('Update job identity is temporarily unavailable');
+        if (updateJobId && d.job_id && d.job_id !== updateJobId) {
             updateActive = false;
             setUpdateButtons(!!d.running);
             setStatus('update-status', 'This update\u2019s status was replaced by another job; use Show Log to inspect the current job.', 'info');
@@ -1501,9 +1577,12 @@ async function pollUpdateLog(epoch = updatePollEpoch) {
                 updateActive = false;
                 updateJobId = d.job_id || updateJobId;
                 setUpdateButtons(false);
+                // Reveal terminal lines even if the operator scrolled upward
+                // while the job was running.
+                out.scrollTop = out.scrollHeight;
                 if (d.ok) {
-                    setStatus('update-status', 'Update finished \u2713 \u2014 reload the app if the UI looks stale.', 'ok');
                     markDone('update', true);
+                    reloadUpdatedSetup(updateJobId);
                 } else if (!Number.isInteger(d.exit_code)) {
                     setStatus('update-status', 'Update finished, but its exit status is unavailable \u2014 review the log above.', 'info');
                     markDone('update', false);
@@ -1529,14 +1608,15 @@ async function pollUpdateLog(epoch = updatePollEpoch) {
     if (updateActive && epoch === updatePollEpoch) updatePollTimer = setTimeout(() => pollUpdateLog(epoch), 2500);
 }
 
-async function showUpdateLog() {
-    const epoch = ++updatePollEpoch;
-    if (updatePollTimer) { clearTimeout(updatePollTimer); updatePollTimer = null; }
+async function showUpdateLog(retryEpoch) {
+    const isRetry = Number.isInteger(retryEpoch);
+    const epoch = isRetry ? retryEpoch : ++updatePollEpoch;
+    if (epoch !== updatePollEpoch || (isRetry && !updateStepIsVisible())) return;
+    if (!isRetry) clearUpdatePolling();
+    else if (updatePollTimer) { clearTimeout(updatePollTimer); updatePollTimer = null; }
     try {
-        const r = await fetch('/setup-api.sh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'update-log' }) });
-        const d = await r.json().catch(() => ({}));
+        const d = await fetchUpdateLog({ action:'update-log' });
         if (epoch !== updatePollEpoch) return;
-        if (!d.success) throw new Error(d.error || 'Update log is temporarily unavailable');
         if (d.log || d.done || d.running || d.job_id) {
             const out = document.getElementById('update-output');
             out.textContent = d.log || '(no output yet)'; out.scrollTop = out.scrollHeight;
@@ -1562,8 +1642,9 @@ async function showUpdateLog() {
             }
         }
     } catch (e) {
-        if (epoch === updatePollEpoch && updateActive) {
-            updatePollTimer = setTimeout(() => pollUpdateLog(epoch), 2500);
+        if (epoch === updatePollEpoch && updateStepIsVisible()) {
+            setStatus('update-status', 'Update status is temporarily unavailable \u2014 reconnecting\u2026', 'info');
+            updatePollTimer = setTimeout(() => showUpdateLog(epoch), 2500);
         }
     }
 }

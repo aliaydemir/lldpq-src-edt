@@ -1250,16 +1250,19 @@ function toggleProblems(show) {
 /**
  * Run LLDP check
  */
-const TOPOLOGY_LLDP_JOB_KEY = 'lldpq_topology_lldp_job';
+const TOPOLOGY_LLDP_JOB_KEY = 'lldpq.activeLldpJobToken';
+const TOPOLOGY_LLDP_LEGACY_JOB_KEY = 'lldpq_topology_lldp_job';
 let topologyLLDPJobToken = null;
 let topologyLLDPPollGeneration = 0;
 let topologyLLDPPollTimer = null;
 let topologyLLDPStatusNotification = null;
+let topologyLLDPNotificationSignature = '';
 
 function setStoredTopologyLLDPJob(token) {
     try {
         if (token) sessionStorage.setItem(TOPOLOGY_LLDP_JOB_KEY, token);
         else sessionStorage.removeItem(TOPOLOGY_LLDP_JOB_KEY);
+        sessionStorage.removeItem(TOPOLOGY_LLDP_LEGACY_JOB_KEY);
     } catch (error) {
         // Private-storage restrictions must not break the live poll.
     }
@@ -1267,7 +1270,12 @@ function setStoredTopologyLLDPJob(token) {
 
 function getStoredTopologyLLDPJob() {
     try {
-        return sessionStorage.getItem(TOPOLOGY_LLDP_JOB_KEY) || '';
+        const currentToken = sessionStorage.getItem(TOPOLOGY_LLDP_JOB_KEY) || '';
+        if (currentToken) return currentToken;
+
+        const legacyToken = sessionStorage.getItem(TOPOLOGY_LLDP_LEGACY_JOB_KEY) || '';
+        if (legacyToken) setStoredTopologyLLDPJob(legacyToken);
+        return legacyToken;
     } catch (error) {
         return '';
     }
@@ -1279,25 +1287,35 @@ function setTopologyLLDPButton(state, enabled) {
     if (!button || !buttonText) return;
 
     button.disabled = !enabled;
-    button.setAttribute('aria-busy', state === 'queued' || state === 'running' ? 'true' : 'false');
+    const isBusy = state === 'queued' || state === 'running' || state === 'reconnecting';
+    button.setAttribute('aria-busy', isBusy ? 'true' : 'false');
     button.style.opacity = enabled ? '1' : '0.7';
     button.style.cursor = enabled ? 'pointer' : 'not-allowed';
 
     if (state === 'running') {
         buttonText.textContent = 'Running...';
         button.style.background = 'linear-gradient(0deg, #76b900 0%, #5a8c00 100%)';
+        button.style.color = '#111';
     } else if (state === 'queued') {
         buttonText.textContent = 'Queued...';
         button.style.background = 'linear-gradient(0deg, #76b900 0%, #5a8c00 100%)';
+        button.style.color = '#111';
+    } else if (state === 'reconnecting') {
+        buttonText.textContent = 'Reconnecting...';
+        button.style.background = '#ffb74d';
+        button.style.color = '#111';
     } else if (state === 'success') {
         buttonText.textContent = '✓ Complete';
         button.style.background = '#76b900';
+        button.style.color = '#111';
     } else if (state === 'failure') {
         buttonText.textContent = '✗ Retry Available';
         button.style.background = '#f44336';
+        button.style.color = '#111';
     } else {
         buttonText.textContent = 'Run LLDPq';
         button.style.removeProperty('background');
+        button.style.removeProperty('color');
     }
 }
 
@@ -1306,9 +1324,16 @@ function updateTopologyLLDPNotification(kind, title, message, detail = '') {
         success: '#76b900',
         running: '#76b900',
         queued: '#4fc3f7',
-        failure: '#f44336'
+        warning: '#ffb74d',
+        failure: '#ff7373'
     };
     const color = colors[kind] || colors.queued;
+    const signature = JSON.stringify([kind, title, message, detail]);
+
+    // Polls often return the same state repeatedly. Avoid making an aria-live
+    // region announce identical content every two seconds.
+    if (signature === topologyLLDPNotificationSignature) return;
+    topologyLLDPNotificationSignature = signature;
 
     if (!topologyLLDPStatusNotification) {
         topologyLLDPStatusNotification = document.createElement('div');
@@ -1343,7 +1368,7 @@ function updateTopologyLLDPNotification(kind, title, message, detail = '') {
 
     if (detail) {
         const small = document.createElement('small');
-        small.style.color = '#888';
+        small.style.color = '#aaa';
         small.textContent = detail;
         topologyLLDPStatusNotification.append(document.createElement('br'), small);
     }
@@ -1367,6 +1392,9 @@ async function pollTopologyLLDPJob(token, generation) {
             headers: { 'Accept': 'application/json', 'Cache-Control': 'no-cache' }
         });
         const data = await response.json();
+        if (token !== topologyLLDPJobToken || generation !== topologyLLDPPollGeneration) {
+            return; // Ignore every response belonging to an older request.
+        }
         if (data.status === 'error' && data.message === 'LLDP job was not found') {
             setStoredTopologyLLDPJob('');
             topologyLLDPJobToken = null;
@@ -1379,10 +1407,7 @@ async function pollTopologyLLDPJob(token, generation) {
         if (!response.ok || data.status === 'error') {
             throw new Error(data.error || data.message || `Status request failed (${response.status})`);
         }
-        if (data.token !== token || token !== topologyLLDPJobToken ||
-            generation !== topologyLLDPPollGeneration) {
-            return; // An older/different request must never refresh this topology.
-        }
+        if (data.token !== token) return;
 
         const reason = data.reason || 'Waiting for LLDP status';
         if (data.status === 'success') {
@@ -1456,8 +1481,8 @@ async function pollTopologyLLDPJob(token, generation) {
     } catch (error) {
         if (token !== topologyLLDPJobToken || generation !== topologyLLDPPollGeneration) return;
         console.error('LLDP topology status unavailable:', error);
-        setTopologyLLDPButton('failure', true);
-        updateTopologyLLDPNotification('failure', 'LLDP Status Unavailable', error.message,
+        setTopologyLLDPButton('reconnecting', false);
+        updateTopologyLLDPNotification('warning', 'LLDP Status Unavailable', error.message,
             'The topology was not treated as complete; status will be checked again.');
         scheduleTopologyLLDPStatusPoll(token, generation, 5000);
     }
