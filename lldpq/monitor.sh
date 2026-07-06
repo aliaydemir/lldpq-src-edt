@@ -1656,7 +1656,7 @@ EOF
         if [ "$_lldpq_link_status" -eq 0 ]; then
             awk '\''
                 function emit() {
-                    if (name ~ /^swp[0-9]+(s[0-9]+)?$/) {
+                    if (name ~ /^swp[0-9]+[s0-9]*/) {
                         print name
                     }
                 }
@@ -1669,9 +1669,13 @@ EOF
                 END { emit() }
             '\'' "$_lldpq_snapshot_dir/link" > "$_lldpq_snapshot_dir/interfaces"
             sort -V "$_lldpq_snapshot_dir/interfaces" > "$_lldpq_snapshot_dir/interfaces-sorted"
+            awk '\''/^swp[0-9]+(s[0-9]+)?$/ { print }'\'' \
+                "$_lldpq_snapshot_dir/interfaces-sorted" \
+                > "$_lldpq_snapshot_dir/pfc-interfaces"
         else
             : > "$_lldpq_snapshot_dir/interfaces"
             : > "$_lldpq_snapshot_dir/interfaces-sorted"
+            : > "$_lldpq_snapshot_dir/pfc-interfaces"
         fi
         : > "$_lldpq_snapshot_dir/ifalias"
         for _lldpq_alias_path in /sys/class/net/*/ifalias; do
@@ -2132,7 +2136,7 @@ EOF
         echo "===PFC_ECN_DATA_START==="
         _pfc_ecn_collection_utc=$(date -u "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || true)
         echo "__LLDPQ_PFC_ECN_COLLECTION_UTC__:${_pfc_ecn_collection_utc:-UNKNOWN}"
-        _pfc_ecn_inventory=$(cat "$_lldpq_snapshot_dir/interfaces-sorted")
+        _pfc_ecn_inventory=$(cat "$_lldpq_snapshot_dir/pfc-interfaces")
         _pfc_ecn_port_count=0
         for _pfc_ecn_port in $_pfc_ecn_inventory; do
             _pfc_ecn_port_count=$((_pfc_ecn_port_count + 1))
@@ -2213,8 +2217,8 @@ EOF
         unset -f _pfc_ecn_collect_port 2>/dev/null || true
         unset _pfc_ecn_collection_utc _pfc_ecn_inventory \
             _pfc_ecn_port_count _pfc_ecn_port _pfc_ecn_status \
-            _pfc_ecn_deadline _pfc_ecn_has_nv _pfc_ecn_has_timeout \
-            _pfc_ecn_batch_pids _pfc_ecn_batch_count _pfc_ecn_pid
+            _pfc_ecn_deadline _pfc_ecn_has_nv _pfc_ecn_has_timeout
+        unset _pfc_ecn_batch_pids _pfc_ecn_batch_count _pfc_ecn_pid
         echo "===PFC_ECN_DATA_END==="
         _lldpq_timing_end PFC_ECN_DATA
 
