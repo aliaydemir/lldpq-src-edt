@@ -815,12 +815,9 @@ class DuplicateAnalyzer:
         self._save_state()
 
     def _ip_sev(self, rec):
-        # A row returned by the successful, current FRR
-        # ``show ... duplicate`` command is the active duplicate truth.
-        if rec.get("authoritative_hosts", set()) & self.coverage["current"]:
-            return "CRITICAL"
         # "Active now" = a duplicate/mobility event within the last hour, or a sequence that climbed
-        # THIS collection cycle. Only an actively-moving duplicate is an urgent (CRITICAL) fire.
+        # THIS collection cycle. A current FRR duplicate row confirms the finding, but FRR can retain
+        # that DAD flag after the conflict settles; presence alone must not make it an active fire.
         active = (rec["recency"] is not None and rec["recency"] <= ACTIVE_WINDOW_SEC) or \
                  (rec["delta"] is not None and rec["delta"] > 0)
         if active:
@@ -847,11 +844,8 @@ class DuplicateAnalyzer:
     # -------------------------------------------------------------- summary
     def summary(self):
         confirmed_ips = [r for r in self.ip_dups.values() if self._is_confirmed_ip(r)]
-        ip_active = sum(
-            1 for hosts in self.authoritative_ip_pairs.values()
-            if hosts & self.coverage["current"]
-        )
-        ip_quiesced = 0
+        ip_active = sum(1 for r in confirmed_ips if r.get("severity") == "CRITICAL")
+        ip_quiesced = sum(1 for r in confirmed_ips if r.get("severity") == "WARNING")
         mac_total = len(self.mac_dups)
         apipa_total = sum(a["total"] for a in self.apipa.values())
         vlans = set(r["vlan"] for r in confirmed_ips) | set(r["vlan"] for r in self.mac_dups.values())
@@ -863,7 +857,7 @@ class DuplicateAnalyzer:
             "confirmed_ip_active": ip_active,
             "mac_total": mac_total, "apipa_total": apipa_total,
             "vlans": len(vlans), "disabled": disabled,
-            "ip_total": ip_active,
+            "ip_total": ip_active + ip_quiesced,
             "coverage_expected": len(self.coverage["expected"]),
             "coverage_current": len(self.coverage["current"]),
             "coverage_failures": len(self.coverage["failures"]),
@@ -961,7 +955,9 @@ class DuplicateAnalyzer:
                 if r["severity"] != "CRITICAL":
                     note += " <span class='dim'>(quiesced)</span>"
             elif r["flagged"]:
-                note = "Confirmed &mdash; EVPN/log"
+                note = "Confirmed &mdash; EVPN DAD"
+                if r["severity"] != "CRITICAL":
+                    note += " <span class='dim'>(quiesced / latched)</span>"
             elif r.get("mobility"):
                 # One MAC, one owner at this instant, but a very high EVPN mobility sequence: the
                 # SAME MAC/IP is rapidly re-registering between locations (a flapping endpoint), not

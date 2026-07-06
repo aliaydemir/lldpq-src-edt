@@ -79,9 +79,16 @@
 
 set -e
 
-# Root/system services and the web backup workflow must never execute the copy
-# under LLDPQ_DIR: that tree is intentionally writable by the service account.
+# Root/system services and the web backup/uninstall workflows must never
+# execute copies under LLDPQ_DIR: that tree is intentionally writable by the
+# service account.
 LLDPQ_BACKUP_IMPORT_HELPER="/usr/local/libexec/lldpq-backup-import.py"
+LLDPQ_UNINSTALL_SCRIPT="/usr/local/libexec/lldpq-uninstall.sh"
+LLDPQ_UNINSTALL_WEB_GATEWAY="/usr/local/libexec/lldpq-uninstall-web.py"
+LLDPQ_UNINSTALL_SUDOERS="/etc/sudoers.d/www-data-lldpq-uninstall"
+LLDPQ_LIFECYCLE_LOCK="/etc/lldpq.lifecycle.lock"
+LLDPQ_UNINSTALL_ACTIVE_MARKER="/run/lldpq-uninstall.active"
+INSTALL_LIFECYCLE_LOCK_FD=""
 
 # Create shared transaction locks without ever following a pre-existing
 # symlink. Existing lock inodes are retained so an in-flight flock cannot be
@@ -121,6 +128,93 @@ for path in sys.argv[1:]:
     finally:
         os.close(descriptor)
 PYTHON
+}
+
+acquire_install_lifecycle_lock() {
+    local current_uid temp_acl=false wait_seconds="${LLDPQ_UPDATE_LOCK_TIMEOUT:-600}"
+    local lock_gid opened_identity path_identity lock_metadata gateway_metadata gateway_parent_metadata
+    [[ -z "$INSTALL_LIFECYCLE_LOCK_FD" ]] || return 0
+    case "$wait_seconds" in
+        ''|*[!0-9]*|0) return 1 ;;
+    esac
+    command -v flock >/dev/null 2>&1 || return 1
+    # This path already exists on every installation that has the uninstall
+    # gateway.  Do not recreate it here: an uninstall may have removed the
+    # gateway, marker and lock while this installer was entering the wait.
+    # Recreating the lock would split the lifecycle transaction.
+    if [[ -L "$LLDPQ_LIFECYCLE_LOCK" || ! -f "$LLDPQ_LIFECYCLE_LOCK" ]]; then
+        echo "[!] LLDPq lifecycle lock disappeared; restart install/update after checking the host" >&2
+        return 1
+    fi
+    lock_gid=$(getent group www-data 2>/dev/null | awk -F: 'NR == 1 { print $3 }')
+    [[ "$lock_gid" =~ ^[0-9]+$ ]] || return 1
+    current_uid=$(id -u) || return 1
+    if (( current_uid != 0 )); then
+        sudo setfacl -m "u:${current_uid}:rw" "$LLDPQ_LIFECYCLE_LOCK" || return 1
+        temp_acl=true
+    fi
+    if ! exec {INSTALL_LIFECYCLE_LOCK_FD}<>"$LLDPQ_LIFECYCLE_LOCK"; then
+        $temp_acl && sudo setfacl -x "u:${current_uid}" "$LLDPQ_LIFECYCLE_LOCK" 2>/dev/null || true
+        INSTALL_LIFECYCLE_LOCK_FD=""
+        return 1
+    fi
+    $temp_acl && sudo setfacl -x "u:${current_uid}" "$LLDPQ_LIFECYCLE_LOCK" 2>/dev/null || true
+    if ! flock -w "$wait_seconds" "$INSTALL_LIFECYCLE_LOCK_FD"; then
+        echo "[!] Timed out waiting for the LLDPq lifecycle lock" >&2
+        exec {INSTALL_LIFECYCLE_LOCK_FD}>&-
+        INSTALL_LIFECYCLE_LOCK_FD=""
+        return 1
+    fi
+
+    # flock protects the opened inode, not the pathname.  The uninstaller
+    # intentionally unlinks this lock at the end of its transaction, so a
+    # waiter can wake while holding an obsolete inode.  Re-resolve the path
+    # after locking and require it to still name the exact opened inode.
+    opened_identity=$(stat -Lc '%d:%i' "/proc/$$/fd/$INSTALL_LIFECYCLE_LOCK_FD" 2>/dev/null || true)
+    path_identity=$(stat -c '%d:%i' -- "$LLDPQ_LIFECYCLE_LOCK" 2>/dev/null || true)
+    lock_metadata=$(stat -Lc '%u:%g:%a:%h' "/proc/$$/fd/$INSTALL_LIFECYCLE_LOCK_FD" 2>/dev/null || true)
+    if [[ -z "$opened_identity" || "$opened_identity" != "$path_identity" || \
+          -L "$LLDPQ_LIFECYCLE_LOCK" || \
+          "$lock_metadata" != "0:${lock_gid}:660:1" ]]; then
+        echo "[!] LLDPq lifecycle lock was removed or replaced while waiting; install/update was not started" >&2
+        flock -u "$INSTALL_LIFECYCLE_LOCK_FD" 2>/dev/null || true
+        exec {INSTALL_LIFECYCLE_LOCK_FD}>&-
+        INSTALL_LIFECYCLE_LOCK_FD=""
+        return 1
+    fi
+    if [[ -e "$LLDPQ_UNINSTALL_ACTIVE_MARKER" || -L "$LLDPQ_UNINSTALL_ACTIVE_MARKER" ]]; then
+        echo "[!] LLDPq uninstall is scheduled or running; install/update was not started" >&2
+        flock -u "$INSTALL_LIFECYCLE_LOCK_FD" 2>/dev/null || true
+        exec {INSTALL_LIFECYCLE_LOCK_FD}>&-
+        INSTALL_LIFECYCLE_LOCK_FD=""
+        return 1
+    fi
+
+    # The fixed gateway and its protected parent are the other half of this
+    # lifecycle authority.  A waiter on an old lock must not continue after a
+    # completed uninstall has removed them, even though the public marker is
+    # already gone at that point.
+    gateway_metadata=$(stat -c '%u:%g:%a:%h' -- "$LLDPQ_UNINSTALL_WEB_GATEWAY" 2>/dev/null || true)
+    gateway_parent_metadata=$(stat -c '%u:%a' -- "${LLDPQ_UNINSTALL_WEB_GATEWAY%/*}" 2>/dev/null || true)
+    if [[ -L "$LLDPQ_UNINSTALL_WEB_GATEWAY" || \
+          ! -f "$LLDPQ_UNINSTALL_WEB_GATEWAY" || \
+          "$gateway_metadata" != "0:0:755:1" || \
+          -L "${LLDPQ_UNINSTALL_WEB_GATEWAY%/*}" || \
+          ! -d "${LLDPQ_UNINSTALL_WEB_GATEWAY%/*}" || \
+          ! "$gateway_parent_metadata" =~ ^0:[0-7]?[0-7][0145][0145]$ ]]; then
+        echo "[!] LLDPq uninstall authority disappeared or became unsafe while waiting; install/update was not started" >&2
+        flock -u "$INSTALL_LIFECYCLE_LOCK_FD" 2>/dev/null || true
+        exec {INSTALL_LIFECYCLE_LOCK_FD}>&-
+        INSTALL_LIFECYCLE_LOCK_FD=""
+        return 1
+    fi
+}
+
+release_install_lifecycle_lock() {
+    [[ -n "$INSTALL_LIFECYCLE_LOCK_FD" ]] || return 0
+    flock -u "$INSTALL_LIFECYCLE_LOCK_FD" 2>/dev/null || true
+    exec {INSTALL_LIFECYCLE_LOCK_FD}>&-
+    INSTALL_LIFECYCLE_LOCK_FD=""
 }
 
 # Copy the fixed system configuration into a private, unprivileged snapshot.
@@ -3099,8 +3193,11 @@ def restore_snapshot(snapshot, web_root):
         (Path("/etc/dhcp/dhcpd.hosts"), "dhcpd.hosts"),
         (Path("/etc/default/isc-dhcp-server"), "isc-dhcp-default"),
         (Path("/usr/local/libexec/lldpq-backup-import.py"), "backup-import-helper"),
+        (Path("/usr/local/libexec/lldpq-uninstall.sh"), "uninstall-script"),
+        (Path("/usr/local/libexec/lldpq-uninstall-web.py"), "uninstall-web-gateway"),
         (Path("/etc/sudoers.d/www-data-lldpq"), "sudoers-www-data-lldpq"),
         (Path("/etc/sudoers.d/www-data-provision"), "sudoers-www-data-provision"),
+        (Path("/etc/sudoers.d/www-data-lldpq-uninstall"), "sudoers-www-data-lldpq-uninstall"),
         (Path("/etc/nginx/sites-enabled/lldpq"), "nginx-enabled-lldpq"),
         (Path("/etc/nginx/sites-enabled/default"), "nginx-enabled-default"),
         (web_root / "VERSION", "web-version"),
@@ -3345,8 +3442,11 @@ prepare_update_rollback() {
        ! snapshot_update_file /etc/dhcp/dhcpd.hosts dhcpd.hosts || \
        ! snapshot_update_file /etc/default/isc-dhcp-server isc-dhcp-default || \
        ! snapshot_update_file "$LLDPQ_BACKUP_IMPORT_HELPER" backup-import-helper || \
+       ! snapshot_update_file "$LLDPQ_UNINSTALL_SCRIPT" uninstall-script || \
+       ! snapshot_update_file "$LLDPQ_UNINSTALL_WEB_GATEWAY" uninstall-web-gateway || \
        ! snapshot_update_file /etc/sudoers.d/www-data-lldpq sudoers-www-data-lldpq || \
        ! snapshot_update_file /etc/sudoers.d/www-data-provision sudoers-www-data-provision || \
+       ! snapshot_update_file "$LLDPQ_UNINSTALL_SUDOERS" sudoers-www-data-lldpq-uninstall || \
        ! snapshot_update_file /etc/nginx/sites-enabled/lldpq nginx-enabled-lldpq || \
        ! snapshot_update_file /etc/nginx/sites-enabled/default nginx-enabled-default || \
        ! snapshot_update_file "$WEB_ROOT/VERSION" web-version || \
@@ -3455,8 +3555,11 @@ rollback_failed_update() {
     restore_update_file /etc/dhcp/dhcpd.hosts dhcpd.hosts || rollback_restore_failed=true
     restore_update_file /etc/default/isc-dhcp-server isc-dhcp-default || rollback_restore_failed=true
     restore_update_file "$LLDPQ_BACKUP_IMPORT_HELPER" backup-import-helper || rollback_restore_failed=true
+    restore_update_file "$LLDPQ_UNINSTALL_SCRIPT" uninstall-script || rollback_restore_failed=true
+    restore_update_file "$LLDPQ_UNINSTALL_WEB_GATEWAY" uninstall-web-gateway || rollback_restore_failed=true
     restore_update_file /etc/sudoers.d/www-data-lldpq sudoers-www-data-lldpq || rollback_restore_failed=true
     restore_update_file /etc/sudoers.d/www-data-provision sudoers-www-data-provision || rollback_restore_failed=true
+    restore_update_file "$LLDPQ_UNINSTALL_SUDOERS" sudoers-www-data-lldpq-uninstall || rollback_restore_failed=true
     restore_update_file /etc/nginx/sites-enabled/lldpq nginx-enabled-lldpq || rollback_restore_failed=true
     restore_update_file /etc/nginx/sites-enabled/default nginx-enabled-default || rollback_restore_failed=true
     restore_update_file "$WEB_ROOT/VERSION" web-version || rollback_restore_failed=true
@@ -3672,6 +3775,7 @@ lldpq_install_exit_handler() {
     release_update_provision_locks
     release_update_config_lock
     release_update_process_lock
+    release_install_lifecycle_lock
     if (( status != 0 )) && [[ "${_UPDATE_PROCESSES_STOPPED:-false}" == "true" ]] && \
        [[ -x /usr/local/bin/lldpq-trigger ]]; then
         # The monitor run that was interrupted will be picked up by cron. Bring
@@ -3785,6 +3889,10 @@ if [[ "$ENABLE_TELEMETRY" == "true" ]] || [[ "$DISABLE_TELEMETRY" == "true" ]]; 
     fi
     LLDPQ_INSTALL_DIR=$(guard_managed_path "LLDPq install" "$LLDPQ_INSTALL_DIR" 2) || exit 1
     LLDPQ_INSTALL_DIR=$(guard_recursive_target "LLDPq install" "$LLDPQ_INSTALL_DIR" false) || exit 1
+    if [[ -e "$LLDPQ_UNINSTALL_WEB_GATEWAY" || -L "$LLDPQ_UNINSTALL_WEB_GATEWAY" ||
+          -e "$LLDPQ_UNINSTALL_ACTIVE_MARKER" || -L "$LLDPQ_UNINSTALL_ACTIVE_MARKER" ]]; then
+        acquire_install_lifecycle_lock || exit 1
+    fi
 
     if [[ "$ENABLE_TELEMETRY" == "true" ]]; then
         echo "Enabling Streaming Telemetry..."
@@ -3959,6 +4067,10 @@ fi
 if [[ ! "$LLDPQ_USER" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]]; then
     echo "[!] Invalid LLDPQ_USER in configuration: '$LLDPQ_USER'" >&2
     exit 1
+fi
+if [[ -e "$LLDPQ_UNINSTALL_WEB_GATEWAY" || -L "$LLDPQ_UNINSTALL_WEB_GATEWAY" ||
+      -e "$LLDPQ_UNINSTALL_ACTIVE_MARKER" || -L "$LLDPQ_UNINSTALL_ACTIVE_MARKER" ]]; then
+    acquire_install_lifecycle_lock || exit 1
 fi
 
 # Running as root advisory
@@ -4589,12 +4701,111 @@ if [[ -L "$_backup_helper_dir" ]] || \
     exit 1
 fi
 
+echo "  - Installing root-owned web uninstall gateway"
+if [[ ! -f uninstall.sh || -L uninstall.sh ]]; then
+    echo "[!] Packaged uninstaller is missing or is a symlink" >&2
+    exit 1
+fi
+if [[ ! -f lldpq/uninstall_web.py || -L lldpq/uninstall_web.py ]]; then
+    echo "[!] Packaged web uninstall gateway is missing or is a symlink" >&2
+    exit 1
+fi
+if ! bash -n uninstall.sh || \
+   ! python3 -c 'import pathlib, sys; compile(pathlib.Path(sys.argv[1]).read_bytes(), sys.argv[1], "exec")' \
+        lldpq/uninstall_web.py; then
+    echo "[!] Packaged web uninstall helper syntax validation failed" >&2
+    exit 1
+fi
+_uninstall_script_stage="${LLDPQ_UNINSTALL_SCRIPT}.lldpq-new"
+_uninstall_gateway_stage="${LLDPQ_UNINSTALL_WEB_GATEWAY}.lldpq-new"
+sudo rm -f -- "$_uninstall_script_stage" "$_uninstall_gateway_stage"
+if ! sudo install -o root -g root -m 0755 -- \
+        uninstall.sh "$_uninstall_script_stage" || \
+   ! sudo install -o root -g root -m 0755 -- \
+        lldpq/uninstall_web.py "$_uninstall_gateway_stage" || \
+   ! sudo mv -fT -- "$_uninstall_script_stage" "$LLDPQ_UNINSTALL_SCRIPT" || \
+   ! sudo mv -fT -- "$_uninstall_gateway_stage" "$LLDPQ_UNINSTALL_WEB_GATEWAY"; then
+    sudo rm -f -- "$_uninstall_script_stage" "$_uninstall_gateway_stage" 2>/dev/null || true
+    echo "[!] Could not install the root-owned web uninstall helpers" >&2
+    exit 1
+fi
+_uninstall_script_metadata=$(sudo stat -c '%u:%g:%a:%h' -- \
+    "$LLDPQ_UNINSTALL_SCRIPT" 2>/dev/null || true)
+_uninstall_gateway_metadata=$(sudo stat -c '%u:%g:%a:%h' -- \
+    "$LLDPQ_UNINSTALL_WEB_GATEWAY" 2>/dev/null || true)
+if [[ -L "$LLDPQ_UNINSTALL_SCRIPT" ]] || \
+   [[ ! -f "$LLDPQ_UNINSTALL_SCRIPT" ]] || \
+   [[ "$_uninstall_script_metadata" != "0:0:755:1" ]] || \
+   ! sudo cmp -s -- uninstall.sh "$LLDPQ_UNINSTALL_SCRIPT" || \
+   [[ -L "$LLDPQ_UNINSTALL_WEB_GATEWAY" ]] || \
+   [[ ! -f "$LLDPQ_UNINSTALL_WEB_GATEWAY" ]] || \
+   [[ "$_uninstall_gateway_metadata" != "0:0:755:1" ]] || \
+   ! sudo cmp -s -- lldpq/uninstall_web.py "$LLDPQ_UNINSTALL_WEB_GATEWAY"; then
+    echo "[!] Root-owned web uninstall helper verification failed" >&2
+    exit 1
+fi
+if ! prepare_shared_lock_files "$LLDPQ_LIFECYCLE_LOCK"; then
+    echo "[!] Could not prepare the shared LLDPq lifecycle lock" >&2
+    exit 1
+fi
+
+# The CGI may invoke only these three fixed root-owned gateway entry points.
+# Options are passed as bounded JSON on stdin; never broaden this policy with
+# an argv wildcard or permission to execute uninstall.sh directly.
+_uninstall_sudoers_tmp=$(mktemp "${TMPDIR:-/tmp}/lldpq-uninstall-sudoers.XXXXXX") || exit 1
+if ! printf '%s\n' \
+    "www-data ALL=(root) NOPASSWD: $LLDPQ_UNINSTALL_WEB_GATEWAY preview, $LLDPQ_UNINSTALL_WEB_GATEWAY start, $LLDPQ_UNINSTALL_WEB_GATEWAY status" \
+    > "$_uninstall_sudoers_tmp" || \
+   ! chmod 0440 "$_uninstall_sudoers_tmp"; then
+    rm -f "$_uninstall_sudoers_tmp"
+    echo "[!] Could not stage the web uninstall sudoers policy" >&2
+    exit 1
+fi
+_visudo_bin=$(command -v visudo 2>/dev/null || true)
+if [[ -z "$_visudo_bin" && -x /usr/sbin/visudo ]]; then
+    _visudo_bin=/usr/sbin/visudo
+fi
+if [[ -z "$_visudo_bin" ]] || \
+   ! sudo "$_visudo_bin" -cf "$_uninstall_sudoers_tmp" >/dev/null; then
+    rm -f "$_uninstall_sudoers_tmp"
+    echo "[!] Web uninstall sudoers policy failed visudo validation" >&2
+    exit 1
+fi
+if sudo test -L "$LLDPQ_UNINSTALL_SUDOERS"; then
+    rm -f "$_uninstall_sudoers_tmp"
+    echo "[!] Refusing symlinked web uninstall sudoers policy" >&2
+    exit 1
+fi
+_uninstall_sudoers_stage="${LLDPQ_UNINSTALL_SUDOERS}.lldpq-new"
+sudo rm -f -- "$_uninstall_sudoers_stage"
+if ! sudo install -o root -g root -m 0440 -- \
+        "$_uninstall_sudoers_tmp" "$_uninstall_sudoers_stage" || \
+   ! sudo "$_visudo_bin" -cf "$_uninstall_sudoers_stage" >/dev/null || \
+   ! sudo mv -fT -- "$_uninstall_sudoers_stage" "$LLDPQ_UNINSTALL_SUDOERS"; then
+    sudo rm -f -- "$_uninstall_sudoers_stage" 2>/dev/null || true
+    rm -f "$_uninstall_sudoers_tmp"
+    echo "[!] Could not install the validated web uninstall sudoers policy" >&2
+    exit 1
+fi
+rm -f "$_uninstall_sudoers_tmp"
+_uninstall_sudoers_metadata=$(sudo stat -c '%u:%g:%a' -- \
+    "$LLDPQ_UNINSTALL_SUDOERS" 2>/dev/null || true)
+if [[ -L "$LLDPQ_UNINSTALL_SUDOERS" ]] || \
+   [[ ! -f "$LLDPQ_UNINSTALL_SUDOERS" ]] || \
+   [[ "$_uninstall_sudoers_metadata" != "0:0:440" ]] || \
+   ! sudo "$_visudo_bin" -cf "$LLDPQ_UNINSTALL_SUDOERS" >/dev/null; then
+    echo "[!] Installed web uninstall sudoers policy verification failed" >&2
+    exit 1
+fi
+
 echo "  - Copying lldpq to $LLDPQ_INSTALL_DIR"
 sudo mkdir -p "$LLDPQ_INSTALL_DIR"
 sudo cp -r lldpq/* "$LLDPQ_INSTALL_DIR/"
 # The source file is packaged with the application, but no installed workflow
-# may import or execute the service-user-writable copy.
-sudo rm -f "$LLDPQ_INSTALL_DIR/backup_import.py"
+# may import or execute either service-user-writable privileged helper copy.
+sudo rm -f \
+    "$LLDPQ_INSTALL_DIR/backup_import.py" \
+    "$LLDPQ_INSTALL_DIR/uninstall_web.py"
 sudo chown -R "$LLDPQ_USER:www-data" "$LLDPQ_INSTALL_DIR"
 
 # Restore preserved configs (update mode)

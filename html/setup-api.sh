@@ -156,10 +156,14 @@ import time
 import uuid
 import grp
 import pwd
+from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 CRON_VALIDATOR = '/usr/local/bin/lldpq-config'
 BACKUP_IMPORT_HELPER = '/usr/local/libexec/lldpq-backup-import.py'
+UNINSTALL_WEB_HELPER = '/usr/local/libexec/lldpq-uninstall-web.py'
+LIFECYCLE_LOCK_FILE = '/etc/lldpq.lifecycle.lock'
+UNINSTALL_ACTIVE_MARKER = '/run/lldpq-uninstall.active'
 SETUP_SAFETY = os.environ.get('SETUP_SAFETY', '')
 _CONFIG_LOCK_HANDLE = None
 _SSH_KEY_LOCK_HANDLE = None
@@ -218,12 +222,15 @@ def load_backup_import_helper(module_name):
     """Load only the installer-owned helper, never a service-tree module."""
     try:
         metadata = os.lstat(BACKUP_IMPORT_HELPER)
+        parent = os.lstat(os.path.dirname(BACKUP_IMPORT_HELPER))
     except OSError as exc:
         raise RuntimeError(
             'Backup helper is missing; run install.sh to repair this installation.'
         ) from exc
     if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != 0
-            or metadata.st_gid != 0 or stat.S_IMODE(metadata.st_mode) != 0o755):
+            or metadata.st_gid != 0 or stat.S_IMODE(metadata.st_mode) != 0o755
+            or not stat.S_ISDIR(parent.st_mode) or parent.st_uid != 0
+            or parent.st_mode & (stat.S_IWGRP | stat.S_IWOTH)):
         raise RuntimeError(
             'Backup helper ownership/mode is unsafe; run install.sh to repair this installation.'
         )
@@ -233,6 +240,118 @@ def load_backup_import_helper(module_name):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+def call_uninstall_web_helper(command, payload, *, timeout):
+    """Call the fixed root-owned uninstall gateway with bounded JSON on stdin."""
+    if command not in ('preview', 'start', 'status'):
+        return {'success': False, 'error': 'Unsupported uninstall gateway action'}
+    try:
+        metadata = os.lstat(UNINSTALL_WEB_HELPER)
+        parent = os.lstat(os.path.dirname(UNINSTALL_WEB_HELPER))
+    except OSError:
+        return {
+            'success': False,
+            'error': 'Uninstall helper is missing; run install.sh to repair this installation.',
+        }
+    if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != 0
+            or metadata.st_gid != 0 or stat.S_IMODE(metadata.st_mode) != 0o755
+            or not stat.S_ISDIR(parent.st_mode) or parent.st_uid != 0
+            or parent.st_mode & (stat.S_IWGRP | stat.S_IWOTH)):
+        return {
+            'success': False,
+            'error': 'Uninstall helper ownership or permissions are unsafe; run install.sh to repair this installation.',
+        }
+    try:
+        raw_payload = json.dumps(payload, separators=(',', ':'), ensure_ascii=True)
+    except (TypeError, ValueError):
+        return {'success': False, 'error': 'Uninstall request could not be encoded'}
+    if len(raw_payload.encode('utf-8')) > 16384:
+        return {'success': False, 'error': 'Uninstall request is too large'}
+    try:
+        result = subprocess.run(
+            ['sudo', '-n', UNINSTALL_WEB_HELPER, command],
+            input=raw_payload, capture_output=True, text=True, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return {'success': False, 'error': 'Uninstall gateway timed out'}
+    except Exception as exc:
+        return {'success': False, 'error': 'Uninstall gateway failed: ' + str(exc)[:200]}
+    if len(result.stdout.encode('utf-8', errors='replace')) > 262144:
+        return {'success': False, 'error': 'Uninstall gateway returned too much data'}
+    try:
+        response = json.loads(result.stdout)
+    except (TypeError, json.JSONDecodeError):
+        detail = (result.stderr or result.stdout or 'no response').strip()
+        return {'success': False, 'error': 'Uninstall gateway failed: ' + detail[:300]}
+    if not isinstance(response, dict):
+        return {'success': False, 'error': 'Uninstall gateway returned an invalid response'}
+    if result.returncode != 0 and response.get('success') is not False:
+        return {'success': False, 'error': 'Uninstall gateway exited unexpectedly'}
+    return response
+
+@contextmanager
+def setup_job_start_guard():
+    """Serialize run/update reservations against an accepted uninstall."""
+    if os.path.exists('/.dockerenv'):
+        yield
+        return
+    try:
+        metadata = os.lstat(LIFECYCLE_LOCK_FILE)
+    except OSError as exc:
+        raise RuntimeError(
+            'Lifecycle lock is missing; run install.sh to repair this installation.'
+        ) from exc
+    try:
+        web_gid = grp.getgrnam('www-data').gr_gid
+    except KeyError as exc:
+        raise RuntimeError('Required www-data group is unavailable') from exc
+    if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != 0
+            or metadata.st_gid != web_gid or stat.S_IMODE(metadata.st_mode) != 0o660
+            or metadata.st_nlink != 1):
+        raise RuntimeError('Lifecycle lock has unsafe ownership or permissions')
+    flags = os.O_RDWR | getattr(os, 'O_CLOEXEC', 0) | getattr(os, 'O_NOFOLLOW', 0)
+    descriptor = os.open(LIFECYCLE_LOCK_FILE, flags)
+    try:
+        opened = os.fstat(descriptor)
+        if ((opened.st_dev, opened.st_ino) != (metadata.st_dev, metadata.st_ino)
+                or not stat.S_ISREG(opened.st_mode)):
+            raise RuntimeError('Lifecycle lock changed while opening')
+        deadline = time.monotonic() + 3.0
+        while True:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError as exc:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(
+                        'Another LLDPq install, update or uninstall lifecycle operation is active'
+                    ) from exc
+                time.sleep(0.05)
+        if os.path.lexists(UNINSTALL_ACTIVE_MARKER):
+            marker = os.lstat(UNINSTALL_ACTIVE_MARKER)
+            if (not stat.S_ISREG(marker.st_mode) or marker.st_uid != 0
+                    or marker.st_gid != 0 or stat.S_IMODE(marker.st_mode) != 0o644
+                    or marker.st_nlink != 1 or marker.st_size > 128):
+                raise RuntimeError('Uninstall lifecycle marker is unsafe; inspect the host')
+            raise RuntimeError('An LLDPq uninstall is already scheduled or running')
+        # The uninstaller removes its fixed gateway while holding this same
+        # lock. A request that was already waiting on the now-unlinked lock
+        # must still fail after the marker is retired; it may not launch work
+        # against a dismantled installation.
+        try:
+            helper = os.lstat(UNINSTALL_WEB_HELPER)
+        except OSError as exc:
+            raise RuntimeError('LLDPq uninstall/install lifecycle is no longer available') from exc
+        if (not stat.S_ISREG(helper.st_mode) or helper.st_uid != 0
+                or helper.st_gid != 0 or stat.S_IMODE(helper.st_mode) != 0o755
+                or helper.st_nlink != 1):
+            raise RuntimeError('LLDPq lifecycle helper has unsafe ownership or permissions')
+        yield
+    finally:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
 
 def ensure_configuration_lock():
     """Serialize all /etc/lldpq.conf + cron transactions in this CGI."""
@@ -797,6 +916,134 @@ def background_job_status(state_dir, kind, raw_done, log_job_id):
             'job_id': job_id or None,
             'stale_reservation': decision['stale_reservation'], 'done': done}
 
+def active_setup_job_names():
+    """Return active collector/update jobs that must not race an uninstall."""
+    state_dir = os.path.join(os.path.expanduser('~' + lldpq_user), '.lldpq-state')
+    jobs = (
+        ('run', os.path.join(lldpq_dir, '.run.log')),
+        ('update', os.path.join(state_dir, 'update.log')),
+    )
+    active = []
+    for kind, log_path in jobs:
+        content = _read_service_file(log_path) or ''
+        _display, raw_done, _exit_code, _ok, log_job_id = parse_completion_log(content)
+        status = background_job_status(state_dir, kind, raw_done, log_job_id)
+        if status['running']:
+            active.append(kind)
+    return active
+
+def validated_uninstall_request(*, start=False):
+    """Copy only the fixed uninstall schema; reject extras and type coercion."""
+    allowed_top = {'action', 'options', 'acknowledgements'}
+    if start:
+        allowed_top.update({
+            'preview_token', 'preview_fingerprint', 'confirmation', 'request_id',
+        })
+    unknown_top = set(post_data) - allowed_top
+    if unknown_top:
+        raise ValueError('Unsupported uninstall request field: ' + sorted(unknown_top)[0])
+
+    options = post_data.get('options')
+    option_names = {'keep_data', 'remove_nginx', 'remove_dhcp', 'remove_docker'}
+    if not isinstance(options, dict) or set(options) != option_names:
+        raise ValueError('Uninstall options must contain exactly the supported fields')
+    if any(not isinstance(options[name], bool) for name in option_names):
+        raise ValueError('Every uninstall option must be true or false')
+
+    acknowledgements = post_data.get('acknowledgements', {})
+    acknowledgement_names = {'ack_disconnect', 'ack_data_loss', 'ack_shared_services'}
+    if (not isinstance(acknowledgements, dict)
+            or set(acknowledgements) != acknowledgement_names
+            or any(not isinstance(value, bool) for value in acknowledgements.values())):
+        raise ValueError('Uninstall acknowledgements are invalid')
+    acknowledgements = {name: acknowledgements[name] for name in acknowledgement_names}
+
+    payload = {'options': dict(options), 'acknowledgements': acknowledgements}
+    if not start:
+        return payload
+
+    confirmation = post_data.get('confirmation')
+    if confirmation != 'UNINSTALL':
+        raise ValueError('Type UNINSTALL exactly to confirm')
+    if not acknowledgements['ack_disconnect']:
+        raise ValueError('The management-disconnect acknowledgement is required')
+    if not options['keep_data'] and not acknowledgements['ack_data_loss']:
+        raise ValueError('The permanent data-loss acknowledgement is required')
+    if (any(options[name] for name in ('remove_nginx', 'remove_dhcp', 'remove_docker'))
+            and not acknowledgements['ack_shared_services']):
+        raise ValueError('The shared-service removal acknowledgement is required')
+
+    token = post_data.get('preview_token')
+    fingerprint = post_data.get('preview_fingerprint', '')
+    request_id = post_data.get('request_id')
+    if not isinstance(token, str) or not re.fullmatch(r'[a-f0-9]{64}', token):
+        raise ValueError('A valid dry-run preview token is required')
+    if (not isinstance(fingerprint, str)
+            or not re.fullmatch(r'[a-f0-9]{64}', fingerprint)):
+        raise ValueError('The preview fingerprint is invalid')
+    if (not isinstance(request_id, str)
+            or not re.fullmatch(r'[a-f0-9]{32}', request_id)):
+        raise ValueError('The uninstall request ID is invalid')
+    payload.update({
+        'preview_token': token,
+        'preview_fingerprint': fingerprint,
+        'confirmation': confirmation,
+        'request_id': request_id,
+    })
+    return payload
+
+# ─── Actions: Native uninstall Danger Zone (root-owned fixed gateway) ───
+if action in ('uninstall-preview', 'uninstall-start'):
+    if os.path.exists('/.dockerenv'):
+        response = {
+            'success': False,
+            'docker': True,
+            'error': ('Docker deployment: uninstall LLDPq from the Docker host with '
+                      'docker compose down and remove the host deployment files there.'),
+        }
+        if action == 'uninstall-start':
+            response['accepted'] = False
+        print(json.dumps(response))
+        sys.exit(0)
+    try:
+        payload = validated_uninstall_request(start=action == 'uninstall-start')
+        conflicts = active_setup_job_names()
+    except Exception as exc:
+        response = {'success': False, 'error': str(exc)[:300]}
+        if action == 'uninstall-start':
+            response['accepted'] = False
+        print(json.dumps(response))
+        sys.exit(0)
+    if conflicts:
+        response = {
+            'success': False,
+            'conflict': True,
+            'error': 'Cannot uninstall while Setup jobs are active: ' + ', '.join(conflicts),
+        }
+        if action == 'uninstall-start':
+            response['accepted'] = False
+        print(json.dumps(response))
+        sys.exit(0)
+    command = 'start' if action == 'uninstall-start' else 'preview'
+    response = call_uninstall_web_helper(
+        command, payload, timeout=30 if command == 'start' else 180,
+    )
+    print(json.dumps(response))
+    sys.exit(0)
+
+if action == 'uninstall-status':
+    if set(post_data) != {'action', 'job_id'}:
+        print(json.dumps({'success': False, 'error': 'Uninstall status request is invalid'}))
+        sys.exit(0)
+    job_id = post_data.get('job_id')
+    if (not isinstance(job_id, str)
+            or not re.fullmatch(r'[a-f0-9]{32}', job_id)):
+        print(json.dumps({'success': False, 'error': 'Uninstall job ID is invalid'}))
+        sys.exit(0)
+    response = call_uninstall_web_helper('status', {'job_id': job_id}, timeout=20)
+    print(json.dumps(response))
+    sys.exit(0)
+
 # ─── Actions: Read/write display-only P2P and field aliases ───
 if action == 'get-aliases':
     alias_file = os.path.join(web_root, 'display-aliases.json')
@@ -959,7 +1206,13 @@ if action == 'run':
     state_dir = os.path.join(os.path.expanduser('~' + lldpq_user), '.lldpq-state')
     subprocess.run(['sudo', '-n', '-u', lldpq_user, '/usr/bin/mkdir', '-p', state_dir],
                    capture_output=True, text=True, timeout=10)
-    job_id, job_error = reserve_background_job(state_dir, 'run', log_path)
+    try:
+        with setup_job_start_guard():
+            job_id, job_error = reserve_background_job(state_dir, 'run', log_path)
+    except Exception as exc:
+        print(json.dumps({'success': False, 'conflict': True,
+                          'error': 'Could not reserve the LLDPq run: ' + str(exc)[:200]}))
+        sys.exit(0)
     if job_error:
         print(json.dumps({'success': False, 'conflict': True, 'error': job_error}))
         sys.exit(0)
@@ -1187,7 +1440,8 @@ if action == 'update':
     script_path = os.path.join(state_dir, 'update-run.sh')
     log_path = os.path.join(state_dir, 'update.log')
     try:
-        job_id, job_error = reserve_background_job(state_dir, 'update', log_path)
+        with setup_job_start_guard():
+            job_id, job_error = reserve_background_job(state_dir, 'update', log_path)
     except Exception as exc:
         print(json.dumps({'success': False, 'error': 'Could not reserve the update: ' + str(exc)[:160]}))
         sys.exit(0)
@@ -1325,7 +1579,8 @@ if action == 'update-offline':
     script_path = os.path.join(state_dir, 'update-run.sh')
     log_path = os.path.join(state_dir, 'update.log')
     try:
-        job_id, job_error = reserve_background_job(state_dir, 'update', log_path)
+        with setup_job_start_guard():
+            job_id, job_error = reserve_background_job(state_dir, 'update', log_path)
     except Exception as exc:
         cleanup_uploaded_tarball(tarball)
         print(json.dumps({'success': False, 'error': 'Could not reserve the offline update: ' + str(exc)[:160]}))

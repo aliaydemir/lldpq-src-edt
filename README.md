@@ -683,6 +683,49 @@ Export a portable configuration bundle (`.tar.gz`) and re-import it on a new ins
 - **Disk usage** report for `monitor-results/` and the old update backups, plus total free space
 - **Safe purge** of old update backups (the `~/lldpq-backup-*` snapshots `install.sh` creates on every update — see [05]) behind a two-click guard: frees space without touching live config or monitoring data
 
+### Uninstall LLDPq (Danger Zone)
+
+Uninstall is deliberately **not** a numbered wizard step. It appears in a
+separate Danger Zone after step 11 because a successful uninstall removes the
+LLDPq nginx route, Setup API and web files; there is no next page for the
+wizard to open. Losing the Setup connection after the detached uninstall has
+started is therefore expected.
+
+The web flow is available only for a native Linux installation. A Docker
+container cannot remove its own host container, image or volumes, so Docker
+deployments show host-side `docker compose down` / `docker rm` guidance instead
+of running the native uninstaller.
+
+Before the destructive action, Setup shows a side-effect-free dry-run. To
+start the real operation, an admin must type `UNINSTALL` exactly and confirm a
+second time. This uninstall API accepts only the root-owned gateway's fixed
+`preview`, `start`, and `status` operations; uninstall options are bounded JSON
+rather than caller-selected executable paths or command-line arguments.
+The default **Keep selected data** option maps to `uninstall.sh --keep-data`.
+It first copies the retained items into
+`$LLDPQ_INSTALL_DIR/uninstall-kept-data/`, then removes their former live/web
+locations. The retained set is exactly:
+
+- Setup configuration: `devices.yaml`, `notifications.yaml`, `topology.dot`,
+  `topology_config.yaml`, and `display-aliases.json`;
+- runtime data: `monitor-results/`, `lldp-results/`, and `alert-states/`;
+- history: collected `configs/`, command-history `hstr/`, and the web
+  `monitor-results/` tree.
+
+It does not retain `/etc/lldpq.conf`, LLDPq users/sessions,
+generated/provisioning files, or `assets.ini`. Collector SSH keys in the
+service user's `~/.ssh/` are outside the managed uninstall targets and remain
+on disk regardless of this checkbox. The native telemetry stack is stopped
+with its Compose volumes removed even when selected data is kept.
+
+Optional package-removal controls are off by default and affect the whole
+host, not just LLDPq: removing DHCP deletes the ISC DHCP configuration and
+leases, removing nginx also removes fcgiwrap, and removing Docker purges the
+Docker/containerd packages plus all data under `/var/lib/docker` and
+`/var/lib/containerd`. Review the dry-run carefully before enabling any of
+them. The partial-tree override (`--force-partial`) is intentionally not
+exposed by the web UI.
+
 ## [04] cron jobs (auto setup)
 
 LLDPq owns a single `/etc/cron.d/lldpq` file. During an upgrade, only legacy

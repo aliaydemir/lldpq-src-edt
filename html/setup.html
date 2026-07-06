@@ -37,6 +37,13 @@
         .su-step .lbl { color:#e0e0e0; font-weight:600; font-size:14px; }
         .su-step .desc { color:#8f8f8f; font-size:11.5px; margin-top:2px; line-height:1.4; }
         .su-step.active .lbl { color:#fff; }
+        .su-danger-separator { margin:18px 14px 8px; color:#8f8f8f; font-size:10px; font-weight:700; letter-spacing:.11em; text-transform:uppercase; }
+        .su-step.danger .num { background:rgba(244,67,54,.14); color:#ef7770; }
+        .su-step.danger .lbl { color:#ef9a94; }
+        .su-step.danger:hover { background:#302222; }
+        .su-step.danger.active { background:#3a2020; border-color:#f44336; }
+        .su-step.danger.active .num { background:#f44336; color:#fff; }
+        .su-step.danger.active .lbl { color:#fff; }
 
         /* ---- right: active panel ---- */
         .su-main { flex:1; display:flex; flex-direction:column; overflow:hidden; }
@@ -65,6 +72,8 @@
         .btn.primary:hover { background:#8ad400; }
         .btn.secondary { background:#3c3c3c; color:#e0e0e0; }
         .btn.secondary:hover { background:#4a4a4a; }
+        .btn.danger { background:#c9362d; color:#fff; }
+        .btn.danger:hover { background:#e0443a; }
         .btn:disabled { opacity:.5; cursor:not-allowed; }
 
         .status { font-size:12.5px; margin-top:10px; min-height:18px; }
@@ -76,6 +85,13 @@
         .key-input input { flex:1; min-width:220px; padding:10px 12px; background:#1a1a1a; color:#d4d4d4; border:1px solid #404040; border-radius:6px; font-size:14px; }
         .key-input input:focus { outline:none; border-color:#76b900; }
         .note { background:#2a2a1a; border:1px solid #4a4424; border-radius:6px; padding:10px 14px; color:#d6ca8a; font-size:12.5px; line-height:1.55; margin-bottom:14px; }
+        .note.danger-note { background:#302020; border-color:#66332f; color:#efaaa4; }
+        .sched-card.danger-card { border-color:#63332f; }
+        .danger-choice { display:flex; align-items:flex-start; gap:9px; color:#d4d4d4; font-size:13px; line-height:1.45; cursor:pointer; margin:10px 0; }
+        .danger-choice input { width:16px; height:16px; min-width:16px; margin-top:2px; accent-color:#f44336; }
+        .danger-choice small { display:block; color:#8f8f8f; font-size:11.5px; margin-top:2px; }
+        .danger-advanced { margin-top:14px; padding-top:12px; border-top:1px solid #3a3030; }
+        .danger-advanced summary { cursor:pointer; color:#ef9a94; font-size:12.5px; font-weight:600; }
 
         .key-card { background:#202020; border:1px solid #333; border-radius:8px; padding:14px 16px; margin-bottom:16px; }
         .key-row { display:flex; justify-content:space-between; align-items:center; padding:4px 0; font-size:13px; }
@@ -466,6 +482,87 @@
                         <div class="status info" id="mt-status"></div>
                     </div>
                 </div>
+
+                <!-- Non-numbered Danger Zone: deliberately outside the 11-step wizard. -->
+                <div class="su-panel" data-step-key="uninstall">
+                    <h2>Uninstall LLDPq <span class="p-file" style="color:#ef7770;">danger zone</span></h2>
+                    <p class="p-desc">Remove LLDPq services, scheduled jobs, web files and managed system integration from this host. A dry-run preview is required before the destructive action can be enabled.</p>
+
+                    <div id="uninstall-env-note" class="note">Verifying that this is a supported native installation&hellip;</div>
+                    <div class="p-toolbar" id="uninstall-env-retry-row" style="display:none;">
+                        <button class="btn secondary" type="button" onclick="loadUninstallEnvironment(true)">Retry safety check</button>
+                    </div>
+
+                    <div id="uninstall-docker" style="display:none;">
+                        <div class="note danger-note"><strong>Browser uninstall is unavailable for Docker deployments.</strong> A container cannot safely remove its host deployment. Stop/remove LLDPq from the host that runs Docker, using the compose project or container management method used to install it.</div>
+                    </div>
+
+                    <div id="uninstall-native" style="display:none;">
+                        <div class="note danger-note"><strong>This cannot be undone from the browser.</strong> LLDPq&rsquo;s web route is removed during uninstall, so this page is expected to disconnect before it can report a final result. Review the dry run and verify completion over SSH.</div>
+
+                        <div class="sched-card danger-card" id="uninstall-options-card">
+                            <label class="key-lbl">LLDPq data</label>
+                            <label class="danger-choice">
+                                <input type="radio" name="uninstall-data" id="uninstall-keep-data" value="keep" checked>
+                                <span><strong>Keep selected Setup configuration and file-based history (recommended)</strong><small>Preserves five Setup files plus selected results/history. It does not preserve <code>/etc/lldpq.conf</code>, <code>assets.ini</code> or telemetry volumes. The preview lists the exact retained paths.</small></span>
+                            </label>
+                            <label class="danger-choice">
+                                <input type="radio" name="uninstall-data" id="uninstall-remove-data" value="remove">
+                                <span><strong>Remove LLDPq-managed configuration and monitoring data</strong><small>Permanently deletes the LLDPq data and configuration listed by the preview. A separate data-loss acknowledgement will be required.</small></span>
+                            </label>
+
+                            <details class="danger-advanced">
+                                <summary>Advanced: also remove host-wide packages</summary>
+                                <div class="note danger-note" style="margin-top:12px;">These packages may be shared by unrelated workloads. They are never selected automatically.</div>
+                                <label class="danger-choice">
+                                    <input type="checkbox" id="uninstall-remove-nginx">
+                                    <span><strong>Remove nginx and fcgiwrap packages</strong><small>May stop other websites and CGI applications on this host.</small></span>
+                                </label>
+                                <label class="danger-choice">
+                                    <input type="checkbox" id="uninstall-remove-dhcp">
+                                    <span><strong>Remove ISC DHCP server and its configuration</strong><small>May interrupt DHCP service for clients unrelated to LLDPq.</small></span>
+                                </label>
+                                <label class="danger-choice">
+                                    <input type="checkbox" id="uninstall-remove-docker">
+                                    <span><strong>Remove Docker engine, <code>/var/lib/docker</code> and <code>/var/lib/containerd</code></strong><small>Deletes all host containers, images and volumes, including workloads unrelated to LLDPq.</small></span>
+                                </label>
+                            </details>
+
+                            <div class="p-toolbar" style="margin-top:16px;">
+                                <button class="btn secondary" type="button" id="uninstall-preview-btn" onclick="previewUninstall()"><svg viewBox="0 0 24 24"><path d="M12,4.5C7,4.5 2.73,7.61 1,12C2.73,16.39 7,19.5 12,19.5C17,19.5 21.27,16.39 23,12C21.27,7.61 17,4.5 12,4.5M12,17C9.24,17 7,14.76 7,12C7,9.24 9.24,7 12,7C14.76,7 17,9.24 17,12C17,14.76 14.76,17 12,17M12,9C10.34,9 9,10.34 9,12C9,13.66 10.34,15 12,15C13.66,15 15,13.66 15,12C15,10.34 13.66,9 12,9Z"/></svg>Preview uninstall (dry run)</button>
+                            </div>
+                            <div class="status info" id="uninstall-status"></div>
+                        </div>
+
+                        <div id="uninstall-preview-wrap" style="display:none;">
+                            <label class="key-lbl">Dry-run preview &mdash; no changes were made</label>
+                            <pre id="uninstall-output" class="run-output" style="height:300px;">Waiting for preview&hellip;</pre>
+
+                            <div class="sched-card danger-card" id="uninstall-confirm-card" style="margin-top:14px;">
+                                <label class="key-lbl">Required acknowledgements</label>
+                                <label class="danger-choice">
+                                    <input type="checkbox" id="uninstall-ack-disconnect">
+                                    <span>I understand that LLDPq&rsquo;s web interface will disconnect and the browser may not receive the final result.</span>
+                                </label>
+                                <label class="danger-choice" id="uninstall-ack-data-loss-row" style="display:none;">
+                                    <input type="checkbox" id="uninstall-ack-data-loss">
+                                    <span>I understand that the selected LLDPq configuration and monitoring data will be permanently deleted.</span>
+                                </label>
+                                <label class="danger-choice" id="uninstall-ack-shared-row" style="display:none;">
+                                    <input type="checkbox" id="uninstall-ack-shared-services">
+                                    <span>I understand that the selected host-wide packages/data may be used by unrelated services and workloads.</span>
+                                </label>
+
+                                <label class="key-lbl" for="uninstall-confirm-text">Type <code>UNINSTALL</code> exactly to enable the final action:</label>
+                                <div class="key-input">
+                                    <input type="text" id="uninstall-confirm-text" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="UNINSTALL">
+                                    <button class="btn danger" type="button" id="uninstall-start-btn" onclick="startUninstall()" disabled><svg viewBox="0 0 24 24"><path d="M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z"/></svg>Permanently uninstall LLDPq</button>
+                                </div>
+                                <div class="status info" id="uninstall-launch-status"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <div class="su-nav">
@@ -525,6 +622,24 @@ let updatePollEpoch = 0;
 let updatePollController = null;
 let updateReloadScheduled = false;
 const UPDATE_LOG_TIMEOUT_MS = 10000;
+let uninstallEnvironment = 'unknown'; // unknown | checking | native | docker | error
+let uninstallEnvironmentSeq = 0;
+let uninstallPreviewToken = null;
+let uninstallPreviewFingerprint = null;
+let uninstallPreviewOptionFingerprint = null;
+let uninstallPreviewSeq = 0;
+let uninstallPreviewController = null;
+let uninstallStarting = false;
+let uninstallCommitted = false; // accepted or ambiguous start: never offer a second launch
+let uninstallJobId = null;
+let uninstallJobCreatedAt = 0;
+let uninstallStatusMissingCount = 0;
+let uninstallStatusTimer = null;
+let uninstallStatusEpoch = 0;
+const UNINSTALL_STATUS_TIMEOUT_MS = 8000;
+const UNINSTALL_STATUS_MISSING_GRACE_MS = 60000;
+const UNINSTALL_STATUS_MISSING_CONFIRMATIONS = 3;
+const UNINSTALL_JOB_STORAGE_KEY = 'lldpq.setup.uninstall-job.v1';
 let aliasesLoaded = false;
 let aliasesDirty = false;
 let aliasesRevision = null;
@@ -554,11 +669,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     renderSteps();
     // Allow deep-linking to a step, e.g. setup.html?step=update (used by the index "Update Available" popup).
     var startIdx = 0;
+    var startUninstall = restoreUninstallJobState();
     try {
         var sp = new URLSearchParams(location.search).get('step') || (location.hash || '').replace('#', '');
-        if (sp) { var si = STEPS.findIndex(function (s) { return s.key === sp; }); if (si >= 0) startIdx = si; }
+        if (sp === 'uninstall') startUninstall = true;
+        else if (sp) { var si = STEPS.findIndex(function (s) { return s.key === sp; }); if (si >= 0) startIdx = si; }
     } catch (e) {}
-    goStep(startIdx);
+    if (startUninstall) {
+        showUninstall();
+        if (uninstallCommitted && uninstallJobId) resumeUninstallJobStatus();
+    } else goStep(startIdx);
     // A successful self-update reloads with a one-use cache-busting query so
     // the browser cannot keep executing the pre-update inline JavaScript.
     try {
@@ -590,10 +710,31 @@ function renderSteps() {
         const desc = document.createElement('div'); desc.className = 'desc'; desc.textContent = s.desc;
         copy.append(label, desc); step.append(num, copy); c.appendChild(step);
     });
+
+    const separator = document.createElement('div');
+    separator.className = 'su-danger-separator';
+    separator.textContent = 'Danger Zone';
+    const danger = document.createElement('div');
+    danger.className = 'su-step danger';
+    danger.id = 'step-uninstall';
+    danger.setAttribute('role', 'button');
+    danger.setAttribute('tabindex', '0');
+    danger.addEventListener('click', showUninstall);
+    danger.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showUninstall(); }
+    });
+    const mark = document.createElement('div');
+    mark.className = 'num'; mark.textContent = '!';
+    const copy = document.createElement('div');
+    const label = document.createElement('div'); label.className = 'lbl'; label.textContent = 'Uninstall LLDPq';
+    const desc = document.createElement('div'); desc.className = 'desc'; desc.textContent = 'Remove LLDPq from this host';
+    copy.append(label, desc); danger.append(mark, copy); c.append(separator, danger);
 }
 
 function goStep(i) {
     if (i < 0 || i >= STEPS.length) return;
+    if (uninstallCommitted || uninstallStarting) return;
+    if (current === STEPS.length) invalidateUninstallPreview('', true);
     current = i;
     const key = STEPS[i].key;
     document.querySelectorAll('.su-step').forEach((el, idx) => {
@@ -630,6 +771,31 @@ function goStep(i) {
     } catch (e) { /* deep-link state is non-critical */ }
 }
 
+function showUninstall() {
+    current = STEPS.length; // sentinel: keeps this panel outside numbered wizard steps
+    document.querySelectorAll('.su-step').forEach(function (el) {
+        const active = el.id === 'step-uninstall';
+        el.classList.toggle('active', active);
+        if (active) el.setAttribute('aria-current', 'page'); else el.removeAttribute('aria-current');
+    });
+    document.querySelectorAll('.su-panel').forEach(function (el) {
+        el.classList.toggle('active', el.dataset.stepKey === 'uninstall');
+    });
+    document.getElementById('nav-ind').textContent = 'Danger Zone';
+    document.getElementById('nav-back').disabled = uninstallCommitted;
+    document.getElementById('nav-next').style.visibility = 'hidden';
+    try {
+        const u = new URL(location.href);
+        u.searchParams.set('step', 'uninstall');
+        u.hash = '';
+        history.replaceState(null, '', u.pathname + u.search);
+    } catch (e) { /* deep-link state is non-critical */ }
+    updateUninstallAcknowledgementVisibility();
+    refreshUninstallAvailability();
+    if (uninstallEnvironment === 'unknown' || uninstallEnvironment === 'error') loadUninstallEnvironment();
+    else renderUninstallEnvironment();
+}
+
 function initDirtyGuards() {
     Object.keys(FILES).forEach(function (key) {
         const cfg = FILES[key];
@@ -644,6 +810,22 @@ function initDirtyGuards() {
     });
     const ansInput = document.getElementById('ans-input');
     if (ansInput) ansInput.addEventListener('input', function () { ansibleDirty = true; ansibleEditVersion++; });
+    ['uninstall-keep-data', 'uninstall-remove-data', 'uninstall-remove-nginx',
+     'uninstall-remove-dhcp', 'uninstall-remove-docker'].forEach(function (id) {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('change', function () {
+            updateUninstallAcknowledgementVisibility();
+            invalidateUninstallPreview('Options changed. Run a new dry-run preview before uninstalling.');
+            refreshUninstallAvailability();
+        });
+    });
+    ['uninstall-ack-disconnect', 'uninstall-ack-data-loss',
+     'uninstall-ack-shared-services'].forEach(function (id) {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('change', refreshUninstallConfirmationGate);
+    });
+    const uninstallText = document.getElementById('uninstall-confirm-text');
+    if (uninstallText) uninstallText.addEventListener('input', refreshUninstallConfirmationGate);
     window.addEventListener('beforeunload', function (e) {
         if (!hasUnsavedSetupChanges()) return;
         e.preventDefault(); e.returnValue = '';
@@ -1969,6 +2151,487 @@ function invalidateSetupCachesAfterRestore(){
     ansibleLoadSeq++; ansibleOpSeq++; ansibleLoaded=false; ansibleDirty=false; ansibleBusy=false;
     keyInfoLoaded=false; schedLoaded=false; parallelLoaded=false; maintLoaded=false;
     publishAliasUpdate(null);
+}
+
+/* ---- Non-numbered Danger Zone: Uninstall LLDPq ---- */
+function persistUninstallJobState(jobId){
+    if (!/^[a-f0-9]{32}$/.test(jobId || '')) return false;
+    try {
+        const record = {job_id:jobId, created_at:Date.now()};
+        localStorage.setItem(UNINSTALL_JOB_STORAGE_KEY, JSON.stringify(record));
+        const stored = JSON.parse(localStorage.getItem(UNINSTALL_JOB_STORAGE_KEY) || '{}');
+        const persisted = stored.job_id === jobId && Number(stored.created_at) === record.created_at;
+        if (persisted) uninstallJobCreatedAt = record.created_at;
+        return persisted;
+    } catch (e) { return false; }
+}
+
+function clearPersistedUninstallJobState(){
+    try { localStorage.removeItem(UNINSTALL_JOB_STORAGE_KEY); } catch (e) {}
+}
+
+function restoreUninstallJobState(){
+    try {
+        const raw = localStorage.getItem(UNINSTALL_JOB_STORAGE_KEY);
+        if (!raw) return false;
+        const saved = JSON.parse(raw);
+        const age = Date.now() - Number(saved.created_at || 0);
+        if (!/^[a-f0-9]{32}$/.test(saved.job_id || '') || age < 0 || age > 86400000) {
+            clearPersistedUninstallJobState();
+            return false;
+        }
+        uninstallJobId = saved.job_id;
+        uninstallJobCreatedAt = Number(saved.created_at);
+        uninstallStatusMissingCount = 0;
+        uninstallCommitted = true;
+        return true;
+    } catch (e) {
+        clearPersistedUninstallJobState();
+        return false;
+    }
+}
+
+function resumeUninstallJobStatus(){
+    uninstallEnvironment = 'native';
+    renderUninstallEnvironment();
+    document.getElementById('uninstall-preview-wrap').style.display = 'block';
+    const output = document.getElementById('uninstall-output');
+    output.textContent = 'Recovering the previously accepted uninstall status…\n';
+    setUninstallControlsDisabled(true);
+    setStatus('uninstall-launch-status', 'A previously accepted uninstall job is being checked. Do not launch it again.', 'info');
+    const epoch = ++uninstallStatusEpoch;
+    pollUninstallStatus(epoch);
+}
+
+function getUninstallOptions(){
+    return {
+        keep_data: !!document.getElementById('uninstall-keep-data').checked,
+        remove_nginx: !!document.getElementById('uninstall-remove-nginx').checked,
+        remove_dhcp: !!document.getElementById('uninstall-remove-dhcp').checked,
+        remove_docker: !!document.getElementById('uninstall-remove-docker').checked
+    };
+}
+
+function uninstallOptionsFingerprint(options){
+    return JSON.stringify({
+        keep_data: options.keep_data === true,
+        remove_nginx: options.remove_nginx === true,
+        remove_dhcp: options.remove_dhcp === true,
+        remove_docker: options.remove_docker === true
+    });
+}
+
+function uninstallHasSharedPackageSelection(options){
+    return options.remove_nginx || options.remove_dhcp || options.remove_docker;
+}
+
+function updateUninstallAcknowledgementVisibility(){
+    const options = getUninstallOptions();
+    const dataRow = document.getElementById('uninstall-ack-data-loss-row');
+    const dataAck = document.getElementById('uninstall-ack-data-loss');
+    const sharedRow = document.getElementById('uninstall-ack-shared-row');
+    const sharedAck = document.getElementById('uninstall-ack-shared-services');
+    const needsDataAck = !options.keep_data;
+    const needsSharedAck = uninstallHasSharedPackageSelection(options);
+    if (dataRow) dataRow.style.display = needsDataAck ? 'flex' : 'none';
+    if (dataAck && !needsDataAck) dataAck.checked = false;
+    if (sharedRow) sharedRow.style.display = needsSharedAck ? 'flex' : 'none';
+    if (sharedAck && !needsSharedAck) sharedAck.checked = false;
+    refreshUninstallConfirmationGate();
+}
+
+function renderUninstallEnvironment(){
+    const note = document.getElementById('uninstall-env-note');
+    const retry = document.getElementById('uninstall-env-retry-row');
+    const docker = document.getElementById('uninstall-docker');
+    const native = document.getElementById('uninstall-native');
+    if (!note || !retry || !docker || !native) return;
+    note.style.display = 'block';
+    retry.style.display = 'none';
+    docker.style.display = 'none';
+    native.style.display = 'none';
+    if (uninstallEnvironment === 'checking') {
+        note.className = 'note';
+        note.textContent = 'Verifying that this is a supported native installation…';
+    } else if (uninstallEnvironment === 'native') {
+        note.style.display = 'none';
+        native.style.display = 'block';
+    } else if (uninstallEnvironment === 'docker') {
+        note.style.display = 'none';
+        docker.style.display = 'block';
+    } else {
+        note.className = 'note danger-note';
+        note.textContent = 'Could not verify the deployment type. Browser uninstall is disabled until this safety check succeeds.';
+        retry.style.display = 'flex';
+    }
+    refreshUninstallAvailability();
+}
+
+async function loadUninstallEnvironment(force){
+    if (uninstallCommitted || uninstallStarting) return false;
+    if (uninstallEnvironment === 'checking' && !force) return false;
+    const seq = ++uninstallEnvironmentSeq;
+    uninstallEnvironment = 'checking';
+    renderUninstallEnvironment();
+    try {
+        const r = await fetch('/setup-api.sh', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({action:'env'})
+        });
+        const d = await r.json().catch(()=>({}));
+        if (seq !== uninstallEnvironmentSeq) return false;
+        if (!d.success) throw new Error(d.error || 'Deployment check failed');
+        uninstallEnvironment = d.docker ? 'docker' : 'native';
+        renderUninstallEnvironment();
+        return uninstallEnvironment === 'native';
+    } catch (e) {
+        if (seq !== uninstallEnvironmentSeq) return false;
+        uninstallEnvironment = 'error';
+        renderUninstallEnvironment();
+        return false;
+    }
+}
+
+function refreshUninstallAvailability(){
+    const preview = document.getElementById('uninstall-preview-btn');
+    if (!preview) return;
+    const unsaved = hasUnsavedSetupChanges();
+    preview.disabled = !!uninstallPreviewController || uninstallStarting || uninstallCommitted ||
+        uninstallEnvironment !== 'native' || unsaved;
+    const status = document.getElementById('uninstall-status');
+    if (unsaved && uninstallEnvironment === 'native' && !uninstallCommitted) {
+        if (status) status.dataset.unsavedBlock = '1';
+        setStatus('uninstall-status', 'Save or reload all unsaved Setup edits before previewing uninstall. The dry run only sees files already saved on the server.', 'err');
+    } else if (status && status.dataset.unsavedBlock === '1') {
+        delete status.dataset.unsavedBlock;
+        setStatus('uninstall-status', '', 'info');
+    }
+    refreshUninstallConfirmationGate();
+}
+
+function clearUninstallStatusTimer(){
+    if (uninstallStatusTimer) { clearTimeout(uninstallStatusTimer); uninstallStatusTimer = null; }
+}
+
+function invalidateUninstallPreview(message, quiet){
+    if (uninstallCommitted) return;
+    uninstallPreviewSeq++;
+    if (uninstallPreviewController) {
+        uninstallPreviewController.abort();
+        uninstallPreviewController = null;
+    }
+    clearUninstallStatusTimer();
+    uninstallPreviewToken = null;
+    uninstallPreviewFingerprint = null;
+    uninstallPreviewOptionFingerprint = null;
+    ['uninstall-ack-disconnect', 'uninstall-ack-data-loss',
+     'uninstall-ack-shared-services'].forEach(function (id) {
+        const el = document.getElementById(id); if (el) el.checked = false;
+    });
+    const confirmText = document.getElementById('uninstall-confirm-text');
+    if (confirmText) confirmText.value = '';
+    const wrap = document.getElementById('uninstall-preview-wrap');
+    if (wrap) wrap.style.display = 'none';
+    const output = document.getElementById('uninstall-output');
+    if (output) output.textContent = 'Waiting for preview…';
+    setStatus('uninstall-launch-status', '', 'info');
+    if (quiet) setStatus('uninstall-status', '', 'info');
+    else if (message) setStatus('uninstall-status', message, 'info');
+    refreshUninstallConfirmationGate();
+}
+
+function formatUninstallPreview(preview){
+    if (typeof preview === 'string') return preview;
+    if (!preview || typeof preview !== 'object') return '';
+    const lines = [];
+    if (typeof preview.summary === 'string' && preview.summary) lines.push(preview.summary);
+    if (Array.isArray(preview.warnings)) preview.warnings.forEach(function (warning) {
+        if (typeof warning === 'string' && warning) lines.push('WARNING: ' + warning);
+    });
+    const output = typeof preview.output === 'string' ? preview.output :
+        (typeof preview.log === 'string' ? preview.log : '');
+    if (output) lines.push(output);
+    if (!lines.length) {
+        try { return JSON.stringify(preview, null, 2); } catch (e) { return ''; }
+    }
+    return lines.join('\n\n');
+}
+
+async function previewUninstall(){
+    if (uninstallCommitted || uninstallStarting) return;
+    if (hasUnsavedSetupChanges()) {
+        refreshUninstallAvailability();
+        return;
+    }
+    if (uninstallEnvironment !== 'native') {
+        const native = await loadUninstallEnvironment(true);
+        if (!native) return;
+    }
+    const options = getUninstallOptions();
+    const optionFingerprint = uninstallOptionsFingerprint(options);
+    invalidateUninstallPreview('', true);
+    const seq = uninstallPreviewSeq;
+    const controller = new AbortController();
+    uninstallPreviewController = controller;
+    const timeout = setTimeout(function () { controller.abort(); }, 150000);
+    refreshUninstallAvailability();
+    setStatus('uninstall-status', 'Running safe dry-run preview…', 'info');
+    try {
+        const r = await fetch('/setup-api.sh', {
+            method:'POST', headers:{'Content-Type':'application/json'}, signal:controller.signal,
+            body:JSON.stringify({
+                action:'uninstall-preview', options:options,
+                acknowledgements:{ack_disconnect:false, ack_data_loss:false, ack_shared_services:false}
+            })
+        });
+        const d = await r.json().catch(()=>({}));
+        if (seq !== uninstallPreviewSeq) return;
+        if (d.docker) {
+            uninstallEnvironment = 'docker';
+            renderUninstallEnvironment();
+            throw new Error('Docker deployment detected; browser uninstall is unavailable.');
+        }
+        if (!d.success) throw new Error(d.error || 'Dry-run preview failed');
+        const text = formatUninstallPreview(d.preview);
+        if (!text || typeof d.preview_token !== 'string' || !d.preview_token ||
+            typeof d.preview_fingerprint !== 'string' || !d.preview_fingerprint) {
+            throw new Error('The server did not return a complete, verifiable dry-run preview.');
+        }
+        uninstallPreviewToken = d.preview_token;
+        uninstallPreviewFingerprint = d.preview_fingerprint;
+        uninstallPreviewOptionFingerprint = optionFingerprint;
+        const output = document.getElementById('uninstall-output');
+        output.textContent = text;
+        output.scrollTop = 0;
+        document.getElementById('uninstall-preview-wrap').style.display = 'block';
+        let status = 'Dry run complete. Review it, acknowledge the impact, then type UNINSTALL exactly.';
+        if (Number.isInteger(d.expires_at)) {
+            status += ' This preview expires at ' + new Date(d.expires_at * 1000).toLocaleTimeString() + '.';
+        } else if (typeof d.expires_at === 'string' && d.expires_at) {
+            status += ' This preview expires at ' + d.expires_at + '.';
+        }
+        setStatus('uninstall-status', status, 'ok');
+        updateUninstallAcknowledgementVisibility();
+    } catch (e) {
+        if (seq !== uninstallPreviewSeq) return;
+        uninstallPreviewToken = null;
+        uninstallPreviewFingerprint = null;
+        uninstallPreviewOptionFingerprint = null;
+        const msg = e && e.name === 'AbortError' ? 'Dry-run preview timed out. No changes were made.' : (e.message || 'Dry-run preview failed');
+        setStatus('uninstall-status', msg, 'err');
+    } finally {
+        clearTimeout(timeout);
+        if (uninstallPreviewController === controller) uninstallPreviewController = null;
+        if (seq === uninstallPreviewSeq) refreshUninstallAvailability();
+    }
+}
+
+function refreshUninstallConfirmationGate(){
+    const button = document.getElementById('uninstall-start-btn');
+    if (!button) return;
+    const options = getUninstallOptions();
+    const currentFingerprint = uninstallOptionsFingerprint(options);
+    const previewValid = !!uninstallPreviewToken && !!uninstallPreviewFingerprint &&
+        uninstallPreviewOptionFingerprint === currentFingerprint;
+    const ackDisconnect = !!document.getElementById('uninstall-ack-disconnect').checked;
+    const ackData = options.keep_data || !!document.getElementById('uninstall-ack-data-loss').checked;
+    const ackShared = !uninstallHasSharedPackageSelection(options) ||
+        !!document.getElementById('uninstall-ack-shared-services').checked;
+    const exact = document.getElementById('uninstall-confirm-text').value === 'UNINSTALL';
+    button.disabled = !previewValid || !ackDisconnect || !ackData || !ackShared || !exact ||
+        hasUnsavedSetupChanges() || uninstallEnvironment !== 'native' ||
+        uninstallStarting || uninstallCommitted;
+}
+
+function setUninstallControlsDisabled(disabled){
+    const native = document.getElementById('uninstall-native');
+    if (native) native.querySelectorAll('input,button').forEach(function (el) { el.disabled = disabled; });
+    document.getElementById('nav-back').disabled = disabled;
+    document.querySelectorAll('.su-step').forEach(function (el) {
+        if (disabled) el.setAttribute('aria-disabled', 'true'); else el.removeAttribute('aria-disabled');
+    });
+    if (!disabled) {
+        refreshUninstallAvailability();
+        refreshUninstallConfirmationGate();
+    }
+}
+
+function newUninstallRequestId(){
+    if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+        return window.crypto.randomUUID().replace(/-/g, '').toLowerCase();
+    }
+    if (!window.crypto || typeof window.crypto.getRandomValues !== 'function') {
+        throw new Error('Secure browser randomness is unavailable; uninstall was not started.');
+    }
+    const bytes = new Uint8Array(16);
+    window.crypto.getRandomValues(bytes);
+    return Array.from(bytes, function (value) { return value.toString(16).padStart(2, '0'); }).join('');
+}
+
+function markUninstallConnectionLost(message){
+    clearUninstallStatusTimer();
+    const text = message || 'LLDPq\u2019s web endpoint is no longer reachable. This is expected after launch, but the browser cannot prove completion. Do not launch again; verify the result over SSH.';
+    setStatus('uninstall-launch-status', text, 'info');
+}
+
+async function startUninstall(){
+    refreshUninstallConfirmationGate();
+    const button = document.getElementById('uninstall-start-btn');
+    if (!button || button.disabled || uninstallStarting || uninstallCommitted) return;
+    const options = getUninstallOptions();
+    if (uninstallOptionsFingerprint(options) !== uninstallPreviewOptionFingerprint) {
+        invalidateUninstallPreview('Options changed. Run a new dry-run preview before uninstalling.');
+        return;
+    }
+    const acknowledgements = {
+        ack_disconnect: !!document.getElementById('uninstall-ack-disconnect').checked,
+        ack_data_loss: !!document.getElementById('uninstall-ack-data-loss').checked,
+        ack_shared_services: !!document.getElementById('uninstall-ack-shared-services').checked
+    };
+    let requestId;
+    try { requestId = newUninstallRequestId(); }
+    catch (e) { setStatus('uninstall-launch-status', e.message, 'err'); return; }
+    const payload = {
+        action:'uninstall-start', options:options, acknowledgements:acknowledgements,
+        confirmation:document.getElementById('uninstall-confirm-text').value,
+        preview_token:uninstallPreviewToken,
+        preview_fingerprint:uninstallPreviewFingerprint,
+        request_id:requestId
+    };
+    // Persist the browser-generated authoritative request id before the
+    // destructive request leaves this tab. If the tab closes after the
+    // server accepts it, the next page load can still recover status. Only a
+    // definitive rejection below is allowed to clear this record.
+    uninstallJobId = requestId;
+    if (!persistUninstallJobState(requestId)) {
+        uninstallJobId = null;
+        setStatus('uninstall-launch-status', 'The browser could not save the uninstall request ID for reload recovery. No uninstall was started.', 'err');
+        return;
+    }
+    uninstallStarting = true;
+    setUninstallControlsDisabled(true);
+    setStatus('uninstall-launch-status', 'Submitting the verified uninstall job…', 'info');
+    const controller = new AbortController();
+    const timeout = setTimeout(function () { controller.abort(); }, 15000);
+    try {
+        const r = await fetch('/setup-api.sh', {
+            method:'POST', headers:{'Content-Type':'application/json'}, signal:controller.signal,
+            body:JSON.stringify(payload)
+        });
+        let d;
+        try { d = await r.json(); }
+        catch (parseError) { throw new Error('The connection closed before a verifiable response was received.'); }
+        if (!d || typeof d !== 'object' || typeof d.success !== 'boolean') {
+            throw new Error('The server returned an unverifiable uninstall response.');
+        }
+        if (d.accepted === false) {
+            clearPersistedUninstallJobState();
+            uninstallJobId = null;
+            uninstallJobCreatedAt = 0;
+            uninstallStatusMissingCount = 0;
+            uninstallStarting = false;
+            setUninstallControlsDisabled(false);
+            invalidateUninstallPreview(d.error || 'The uninstall was not accepted. Run a new dry-run preview.');
+            return;
+        }
+        if (!d.success) throw new Error(d.error || 'The server could not verify whether uninstall was accepted.');
+        uninstallStarting = false;
+        uninstallCommitted = true;
+        uninstallPreviewToken = null;
+        setUninstallControlsDisabled(true);
+        const output = document.getElementById('uninstall-output');
+        output.textContent = typeof d.log === 'string' && d.log ? d.log :
+            'Uninstall accepted. Waiting for the LLDPq web endpoint to close…\n';
+        output.scrollTop = output.scrollHeight;
+        setStatus('uninstall-launch-status', 'Uninstall accepted. This page is expected to disconnect; do not submit it again. Verify completion over SSH.', 'ok');
+        if (typeof d.job_id === 'string' && d.job_id && d.job_id !== requestId) {
+            markUninstallConnectionLost('The uninstall was accepted with an unexpected status identity. Do not launch again; verify completion over SSH.');
+        } else {
+            const epoch = ++uninstallStatusEpoch;
+            pollUninstallStatus(epoch);
+        }
+    } catch (e) {
+        // The request can be accepted immediately before nginx/fcgiwrap goes away.
+        // Never retry a destructive start whose result is ambiguous.
+        uninstallStarting = false;
+        uninstallCommitted = true;
+        uninstallPreviewToken = null;
+        uninstallJobId = requestId;
+        setUninstallControlsDisabled(true);
+        markUninstallConnectionLost('The connection closed before the browser received acceptance. The uninstall may have started. Do not launch again; verify the result over SSH.');
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+async function pollUninstallStatus(epoch){
+    if (!uninstallCommitted || !uninstallJobId || epoch !== uninstallStatusEpoch) return;
+    clearUninstallStatusTimer();
+    const controller = new AbortController();
+    const timeout = setTimeout(function () { controller.abort(); }, UNINSTALL_STATUS_TIMEOUT_MS);
+    try {
+        const r = await fetch('/setup-api.sh', {
+            method:'POST', headers:{'Content-Type':'application/json'}, signal:controller.signal,
+            body:JSON.stringify({action:'uninstall-status', job_id:uninstallJobId})
+        });
+        const d = await r.json().catch(()=>({}));
+        if (epoch !== uninstallStatusEpoch) return;
+        if (!d.success) {
+            if (typeof d.error === 'string' && /job was not found/i.test(d.error)) {
+                const age = Date.now() - uninstallJobCreatedAt;
+                if (!Number.isFinite(age) || age < 0 || age < UNINSTALL_STATUS_MISSING_GRACE_MS) {
+                    setStatus('uninstall-launch-status', 'The uninstall submission is still being resolved. Do not launch it again.', 'info');
+                    uninstallStatusTimer = setTimeout(function () { pollUninstallStatus(epoch); }, 2000);
+                    return;
+                }
+                uninstallStatusMissingCount++;
+                if (uninstallStatusMissingCount < UNINSTALL_STATUS_MISSING_CONFIRMATIONS) {
+                    setStatus('uninstall-launch-status', 'No uninstall job is visible yet; confirming that absence before allowing another attempt.', 'info');
+                    uninstallStatusTimer = setTimeout(function () { pollUninstallStatus(epoch); }, 2000);
+                    return;
+                }
+                clearPersistedUninstallJobState();
+                uninstallCommitted = false;
+                uninstallJobId = null;
+                uninstallJobCreatedAt = 0;
+                uninstallStatusMissingCount = 0;
+                setUninstallControlsDisabled(false);
+                invalidateUninstallPreview('The saved uninstall request was not accepted. Run a new dry-run preview before trying again.');
+                return;
+            }
+            throw new Error(d.error || 'Status endpoint unavailable');
+        }
+        uninstallStatusMissingCount = 0;
+        if (d.job_id && d.job_id !== uninstallJobId) {
+            markUninstallConnectionLost('The uninstall status identity changed. Do not launch again; verify completion over SSH.');
+            return;
+        }
+        if (typeof d.log === 'string') {
+            const output = document.getElementById('uninstall-output');
+            output.textContent = d.log;
+            output.scrollTop = output.scrollHeight;
+        }
+        if (d.done) {
+            clearPersistedUninstallJobState();
+            const exitCode = Number.isInteger(d.exit_code) ? d.exit_code :
+                (Number.isInteger(d.exit_status) ? d.exit_status : (d.ok === true ? 0 : null));
+            if (d.ok === true && exitCode === 0) setStatus('uninstall-launch-status', 'LLDPq uninstall completed successfully. This page may stop responding now.', 'ok');
+            else if (exitCode === 0) setStatus('uninstall-launch-status', 'The uninstall exited with code 0 but the server could not verify a successful terminal state. Inspect the host over SSH.', 'err');
+            else if (Number.isInteger(exitCode)) setStatus('uninstall-launch-status', 'Uninstall stopped with exit ' + exitCode + '. Review the log and inspect the host over SSH.', 'err');
+            else setStatus('uninstall-launch-status', 'The uninstall stopped without a recorded exit status. Inspect the host over SSH.', 'err');
+            return;
+        }
+        if (d.running === false) {
+            markUninstallConnectionLost('The uninstall is no longer reported as running, but no final status was recorded. Do not launch again; inspect the host over SSH.');
+            return;
+        }
+        uninstallStatusTimer = setTimeout(function () { pollUninstallStatus(epoch); }, 1000);
+    } catch (e) {
+        if (epoch !== uninstallStatusEpoch) return;
+        markUninstallConnectionLost();
+    } finally {
+        clearTimeout(timeout);
+    }
 }
 
 /* ---- Step 10: Maintenance ---- */
