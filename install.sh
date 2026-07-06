@@ -3722,6 +3722,16 @@ REPLACE_DHCP_CONFIG=false
 # button can later git pull + reinstall from here (stored as LLDPQ_SRC in lldpq.conf).
 LLDPQ_SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Keep caller intent separate from values loaded from an existing config. A
+# clean install must not carry an old SKIP_L1 preference into the new config,
+# but an explicit environment override remains supported.
+_CALLER_SKIP_L1_WAS_SET=false
+_CALLER_SKIP_L1_VALUE=""
+if [[ -n "${SKIP_L1+x}" ]]; then
+    _CALLER_SKIP_L1_WAS_SET=true
+    _CALLER_SKIP_L1_VALUE="$SKIP_L1"
+fi
+
 for arg in "$@"; do
     case $arg in
         -y) AUTO_YES=true ;;
@@ -4031,6 +4041,11 @@ if [[ -f /etc/lldpq.conf ]] || [[ -f /etc/lldpq-users.conf ]] || [[ -d /var/lib/
             sudo rm -rf /var/lib/lldpq
             echo "  Old installation files removed"
             INSTALL_MODE="fresh"
+            if [[ "$_CALLER_SKIP_L1_WAS_SET" == "true" ]]; then
+                SKIP_L1="$_CALLER_SKIP_L1_VALUE"
+            else
+                unset SKIP_L1
+            fi
         else
             INSTALL_MODE="update"
         fi
@@ -4881,7 +4896,7 @@ render_runtime_tuning_config \
     "${LLDPQ_CRON:-*/10 * * * *}" \
     "${GETCONF_CRON:-0 */12 * * *}" \
     "${SKIP_OPTICAL:-false}" \
-    "${SKIP_L1:-true}" \
+    "${SKIP_L1:-false}" \
     "${MONITOR_MAX_PARALLEL:-100}" \
     "${LLDP_MAX_PARALLEL:-100}" \
     "${ASSETS_MAX_PARALLEL:-100}" \

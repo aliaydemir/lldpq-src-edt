@@ -47,7 +47,7 @@ normalize_bool() {
 
 # Parse flags
 SKIP_OPTICAL="${SKIP_OPTICAL:-false}"
-SKIP_L1="${SKIP_L1:-true}"
+SKIP_L1="${SKIP_L1:-false}"
 CLI_SKIP_OPTICAL=false
 while getopts "s" opt; do
     case $opt in
@@ -70,7 +70,7 @@ apply_monitor_tuning() {
     if [[ "$CLI_SKIP_OPTICAL" == "true" ]]; then
         SKIP_OPTICAL=true
     fi
-    SKIP_L1="$(normalize_bool "${SKIP_L1:-true}")"
+    SKIP_L1="$(normalize_bool "${SKIP_L1:-false}")"
     MONITOR_TIMING="$(normalize_bool "${MONITOR_TIMING:-false}")"
 
     MAX_PARALLEL="${MONITOR_MAX_PARALLEL:-${MAX_PARALLEL:-100}}"

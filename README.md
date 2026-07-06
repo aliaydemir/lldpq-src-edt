@@ -847,6 +847,11 @@ lldpq - -s                         # verbose + skip optical
 
 **Skip optical**: The `-s` flag skips optical transceiver DOM data (ethtool -m) and transceiver firmware checks (mlxlink). These are the slowest monitoring sections — skipping them can cut monitoring time by 50%+. To make it permanent, set `SKIP_OPTICAL=true` in `/etc/lldpq.conf`.
 
+**L1 BER collection**: `SKIP_L1=false` is the default, so monitoring collects
+`l1-show all -p` data for Physical BER, Effective BER and PHY symbol counters.
+Set `SKIP_L1=true` only when intentionally trading those fields for a faster
+collection cycle; the affected BER columns will otherwise show `N/A`.
+
 **Monitoring performance controls**: collection remains fail-closed and keeps
 last-known-good reports when a timeout is reached. The following optional
 environment/config values tune bounded read-only collection without changing

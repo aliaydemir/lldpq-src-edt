@@ -163,7 +163,7 @@ RUN printf '%s\n' \
     'BASE_CONFIG_DIR=/home/lldpq/lldpq/sw-base' \
     'ANSIBLE_DIR=NoNe' \
     'EDITOR_ROOT=/home/lldpq' \
-    'SKIP_L1=true' \
+    'SKIP_L1=false' \
     'MONITOR_TIMING=false' \
     'MONITOR_MAX_PARALLEL=100' \
     'PFC_ECN_MAX_PARALLEL=4' \
