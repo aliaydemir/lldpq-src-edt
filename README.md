@@ -715,8 +715,29 @@ locations. The retained set is exactly:
 It does not retain `/etc/lldpq.conf`, LLDPq users/sessions,
 generated/provisioning files, or `assets.ini`. Collector SSH keys in the
 service user's `~/.ssh/` are outside the managed uninstall targets and remain
-on disk regardless of this checkbox. The native telemetry stack is stopped
-with its Compose volumes removed even when selected data is kept.
+on disk regardless of this checkbox. Timestamped `~/lldpq-backup-*` snapshots
+and data in separately configured Ansible/project directories are likewise
+outside the uninstall targets. The native telemetry stack is stopped with its
+Compose volumes removed even when selected data is kept.
+
+The advanced **Remove the `LLDPQ_SRC` source checkout** option is independent
+of the data choice and is off by default. When explicitly selected, the
+dry-run shows the exact path plus its Git/working-tree state; the real uninstall
+then removes that checkout, including Git history, committed files, local
+changes and untracked files. Recursive removal is authorized by a root-owned
+source identity written by the installer and is refused if the path, inode,
+ownership, source layout or safety boundaries no longer match. In particular,
+the checkout must be a strict child of the LLDPq service user's home and must
+not overlap the home itself, the live install/web trees or configured external
+project directories.
+
+Normal native uninstall also removes LLDPq's dedicated transient/runtime
+directories, including the service user's `~/.lldpq-state/`, `/var/lib/lldpq/`
+and `/var/log/lldpq/`, plus the fixed Ansible CGI runtime roots
+`/tmp/ansible-{www,tmp,cache}` and known LLDPq lock/state files under `/run`
+and `/tmp`. Shared parent directories are not recursively removed. This
+cleanup is separate from the retained-data copy described above and never
+includes `~/.ssh/`, `~/lldpq-backup-*` or external Ansible/project data.
 
 Optional package-removal controls are off by default and affect the whole
 host, not just LLDPq: removing DHCP deletes the ISC DHCP configuration and

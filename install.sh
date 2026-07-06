@@ -86,6 +86,7 @@ LLDPQ_BACKUP_IMPORT_HELPER="/usr/local/libexec/lldpq-backup-import.py"
 LLDPQ_UNINSTALL_SCRIPT="/usr/local/libexec/lldpq-uninstall.sh"
 LLDPQ_UNINSTALL_WEB_GATEWAY="/usr/local/libexec/lldpq-uninstall-web.py"
 LLDPQ_UNINSTALL_SUDOERS="/etc/sudoers.d/www-data-lldpq-uninstall"
+LLDPQ_SOURCE_MANIFEST="/etc/lldpq-source.json"
 LLDPQ_LIFECYCLE_LOCK="/etc/lldpq.lifecycle.lock"
 LLDPQ_UNINSTALL_ACTIVE_MARKER="/run/lldpq-uninstall.active"
 INSTALL_LIFECYCLE_LOCK_FD=""
@@ -456,6 +457,204 @@ guard_recursive_target() {
 paths_overlap() {
     local first="${1%/}" second="${2%/}"
     [[ "$first" == "$second" || "$first" == "$second"/* || "$second" == "$first"/* ]]
+}
+
+# Validate the exact source checkout used by this installer and, after the
+# update rollback authority is ready, publish a root-owned identity record for
+# the uninstaller.  /etc/lldpq.conf is deliberately writable by the runtime and
+# web accounts, so it must never be the sole authority for recursively deleting
+# LLDPQ_SRC.  The sidecar binds the canonical root directory (and .git when this
+# is a directly-owned Git checkout) to stable filesystem identities. Offline
+# tarballs and linked worktrees remain valid install sources but receive
+# zero-valued Git identities, so recursive source removal stays unavailable.
+manage_lldpq_source_manifest() {
+    local mode="$1" source_path="$2"
+    local -a python_runner=(python3)
+
+    case "$mode" in
+        validate) ;;
+        install) python_runner=(sudo python3) ;;
+        *)
+            echo "[!] Invalid LLDPq source-manifest operation: $mode" >&2
+            return 1
+            ;;
+    esac
+
+    "${python_runner[@]}" - "$mode" "$source_path" "$LLDPQ_SOURCE_MANIFEST" <<'PYTHON'
+import json
+import os
+import stat
+import sys
+import tempfile
+
+
+mode, source_value, target = sys.argv[1:]
+
+
+def fail(message):
+    raise SystemExit("LLDPq source provenance: " + message)
+
+
+def required_node(source, relative, expected):
+    candidate = os.path.join(source, *relative.split("/"))
+    try:
+        metadata = os.lstat(candidate)
+    except OSError as error:
+        fail(f"required source sentinel is unavailable: {relative}: {error}")
+    if expected == "directory":
+        valid = stat.S_ISDIR(metadata.st_mode)
+    else:
+        valid = stat.S_ISREG(metadata.st_mode)
+    if not valid:
+        fail(f"required source sentinel is not a real {expected}: {relative}")
+
+
+def source_payload(source):
+    if not os.path.isabs(source) or "\x00" in source or "\n" in source or "\r" in source:
+        fail("source path must be one absolute line")
+    canonical = os.path.realpath(os.path.abspath(source))
+    if source != canonical:
+        fail(f"source path is not canonical: {source!r} -> {canonical!r}")
+    try:
+        source_metadata = os.lstat(source)
+    except OSError as error:
+        fail(f"source directory is unavailable: {error}")
+    if not stat.S_ISDIR(source_metadata.st_mode):
+        fail("source path is not a real directory")
+    if source_metadata.st_dev <= 0 or source_metadata.st_ino <= 0:
+        fail("source directory has an unusable filesystem identity")
+
+    for relative in ("lldpq", "html", "bin", "etc"):
+        required_node(source, relative, "directory")
+    for relative in (
+        "install.sh",
+        "uninstall.sh",
+        "README.md",
+        "VERSION",
+        "lldpq/monitor.sh",
+        "html/setup.html",
+        "bin/lldpq-config",
+    ):
+        required_node(source, relative, "file")
+
+    git_path = os.path.join(source, ".git")
+    try:
+        git_metadata = os.lstat(git_path)
+    except FileNotFoundError:
+        git_device = 0
+        git_inode = 0
+    except OSError as error:
+        fail(f"cannot inspect .git: {error}")
+    else:
+        if stat.S_ISDIR(git_metadata.st_mode):
+            if git_metadata.st_dev <= 0 or git_metadata.st_ino <= 0:
+                fail(".git has an unusable filesystem identity")
+            git_device = git_metadata.st_dev
+            git_inode = git_metadata.st_ino
+        else:
+            # Linked worktrees legitimately use a regular .git indirection
+            # file. Installation/update must remain compatible with them, but
+            # zero Git identity deliberately withholds recursive-delete
+            # authority: uninstall consumers reject 0/0 while .git exists and
+            # direct the operator to remove that checkout manually.
+            git_device = 0
+            git_inode = 0
+
+    # Re-read the root after walking the sentinels so a replaced checkout is not
+    # accidentally recorded under the identity inspected at function entry.
+    current = os.lstat(source)
+    if (current.st_dev, current.st_ino, current.st_uid) != (
+        source_metadata.st_dev,
+        source_metadata.st_ino,
+        source_metadata.st_uid,
+    ):
+        fail("source directory changed during validation")
+    if git_device:
+        current_git = os.lstat(git_path)
+        if (not stat.S_ISDIR(current_git.st_mode)
+                or (current_git.st_dev, current_git.st_ino) != (git_device, git_inode)):
+            fail(".git changed during validation")
+
+    return {
+        "version": 1,
+        "path": canonical,
+        "device": source_metadata.st_dev,
+        "inode": source_metadata.st_ino,
+        "uid": source_metadata.st_uid,
+        "git_device": git_device,
+        "git_inode": git_inode,
+    }
+
+
+payload = source_payload(source_value)
+if mode == "validate":
+    raise SystemExit(0)
+if mode != "install" or target != "/etc/lldpq-source.json":
+    fail("refusing an unsupported manifest destination")
+
+parent = os.path.dirname(target)
+parent_metadata = os.lstat(parent)
+if (not stat.S_ISDIR(parent_metadata.st_mode)
+        or parent_metadata.st_uid != 0
+        or parent_metadata.st_gid != 0
+        or stat.S_IMODE(parent_metadata.st_mode) & 0o022):
+    fail("manifest parent directory failed its ownership/type/mode check")
+encoded = (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+if len(encoded) > 4096:
+    fail("manifest content exceeds the 4096-byte limit")
+descriptor = -1
+temporary = None
+try:
+    descriptor, temporary = tempfile.mkstemp(prefix=".lldpq-source.", dir=parent)
+    os.fchmod(descriptor, 0o600)
+    os.fchown(descriptor, 0, 0)
+    with os.fdopen(descriptor, "wb", closefd=True) as output:
+        descriptor = -1
+        output.write(encoded)
+        output.flush()
+        os.fsync(output.fileno())
+
+    # Do not publish a record for a checkout replaced while the staged JSON was
+    # being written. os.replace keeps readers on either the old or new record.
+    if source_payload(source_value) != payload:
+        fail("source identity changed before manifest publication")
+    os.replace(temporary, target)
+    temporary = None
+    directory_fd = os.open(parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+finally:
+    if descriptor >= 0:
+        os.close(descriptor)
+    if temporary is not None:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+
+flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+manifest_fd = os.open(target, flags)
+try:
+    metadata = os.fstat(manifest_fd)
+    if (not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != 0
+            or metadata.st_gid != 0
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or metadata.st_nlink != 1
+            or metadata.st_size > 4096):
+        fail("installed manifest failed its ownership/type/mode check")
+    raw = os.read(manifest_fd, 4097)
+finally:
+    os.close(manifest_fd)
+try:
+    installed = json.loads(raw.decode("utf-8"))
+except (UnicodeDecodeError, json.JSONDecodeError) as error:
+    fail(f"installed manifest is not valid JSON: {error}")
+if installed != payload:
+    fail("installed manifest content does not match the validated source")
+PYTHON
 }
 
 assert_lldpq_install_tree() {
@@ -3210,6 +3409,13 @@ def restore_snapshot(snapshot, web_root):
     )
     for target, label in mappings:
         restore_one(snapshot, target, label)
+    # Snapshots created before source provenance was introduced do not have
+    # this authority. New snapshots always carry either .present or .missing,
+    # allowing a failed first upgrade to remove a newly-created sidecar.
+    source_present = snapshot / "system" / "source-manifest.present"
+    source_missing = snapshot / "system" / "source-manifest.missing"
+    if source_present.is_file() or source_missing.is_file():
+        restore_one(snapshot, Path("/etc/lldpq-source.json"), "source-manifest")
     restore_tree(snapshot, Path("/etc"), "etc")
     restore_tree(snapshot, Path("/usr/local/bin"), "bin")
     restore_tree(snapshot, web_root, "web")
@@ -3436,6 +3642,7 @@ prepare_update_rollback() {
     # across two inodes. prepare_shared_lock_files normalizes the stable inode.
     if ! root_run mkdir -p "$UPDATE_ROLLBACK_DIR/system" || \
        ! snapshot_update_file /etc/lldpq.conf lldpq.conf || \
+       ! snapshot_update_file "$LLDPQ_SOURCE_MANIFEST" source-manifest || \
        ! snapshot_update_file /etc/cron.d/lldpq cron.d-lldpq || \
        ! snapshot_update_file /etc/crontab crontab || \
        ! snapshot_update_file /etc/dhcp/dhcpd.conf dhcpd.conf || \
@@ -3549,6 +3756,7 @@ rollback_failed_update() {
     root_run systemctl stop lldpq-recovery.path lldpq-recovery.service \
         >/dev/null 2>&1 || true
     restore_update_file /etc/lldpq.conf lldpq.conf || rollback_restore_failed=true
+    restore_update_file "$LLDPQ_SOURCE_MANIFEST" source-manifest || rollback_restore_failed=true
     restore_update_file /etc/cron.d/lldpq cron.d-lldpq || rollback_restore_failed=true
     restore_update_file /etc/crontab crontab || rollback_restore_failed=true
     restore_update_file /etc/dhcp/dhcpd.conf dhcpd.conf || rollback_restore_failed=true
@@ -3824,7 +4032,7 @@ FORCE_BACKUP=false
 REPLACE_DHCP_CONFIG=false
 # Remember where we were installed FROM (the source repo) so the web "Update"
 # button can later git pull + reinstall from here (stored as LLDPQ_SRC in lldpq.conf).
-LLDPQ_SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LLDPQ_SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 # Keep caller intent separate from values loaded from an existing config. A
 # clean install must not carry an old SKIP_L1 preference into the new config,
@@ -4030,10 +4238,17 @@ if [[ $EUID -eq 0 ]] && [[ -n "$SUDO_USER" ]] && [[ "$SUDO_USER" != "root" ]]; t
     exit 1
 fi
 
-# Check if we're in the lldpq-src directory
-if [[ ! -f "README.md" ]] || [[ ! -d "lldpq" ]]; then
+# Check if we're in the same canonical lldpq-src directory as this script. The
+# installer copies relative paths throughout, so recording BASH_SOURCE while
+# installing a different current directory would create false provenance.
+if [[ "$(pwd -P)" != "$LLDPQ_SRC_DIR" ]] || \
+   [[ ! -f "README.md" ]] || [[ ! -d "lldpq" ]]; then
     echo "[!] Please run this script from the lldpq-src directory"
     echo "    Make sure you're in the directory containing README.md and lldpq/"
+    exit 1
+fi
+if ! manage_lldpq_source_manifest validate "$LLDPQ_SRC_DIR"; then
+    echo "[!] Refusing an unrecognized or unsafe LLDPq source checkout" >&2
     exit 1
 fi
 
@@ -4068,6 +4283,26 @@ if [[ ! "$LLDPQ_USER" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]]; then
     echo "[!] Invalid LLDPQ_USER in configuration: '$LLDPQ_USER'" >&2
     exit 1
 fi
+_SOURCE_PROTECT_HOME=$(resolve_lldpq_user_home "$LLDPQ_USER") || exit 1
+for _source_protected_path in \
+    "$LLDPQ_INSTALL_DIR" "$WEB_ROOT" \
+    "$_SOURCE_PROTECT_HOME/.lldpq-state" "$_SOURCE_PROTECT_HOME/.ssh"; do
+    if paths_overlap "$LLDPQ_SRC_DIR" "$_source_protected_path"; then
+        echo "[!] LLDPQ_SRC must not overlap a managed or preserved LLDPq path:" >&2
+        echo "    source:    $LLDPQ_SRC_DIR" >&2
+        echo "    protected: $_source_protected_path" >&2
+        echo "    Move the source checkout and run install.sh again." >&2
+        exit 1
+    fi
+done
+case "$LLDPQ_SRC_DIR" in
+    "$_SOURCE_PROTECT_HOME"/lldpq-backup-*)
+        echo "[!] LLDPQ_SRC must not be inside a preserved ~/lldpq-backup-* snapshot" >&2
+        echo "    Move the source checkout and run install.sh again." >&2
+        exit 1
+        ;;
+esac
+unset _SOURCE_PROTECT_HOME _source_protected_path
 if [[ -e "$LLDPQ_UNINSTALL_WEB_GATEWAY" || -L "$LLDPQ_UNINSTALL_WEB_GATEWAY" ||
       -e "$LLDPQ_UNINSTALL_ACTIVE_MARKER" || -L "$LLDPQ_UNINSTALL_ACTIVE_MARKER" ]]; then
     acquire_install_lifecycle_lock || exit 1
@@ -4114,6 +4349,9 @@ quiesce_recovery_units_for_fresh_install() {
         /etc/systemd/system/multi-user.target.wants/lldpq-recovery.service \
         /etc/systemd/system/multi-user.target.wants/lldpq-update-recovery.service \
         /usr/local/libexec/lldpq-update-recovery.py
+    # A clean install must not leave a previous checkout identity authoritative
+    # if this install stops before publishing its own validated manifest.
+    sudo rm -f -- "$LLDPQ_SOURCE_MANIFEST" || return 1
     clean_user_home=$(resolve_lldpq_user_home "$LLDPQ_USER") || return 1
     # Clean install means no retained transaction may replay old config/state
     # after the new files are written.  This also removes stale Setup upgrade
@@ -6124,6 +6362,16 @@ if command -v docker >/dev/null 2>&1 && \
         sudo systemctl restart fcgiwrap 2>/dev/null || sudo service fcgiwrap restart 2>/dev/null || true
     fi
 fi
+
+# Publish source deletion authority only after the final configuration rewrite
+# and every ordinary install step has succeeded, but before a successful update
+# discards its rollback snapshot. A crash/failure on either side is therefore
+# recovered with the matching previous manifest (or removes it on first update).
+if ! manage_lldpq_source_manifest install "$LLDPQ_SRC_DIR"; then
+    echo "[!] Could not publish the root-owned LLDPq source manifest" >&2
+    exit 1
+fi
+echo "  Source provenance saved to $LLDPQ_SOURCE_MANIFEST"
 
 # Finalize the update transaction before printing a success banner. Calling
 # the same EXIT handler explicitly keeps asynchronous failures (runtime data

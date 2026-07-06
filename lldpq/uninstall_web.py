@@ -2,7 +2,7 @@
 """Root-owned gateway for the Setup Danger Zone uninstall workflow.
 
 The CGI is deliberately not allowed to select a program, path, user, unit name,
-or command-line fragment.  It may only submit the four documented booleans and
+or command-line fragment.  It may only submit the five documented booleans and
 the confirmation acknowledgements.  This helper must be installed root:root
 0755 at /usr/local/libexec/lldpq-uninstall-web.py; the actual uninstaller must
 likewise be installed root:root 0755 at the fixed path below.
@@ -17,7 +17,9 @@ import json
 import os
 import pwd
 import re
+import selectors
 import secrets
+import signal
 import stat
 import subprocess
 import sys
@@ -25,6 +27,7 @@ import time
 
 
 CONFIG_FILE = "/etc/lldpq.conf"
+SOURCE_MANIFEST = "/etc/lldpq-source.json"
 UNINSTALLER = "/usr/local/libexec/lldpq-uninstall.sh"
 GATEWAY = "/usr/local/libexec/lldpq-uninstall-web.py"
 RUN_DIR = "/run/lldpq-uninstall"
@@ -35,9 +38,13 @@ TOKEN_TTL_SECONDS = 300
 ORPHANED_STATUS_SECONDS = 120
 MAX_REQUEST_BYTES = 16 * 1024
 MAX_CONFIG_BYTES = 1024 * 1024
+MAX_SOURCE_MANIFEST_BYTES = 16 * 1024
+MAX_GIT_STATUS_BYTES = 16 * 1024 * 1024
+MAX_STATE_RECORD_BYTES = 8 * 1024
 MAX_PREVIEW_BYTES = 128 * 1024
 MAX_JOURNAL_BYTES = 128 * 1024
 STATUS_COMMAND_TIMEOUT = 5
+SOURCE_GIT_TIMEOUT_SECONDS = 20
 LIFECYCLE_LOCK_TIMEOUT_SECONDS = 3
 SYSTEMD_RUN = "/usr/bin/systemd-run"
 SYSTEMCTL = "/usr/bin/systemctl"
@@ -45,12 +52,14 @@ JOURNALCTL = "/usr/bin/journalctl"
 SUDO = "/usr/bin/sudo"
 ENV = "/usr/bin/env"
 ID = "/usr/bin/id"
+GIT = "/usr/bin/git"
 SAFE_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 TOKEN_RE = re.compile(r"^[a-f0-9]{64}$")
 JOB_RE = re.compile(r"^[a-f0-9]{32}$")
 USER_RE = re.compile(r"^[a-z_][a-z0-9_-]*\$?$")
 OPTION_KEYS = (
     "keep_data",
+    "remove_source",
     "remove_dhcp",
     "remove_nginx",
     "remove_docker",
@@ -100,7 +109,7 @@ def read_request(command: str) -> dict:
 def parse_options(request: dict) -> dict[str, bool]:
     raw_options = request.get("options")
     if not isinstance(raw_options, dict) or set(raw_options) != set(OPTION_KEYS):
-        raise GatewayError("options must contain exactly the four documented uninstall options")
+        raise GatewayError("options must contain exactly the five documented uninstall options")
     options: dict[str, bool] = {}
     for key in OPTION_KEYS:
         if type(raw_options[key]) is not bool:
@@ -265,10 +274,452 @@ def config_identity() -> dict[str, int]:
     }
 
 
+def source_manifest_error(reason: str) -> GatewayError:
+    return GatewayError(
+        "Source checkout removal is unavailable: "
+        + reason
+        + ". Run the current LLDPq installer/update once to repair "
+        + SOURCE_MANIFEST
+        + ", then generate a new uninstall preview."
+    )
+
+
+def source_manual_cleanup_error(reason: str) -> GatewayError:
+    return GatewayError(
+        "Source checkout removal is unavailable: "
+        + reason
+        + ". Leave the LLDPQ_SRC removal option unchecked to uninstall LLDPq, "
+        + "then inspect and remove the source directory manually over SSH."
+    )
+
+
+def read_runtime_source_path() -> str:
+    """Read the one configured LLDPQ_SRC value without evaluating shell code."""
+    try:
+        descriptor = os.open(CONFIG_FILE, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError as exc:
+        raise source_manifest_error("the runtime configuration cannot be opened safely") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_nlink != 1
+            or metadata.st_size > MAX_CONFIG_BYTES
+        ):
+            raise source_manifest_error("the runtime configuration is not a bounded regular file")
+        encoded = os.read(descriptor, MAX_CONFIG_BYTES + 1)
+    finally:
+        os.close(descriptor)
+    try:
+        text = encoded.decode("utf-8")
+    except UnicodeError as exc:
+        raise source_manifest_error("the runtime configuration is not valid UTF-8") from exc
+
+    values: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key.strip() != "LLDPQ_SRC":
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        values.append(value)
+    if len(values) != 1:
+        raise source_manifest_error("the runtime configuration must contain exactly one LLDPQ_SRC")
+    path = values[0]
+    if (
+        not path.startswith("/")
+        or path == "/"
+        or len(path) > 4096
+        or any(character in path for character in "\x00\r\n")
+    ):
+        raise source_manifest_error("LLDPQ_SRC is not a safe absolute path")
+    return path
+
+
+def _reject_duplicate_json_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate key: " + key)
+        result[key] = value
+    return result
+
+
+def read_source_manifest() -> tuple[dict, dict[str, int]]:
+    try:
+        parent = os.lstat(os.path.dirname(SOURCE_MANIFEST))
+        descriptor = os.open(SOURCE_MANIFEST, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError as exc:
+        raise source_manifest_error("the root-owned source manifest is missing or unsafe") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISDIR(parent.st_mode)
+            or parent.st_uid != 0
+            or stat.S_IMODE(parent.st_mode) & 0o022
+            or not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != 0
+            or metadata.st_gid != 0
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or metadata.st_nlink != 1
+            or metadata.st_size <= 0
+            or metadata.st_size > MAX_SOURCE_MANIFEST_BYTES
+        ):
+            raise source_manifest_error("the source manifest failed its root ownership check")
+        encoded = os.read(descriptor, MAX_SOURCE_MANIFEST_BYTES + 1)
+    finally:
+        os.close(descriptor)
+    try:
+        manifest = json.loads(
+            encoded.decode("utf-8"), object_pairs_hook=_reject_duplicate_json_keys
+        )
+    except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise source_manifest_error("the source manifest is invalid") from exc
+    required = {
+        "version",
+        "path",
+        "device",
+        "inode",
+        "uid",
+        "git_device",
+        "git_inode",
+    }
+    if not isinstance(manifest, dict) or not required.issubset(manifest):
+        raise source_manifest_error("the source manifest is incomplete")
+    if manifest.get("version") != 1 or type(manifest.get("version")) is not int:
+        raise source_manifest_error("the source manifest version is unsupported")
+    if not isinstance(manifest.get("path"), str):
+        raise source_manifest_error("the source manifest path is invalid")
+    for name in ("device", "inode", "uid", "git_device", "git_inode"):
+        if type(manifest.get(name)) is not int or manifest[name] < 0:
+            raise source_manifest_error("the source manifest " + name + " is invalid")
+    if manifest["device"] == 0 or manifest["inode"] == 0:
+        raise source_manifest_error("the source manifest directory identity is invalid")
+    if (manifest["git_device"] == 0) != (manifest["git_inode"] == 0):
+        raise source_manifest_error("the source manifest Git identity is inconsistent")
+    manifest_identity = {
+        "device": metadata.st_dev,
+        "inode": metadata.st_ino,
+        "uid": metadata.st_uid,
+        "gid": metadata.st_gid,
+        "mode": stat.S_IMODE(metadata.st_mode),
+        "nlink": metadata.st_nlink,
+        "size": metadata.st_size,
+        "mtime_ns": metadata.st_mtime_ns,
+        "ctime_ns": metadata.st_ctime_ns,
+    }
+    return manifest, manifest_identity
+
+
+def run_source_git(
+    user: str,
+    home: str,
+    source_path: str,
+    arguments: list[str],
+    *,
+    allowed_returncodes=(0,),
+    output_limit=4096,
+) -> tuple[int, bytes]:
+    if type(output_limit) is not int or output_limit < 0:
+        raise source_manifest_error("the Git output limit is invalid")
+    process = None
+    selector = None
+
+    def signal_process_group(signal_number: int) -> None:
+        try:
+            os.killpg(process.pid, signal_number)
+        except ProcessLookupError:
+            return
+        except OSError:
+            # start_new_session normally makes the child the process-group
+            # leader. Fall back to the direct child if the platform refuses a
+            # group signal; Popen.wait below still guarantees it is reaped.
+            try:
+                process.send_signal(signal_number)
+            except OSError:
+                pass
+
+    def stop_and_reap() -> None:
+        if process is None:
+            return
+        if process.poll() is None:
+            signal_process_group(signal.SIGTERM)
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                signal_process_group(signal.SIGKILL)
+                # SIGKILL is the terminal fallback. Always collect the direct
+                # child so an overflow/timeout cannot leave a zombie behind.
+                process.wait()
+        else:
+            process.wait()
+
+    try:
+        process = subprocess.Popen(
+            user_environment(user, home)
+            + [GIT, "--no-optional-locks", "-C", source_path]
+            + arguments,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        if process.stdout is None:
+            raise OSError("Git stdout pipe is unavailable")
+        os.set_blocking(process.stdout.fileno(), False)
+        selector = selectors.DefaultSelector()
+        selector.register(process.stdout, selectors.EVENT_READ)
+        output = bytearray()
+        deadline = time.monotonic() + SOURCE_GIT_TIMEOUT_SECONDS
+        eof = False
+        while not eof:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                stop_and_reap()
+                raise source_manifest_error("the source Git inspection timed out")
+            events = selector.select(timeout=min(remaining, 0.25))
+            if not events:
+                continue
+            for key, _mask in events:
+                while True:
+                    read_size = max(1, min(65536, output_limit + 1 - len(output)))
+                    try:
+                        chunk = os.read(key.fd, read_size)
+                    except BlockingIOError:
+                        break
+                    if not chunk:
+                        eof = True
+                        break
+                    output.extend(chunk)
+                    if len(output) > output_limit:
+                        stop_and_reap()
+                        raise source_manifest_error(
+                            "the source Git inspection exceeded its safe output limit"
+                        )
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            stop_and_reap()
+            raise source_manifest_error("the source Git inspection timed out")
+        try:
+            returncode = process.wait(timeout=remaining)
+        except subprocess.TimeoutExpired as exc:
+            stop_and_reap()
+            raise source_manifest_error("the source Git inspection timed out") from exc
+    except GatewayError:
+        raise
+    except OSError as exc:
+        stop_and_reap()
+        raise source_manifest_error("the source checkout could not be inspected safely") from exc
+    finally:
+        if selector is not None:
+            selector.close()
+        if process is not None and process.stdout is not None:
+            process.stdout.close()
+    captured = bytes(output)
+    if returncode not in allowed_returncodes:
+        raise source_manifest_error("the source checkout failed its Git identity check")
+    return returncode, captured
+
+
+def source_identity(options: dict[str, bool], user: str, home: str):
+    """Return immutable approval context for an explicitly selected source tree."""
+    if not options["remove_source"]:
+        return None
+
+    manifest, manifest_metadata = read_source_manifest()
+    source_path = manifest["path"]
+    configured_path = read_runtime_source_path()
+    if configured_path != source_path:
+        raise source_manifest_error("LLDPQ_SRC does not match the trusted source manifest")
+    if (
+        not source_path.startswith("/")
+        or source_path == "/"
+        or len(source_path) > 4096
+        or len(json.dumps(source_path, ensure_ascii=True)) > 4098
+        or any(character in source_path for character in "\x00\r\n")
+        or os.path.realpath(source_path) != source_path
+    ):
+        raise source_manifest_error("the recorded source path is not canonical")
+    try:
+        source_is_below_home = (
+            source_path != home and os.path.commonpath((home, source_path)) == home
+        )
+    except ValueError:
+        source_is_below_home = False
+    if not source_is_below_home:
+        raise source_manual_cleanup_error(
+            "the source directory is not a child of the configured LLDPq service-account home"
+        )
+    try:
+        account = pwd.getpwnam(user)
+        source_metadata = os.lstat(source_path)
+    except (KeyError, OSError) as exc:
+        raise source_manifest_error("the recorded source directory is unavailable") from exc
+    if (
+        not stat.S_ISDIR(source_metadata.st_mode)
+        or source_metadata.st_uid != manifest["uid"]
+        or source_metadata.st_dev != manifest["device"]
+        or source_metadata.st_ino != manifest["inode"]
+    ):
+        raise source_manifest_error("the recorded source directory identity changed")
+    if source_metadata.st_uid != account.pw_uid:
+        raise source_manual_cleanup_error(
+            "the source directory is not owned by the configured LLDPq service account"
+        )
+
+    git_identity = None
+    git_path = os.path.join(source_path, ".git")
+    if manifest["git_device"] == 0:
+        if os.path.lexists(git_path):
+            raise source_manifest_error("the non-Git source unexpectedly contains .git")
+    else:
+        try:
+            git_metadata = os.lstat(git_path)
+        except OSError as exc:
+            raise source_manifest_error("the recorded Git directory is unavailable") from exc
+        if (
+            not stat.S_ISDIR(git_metadata.st_mode)
+            or git_metadata.st_dev != manifest["git_device"]
+            or git_metadata.st_ino != manifest["git_inode"]
+        ):
+            raise source_manifest_error("the recorded Git directory identity changed")
+        if git_metadata.st_uid != account.pw_uid:
+            raise source_manual_cleanup_error(
+                "the Git directory is not owned by the configured LLDPq service account"
+            )
+        _returncode, top_level_raw = run_source_git(
+            user, home, source_path, ["rev-parse", "--show-toplevel"]
+        )
+        try:
+            top_level = top_level_raw.decode("utf-8").rstrip("\n")
+        except UnicodeError as exc:
+            raise source_manifest_error("the Git top-level path is invalid") from exc
+        if top_level != source_path or os.path.realpath(top_level) != source_path:
+            raise source_manifest_error("LLDPQ_SRC is not the exact Git top-level directory")
+        head_returncode, head_raw = run_source_git(
+            user,
+            home,
+            source_path,
+            ["rev-parse", "--verify", "--quiet", "HEAD"],
+            allowed_returncodes=(0, 1),
+        )
+        head = None
+        if head_returncode == 0:
+            try:
+                head = head_raw.decode("ascii").strip()
+            except UnicodeError as exc:
+                raise source_manifest_error("the Git HEAD identity is invalid") from exc
+            if not re.fullmatch(r"[0-9a-fA-F]{40,64}", head):
+                raise source_manifest_error("the Git HEAD identity is invalid")
+            head = head.lower()
+        elif head_raw:
+            raise source_manifest_error("the unborn Git HEAD response is invalid")
+        _returncode, status_raw = run_source_git(
+            user,
+            home,
+            source_path,
+            [
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--untracked-files=all",
+                "--ignore-submodules=none",
+            ],
+            output_limit=MAX_GIT_STATUS_BYTES,
+        )
+        git_identity = {
+            "device": git_metadata.st_dev,
+            "inode": git_metadata.st_ino,
+            "uid": git_metadata.st_uid,
+            "mode": stat.S_IMODE(git_metadata.st_mode),
+            "mtime_ns": git_metadata.st_mtime_ns,
+            "ctime_ns": git_metadata.st_ctime_ns,
+            "head": head,
+            "status_sha256": hashlib.sha256(status_raw).hexdigest(),
+            "status_bytes": len(status_raw),
+        }
+
+    # The source account owns this tree, so re-read both public pathnames after
+    # the potentially slow Git inspection. A rename/replacement during the
+    # check must never be approved under the identity opened at entry.
+    try:
+        current_source = os.lstat(source_path)
+    except OSError as exc:
+        raise source_manifest_error("the source directory changed during verification") from exc
+    if (
+        not stat.S_ISDIR(current_source.st_mode)
+        or (
+            current_source.st_dev,
+            current_source.st_ino,
+            current_source.st_uid,
+            current_source.st_gid,
+            stat.S_IMODE(current_source.st_mode),
+            current_source.st_mtime_ns,
+            current_source.st_ctime_ns,
+        )
+        != (
+            source_metadata.st_dev,
+            source_metadata.st_ino,
+            source_metadata.st_uid,
+            source_metadata.st_gid,
+            stat.S_IMODE(source_metadata.st_mode),
+            source_metadata.st_mtime_ns,
+            source_metadata.st_ctime_ns,
+        )
+    ):
+        raise source_manifest_error("the source directory changed during verification")
+    if git_identity is not None:
+        try:
+            current_git = os.lstat(git_path)
+        except OSError as exc:
+            raise source_manifest_error("the Git directory changed during verification") from exc
+        if (
+            not stat.S_ISDIR(current_git.st_mode)
+            or (
+                current_git.st_dev,
+                current_git.st_ino,
+                current_git.st_uid,
+                stat.S_IMODE(current_git.st_mode),
+                current_git.st_mtime_ns,
+                current_git.st_ctime_ns,
+            )
+            != (
+                git_metadata.st_dev,
+                git_metadata.st_ino,
+                git_metadata.st_uid,
+                stat.S_IMODE(git_metadata.st_mode),
+                git_metadata.st_mtime_ns,
+                git_metadata.st_ctime_ns,
+            )
+        ):
+            raise source_manifest_error("the Git directory changed during verification")
+
+    return {
+        "manifest": manifest_metadata,
+        "path": source_path,
+        "source": {
+            "device": source_metadata.st_dev,
+            "inode": source_metadata.st_ino,
+            "uid": source_metadata.st_uid,
+            "gid": source_metadata.st_gid,
+            "mode": stat.S_IMODE(source_metadata.st_mode),
+            "mtime_ns": source_metadata.st_mtime_ns,
+            "ctime_ns": source_metadata.st_ctime_ns,
+        },
+        "git": git_identity,
+    }
+
+
 def option_argv(options: dict[str, bool], *, preview: bool) -> list[str]:
     argv = [UNINSTALLER, "--dry-run" if preview else "--yes"]
     if options["keep_data"]:
         argv.append("--keep-data")
+    if options["remove_source"]:
+        argv.append("--remove-source")
     if options["remove_dhcp"]:
         argv.append("--remove-dhcp")
     if options["remove_nginx"]:
@@ -499,7 +950,9 @@ def cleanup_expired_tokens(now: int) -> None:
             continue
 
 
-def create_token(options: dict[str, bool], user: str) -> tuple[str, int, str]:
+def create_token(
+    options: dict[str, bool], user: str, approved_source
+) -> tuple[str, int, str]:
     now = int(time.time())
     expires = now + TOKEN_TTL_SECONDS
     context = {
@@ -507,6 +960,7 @@ def create_token(options: dict[str, bool], user: str) -> tuple[str, int, str]:
         "expires": expires,
         "options": options,
         "config": config_identity(),
+        "source": approved_source,
         "user": user,
     }
     lock = token_lock()
@@ -533,6 +987,8 @@ def create_token(options: dict[str, bool], user: str) -> tuple[str, int, str]:
             record = dict(context)
             record["fingerprint"] = fingerprint
             encoded = (json.dumps(record, separators=(",", ":"), sort_keys=True) + "\n").encode("ascii")
+            if len(encoded) > MAX_STATE_RECORD_BYTES:
+                raise GatewayError("Uninstall approval state exceeds its safe size limit")
             path = os.path.join(RUN_DIR, token)
             try:
                 descriptor = os.open(
@@ -570,10 +1026,10 @@ def _read_root_record(path: str) -> dict:
             or metadata.st_uid != 0
             or stat.S_IMODE(metadata.st_mode) != 0o600
             or metadata.st_nlink != 1
-            or metadata.st_size > 8192
+            or metadata.st_size > MAX_STATE_RECORD_BYTES
         ):
             raise GatewayError("Uninstall state failed its ownership check")
-        encoded = os.read(descriptor, 8193)
+        encoded = os.read(descriptor, MAX_STATE_RECORD_BYTES + 1)
     finally:
         os.close(descriptor)
     try:
@@ -587,6 +1043,8 @@ def _read_root_record(path: str) -> dict:
 
 def _write_root_record(path: str, record: dict) -> None:
     encoded = (json.dumps(record, separators=(",", ":"), sort_keys=True) + "\n").encode("ascii")
+    if len(encoded) > MAX_STATE_RECORD_BYTES:
+        raise GatewayError("Uninstall state exceeds its safe size limit")
     descriptor = os.open(
         path,
         os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
@@ -604,6 +1062,7 @@ def consume_token(
     fingerprint: object,
     options: dict[str, bool],
     user: str,
+    home: str,
     request_id: str,
 ) -> bool:
     """Consume approval and reserve request_id; return True for an idempotent retry."""
@@ -645,6 +1104,10 @@ def consume_token(
             raise GatewayError("Uninstall preview fingerprint does not match; generate a new preview")
         if record.get("user") != user or record.get("config") != config_identity():
             raise GatewayError("LLDPq configuration changed after the preview; generate a new preview")
+        if record.get("source") != source_identity(options, user, home):
+            raise GatewayError(
+                "The LLDPq source checkout changed after the preview; generate a new preview"
+            )
 
         # The directory is root-only and this operation is serialized.  Unlink
         # and reserve the authoritative request id in one lock transaction so
@@ -657,6 +1120,7 @@ def consume_token(
             "options": options,
             "user": user,
             "config": record["config"],
+            "source": record.get("source"),
             "created": int(time.time()),
         }
         _write_root_record(job_path, job_record)
@@ -732,6 +1196,7 @@ def preview(request: dict) -> dict:
     parse_acknowledgements(request)
     user, home = read_runtime_user()
     verify_passwordless_sudo(user, home)
+    source_before = source_identity(options, user, home)
     result = subprocess.run(
         user_environment(user, home) + option_argv(options, preview=True),
         stdin=subprocess.DEVNULL,
@@ -745,7 +1210,12 @@ def preview(request: dict) -> dict:
         raise GatewayError(
             "Uninstall dry-run failed; nothing was changed.\n" + output[-4000:]
         )
-    token, expires, fingerprint = create_token(options, user)
+    source_after = source_identity(options, user, home)
+    if source_before != source_after:
+        raise GatewayError(
+            "The LLDPq source checkout changed during the dry run; generate a new preview"
+        )
+    token, expires, fingerprint = create_token(options, user, source_after)
     return {
         "success": True,
         "preview_token": token,
@@ -763,8 +1233,12 @@ def validate_start_acknowledgements(request: dict, options: dict[str, bool]) -> 
         raise GatewayError("Type UNINSTALL exactly to confirm")
     if acknowledgements["ack_disconnect"] is not True:
         raise GatewayError("Acknowledge that the web interface will disconnect")
-    if not options["keep_data"] and acknowledgements["ack_data_loss"] is not True:
-        raise GatewayError("Acknowledge permanent configuration and monitoring-data removal")
+    if (
+        not options["keep_data"] or options["remove_source"]
+    ) and acknowledgements["ack_data_loss"] is not True:
+        raise GatewayError(
+            "Acknowledge permanent configuration, monitoring-data or source-checkout removal"
+        )
     if any(options[key] for key in ("remove_dhcp", "remove_nginx", "remove_docker")) and request[
         "acknowledgements"
     ][
@@ -807,6 +1281,10 @@ def run_reserved_uninstall() -> int:
             or reservation.get("config") != config_identity()
         ):
             raise GatewayError("LLDPq configuration changed before the reserved uninstall launched")
+        if reservation.get("source") != source_identity(options, user, home):
+            raise GatewayError(
+                "The LLDPq source checkout changed before the reserved uninstall launched"
+            )
         verify_root_owned_program(UNINSTALLER)
         verify_passwordless_sudo(user, home)
         command = (
@@ -897,6 +1375,7 @@ def start(request: dict) -> dict:
                 supplied_fingerprint,
                 options,
                 user,
+                home,
                 request_id,
             )
             try:

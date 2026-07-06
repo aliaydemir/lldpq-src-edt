@@ -512,8 +512,14 @@
                             </label>
 
                             <details class="danger-advanced">
-                                <summary>Advanced: also remove host-wide packages</summary>
-                                <div class="note danger-note" style="margin-top:12px;">These packages may be shared by unrelated workloads. They are never selected automatically.</div>
+                                <summary>Advanced removal options</summary>
+                                <label class="key-lbl" style="margin-top:12px;">Installation source</label>
+                                <label class="danger-choice">
+                                    <input type="checkbox" id="uninstall-remove-source">
+                                    <span><strong>Remove the <code>LLDPQ_SRC</code> source checkout</strong><small>Deletes the complete source directory, including any Git history, uncommitted changes and untracked files. The exact verified path and source state are shown by the dry-run preview. This is never selected automatically.</small></span>
+                                </label>
+                                <label class="key-lbl" style="margin-top:16px;">Host-wide packages</label>
+                                <div class="note danger-note">These packages may be shared by unrelated workloads. They are never selected automatically.</div>
                                 <label class="danger-choice">
                                     <input type="checkbox" id="uninstall-remove-nginx">
                                     <span><strong>Remove nginx and fcgiwrap packages</strong><small>May stop other websites and CGI applications on this host.</small></span>
@@ -546,7 +552,7 @@
                                 </label>
                                 <label class="danger-choice" id="uninstall-ack-data-loss-row" style="display:none;">
                                     <input type="checkbox" id="uninstall-ack-data-loss">
-                                    <span>I understand that the selected LLDPq configuration and monitoring data will be permanently deleted.</span>
+                                    <span>I understand that the selected LLDPq configuration, monitoring data and/or source checkout will be permanently deleted.</span>
                                 </label>
                                 <label class="danger-choice" id="uninstall-ack-shared-row" style="display:none;">
                                     <input type="checkbox" id="uninstall-ack-shared-services">
@@ -810,7 +816,7 @@ function initDirtyGuards() {
     });
     const ansInput = document.getElementById('ans-input');
     if (ansInput) ansInput.addEventListener('input', function () { ansibleDirty = true; ansibleEditVersion++; });
-    ['uninstall-keep-data', 'uninstall-remove-data', 'uninstall-remove-nginx',
+    ['uninstall-keep-data', 'uninstall-remove-data', 'uninstall-remove-source', 'uninstall-remove-nginx',
      'uninstall-remove-dhcp', 'uninstall-remove-docker'].forEach(function (id) {
         const el = document.getElementById(id);
         if (el) el.addEventListener('change', function () {
@@ -2206,6 +2212,7 @@ function resumeUninstallJobStatus(){
 function getUninstallOptions(){
     return {
         keep_data: !!document.getElementById('uninstall-keep-data').checked,
+        remove_source: !!document.getElementById('uninstall-remove-source').checked,
         remove_nginx: !!document.getElementById('uninstall-remove-nginx').checked,
         remove_dhcp: !!document.getElementById('uninstall-remove-dhcp').checked,
         remove_docker: !!document.getElementById('uninstall-remove-docker').checked
@@ -2215,6 +2222,7 @@ function getUninstallOptions(){
 function uninstallOptionsFingerprint(options){
     return JSON.stringify({
         keep_data: options.keep_data === true,
+        remove_source: options.remove_source === true,
         remove_nginx: options.remove_nginx === true,
         remove_dhcp: options.remove_dhcp === true,
         remove_docker: options.remove_docker === true
@@ -2225,13 +2233,17 @@ function uninstallHasSharedPackageSelection(options){
     return options.remove_nginx || options.remove_dhcp || options.remove_docker;
 }
 
+function uninstallHasDataLossSelection(options){
+    return !options.keep_data || options.remove_source;
+}
+
 function updateUninstallAcknowledgementVisibility(){
     const options = getUninstallOptions();
     const dataRow = document.getElementById('uninstall-ack-data-loss-row');
     const dataAck = document.getElementById('uninstall-ack-data-loss');
     const sharedRow = document.getElementById('uninstall-ack-shared-row');
     const sharedAck = document.getElementById('uninstall-ack-shared-services');
-    const needsDataAck = !options.keep_data;
+    const needsDataAck = uninstallHasDataLossSelection(options);
     const needsSharedAck = uninstallHasSharedPackageSelection(options);
     if (dataRow) dataRow.style.display = needsDataAck ? 'flex' : 'none';
     if (dataAck && !needsDataAck) dataAck.checked = false;
@@ -2434,7 +2446,8 @@ function refreshUninstallConfirmationGate(){
     const previewValid = !!uninstallPreviewToken && !!uninstallPreviewFingerprint &&
         uninstallPreviewOptionFingerprint === currentFingerprint;
     const ackDisconnect = !!document.getElementById('uninstall-ack-disconnect').checked;
-    const ackData = options.keep_data || !!document.getElementById('uninstall-ack-data-loss').checked;
+    const ackData = !uninstallHasDataLossSelection(options) ||
+        !!document.getElementById('uninstall-ack-data-loss').checked;
     const ackShared = !uninstallHasSharedPackageSelection(options) ||
         !!document.getElementById('uninstall-ack-shared-services').checked;
     const exact = document.getElementById('uninstall-confirm-text').value === 'UNINSTALL';

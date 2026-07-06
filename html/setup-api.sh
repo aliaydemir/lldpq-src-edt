@@ -944,7 +944,9 @@ def validated_uninstall_request(*, start=False):
         raise ValueError('Unsupported uninstall request field: ' + sorted(unknown_top)[0])
 
     options = post_data.get('options')
-    option_names = {'keep_data', 'remove_nginx', 'remove_dhcp', 'remove_docker'}
+    option_names = {
+        'keep_data', 'remove_source', 'remove_nginx', 'remove_dhcp', 'remove_docker',
+    }
     if not isinstance(options, dict) or set(options) != option_names:
         raise ValueError('Uninstall options must contain exactly the supported fields')
     if any(not isinstance(options[name], bool) for name in option_names):
@@ -967,7 +969,8 @@ def validated_uninstall_request(*, start=False):
         raise ValueError('Type UNINSTALL exactly to confirm')
     if not acknowledgements['ack_disconnect']:
         raise ValueError('The management-disconnect acknowledgement is required')
-    if not options['keep_data'] and not acknowledgements['ack_data_loss']:
+    if ((not options['keep_data'] or options['remove_source'])
+            and not acknowledgements['ack_data_loss']):
         raise ValueError('The permanent data-loss acknowledgement is required')
     if (any(options[name] for name in ('remove_nginx', 'remove_dhcp', 'remove_docker'))
             and not acknowledgements['ack_shared_services']):
