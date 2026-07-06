@@ -41,13 +41,18 @@ class BERAnalyzer:
 
     # Trend evaluation consumes the last ten analyzed samples.  Keep those
     # plus two newest context samples so an intervening baseline/low-traffic
-    # record cannot hide a valid trend and symbol-counter deltas still have a
-    # previous sample.  Version 2 migrates the former time-only history to
-    # this bounded representation when it is loaded/saved.
+    # record cannot hide a valid trend.  Also retain the newest sample carrying
+    # an L1 symbol counter: L1 collection may be unavailable for many runs and
+    # the first recovered sample still needs its previous counter baseline.
+    # Version 2 migrates the former time-only history to this bounded
+    # representation when it is loaded/saved.
     TREND_ANALYSIS_POINTS = 10
     HISTORY_CONTEXT_POINTS = 2
+    HISTORY_SYMBOL_CONTEXT_POINTS = 1
     MAX_HISTORY_ENTRIES_PER_PORT = (
-        TREND_ANALYSIS_POINTS + HISTORY_CONTEXT_POINTS
+        TREND_ANALYSIS_POINTS
+        + HISTORY_CONTEXT_POINTS
+        + HISTORY_SYMBOL_CONTEXT_POINTS
     )
     HISTORY_SCHEMA_VERSION = 2
     
@@ -71,7 +76,9 @@ class BERAnalyzer:
         "symbol_error_warning_delta": 1,
         "symbol_error_critical_delta": 1000,
         "min_packets_for_analysis": 1000,  # Minimum packets for reliable BER
-        "history_retention_hours": 24,     # Keep 24 hours of history
+        # Time is an upper bound; persisted trend state is additionally
+        # sample-bounded by MAX_HISTORY_ENTRIES_PER_PORT.
+        "history_retention_hours": 24,
         "trend_analysis_points": TREND_ANALYSIS_POINTS  # Minimum trend points
     }
     
@@ -404,7 +411,7 @@ class BERAnalyzer:
             return False
 
     def _bound_port_history(self, entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Retain all trend inputs plus the two newest context records."""
+        """Retain trend inputs, recent context, and the latest L1 baseline."""
         if len(entries) <= self.MAX_HISTORY_ENTRIES_PER_PORT:
             return entries
 
@@ -416,7 +423,15 @@ class BERAnalyzer:
         context_start = max(0, len(entries) - self.HISTORY_CONTEXT_POINTS)
         keep.update(range(context_start, len(entries)))
 
-        # The union is at most 12 entries. Preserve chronological order so
+        # A long L1 outage can place the last valid symbol counter outside the
+        # trend/context window.  Keep that one record so recovery computes the
+        # accumulated delta instead of silently treating it as a first sample.
+        for index in range(len(entries) - 1, -1, -1):
+            if isinstance(entries[index].get("symbol_errors"), int):
+                keep.add(index)
+                break
+
+        # The union is at most 13 entries. Preserve chronological order so
         # trend and previous-symbol lookup semantics remain unchanged.
         return [entries[index] for index in sorted(keep)]
     

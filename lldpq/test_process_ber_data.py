@@ -65,11 +65,34 @@ class BERHistoryTests(unittest.TestCase):
             )
             saved = json.loads(serialized)
             self.assertEqual(saved["history_schema_version"], 2)
-            self.assertEqual(saved["history_max_entries_per_port"], 12)
+            self.assertEqual(saved["history_max_entries_per_port"], 13)
             self.assertEqual(
                 len(saved["ber_history"]["leaf-01:swp1"]), 12
             )
             self.assertNotIn("\n  ", serialized)
+
+    def test_l1_symbol_baseline_survives_a_long_collection_gap(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            history = [_history_entry(0)]
+            history[0]["symbol_errors"] = 1234
+            for index in range(1, 30):
+                entry = _history_entry(index)
+                entry.pop("symbol_errors")
+                history.append(entry)
+
+            analyzer = BERAnalyzer(temporary)
+            analyzer.ber_history = {"leaf-01:swp1": history}
+            analyzer.cleanup_old_history()
+            retained = analyzer.ber_history["leaf-01:swp1"]
+
+            self.assertEqual(len(retained), 13)
+            self.assertEqual(retained[0]["symbol_errors"], 1234)
+            self.assertEqual(
+                analyzer._previous_symbol_errors(
+                    "leaf-01:swp1", {"timestamp": time.time(), "symbol_errors": 1400}
+                ),
+                1234,
+            )
 
     def test_atomic_history_failure_keeps_previous_file(self):
         with tempfile.TemporaryDirectory() as temporary:
