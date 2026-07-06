@@ -151,8 +151,11 @@ load_lldpq_config() {
             LLDPQ_DIR|LLDPQ_USER|LLDPQ_SRC|LLDPQ_CRON|GETCONF_CRON|WEB_ROOT|\
             ANSIBLE_DIR|EDITOR_ROOT|PROJECT_DIR|DHCP_HOSTS_FILE|DHCP_CONF_FILE|\
             DHCP_LEASES_FILE|ZTP_SCRIPT_FILE|BASE_CONFIG_DIR|AUTO_BASE_CONFIG|\
-            AUTO_ZTP_DISABLE|AUTO_SET_HOSTNAME|SKIP_OPTICAL|SKIP_L1|\
-            MONITOR_MAX_PARALLEL|LLDP_MAX_PARALLEL|ASSETS_MAX_PARALLEL|\
+            AUTO_ZTP_DISABLE|AUTO_SET_HOSTNAME|SKIP_OPTICAL|SKIP_L1|MONITOR_TIMING|\
+            MONITOR_MAX_PARALLEL|PFC_ECN_MAX_PARALLEL|\
+            PFC_ECN_COLLECTION_BUDGET_SECONDS|PFC_ECN_PORT_TIMEOUT_SECONDS|\
+            OPTICAL_COLLECTION_BUDGET_SECONDS|OPTICAL_PORT_TIMEOUT_SECONDS|\
+            LLDP_MAX_PARALLEL|ASSETS_MAX_PARALLEL|\
             GET_CONFIGS_MAX_PARALLEL|GET_CONFIGS_SSH_TIMEOUT|SEND_CMD_MAX_PARALLEL|TELEMETRY_MAX_PARALLEL|\
             TRANSCEIVER_FW_SKIP_MODELS|TRANSCEIVER_FW_UNKNOWN_MODEL_POLICY|\
             TRANSCEIVER_FW_MAX_PARALLEL|TRANSCEIVER_FW_MIN_INTERVAL|\
@@ -442,6 +445,9 @@ render_runtime_tuning_config() {
     local monitor_parallel="$5" lldp_parallel="$6" assets_parallel="$7"
     local getconfigs_parallel="$8" send_parallel="$9" telemetry_parallel="${10}"
     local scan_interval="${11:-300}" getconfigs_ssh_timeout="${12:-60}"
+    local pfc_parallel="${13:-4}" pfc_budget="${14:-60}"
+    local pfc_port_timeout="${15:-5}" optical_budget="${16:-120}"
+    local optical_port_timeout="${17:-10}" monitor_timing="${18:-false}"
     case "$scan_interval" in
         ''|*[!0-9]*) scan_interval=300 ;;
     esac
@@ -453,6 +459,12 @@ render_runtime_tuning_config() {
     printf 'SKIP_OPTICAL=%s\n' "$skip_optical"
     printf 'SKIP_L1=%s\n' "$skip_l1"
     printf 'MONITOR_MAX_PARALLEL=%s\n' "$monitor_parallel"
+    printf 'PFC_ECN_MAX_PARALLEL=%s\n' "$pfc_parallel"
+    printf 'PFC_ECN_COLLECTION_BUDGET_SECONDS=%s\n' "$pfc_budget"
+    printf 'PFC_ECN_PORT_TIMEOUT_SECONDS=%s\n' "$pfc_port_timeout"
+    printf 'OPTICAL_COLLECTION_BUDGET_SECONDS=%s\n' "$optical_budget"
+    printf 'OPTICAL_PORT_TIMEOUT_SECONDS=%s\n' "$optical_port_timeout"
+    printf 'MONITOR_TIMING=%s\n' "$monitor_timing"
     printf 'LLDP_MAX_PARALLEL=%s\n' "$lldp_parallel"
     printf 'ASSETS_MAX_PARALLEL=%s\n' "$assets_parallel"
     printf 'GET_CONFIGS_MAX_PARALLEL=%s\n' "$getconfigs_parallel"
@@ -4666,7 +4678,13 @@ render_runtime_tuning_config \
     "${SEND_CMD_MAX_PARALLEL:-25}" \
     "${TELEMETRY_MAX_PARALLEL:-25}" \
     "${_SAVE_SCAN_INTERVAL:-${SCAN_INTERVAL:-300}}" \
-    "${_SAVE_GET_CONFIGS_SSH_TIMEOUT:-${GET_CONFIGS_SSH_TIMEOUT:-60}}" | \
+    "${_SAVE_GET_CONFIGS_SSH_TIMEOUT:-${GET_CONFIGS_SSH_TIMEOUT:-60}}" \
+    "${PFC_ECN_MAX_PARALLEL:-4}" \
+    "${PFC_ECN_COLLECTION_BUDGET_SECONDS:-60}" \
+    "${PFC_ECN_PORT_TIMEOUT_SECONDS:-5}" \
+    "${OPTICAL_COLLECTION_BUDGET_SECONDS:-120}" \
+    "${OPTICAL_PORT_TIMEOUT_SECONDS:-10}" \
+    "${MONITOR_TIMING:-false}" | \
     sudo tee -a /etc/lldpq.conf > /dev/null
 echo "TRANSCEIVER_FW_SKIP_MODELS=\"\"" | sudo tee -a /etc/lldpq.conf > /dev/null
 echo "TRANSCEIVER_FW_UNKNOWN_MODEL_POLICY=skip" | sudo tee -a /etc/lldpq.conf > /dev/null

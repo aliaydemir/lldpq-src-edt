@@ -352,7 +352,6 @@ def process_ber_data_files(data_dir="monitor-results/ber-data"):
     
     if processed_devices == 0 and not all_devices_unavailable:
         print("❌ No BER data files found to process")
-        ber_analyzer.save_ber_history()
         return False
     missing_interface_hosts = sorted(expected_hosts - hosts_with_interfaces)
     if missing_interface_hosts:
