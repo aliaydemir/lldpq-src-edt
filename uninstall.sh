@@ -2,8 +2,8 @@
 # LLDPq Uninstaller — removes everything install.sh sets up
 #
 # Usage:
-#   ./uninstall.sh            # interactive (asks for confirmation)
-#   ./uninstall.sh -y         # auto-yes
+#   ./uninstall.sh            # interactive (requires exact UNINSTALL confirmation)
+#   ./uninstall.sh -y|--yes   # non-interactive
 #   ./uninstall.sh --dry-run  # show what would be removed, do nothing
 #   ./uninstall.sh --keep-data  # retain five Setup configs + selected runtime/history
 #   ./uninstall.sh --force-partial # also remove an unrecognized partial install tree
@@ -11,6 +11,8 @@
 #   ./uninstall.sh --remove-nginx  # also remove nginx + fcgiwrap packages
 #   ./uninstall.sh --remove-docker # also remove Docker packages and data
 #   ./uninstall.sh --remove-dhcp   # also remove isc-dhcp-server package/config
+#   ./uninstall.sh --yes --remove-source --remove-nginx --remove-dhcp --remove-docker
+#                              # full LLDPq + explicitly selected host packages/data
 #
 # What it removes:
 #   - LLDPq cron entries (/etc/crontab + /etc/cron.d/lldpq)
@@ -843,7 +845,7 @@ while [[ $# -gt 0 ]]; do
         --remove-source) REMOVE_SOURCE=true ;;
         --force-partial) FORCE_PARTIAL=true ;;
         -h|--help)
-            sed -n '1,30p' "$0"
+            sed -n '1,40p' "$0"
             exit 0
             ;;
         *)
@@ -2192,8 +2194,8 @@ echo "================================================"
 
 if ! $AUTO_YES && ! $DRY_RUN; then
     echo -e "${RED}This will permanently remove LLDPq from this system.${NC}"
-    read -p "Type 'YES' to continue: " confirm
-    if [[ "$confirm" != "YES" ]]; then
+    read -p "Type 'UNINSTALL' to continue: " confirm
+    if [[ "$confirm" != "UNINSTALL" ]]; then
         echo "Aborted."
         exit 1
     fi

@@ -3834,10 +3834,18 @@ restore_preserved_runtime_data() {
     [[ -n "$preserve_dir" && -d "$preserve_dir" ]] || return 0
 
     for runtime_dir in monitor-results lldp-results alert-states assets.ini; do
-        if [[ -e "$preserve_dir/$runtime_dir" && \
-              ! -e "$LLDPQ_INSTALL_DIR/$runtime_dir" ]]; then
-            if ! root_run mv "$preserve_dir/$runtime_dir" \
-                "$LLDPQ_INSTALL_DIR/" 2>/dev/null; then
+        if [[ -e "$preserve_dir/$runtime_dir" || \
+              -L "$preserve_dir/$runtime_dir" ]]; then
+            # The pre-update preservation copy is authoritative while the
+            # transaction locks are still held. A partial new install or a
+            # restored old tree may already contain an empty/default runtime
+            # path; leaving that collision in place strands the real data and
+            # keeps nginx fail-closed. Match the normal success-path restore:
+            # remove only this known runtime target, then move its preserved
+            # counterpart back atomically on the same filesystem.
+            if ! root_run rm -rf -- "$LLDPQ_INSTALL_DIR/$runtime_dir" 2>/dev/null || \
+               ! root_run mv -- "$preserve_dir/$runtime_dir" \
+                    "$LLDPQ_INSTALL_DIR/" 2>/dev/null; then
                 restore_failed=true
                 echo "[!] Preserved runtime data could not be restored: $preserve_dir/$runtime_dir" >&2
             fi

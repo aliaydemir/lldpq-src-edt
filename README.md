@@ -747,6 +747,23 @@ Docker/containerd packages plus all data under `/var/lib/docker` and
 them. The partial-tree override (`--force-partial`) is intentionally not
 exposed by the web UI.
 
+The CLI and web flow execute the same `uninstall.sh` cleanup engine. Use a
+dry-run first; interactive CLI confirmation also requires the exact word
+`UNINSTALL`. To remove all LLDPq-owned data including the verified source
+checkout, or to additionally purge the explicitly selected host-wide
+dependencies, use:
+
+```bash
+./uninstall.sh --dry-run --remove-source
+./uninstall.sh --yes --remove-source
+
+# Also purge host-wide nginx/fcgiwrap, DHCP and Docker packages/data:
+./uninstall.sh --yes --remove-source --remove-nginx --remove-dhcp --remove-docker
+```
+
+The host-wide flags remain independent and off by default because those
+services and their data may be shared by workloads unrelated to LLDPq.
+
 ## [04] cron jobs (auto setup)
 
 LLDPq owns a single `/etc/cron.d/lldpq` file. During an upgrade, only legacy
