@@ -5026,11 +5026,11 @@ if ! sudo install -o root -g root -m 0440 -- \
     exit 1
 fi
 rm -f "$_uninstall_sudoers_tmp"
-_uninstall_sudoers_metadata=$(sudo stat -c '%u:%g:%a' -- \
+_uninstall_sudoers_metadata=$(sudo stat -c '%u:%g:%a:%h' -- \
     "$LLDPQ_UNINSTALL_SUDOERS" 2>/dev/null || true)
-if [[ -L "$LLDPQ_UNINSTALL_SUDOERS" ]] || \
-   [[ ! -f "$LLDPQ_UNINSTALL_SUDOERS" ]] || \
-   [[ "$_uninstall_sudoers_metadata" != "0:0:440" ]] || \
+if sudo test -L "$LLDPQ_UNINSTALL_SUDOERS" || \
+   ! sudo test -f "$LLDPQ_UNINSTALL_SUDOERS" || \
+   [[ "$_uninstall_sudoers_metadata" != "0:0:440:1" ]] || \
    ! sudo "$_visudo_bin" -cf "$LLDPQ_UNINSTALL_SUDOERS" >/dev/null; then
     echo "[!] Installed web uninstall sudoers policy verification failed" >&2
     exit 1
