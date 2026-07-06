@@ -2758,6 +2758,7 @@ function trackDiscoveryJob(jobId, interactive) {
     if (discoveryPollTimer) clearTimeout(discoveryPollTimer);
     const btn = document.getElementById('btnScan');
     if (btn) { btn.disabled = true; btn.textContent = 'Scanning...'; }
+    let pollAttempts = 0;
 
     const poll = async () => {
         const data = await apiCall('discovery-status', { job_id: jobId });
@@ -2770,7 +2771,10 @@ function trackDiscoveryJob(jobId, interactive) {
         }
         const job = data.job || {};
         if (!job.complete) {
-            discoveryPollTimer = setTimeout(poll, 3000);
+            pollAttempts += 1;
+            discoveryPollTimer = setTimeout(
+                poll, pollAttempts <= 10 ? 1000 : 3000
+            );
             return;
         }
         _scanInProgress = false;
@@ -2907,7 +2911,7 @@ async function runSubnetScan() {
     btn.textContent = 'Scanning...';
     document.getElementById('discoveredBody').innerHTML = '<tr><td colspan="9" class="loading">Scanning subnet: ping + SSH probe + post-provision...</td></tr>';
     
-    const data = await apiCall('discovery-start', {});
+    const data = await apiCall('discovery-start', { apply_post_provision: true });
     if (data.success && data.job) {
         trackDiscoveryJob(data.job.id, true);
         return;

@@ -2302,12 +2302,12 @@ def run_subnet_scan(apply_post_provision=True):
                  '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null',
                  '-o', 'LogLevel=ERROR', f'cumulus@{ip}',
                  "echo LLDPQ_OK; "
-                 "printf 'LLDPQ_SERIAL='; sudo dmidecode -s system-serial-number 2>/dev/null | head -1; "
-                 "printf 'LLDPQ_MGMT_MAC='; cat /sys/class/net/eth0/address 2>/dev/null | head -1; "
-                 f"printf 'LLDPQ_BASE_HASH='; sudo cat {BASE_STATE_FILE} 2>/dev/null || true; "
+                 "printf 'LLDPQ_SERIAL=%s\\n' \"$(sudo dmidecode -s system-serial-number 2>/dev/null | head -1)\"; "
+                 "printf 'LLDPQ_MGMT_MAC=%s\\n' \"$(cat /sys/class/net/eth0/address 2>/dev/null | head -1)\"; "
+                 f"printf 'LLDPQ_BASE_HASH=%s\\n' \"$(sudo head -n 1 {shlex.quote(BASE_STATE_FILE)} 2>/dev/null || true)\"; "
                  f"test -f {LEGACY_BASE_MARKER} && echo LLDPQ_LEGACY_BASE=1 || echo LLDPQ_LEGACY_BASE=0; "
                  f"test -f {ZTP_STATE_FILE} && echo LLDPQ_ZTP_DISABLED=1 || echo LLDPQ_ZTP_DISABLED=0; "
-                 "printf 'LLDPQ_HOSTNAME='; hostname"],
+                 "printf 'LLDPQ_HOSTNAME=%s\\n' \"$(hostname)\""],
                 capture_output=True, text=True, timeout=10
             )
             if r.returncode == 0 and 'LLDPQ_OK' in r.stdout:
@@ -2443,15 +2443,57 @@ def run_subnet_scan(apply_post_provision=True):
         available_base_files, current_base_manifest = [], ''
 
     if apply_post_provision and (auto_base or auto_ztp or auto_host):
+        def pending_post_provision_actions(entry):
+            # Discovery is allowed to finish a genuinely new/incomplete
+            # provisioning run.  A changed local sw-base manifest is an
+            # upgrade concern and must not turn a routine Scan into a rollout
+            # across every existing device.
+            base_complete = bool(
+                entry.get('base_manifest') or entry.get('legacy_base')
+            )
+            return {
+                'base_config': bool(
+                    auto_base and current_base_manifest and not base_complete
+                ),
+                'ztp_disable': bool(
+                    auto_ztp and not entry.get('ztp_disabled')
+                ),
+                'hostname': bool(
+                    auto_host and entry.get('hostname') and
+                    entry.get('actual_hostname') != entry.get('hostname')
+                ),
+            }
+
+        def has_pending_post_provision_action(entry):
+            return any(pending_post_provision_actions(entry).values())
+
+        def initial_post_provision_actions(entry, block_pending=False):
+            pending = pending_post_provision_actions(entry)
+            actions = {
+                'base_config': (
+                    'skipped' if not auto_base or not current_base_manifest
+                    else 'already'
+                ),
+                'ztp_disable': 'skipped' if not auto_ztp else 'already',
+                'hostname': 'skipped' if not auto_host else 'already',
+            }
+            if block_pending:
+                for action_name, is_pending in pending.items():
+                    if is_pending:
+                        actions[action_name] = 'blocked'
+            return actions, pending
+
         provisioned_entries = [
             e for e in entries
             if e['device_type'] == 'provisioned' and e['has_binding']
             and e.get('identity_verified')
+            and has_pending_post_provision_action(e)
         ]
         blocked_entries = [
             e for e in entries
             if e['device_type'] == 'provisioned' and e['has_binding']
             and not e.get('identity_verified')
+            and has_pending_post_provision_action(e)
         ]
 
         def post_provision_one_locked(entry, canonical):
@@ -2461,38 +2503,19 @@ def run_subnet_scan(apply_post_provision=True):
                 canonical.get('expected_mac', ''),
                 canonical.get('expected_serial', ''),
             )
-            legacy_assumed = bool(entry.get('legacy_base') and not entry.get('base_manifest'))
-            actions = {
-                'base_config': 'skipped' if not auto_base else 'already',
-                'ztp_disable': 'skipped' if not auto_ztp else 'already',
-                'hostname': 'skipped' if not auto_host else 'already',
-            }
+            actions, pending = initial_post_provision_actions(entry)
             changed = False
 
-            legacy_verified = False
-            if auto_base and legacy_assumed and current_base_manifest:
-                legacy_verified = verify_and_migrate_legacy_base_state(
-                    ip, 'cumulus', available_base_files,
-                    current_base_manifest,
-                    canonical.get('expected_mac', ''),
-                    canonical.get('expected_serial', ''),
-                )
-                if legacy_verified:
-                    entry['base_manifest'] = current_base_manifest
-            if auto_base and not current_base_manifest:
-                actions['base_config'] = 'skipped'
-
-            needs_base = auto_base and bool(current_base_manifest) and (
-                (legacy_assumed and not legacy_verified) or
-                (not legacy_assumed and entry.get('base_manifest') != current_base_manifest)
-            )
+            # Presence of either generation's marker means automatic
+            # post-provisioning has already completed.  Manifest drift is
+            # handled by the explicit Base Config deployment workflow, not by
+            # a discovery scan.
+            needs_base = pending['base_config']
             # The old aggregate marker only proves that the legacy base copy
             # ran.  It says nothing about ZTP or hostname, so those two steps
             # must use their own observed state.
-            needs_ztp = auto_ztp and not entry.get('ztp_disabled')
-            needs_hostname = auto_host and hostname and (
-                entry.get('actual_hostname') != hostname
-            )
+            needs_ztp = pending['ztp_disable']
+            needs_hostname = pending['hostname']
 
             if needs_base:
                 result = _deploy_to_device(
@@ -2557,22 +2580,18 @@ def run_subnet_scan(apply_post_provision=True):
                     return post_provision_one_locked(entry, canonical)
             except Exception as exc:
                 entry['identity_error'] = f'Target authorization failed: {exc}'
-                actions = {
-                    'base_config': 'blocked' if auto_base else 'skipped',
-                    'ztp_disable': 'blocked' if auto_ztp else 'skipped',
-                    'hostname': 'blocked' if auto_host else 'skipped',
-                }
+                actions, _pending = initial_post_provision_actions(
+                    entry, block_pending=True
+                )
                 return entry['ip'], 'failed', actions
 
         # Run post-provision in parallel (limited workers since these are heavier)
         post_results = {}
         post_action_results = {}
         for entry in blocked_entries:
-            actions = {
-                'base_config': 'blocked' if auto_base else 'skipped',
-                'ztp_disable': 'blocked' if auto_ztp else 'skipped',
-                'hostname': 'blocked' if auto_host else 'skipped',
-            }
+            actions, _pending = initial_post_provision_actions(
+                entry, block_pending=True
+            )
             post_results[entry['ip']] = 'failed'
             post_action_results[entry['ip']] = actions
         if provisioned_entries:

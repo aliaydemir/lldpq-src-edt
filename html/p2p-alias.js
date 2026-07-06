@@ -81,22 +81,22 @@
     // pages keep the legacy exact-leaf matching behaviour.
     function leafCells() {
         var out = [];
-        var seen = [];
+        var seen = new Set();
         var explicit = document.querySelectorAll('[data-p2p-key]');
         for (var e = 0; e < explicit.length; e++) {
             out.push(explicit[e]);
-            seen.push(explicit[e]);
+            seen.add(explicit[e]);
         }
         var tds = document.querySelectorAll('table td, table th');
         for (var i = 0; i < tds.length; i++) {
             var td = tds[i];
-            var kids = td.querySelectorAll('*');
-            if (kids.length === 0) {
-                if (seen.indexOf(td) === -1) out.push(td);
+            if (td.childElementCount === 0) {
+                if (!seen.has(td)) out.push(td);
                 continue;
             }
+            var kids = td.querySelectorAll('*');
             for (var j = 0; j < kids.length; j++) {
-                if (kids[j].children.length === 0 && seen.indexOf(kids[j]) === -1) {
+                if (kids[j].childElementCount === 0 && !seen.has(kids[j])) {
                     out.push(kids[j]);
                 }
             }
@@ -144,36 +144,52 @@
         return '';
     }
 
-    function headerTextForCell(cell) {
+    function headerTextForCell(cell, context) {
         if (!cell || typeof cell.cellIndex !== 'number') return '';
         var table = cell.closest ? cell.closest('table') : null;
         if (!table) return '';
+        var cached = context && context.headersByTable.get(table);
+        if (cached) return cached[cell.cellIndex] || '';
         var rows = table.querySelectorAll('thead tr');
         if (!rows.length) return '';
         var headerRow = rows[rows.length - 1];
-        var header = headerRow.cells && headerRow.cells[cell.cellIndex];
-        return header ? (header.textContent || '') : '';
+        var headers = [];
+        if (headerRow.cells) {
+            for (var i = 0; i < headerRow.cells.length; i++) {
+                headers[i] = headerRow.cells[i].textContent || '';
+            }
+        }
+        if (context) context.headersByTable.set(table, headers);
+        return headers[cell.cellIndex] || '';
     }
 
-    function namespaceForElement(el) {
+    function namespaceForElement(el, context) {
         if (!el) return '';
-        var owner = el.closest ? el.closest('[data-p2p-namespace]') : null;
+        var owner = context && !context.hasExplicitNamespaces
+            ? null
+            : (el.closest ? el.closest('[data-p2p-namespace]') : null);
         var explicit = normalizeNamespace(owner && owner.getAttribute('data-p2p-namespace'));
         if (explicit) return explicit;
-        var cell = el.closest ? el.closest('td,th') : null;
+        var tag = String(el.tagName || '').toLowerCase();
+        var cell = (tag === 'td' || tag === 'th') ? el : (el.closest ? el.closest('td,th') : null);
         var hint = [
             el.id || '', el.className || '',
             cell ? (cell.id || '') : '', cell ? (cell.className || '') : '',
-            headerTextForCell(cell)
+            headerTextForCell(cell, context)
         ].join(' ').toLowerCase();
         if (/(^|[^a-z])(port|ports|interface|interfaces|ifname|iface)([^a-z]|$)/.test(hint)) return 'interfaces';
         if (/(^|[^a-z])(device|devices|switch|switches|host|hostname|neighbor|node|peer)([^a-z]|$)/.test(hint)) return 'devices';
         return '';
     }
 
-    function aliasForElement(el, canonical) {
+    function aliasForElement(el, canonical, context) {
         var key = String(canonical || '').toLowerCase();
-        var namespace = namespaceForElement(el);
+        // Most cells in analysis tables are metrics, timestamps or status text. Do
+        // not perform DOM/header discovery unless the text can actually be aliased.
+        var hasDevice = Object.prototype.hasOwnProperty.call(deviceMap, key);
+        var hasInterface = Object.prototype.hasOwnProperty.call(interfaceMap, key);
+        if (!hasDevice && !hasInterface) return '';
+        var namespace = namespaceForElement(el, context);
         if (namespace === 'devices') return deviceMap[key] || '';
         if (namespace === 'interfaces') return interfaceMap[key] || '';
         return fallbackMap[key] || '';
@@ -203,31 +219,38 @@
     function apply() {
         if (!loaded) return;
         if (observer) observer.disconnect();      // avoid reacting to our own edits
+        if (!on) {
+            restoreAllApplied();
+            connectObserver();
+            return;
+        }
+        var context = {
+            headersByTable: new WeakMap(),
+            hasExplicitNamespaces: !!document.querySelector('[data-p2p-namespace]')
+        };
         var cells = leafCells();
         for (var i = 0; i < cells.length; i++) {
             var el = cells[i];
-            if (on) {
-                if (el.getAttribute('data-p2p-applied') === 'true') continue;
-                var explicitKey = (el.getAttribute('data-p2p-key') || '').trim();
-                var original = el.hasAttribute('data-p2p-orig')
-                    ? el.getAttribute('data-p2p-orig')
-                    : el.textContent;
-                var t = (explicitKey || original || '').trim();
-                var alias = t ? aliasForElement(el, t) : '';    // case-insensitive, namespace-aware lookup
-                if (alias) {
-                    if (!el.hasAttribute('data-p2p-orig')) {
-                        el.setAttribute('data-p2p-orig', original);
-                        el.setAttribute('data-p2p-orig-auto', 'true');
-                    }
-                    if (!el.hasAttribute('data-csv-value')) {
-                        el.setAttribute('data-csv-value', original);
-                        el.setAttribute('data-p2p-csv-auto', 'true');
-                    }
-                    el.textContent = alias;
-                    el.setAttribute('data-p2p-applied', 'true');
-                    saveTitle(el, original);
+            if (el.getAttribute('data-p2p-applied') === 'true') continue;
+            var explicitKey = (el.getAttribute('data-p2p-key') || '').trim();
+            var original = el.hasAttribute('data-p2p-orig')
+                ? el.getAttribute('data-p2p-orig')
+                : el.textContent;
+            var t = (explicitKey || original || '').trim();
+            var alias = t ? aliasForElement(el, t, context) : '';    // case-insensitive, namespace-aware lookup
+            if (alias) {
+                if (!el.hasAttribute('data-p2p-orig')) {
+                    el.setAttribute('data-p2p-orig', original);
+                    el.setAttribute('data-p2p-orig-auto', 'true');
                 }
-            } else if (el.getAttribute('data-p2p-applied') === 'true') restoreAppliedElement(el);
+                if (!el.hasAttribute('data-csv-value')) {
+                    el.setAttribute('data-csv-value', original);
+                    el.setAttribute('data-p2p-csv-auto', 'true');
+                }
+                el.textContent = alias;
+                el.setAttribute('data-p2p-applied', 'true');
+                saveTitle(el, original);
+            }
         }
         connectObserver();
     }

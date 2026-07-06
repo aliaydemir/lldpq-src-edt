@@ -206,6 +206,9 @@ def check_connections(
         name for edge in edges for name in (edge.left_device, edge.right_device)
     )
     resolver = resolver or DeviceNameResolver(known_names)
+    managed_device_keys = {
+        resolver.key(name) for name in managed_devices
+    } - {''}
 
     collected_by_key = {}
     for collected_name in device_neighbors:
@@ -311,14 +314,19 @@ def check_connections(
                 'Reason': reason,
             })
 
-        # Every LLDP neighbor on an otherwise-unconfigured local port is a
-        # warning candidate, including devices outside the managed inventory.
+        # An otherwise-unconfigured local port is a wiring warning only when it
+        # reaches another managed device.  External endpoints commonly advertise
+        # LLDP on server-facing ports without being part of the managed fabric;
+        # they must not inflate wiring failures.  Configured topology ports are
+        # handled above, so an explicitly modeled endpoint (or a wrong endpoint
+        # on a modeled port) still receives the normal exact-match validation.
         for local_port in sorted(neighbors_by_port):
             if local_port in expected_local_ports or is_eth0(local_port):
                 continue
             candidates = [
                 candidate for candidate in neighbors_by_port[local_port]
                 if not is_eth0(candidate.remote_port)
+                and resolver.key(candidate.device) in managed_device_keys
             ]
             if not candidates:
                 continue
