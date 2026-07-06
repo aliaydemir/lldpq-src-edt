@@ -806,62 +806,22 @@ EOF
     mv -f "$html_temp" "$html_file"
 }
 
-validate_collection_bundle() {
-    local raw_file=$1
-    python3 - "$raw_file" <<'PYTHON'
-import sys
-from pathlib import Path
-
-sections = (
-    "HTML_OUTPUT", "BGP_DATA", "EVPN_DATA", "DUP_DATA", "FDB_DATA",
-    "NEIGH_DATA", "CARRIER_DATA", "OPTICAL_DATA", "BER_DATA", "L1_DATA",
-    "PFC_ECN_DATA", "HARDWARE_DATA", "LOG_DATA",
-)
-try:
-    lines = Path(sys.argv[1]).read_text(
-        encoding="utf-8", errors="replace"
-    ).splitlines()
-except OSError as exc:
-    print(f"cannot read collection bundle: {exc}", file=sys.stderr)
-    raise SystemExit(1)
-
-command_errors = [
-    line for line in lines if line.startswith("__LLDPQ_COLLECTION_ERROR__:")
-]
-if command_errors:
-    print(
-        "remote collection command failures: " + ", ".join(command_errors),
-        file=sys.stderr,
-    )
-    raise SystemExit(1)
-
-previous_end = -1
-for section in sections:
-    start_marker = f"==={section}_START==="
-    end_marker = f"==={section}_END==="
-    starts = [index for index, line in enumerate(lines) if line == start_marker]
-    ends = [index for index, line in enumerate(lines) if line == end_marker]
-    if len(starts) != 1 or len(ends) != 1:
-        print(
-            f"invalid {section} marker count: start={len(starts)} end={len(ends)}",
-            file=sys.stderr,
-        )
-        raise SystemExit(1)
-    if not (previous_end < starts[0] < ends[0]):
-        print(f"out-of-order collection section: {section}", file=sys.stderr)
-        raise SystemExit(1)
-    previous_end = ends[0]
-PYTHON
-}
-
-extract_collection_section() {
-    local raw_file=$1 section=$2 destination=$3
-    awk -v start="===${section}_START===" -v end="===${section}_END===" '
-        $0 == start { inside=1; next }
-        $0 == end { if (inside) { found_end=1; exit } }
-        inside { print }
-        END { if (!found_end) exit 1 }
-    ' "$raw_file" > "$destination"
+split_collection_bundle() {
+    local raw_file=$1 stage_dir=$2 carrier_output=$3 optical_output=$4
+    python3 "$SCRIPT_DIR/collection_bundle.py" "$raw_file" \
+        --output HTML_OUTPUT "$stage_dir/html.body" \
+        --output BGP_DATA "$stage_dir/bgp.txt" \
+        --output EVPN_DATA "$stage_dir/evpn.txt" \
+        --output DUP_DATA "$stage_dir/dup.txt" \
+        --output FDB_DATA "$stage_dir/fdb.txt" \
+        --output NEIGH_DATA "$stage_dir/neigh.txt" \
+        --output CARRIER_DATA "$carrier_output" \
+        --output OPTICAL_DATA "$optical_output" \
+        --output BER_DATA "$stage_dir/ber.txt" \
+        --output L1_DATA "$stage_dir/l1.txt" \
+        --output PFC_ECN_DATA "$stage_dir/pfc-ecn.txt" \
+        --output HARDWARE_DATA "$stage_dir/hardware.txt" \
+        --output LOG_DATA "$stage_dir/logs.txt"
 }
 
 restore_bundle_commit_traps() {
@@ -2559,12 +2519,6 @@ EOF
         rm -rf "$bundle_stage"
         return "$ssh_status"
     fi
-    if ! validate_collection_bundle "$raw_file"; then
-        COLLECTION_FAILURE_KIND=invalid
-        echo "Data collection failed for ${hostname} (invalid collection bundle)" >&2
-        rm -rf "$bundle_stage"
-        return 1
-    fi
     if [[ "$MONITOR_TIMING" == "true" ]]; then
         awk -F: -v host="$hostname" '
             /^__LLDPQ_SECTION_TIMING__:/ && $2 == host {
@@ -2586,31 +2540,10 @@ EOF
     # =========================================================================
     local parse_start=$(date +%s)
     
-    if ! extract_collection_section "$raw_file" HTML_OUTPUT \
-            "$bundle_stage/html.body" ||
-       ! cat "$bundle_stage/html.body" >> "$html_temp" ||
-       ! extract_collection_section "$raw_file" BGP_DATA \
-            "$bundle_stage/bgp.txt" ||
-       ! extract_collection_section "$raw_file" EVPN_DATA \
-            "$bundle_stage/evpn.txt" ||
-       ! extract_collection_section "$raw_file" DUP_DATA \
-            "$bundle_stage/dup.txt" ||
-       ! extract_collection_section "$raw_file" FDB_DATA \
-            "$bundle_stage/fdb.txt" ||
-       ! extract_collection_section "$raw_file" NEIGH_DATA \
-            "$bundle_stage/neigh.txt" ||
-       ! extract_collection_section "$raw_file" CARRIER_DATA "$carrier_body" ||
-       ! extract_collection_section "$raw_file" OPTICAL_DATA "$optical_body" ||
-       ! extract_collection_section "$raw_file" BER_DATA \
-            "$bundle_stage/ber.txt" ||
-       ! extract_collection_section "$raw_file" L1_DATA \
-            "$bundle_stage/l1.txt" ||
-       ! extract_collection_section "$raw_file" PFC_ECN_DATA \
-            "$bundle_stage/pfc-ecn.txt" ||
-       ! extract_collection_section "$raw_file" HARDWARE_DATA \
-            "$bundle_stage/hardware.txt" ||
-       ! extract_collection_section "$raw_file" LOG_DATA \
-            "$bundle_stage/logs.txt"; then
+    if ! split_collection_bundle "$raw_file" "$bundle_stage" \
+            "$carrier_body" "$optical_body" ||
+       ! cat "$bundle_stage/html.body" >> "$html_temp"; then
+        COLLECTION_FAILURE_KIND=invalid
         echo "Could not stage the complete collection bundle for ${hostname}" >&2
         rm -rf "$bundle_stage"
         return 1
