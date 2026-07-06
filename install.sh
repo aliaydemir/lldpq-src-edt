@@ -4874,12 +4874,25 @@ for f in device-cache.json fabric-scan-cache.json discovery-cache.json inventory
     sudo chmod 664 "$WEB_ROOT/$f"
 done
 
-# Keep native and Docker installs on the same explicit shared config group.
-# Basing this on the invoking admin's primary group breaks updates performed by
-# another administrator and can accidentally add www-data to the root group.
-sudo chown root:www-data /etc/lldpq.conf
+# Use the configured runtime account's primary group, never the invoking
+# administrator's group.  This keeps a first-install shell able to run `lldpq`
+# immediately (usermod cannot refresh that parent shell's supplementary group
+# list), while the restarted web worker receives access through group
+# membership.  A root runtime uses the dedicated web group rather than adding
+# www-data to the privileged root group.
+CONFIG_GROUP=$(id -gn "$LLDPQ_USER") || {
+    echo "[!] Could not resolve the runtime group for '$LLDPQ_USER'" >&2
+    exit 1
+}
+[[ "$CONFIG_GROUP" == "root" ]] && CONFIG_GROUP="www-data"
+sudo chown root:"$CONFIG_GROUP" /etc/lldpq.conf
 sudo chmod 660 /etc/lldpq.conf
 prepare_shared_lock_files /etc/lldpq.conf.lock
+sudo chown root:"$CONFIG_GROUP" /etc/lldpq.conf.lock
+sudo chmod 660 /etc/lldpq.conf.lock
+if [[ "$CONFIG_GROUP" != "www-data" ]]; then
+    sudo usermod -a -G "$CONFIG_GROUP" www-data 2>/dev/null || true
+fi
 sudo usermod -a -G www-data "$LLDPQ_USER" 2>/dev/null || true
 if ! sudo -u "$LLDPQ_USER" /usr/local/bin/lldpq-config --require-config \
    --require-key LLDPQ_DIR --require-key LLDPQ_USER --require-key WEB_ROOT \
