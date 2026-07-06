@@ -128,10 +128,29 @@ PYTHON
 # turn a configuration write into arbitrary code execution during install.
 load_lldpq_config() {
     local config_file="${1:-/etc/lldpq.conf}"
-    local line key raw value config_lock_fd=""
+    local line key raw value config_lock_fd="" config_snapshot=""
 
     [[ -f "$config_file" ]] || return 0
-    if [[ -e "${config_file}.lock" ]] && command -v flock >/dev/null 2>&1; then
+    if [[ ! -r "$config_file" ]]; then
+        # Interrupted recovery can restore the root-owned config before its
+        # final group ownership pass. Read only the fixed system config through
+        # sudo, under the same shared lock, into a private snapshot. Never
+        # extend this read privilege to a caller-supplied path.
+        [[ "$config_file" == "/etc/lldpq.conf" ]] || return 1
+        config_snapshot=$(mktemp "${TMPDIR:-/tmp}/lldpq-config-read.XXXXXX") || return 1
+        chmod 600 "$config_snapshot" || { rm -f "$config_snapshot"; return 1; }
+        if [[ -e "${config_file}.lock" ]] && command -v flock >/dev/null 2>&1; then
+            if ! sudo flock -s "${config_file}.lock" cat -- "$config_file" \
+                    > "$config_snapshot"; then
+                rm -f "$config_snapshot"
+                return 1
+            fi
+        elif ! sudo cat -- "$config_file" > "$config_snapshot"; then
+            rm -f "$config_snapshot"
+            return 1
+        fi
+        config_file="$config_snapshot"
+    elif [[ -e "${config_file}.lock" ]] && command -v flock >/dev/null 2>&1; then
         exec {config_lock_fd}<>"${config_file}.lock" || return 1
         flock -s "$config_lock_fd" || {
             exec {config_lock_fd}>&-
@@ -187,6 +206,7 @@ load_lldpq_config() {
         flock -u "$config_lock_fd" || true
         exec {config_lock_fd}>&-
     fi
+    [[ -z "$config_snapshot" ]] || rm -f "$config_snapshot"
 }
 
 canonical_path() {
@@ -3839,7 +3859,7 @@ if [[ $EUID -eq 0 ]]; then
 fi
 
 quiesce_recovery_units_for_fresh_install() {
-    local unit
+    local unit clean_user_home
     # A clean/fresh install deliberately discards retained transactions. Stop
     # their oneshots before deleting /var/lib/lldpq; otherwise an already
     # running recovery process can keep nginx/fcgiwrap start jobs waiting even
@@ -3868,6 +3888,11 @@ quiesce_recovery_units_for_fresh_install() {
         /etc/systemd/system/multi-user.target.wants/lldpq-recovery.service \
         /etc/systemd/system/multi-user.target.wants/lldpq-update-recovery.service \
         /usr/local/libexec/lldpq-update-recovery.py
+    clean_user_home=$(resolve_lldpq_user_home "$LLDPQ_USER") || return 1
+    # Clean install means no retained transaction may replay old config/state
+    # after the new files are written.  This also removes stale Setup upgrade
+    # markers and config-collection state from the prior installation.
+    sudo rm -rf -- "$clean_user_home/.lldpq-state"
     sudo systemctl daemon-reload
 }
 
