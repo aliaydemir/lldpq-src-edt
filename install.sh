@@ -4874,12 +4874,12 @@ for f in device-cache.json fabric-scan-cache.json discovery-cache.json inventory
     sudo chmod 664 "$WEB_ROOT/$f"
 done
 
-# Set permissions so web server can update telemetry config
-USER_GROUP=$(id -gn)
-sudo chown root:"$USER_GROUP" /etc/lldpq.conf
+# Keep native and Docker installs on the same explicit shared config group.
+# Basing this on the invoking admin's primary group breaks updates performed by
+# another administrator and can accidentally add www-data to the root group.
+sudo chown root:www-data /etc/lldpq.conf
 sudo chmod 660 /etc/lldpq.conf
 prepare_shared_lock_files /etc/lldpq.conf.lock
-sudo usermod -a -G $USER_GROUP www-data 2>/dev/null || true
 sudo usermod -a -G www-data "$LLDPQ_USER" 2>/dev/null || true
 if ! sudo -u "$LLDPQ_USER" /usr/local/bin/lldpq-config --require-config \
    --require-key LLDPQ_DIR --require-key LLDPQ_USER --require-key WEB_ROOT \
