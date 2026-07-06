@@ -11,6 +11,8 @@ import time
 import re
 import os
 import math
+import stat
+import tempfile
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
 from enum import Enum
@@ -36,6 +38,18 @@ class BERGrade(Enum):
 
 class BERAnalyzer:
     """Professional BER Analysis System"""
+
+    # Trend evaluation consumes the last ten analyzed samples.  Keep those
+    # plus two newest context samples so an intervening baseline/low-traffic
+    # record cannot hide a valid trend and symbol-counter deltas still have a
+    # previous sample.  Version 2 migrates the former time-only history to
+    # this bounded representation when it is loaded/saved.
+    TREND_ANALYSIS_POINTS = 10
+    HISTORY_CONTEXT_POINTS = 2
+    MAX_HISTORY_ENTRIES_PER_PORT = (
+        TREND_ANALYSIS_POINTS + HISTORY_CONTEXT_POINTS
+    )
+    HISTORY_SCHEMA_VERSION = 2
     
     # Interface error-event density, raw (pre-FEC) BER, and effective
     # (post-FEC) BER are different metrics and intentionally have separate
@@ -58,7 +72,7 @@ class BERAnalyzer:
         "symbol_error_critical_delta": 1000,
         "min_packets_for_analysis": 1000,  # Minimum packets for reliable BER
         "history_retention_hours": 24,     # Keep 24 hours of history
-        "trend_analysis_points": 10        # Minimum points for trend analysis
+        "trend_analysis_points": TREND_ANALYSIS_POINTS  # Minimum trend points
     }
     
     def __init__(self, data_dir="monitor-results"):
@@ -135,10 +149,53 @@ class BERAnalyzer:
     def save_baseline_data(self):
         """Save baseline counter data"""
         try:
-            with open(f"{self.data_dir}/ber_baseline.json", "w") as f:
-                json.dump(self.baseline_data, f, indent=2)
+            self._atomic_json_write(
+                f"{self.data_dir}/ber_baseline.json", self.baseline_data
+            )
+            return True
         except Exception as e:
             print(f"Error saving baseline data: {e}")
+            return False
+
+    @staticmethod
+    def _atomic_json_write(path: str, value: Any) -> None:
+        """Write compact JSON atomically and durably without a partial file."""
+        directory = os.path.dirname(os.path.abspath(path))
+        os.makedirs(directory, exist_ok=True)
+        try:
+            mode = stat.S_IMODE(os.stat(path).st_mode)
+        except FileNotFoundError:
+            mode = 0o644
+
+        descriptor, temporary = tempfile.mkstemp(
+            prefix=f".{os.path.basename(path)}.", dir=directory
+        )
+        try:
+            os.fchmod(descriptor, mode)
+            with os.fdopen(descriptor, "w") as stream:
+                descriptor = -1
+                json.dump(value, stream, separators=(",", ":"))
+                stream.write("\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, path)
+
+            # Persist the directory entry on filesystems which support it.
+            directory_fd = os.open(
+                directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+            )
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except Exception:
+            if descriptor >= 0:
+                os.close(descriptor)
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+            raise
 
     def _parse_raw_phy_ber_for_device(self, hostname: str) -> Dict[str, float]:
         """Parse RAW PHY BER per interface for given device.
@@ -326,16 +383,42 @@ class BERAnalyzer:
     def save_ber_history(self):
         """Save BER history to file"""
         try:
+            # Bound both newly collected data and legacy time-only history
+            # before serialization.  current_ber_stats and baselines remain
+            # independent, complete snapshots.
+            self.cleanup_old_history()
             data = {
                 "ber_history": self.ber_history,
                 "current_ber_stats": self.current_ber_stats,
                 "last_update": time.time(),
-                "config": self.config
+                "config": self.config,
+                "history_schema_version": self.HISTORY_SCHEMA_VERSION,
+                "history_max_entries_per_port": self.MAX_HISTORY_ENTRIES_PER_PORT,
             }
-            with open(f"{self.data_dir}/ber_history.json", "w") as f:
-                json.dump(data, f, indent=2)
+            self._atomic_json_write(
+                f"{self.data_dir}/ber_history.json", data
+            )
+            return True
         except Exception as e:
             print(f"Error saving BER history: {e}")
+            return False
+
+    def _bound_port_history(self, entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Retain all trend inputs plus the two newest context records."""
+        if len(entries) <= self.MAX_HISTORY_ENTRIES_PER_PORT:
+            return entries
+
+        analyzed_indices = [
+            index for index, entry in enumerate(entries)
+            if entry.get("sample_status", "analyzed") == "analyzed"
+        ]
+        keep = set(analyzed_indices[-self.TREND_ANALYSIS_POINTS:])
+        context_start = max(0, len(entries) - self.HISTORY_CONTEXT_POINTS)
+        keep.update(range(context_start, len(entries)))
+
+        # The union is at most 12 entries. Preserve chronological order so
+        # trend and previous-symbol lookup semantics remain unchanged.
+        return [entries[index] for index in sorted(keep)]
     
     def cleanup_old_history(self):
         """Remove history entries older than retention period"""
@@ -344,10 +427,11 @@ class BERAnalyzer:
         
         for port_name in list(self.ber_history.keys()):
             if port_name in self.ber_history:
-                self.ber_history[port_name] = [
+                retained = [
                     entry for entry in self.ber_history[port_name]
                     if current_time - entry['timestamp'] <= retention_seconds
                 ]
+                self.ber_history[port_name] = self._bound_port_history(retained)
                 
                 # Remove port if no history left
                 if not self.ber_history[port_name]:
@@ -871,11 +955,14 @@ class BERAnalyzer:
         
         return summary
     
-    def detect_ber_anomalies(self) -> List[Dict[str, Any]]:
+    def detect_ber_anomalies(
+        self, summary: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
         """Detect anomalies from the same combined evidence as the report."""
         anomalies = []
 
-        summary = self.get_ber_summary()
+        if summary is None:
+            summary = self.get_ber_summary()
         port_infos = (summary['critical_ports'] + summary['warning_ports'] +
                       summary['good_ports'] + summary['excellent_ports'] +
                       summary['unknown_ports'])
@@ -966,10 +1053,17 @@ class BERAnalyzer:
         
         return anomalies
     
-    def export_ber_data_for_web(self, output_file: str):
+    def export_ber_data_for_web(
+        self,
+        output_file: str,
+        summary: Optional[Dict[str, Any]] = None,
+        anomalies: Optional[List[Dict[str, Any]]] = None,
+    ):
         """Export BER data for web display - same format as BGP/Link Flap/Optical"""
-        summary = self.get_ber_summary()
-        anomalies = self.detect_ber_anomalies()
+        if summary is None:
+            summary = self.get_ber_summary()
+        if anomalies is None:
+            anomalies = self.detect_ber_anomalies(summary)
         expected_hosts = getattr(self, 'coverage_expected_hosts', None)
         current_hosts = getattr(self, 'coverage_current_hosts', None)
         coverage_attrs = ''
@@ -1886,6 +1980,3 @@ class BERAnalyzer:
             print(f"BER analysis report generated: {output_file}")
         except Exception as e:
             print(f"Error writing BER analysis report: {e}")
-        
-        # Save history after analysis
-        self.save_ber_history()

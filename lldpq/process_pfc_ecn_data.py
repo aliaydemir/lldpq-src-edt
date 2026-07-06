@@ -17,7 +17,6 @@ import re
 import sys
 import tempfile
 import time
-from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional, Tuple
@@ -409,8 +408,12 @@ def build_port_record(
     discard_values = [
         deltas.get("tx_uc_buffer_discards"), deltas.get("wred_discards")
     ]
-    known_discards = [value for value in discard_values if value is not None]
-    loss_delta = sum(known_discards) if known_discards else None
+    # The table labels this as the combined TC3 discard delta.  Showing a
+    # partial sum as zero would hide an unavailable constituent counter.
+    loss_delta = (
+        sum(discard_values) if all(value is not None for value in discard_values)
+        else None
+    )
     ecn_delta = deltas.get("ecn_marked_frames")
     tx_delta = deltas.get("tx_frames")
     ecn_share = (
@@ -508,7 +511,7 @@ def _fmt_percent(value: Optional[float]) -> str:
 
 def _fmt_duration(value: Optional[float]) -> str:
     if value is None or value < 0:
-        return "&mdash;"
+        return "—"
     seconds = int(round(value))
     minutes, seconds = divmod(seconds, 60)
     hours, minutes = divmod(minutes, 60)
@@ -519,76 +522,14 @@ def _fmt_duration(value: Optional[float]) -> str:
     return f"{seconds}s"
 
 
-def _trend_svg(history: Mapping[str, Any]) -> str:
-    buckets: Dict[int, Dict[str, float]] = defaultdict(lambda: defaultdict(float))
-    for records in history.values():
-        if not isinstance(records, list):
-            continue
-        for record in records:
-            if not isinstance(record, Mapping) or record.get("sample_status") != "analyzed":
-                continue
-            timestamp = record.get("timestamp")
-            rates = record.get("rates")
-            if not isinstance(timestamp, (int, float)) or not isinstance(rates, Mapping):
-                continue
-            bucket = int(timestamp // 60 * 60)
-            for name in REQUIRED_COUNTERS:
-                value = rates.get(name)
-                if isinstance(value, (int, float)) and math.isfinite(value):
-                    buckets[bucket][name] += max(float(value), 0.0)
-    points = sorted(buckets.items())[-24:]
-    if len(points) < 2:
-        return '<div class="trend-empty">A trend appears after two complete samples.</div>'
-
-    width, height = 920, 220
-    left, right, top, bottom = 54, 18, 18, 36
-    plot_w, plot_h = width - left - right, height - top - bottom
-    maximum = max(
-        [bucket.get(name, 0.0) for _ts, bucket in points for name in REQUIRED_COUNTERS]
-        or [0.0]
-    )
-    maximum = maximum if maximum > 0 else 1.0
-    colors = {
-        "ecn_marked_frames": "#76b900",
-        "rx_pause_frames": "#4fc3f7",
-        "tx_pause_frames": "#ffb74d",
-    }
-    labels = {
-        "ecn_marked_frames": "TC3 ECN",
-        "rx_pause_frames": "SP3 PFC RX",
-        "tx_pause_frames": "SP3 PFC TX",
-    }
-    polylines = []
-    for name in REQUIRED_COUNTERS:
-        coordinates = []
-        for index, (_timestamp, values) in enumerate(points):
-            x = left + (plot_w * index / (len(points) - 1))
-            y = top + plot_h * (1 - values.get(name, 0.0) / maximum)
-            coordinates.append(f"{x:.1f},{y:.1f}")
-        polylines.append(
-            f'<polyline fill="none" stroke="{colors[name]}" stroke-width="2.5" '
-            f'points="{" ".join(coordinates)}" />'
-        )
-    first_label = datetime.fromtimestamp(points[0][0]).strftime("%H:%M")
-    last_label = datetime.fromtimestamp(points[-1][0]).strftime("%H:%M")
-    legend = "".join(
-        f'<span><i style="background:{colors[name]}"></i>{labels[name]}</span>'
-        for name in REQUIRED_COUNTERS
-    )
-    return f'''<div class="trend-legend">{legend}</div>
-<svg class="trend" viewBox="0 0 {width} {height}" role="img" aria-label="Aggregate counter rates">
-  <line x1="{left}" y1="{top + plot_h}" x2="{width-right}" y2="{top + plot_h}" class="axis" />
-  <line x1="{left}" y1="{top}" x2="{left}" y2="{top + plot_h}" class="axis" />
-  <text x="8" y="{top + 6}" class="axis-label">{maximum:,.2f}/s</text>
-  <text x="{left}" y="{height-8}" class="axis-label">{first_label}</text>
-  <text x="{width-right-35}" y="{height-8}" class="axis-label">{last_label}</text>
-  {''.join(polylines)}
-</svg>'''
+def _fmt_sample_time(timestamp: float) -> str:
+    value = datetime.fromtimestamp(timestamp, timezone.utc)
+    return f"{value.day} {value:%b %Y, %H:%M:%S} UTC"
 
 
 def render_report(
     records: List[Mapping[str, Any]],
-    history: Mapping[str, Any],
+    _history: Mapping[str, Any],
     expected_hosts: Optional[int] = None,
     current_hosts: Optional[int] = None,
     collection_unavailable: bool = False,
@@ -620,73 +561,338 @@ def render_report(
     for row in records:
         counters, deltas, rates = row["counters"], row["deltas"], row["rates"]
         status = str(row["sample_status"])
-        status_label = {
+        status_key = str({
             "analyzed": row.get("signal", "quiet"),
-            "first_sample": "first sample",
-            "counter_reset": "counter reset",
-            "collection_error": "collection error",
+            "first_sample": "first_sample",
+            "counter_reset": "counter_reset",
+            "collection_error": "collection_error",
             "missing": "missing",
-        }.get(status, status)
+        }.get(status, status))
+        status_label = {
+            "quiet": "No ECN/PFC activity",
+            "ecn": "ECN marking",
+            "pfc": "PFC activity",
+            "combined": "ECN + PFC",
+            "loss": "Discards",
+            "first_sample": "Baseline set",
+            "counter_reset": "Counter reset",
+            "collection_error": "Collection failed",
+            "missing": "Data missing",
+        }.get(status_key, status_key.replace("_", " ").title())
         status_class = {
             "loss": "danger", "combined": "warn", "pfc": "warn", "ecn": "info",
             "quiet": "ok", "first_sample": "muted", "counter_reset": "muted",
             "collection_error": "danger", "missing": "muted",
-        }.get(status_label, "muted")
+        }.get(status_key, "muted")
+        hostname = str(row["hostname"])
+        interface = str(row["interface"])
         search = html.escape(
-            f'{row["hostname"]} {row["interface"]} {status_label}'.lower(), quote=True
+            f"{hostname} {interface} {status_key} {status_label}".lower(), quote=True
         )
         sort = lambda value: "" if value is None else str(value)
-        rows.append(f'''<tr data-search="{search}" data-status="{html.escape(status_label, quote=True)}">
-<td data-sort="{html.escape(str(row['hostname']), quote=True)}">{html.escape(str(row['hostname']))}</td>
-<td data-sort="{html.escape(str(row['interface']), quote=True)}"><code>{html.escape(str(row['interface']))}</code></td>
+        ecn_delta_display = _fmt_delta(deltas.get("ecn_marked_frames"))
+        ecn_rate_display = _fmt_rate(rates.get("ecn_marked_frames"))
+        rx_delta_display = _fmt_delta(deltas.get("rx_pause_frames"))
+        rx_rate_display = _fmt_rate(rates.get("rx_pause_frames"))
+        tx_delta_display = _fmt_delta(deltas.get("tx_pause_frames"))
+        tx_rate_display = _fmt_rate(rates.get("tx_pause_frames"))
+        sample_time = _fmt_sample_time(float(row["timestamp"]))
+        sample_window = _fmt_duration(row.get("sample_duration_seconds"))
+        rows.append(f'''<tr data-search="{search}" data-status="{html.escape(status_key, quote=True)}" data-device="{html.escape(hostname, quote=True)}">
+<td data-sort="{html.escape(hostname, quote=True)}" data-csv-value="{html.escape(hostname, quote=True)}" data-p2p-namespace="devices"><span data-p2p-key="{html.escape(hostname, quote=True)}" data-p2p-namespace="devices">{html.escape(hostname)}</span></td>
+<td data-sort="{html.escape(interface, quote=True)}" data-csv-value="{html.escape(interface, quote=True)}" data-p2p-namespace="interfaces"><code data-p2p-key="{html.escape(interface, quote=True)}" data-p2p-namespace="interfaces">{html.escape(interface)}</code></td>
 <td data-sort="{html.escape(status_label, quote=True)}"><span class="badge {status_class}">{html.escape(status_label)}</span></td>
 <td data-sort="{sort(counters.get('ecn_marked_frames'))}">{_fmt_total(counters.get('ecn_marked_frames'))}</td>
-<td data-sort="{sort(deltas.get('ecn_marked_frames'))}">{_fmt_delta(deltas.get('ecn_marked_frames'))}<small>{_fmt_rate(rates.get('ecn_marked_frames'))}</small></td>
+<td data-sort="{sort(deltas.get('ecn_marked_frames'))}" data-csv-value="{ecn_delta_display} / {ecn_rate_display}">{ecn_delta_display}<small>{ecn_rate_display}</small></td>
 <td data-sort="{sort(row.get('ecn_share_percent'))}">{_fmt_percent(row.get('ecn_share_percent'))}</td>
 <td data-sort="{sort(counters.get('rx_pause_frames'))}">{_fmt_total(counters.get('rx_pause_frames'))}</td>
-<td data-sort="{sort(deltas.get('rx_pause_frames'))}">{_fmt_delta(deltas.get('rx_pause_frames'))}<small>{_fmt_rate(rates.get('rx_pause_frames'))}</small></td>
+<td data-sort="{sort(deltas.get('rx_pause_frames'))}" data-csv-value="{rx_delta_display} / {rx_rate_display}">{rx_delta_display}<small>{rx_rate_display}</small></td>
 <td data-sort="{sort(counters.get('tx_pause_frames'))}">{_fmt_total(counters.get('tx_pause_frames'))}</td>
-<td data-sort="{sort(deltas.get('tx_pause_frames'))}">{_fmt_delta(deltas.get('tx_pause_frames'))}<small>{_fmt_rate(rates.get('tx_pause_frames'))}</small></td>
+<td data-sort="{sort(deltas.get('tx_pause_frames'))}" data-csv-value="{tx_delta_display} / {tx_rate_display}">{tx_delta_display}<small>{tx_rate_display}</small></td>
 <td data-sort="{sort(deltas.get('tx_frames'))}">{_fmt_delta(deltas.get('tx_frames'))}</td>
 <td data-sort="{sort(row.get('loss_delta'))}">{_fmt_delta(row.get('loss_delta'))}</td>
-<td data-sort="{row['timestamp']}">{html.escape(str(row['timestamp_iso']).replace('+00:00', 'Z'))}<small>{_fmt_duration(row.get('sample_duration_seconds'))}</small></td>
+<td data-sort="{row['timestamp']}" data-csv-value="{html.escape(sample_time, quote=True)} / {html.escape(sample_window, quote=True)} window" title="{html.escape(str(row['timestamp_iso']), quote=True)}">{html.escape(sample_time)}<small>{html.escape(sample_window)} window</small></td>
 </tr>''')
 
-    generated = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
-    trend = _trend_svg(history)
+    latest_timestamp = max(
+        (float(row["timestamp"]) for row in records),
+        default=time.time(),
+    )
+    last_updated = datetime.fromtimestamp(
+        latest_timestamp, timezone.utc
+    ).strftime("%Y-%m-%d %H:%M:%S UTC")
     unavailable_banner = (
         '<div class="notice">No current switch collection is available; '
         'the table intentionally shows no current counters.</div>'
         if collection_unavailable else ""
     )
     return f'''<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>PFC/ECN Analysis</title>
+<link rel="shortcut icon" href="/png/favicon.ico">
+<link rel="stylesheet" type="text/css" href="/css/select2.min.css">
 <meta name="totalPorts" content="{total}"><meta name="exactPorts" content="{exact}">
 <style>
-:root{{--bg:#1e1e1e;--panel:#2a2a2a;--panel2:#242424;--line:#414141;--text:#ddd;--muted:#999;--green:#76b900;--cyan:#4fc3f7;--orange:#ffb74d;--red:#ff6b6b}}*{{box-sizing:border-box}}body{{margin:0;padding:20px;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}}header{{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;border-bottom:1px solid var(--line);padding-bottom:14px;margin-bottom:18px}}h1{{margin:0;color:var(--green);font-size:25px}}.subtitle,.updated{{color:var(--muted);font-size:12px;margin-top:4px}}.chip{{display:inline-block;border:1px solid #557d16;border-radius:99px;padding:4px 10px;color:#a9d764;background:#253017}}.notice{{margin:0 0 18px;padding:12px 14px;border-left:4px solid var(--orange);background:#332b20;color:#ffcc80}}.cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:10px;margin-bottom:18px}}.card,.section{{background:var(--panel);border:1px solid #353535;border-radius:8px}}.card{{padding:13px;border-left:3px solid var(--green)}}.card.warn{{border-left-color:var(--orange)}}.card.danger{{border-left-color:var(--red)}}.value{{font-size:23px;font-weight:700}}.label{{color:var(--muted);font-size:12px}}.section{{margin-bottom:18px;overflow:hidden}}.section h2{{margin:0;padding:11px 14px;background:#323232;color:var(--green);font-size:14px}}.content{{padding:14px}}.directions{{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}}.direction{{background:var(--panel2);border-left:3px solid var(--cyan);padding:10px 12px}}.direction:first-child{{border-left-color:var(--green)}}.direction:last-child{{border-left-color:var(--orange)}}.direction b{{display:block;margin-bottom:4px}}.trend{{display:block;width:100%;height:auto;max-height:250px}}.axis{{stroke:#555;stroke-width:1}}.axis-label{{fill:#999;font-size:11px}}.trend-legend{{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:5px;color:#bbb;font-size:12px}}.trend-legend i{{display:inline-block;width:12px;height:3px;margin:0 5px 3px 0}}.trend-empty{{padding:30px;text-align:center;color:var(--muted)}}.toolbar{{display:flex;gap:10px;flex-wrap:wrap;padding:12px 14px;border-bottom:1px solid var(--line)}}input,select,button{{background:#242424;color:var(--text);border:1px solid #555;border-radius:5px;padding:8px 10px}}input{{min-width:240px;flex:1}}button{{cursor:pointer;background:#5b8f00;border-color:#76b900;color:white;font-weight:600}}button:hover{{background:#6ca800}}.table-wrap{{overflow:auto}}table{{border-collapse:collapse;width:100%;min-width:1320px;font-size:12px}}th,td{{padding:9px 10px;border-bottom:1px solid #3d3d3d;text-align:right;white-space:nowrap}}th:first-child,th:nth-child(2),th:nth-child(3),td:first-child,td:nth-child(2),td:nth-child(3){{text-align:left}}th{{background:#333;color:var(--green);position:sticky;top:0;cursor:pointer}}tbody tr:nth-child(even){{background:#272727}}tbody tr:hover{{background:#303030}}td small{{display:block;color:var(--muted)}}code{{color:#9cdcfe}}.badge{{display:inline-block;padding:2px 7px;border-radius:4px;text-transform:uppercase;font-size:10px;font-weight:700}}.badge.ok{{color:#a8d66d;background:#26351e}}.badge.info{{color:#8ad9ff;background:#173544}}.badge.warn{{color:#ffd08a;background:#44331d}}.badge.danger{{color:#ff9a9a;background:#482323}}.badge.muted{{color:#bbb;background:#3b3b3b}}.foot{{color:var(--muted);font-size:12px;padding:0 2px}}@media(max-width:760px){{body{{padding:12px}}header{{display:block}}.chip{{margin-top:10px}}.directions{{grid-template-columns:1fr}}}}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;background:#1e1e1e;color:#d4d4d4;padding:20px;min-height:100vh}}
+.page-header{{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:20px;padding-bottom:15px;border-bottom:1px solid #404040}}
+.page-title{{font-size:24px;font-weight:600;color:#76b900}}.last-updated{{font-size:13px;color:#888;margin-top:2px}}
+.action-buttons{{display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end}}.device-search-container{{display:flex;align-items:center}}
+.device-search-container .select2-container{{min-width:220px}}.device-search-container .select2-container--default .select2-selection--single{{height:34px;border:1px solid #555;border-radius:4px;background:#3c3c3c;display:flex;align-items:center}}
+.device-search-container .select2-container--default .select2-selection--single .select2-selection__rendered{{line-height:34px;color:#d4d4d4;padding-left:10px;font-size:13px}}.device-search-container .select2-container--default .select2-selection--single .select2-selection__arrow{{height:34px}}.device-search-container .select2-container--default .select2-selection--single .select2-selection__placeholder{{color:#888}}
+.select2-dropdown{{background:#2d2d2d;border:1px solid #555}}.select2-container--default .select2-search--dropdown .select2-search__field{{background:#3c3c3c;border:1px solid #555;color:#d4d4d4}}.select2-container--default .select2-results__option{{color:#d4d4d4;padding:8px 12px}}.select2-container--default .select2-results__option--highlighted[aria-selected]{{background:#76b900;color:#000}}.select2-container--default .select2-results__option[aria-selected=true]{{background:#3c3c3c}}
+.btn{{height:34px;padding:8px 14px;border:none;border-radius:4px;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}}
+.btn-primary{{background:linear-gradient(0deg,#76b900 0%,#5a8c00 100%);color:#fff}}.btn-primary:hover{{background:linear-gradient(0deg,#8bd400 0%,#6ba000 100%)}}
+.btn-secondary{{background:linear-gradient(0deg,#4fc3f7 0%,#0288d1 100%);color:#fff}}.btn-secondary:hover{{background:linear-gradient(0deg,#81d4fa 0%,#039be5 100%)}}.btn:disabled{{opacity:.6;cursor:wait}}
+.notice{{margin:0 0 20px;padding:12px 14px;border-left:4px solid #ff9800;background:#332b20;color:#ffcc80}}
+.dashboard-section{{background:#2d2d2d;border-radius:8px;margin-bottom:20px;overflow:hidden}}.section-header{{padding:12px 16px;background:#333;font-weight:600;font-size:14px;color:#76b900;border-bottom:1px solid #404040}}
+.section-content{{padding:16px}}.section-content-table{{padding:0}}.summary-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}}
+.summary-card{{background:#252526;padding:15px;border-radius:6px;border-left:3px solid #76b900}}.card-info{{border-left-color:#4fc3f7}}.card-good{{border-left-color:#8bc34a}}.card-warning{{border-left-color:#ff9800}}.card-critical{{border-left-color:#f44336}}
+.metric{{font-size:22px;font-weight:bold;color:#d4d4d4}}.card-info .metric{{color:#4fc3f7}}.card-good .metric{{color:#8bc34a}}.card-warning .metric{{color:#ff9800}}.card-critical .metric{{color:#f44336}}.metric-label{{font-size:12px;color:#aaa;margin-top:4px}}.metric-caption{{font-size:10px;color:#777;margin-top:3px}}
+.toolbar{{display:flex;gap:10px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid #404040}}.toolbar input,.toolbar select{{height:34px;background:#3c3c3c;color:#d4d4d4;border:1px solid #555;border-radius:4px;padding:0 10px;font-size:13px}}.toolbar input{{min-width:260px;flex:1}}
+.table-wrap{{overflow:auto}}table{{border-collapse:collapse;width:100%;min-width:1480px;font-size:13px}}th,td{{border:1px solid #404040;padding:10px 12px;text-align:left;white-space:nowrap}}th{{background:#333;color:#76b900;font-weight:600;font-size:12px;position:sticky;top:0;z-index:1}}tbody tr{{background:#252526}}tbody tr:hover{{background:#2d2d2d}}td:nth-child(n+4){{text-align:right}}td small{{display:block;color:#888;margin-top:2px}}code{{color:#9cdcfe}}
+.sortable{{cursor:pointer;user-select:none;padding-right:20px}}.sortable:hover{{background:#3c3c3c}}.sort-arrow{{font-size:10px;color:#666;margin-left:5px;opacity:.65}}.sortable.asc .sort-arrow,.sortable.desc .sort-arrow{{color:#76b900;opacity:1}}
+.badge{{display:inline-block;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600;text-transform:uppercase}}.badge.ok{{background:rgba(118,185,0,.2);color:#76b900}}.badge.info{{background:rgba(79,195,247,.2);color:#4fc3f7}}.badge.warn{{background:rgba(255,152,0,.2);color:#ffb74d}}.badge.danger{{background:rgba(244,67,54,.2);color:#ff6b6b}}.badge.muted{{background:rgba(158,158,158,.2);color:#aaa}}
+.guide-modal{{display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.68);padding:40px 16px}}.guide-modal.open{{display:flex;align-items:flex-start;justify-content:center}}.guide-modal-box{{background:#1e1e1e;border:1px solid #3c3c3c;border-radius:8px;width:92%;max-width:960px;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 12px 48px rgba(0,0,0,.55)}}
+.guide-modal-head{{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #3c3c3c}}.guide-modal-head h2{{font-size:17px;color:#e0e0e0}}.guide-modal-close{{background:none;border:none;color:#aaa;font-size:26px;line-height:1;cursor:pointer;padding:0 6px}}.guide-modal-close:hover{{color:#fff}}.guide-modal-body{{padding:18px;overflow:auto;color:#aaa;font-size:13px;line-height:1.65}}
+.guide-intro{{padding:12px 14px;background:#252526;border-left:3px solid #76b900;color:#d4d4d4;margin-bottom:16px}}.guide-grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:18px}}.guide-card{{background:#252526;border-left:3px solid #4fc3f7;padding:12px}}.guide-card:first-child{{border-left-color:#76b900}}.guide-card:last-child{{border-left-color:#ff9800}}.guide-card h3,.guide-section h3{{font-size:14px;color:#d4d4d4;margin-bottom:5px}}
+.guide-section{{margin-top:18px}}.guide-section ul{{margin:7px 0 0 20px}}.guide-section li{{margin:6px 0}}.guide-table{{width:100%;min-width:0;margin-top:8px;font-size:12px}}.guide-table th,.guide-table td{{white-space:normal;text-align:left}}.guide-table th{{position:static;color:#d4d4d4;background:#333}}.guide-note{{margin-top:18px;padding:10px 12px;background:#332b20;border-left:3px solid #ff9800;color:#ffcc80}}
+@media(max-width:1100px){{.page-header{{align-items:flex-start}}.action-buttons{{max-width:62%}}}}@media(max-width:760px){{body{{padding:12px}}.page-header{{display:block}}.action-buttons{{max-width:none;justify-content:flex-start;margin-top:12px}}.device-search-container .select2-container{{min-width:180px}}.guide-grid{{grid-template-columns:1fr}}}}
 </style></head><body{coverage_attrs}>
-<header><div><h1>PFC/ECN Analysis</h1><div class="subtitle">Static TC3 egress and SP3 priority-flow-control counters</div></div><div><span class="chip">TC3 / SP3</span><div class="updated">Generated {html.escape(generated)}</div></div></header>
+<div class="page-header">
+  <div><div class="page-title">PFC/ECN Analysis</div><div class="last-updated">Last Updated: {html.escape(last_updated)}</div></div>
+  <div class="action-buttons">
+    <div class="device-search-container"><select id="deviceSearch" aria-label="Filter by device"><option value="">Search Device...</option></select></div>
+    <button id="metric-guide-btn" class="btn btn-secondary" type="button" onclick="openMetricGuide()" title="How to interpret PFC and ECN counters"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M13,9H11V7H13M13,17H11V11H13M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2Z"/></svg>Metric Guide</button>
+    <button id="run-analysis" class="btn btn-secondary" type="button" onclick="runAnalysis()"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4Z"/></svg>Run Analysis</button>
+    <button id="download-csv" class="btn btn-primary" type="button"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/></svg>Download CSV</button>
+  </div>
+</div>
 {unavailable_banner}
-<section class="cards">
-<div class="card"><div class="value">{device_coverage}</div><div class="label">Current inventory devices</div></div>
-<div class="card"><div class="value">{total}</div><div class="label">Monitored ports</div></div>
-<div class="card"><div class="value">{exact}/{total}</div><div class="label">Exact counter coverage</div></div>
-<div class="card"><div class="value">{ecn_active}</div><div class="label">ECN active (interval)</div></div>
-<div class="card warn"><div class="value">{rx_active}</div><div class="label">PFC RX active (interval)</div></div>
-<div class="card warn"><div class="value">{tx_active}</div><div class="label">PFC TX active (interval)</div></div>
-<div class="card danger"><div class="value">{loss_active}</div><div class="label">Discard evidence (interval)</div></div>
-<div class="card {'warn' if incomplete else ''}"><div class="value">{incomplete}</div><div class="label">Pending / missing / reset</div></div>
-</section>
-<section class="section"><h2>How to read direction</h2><div class="content directions"><div class="direction"><b>TC3 ECN marked</b>Local egress congestion caused the switch to mark ECN-capable traffic.</div><div class="direction"><b>SP3 PFC RX</b>The link peer asked this port to pause priority 3 transmission.</div><div class="direction"><b>SP3 PFC TX</b>This switch asked the peer to pause priority 3 because of local ingress pressure.</div></div></section>
-<section class="section"><h2>Aggregate interval trend</h2><div class="content">{trend}</div></section>
-<section class="section"><h2>Port counters and interval analysis</h2><div class="toolbar"><input id="search" type="search" placeholder="Search device, interface or status" aria-label="Search ports"><select id="statusFilter" aria-label="Filter status"><option value="">All signals</option><option value="quiet">Quiet</option><option value="ecn">ECN</option><option value="pfc">PFC</option><option value="combined">Combined</option><option value="loss">Loss evidence</option><option value="missing">Missing</option><option value="first sample">First sample</option><option value="counter reset">Counter reset</option><option value="collection error">Collection error</option></select><button id="csv" type="button">Export visible CSV</button></div><div class="table-wrap"><table id="ports"><thead><tr>
-<th>Device</th><th>Interface</th><th>Signal</th><th data-type="number">ECN total</th><th data-type="number">ECN delta / rate</th><th data-type="number">ECN share</th><th data-type="number">PFC RX total</th><th data-type="number">PFC RX delta / rate</th><th data-type="number">PFC TX total</th><th data-type="number">PFC TX delta / rate</th><th data-type="number">TC3 TX delta</th><th data-type="number">Discard delta</th><th data-type="number">Sample time / window</th>
-</tr></thead><tbody>{''.join(rows)}</tbody></table></div></section>
-<p class="foot">Cumulative totals are the actual switch counters. Deltas and rates compare this collection with the prior successful sample. An em dash means unavailable, not zero.</p>
+<section class="dashboard-section"><div class="section-header">PFC/ECN Summary</div><div class="section-content"><div class="summary-grid">
+<div class="summary-card card-info"><div class="metric">{device_coverage}</div><div class="metric-label">Devices reporting</div></div>
+<div class="summary-card card-good"><div class="metric">{total:,}</div><div class="metric-label">Ports checked</div></div>
+<div class="summary-card card-good"><div class="metric">{exact:,}/{total:,}</div><div class="metric-label">Counters available</div></div>
+<div class="summary-card card-good"><div class="metric">{ecn_active:,}</div><div class="metric-label">Ports marking ECN</div><div class="metric-caption">Since previous sample</div></div>
+<div class="summary-card card-warning"><div class="metric">{rx_active:,}</div><div class="metric-label">Paused by peer (PFC RX)</div><div class="metric-caption">Since previous sample</div></div>
+<div class="summary-card card-warning"><div class="metric">{tx_active:,}</div><div class="metric-label">Asked peer to pause (PFC TX)</div><div class="metric-caption">Since previous sample</div></div>
+<div class="summary-card card-critical"><div class="metric">{loss_active:,}</div><div class="metric-label">Ports with discards</div><div class="metric-caption">Since previous sample</div></div>
+<div class="summary-card {'card-warning' if incomplete else 'card-good'}"><div class="metric">{incomplete:,}</div><div class="metric-label">Needs attention</div><div class="metric-caption">Missing, reset, or awaiting sample</div></div>
+</div></div></section>
+<section class="dashboard-section"><div class="section-header">Port Details</div><div class="section-content-table">
+<div class="toolbar"><input id="search" type="search" placeholder="Search device, port, or status..." aria-label="Search ports"><select id="statusFilter" aria-label="Filter status"><option value="">All statuses</option><option value="quiet">No ECN/PFC activity</option><option value="ecn">ECN marking</option><option value="pfc">PFC activity</option><option value="combined">ECN + PFC</option><option value="loss">Discards</option><option value="missing">Data missing</option><option value="first_sample">Baseline set</option><option value="counter_reset">Counter reset</option><option value="collection_error">Collection failed</option></select></div>
+<div class="table-wrap"><table id="ports"><thead><tr>
+<th class="sortable" data-type="string" aria-sort="none">Device <span class="sort-arrow">▲▼</span></th>
+<th class="sortable" data-type="string" aria-sort="none">Port <span class="sort-arrow">▲▼</span></th>
+<th class="sortable" data-type="string" aria-sort="none">Status <span class="sort-arrow">▲▼</span></th>
+<th class="sortable" data-type="number" aria-sort="none">ECN marked — total <span class="sort-arrow">▲▼</span></th>
+<th class="sortable" data-type="number" aria-sort="none">ECN — since last sample <span class="sort-arrow">▲▼</span></th>
+<th class="sortable" data-type="number" aria-sort="none">ECN share <span class="sort-arrow">▲▼</span></th>
+<th class="sortable" data-type="number" aria-sort="none">PFC RX — total <span class="sort-arrow">▲▼</span></th>
+<th class="sortable" data-type="number" aria-sort="none">PFC RX — since last sample <span class="sort-arrow">▲▼</span></th>
+<th class="sortable" data-type="number" aria-sort="none">PFC TX — total <span class="sort-arrow">▲▼</span></th>
+<th class="sortable" data-type="number" aria-sort="none">PFC TX — since last sample <span class="sort-arrow">▲▼</span></th>
+<th class="sortable" data-type="number" aria-sort="none">TC3 frames — since last sample <span class="sort-arrow">▲▼</span></th>
+<th class="sortable" data-type="number" aria-sort="none">Discards — since last sample <span class="sort-arrow">▲▼</span></th>
+<th class="sortable" data-type="number" aria-sort="none">Updated / Window <span class="sort-arrow">▲▼</span></th>
+</tr></thead><tbody>{''.join(rows)}</tbody></table></div></div></section>
+<div id="metricGuideModal" class="guide-modal" role="dialog" aria-modal="true" aria-labelledby="metricGuideTitle" aria-hidden="true">
+  <div class="guide-modal-box"><div class="guide-modal-head"><h2 id="metricGuideTitle">PFC/ECN Metric Guide</h2><button type="button" class="guide-modal-close" onclick="closeMetricGuide()" title="Close" aria-label="Close metric guide">&times;</button></div>
+  <div class="guide-modal-body"><div class="guide-intro">This report compares the latest switch counters with the previous successful collection. It monitors traffic class 3 (TC3) and switch priority 3 (SP3). Totals are cumulative hardware counters; “since last sample” values show what changed during the comparison window.</div>
+  <div class="guide-grid"><div class="guide-card"><h3>TC3 ECN marked</h3>ECN-capable traffic marked by this port's egress queue. An increase is evidence of egress congestion, but it does not mean packets were dropped.</div><div class="guide-card"><h3>SP3 PFC RX — peer paused us</h3>Priority-3 pause frames received from the link partner. An increase means the peer asked this port to pause priority-3 transmission.</div><div class="guide-card"><h3>SP3 PFC TX — we paused the peer</h3>Priority-3 pause frames sent to the link partner. An increase means this switch asked the peer to pause because of local ingress pressure.</div></div>
+  <div class="guide-section"><h3>How the values are calculated</h3><table class="guide-table"><tbody><tr><th>Total</th><td>Current cumulative hardware counter; it can include activity from before this sample window.</td></tr><tr><th>Since last sample</th><td>Current total minus the previous successful total.</td></tr><tr><th>Rate</th><td>Change divided by elapsed time; it is an average over the window, not an instantaneous rate.</td></tr><tr><th>ECN share</th><td>ECN-marked frames divided by TC3 transmitted frames during the same window.</td></tr><tr><th>Discards</th><td>TC3 unicast-buffer plus WRED discards during the window. Both counters must be available; a non-zero value is direct drop evidence.</td></tr><tr><th>—</th><td>Data is unavailable; it does not mean zero.</td></tr></tbody></table></div>
+  <div class="guide-section"><h3>Status meanings</h3><ul><li><strong>No ECN/PFC activity:</strong> no new ECN marks or PFC frames were observed; check the Discards column separately.</li><li><strong>ECN marking:</strong> new ECN marks were observed.</li><li><strong>PFC activity:</strong> new PFC RX or TX frames were observed.</li><li><strong>ECN + PFC:</strong> both ECN marking and PFC activity occurred.</li><li><strong>Discards:</strong> new drop counters were observed; this status takes precedence.</li><li><strong>Baseline set:</strong> one more sample is required for deltas and rates.</li><li><strong>Counter reset:</strong> a counter decreased, so no misleading negative delta is shown.</li><li><strong>Data missing / Collection failed:</strong> exact counters were unavailable or the command did not return a usable sample.</li></ul></div>
+  <div class="guide-note">There are no arbitrary warning or critical thresholds on this page. ECN and PFC are operational signals that must be interpreted by direction, duration, and affected ports. PFC counters count pause frames, not how long traffic remained paused.</div></div></div>
+</div>
+<script src="/css/jquery-3.5.1.min.js"></script>
+<script src="/css/select2.min.js"></script>
 <script>
-(()=>{{const table=document.querySelector('#ports'),body=table.tBodies[0],search=document.querySelector('#search'),filter=document.querySelector('#statusFilter');let direction=1,last=-1;function apply(){{const q=search.value.trim().toLowerCase(),f=filter.value.toLowerCase();[...body.rows].forEach(r=>r.hidden=!!((q&&!r.dataset.search.includes(q))||(f&&r.dataset.status.toLowerCase()!==f)))}}search.addEventListener('input',apply);filter.addEventListener('change',apply);[...table.tHead.rows[0].cells].forEach((th,index)=>th.addEventListener('click',()=>{{direction=last===index?-direction:1;last=index;const numeric=th.dataset.type==='number';[...body.rows].sort((a,b)=>{{let av=a.cells[index].dataset.sort??'',bv=b.cells[index].dataset.sort??'';if(numeric){{av=av===''?Number.NEGATIVE_INFINITY:Number(av);bv=bv===''?Number.NEGATIVE_INFINITY:Number(bv);return (av-bv)*direction}}return av.localeCompare(bv,undefined,{{numeric:true}})*direction}}).forEach(row=>body.appendChild(row))}}));document.querySelector('#csv').addEventListener('click',()=>{{const visible=[...body.rows].filter(r=>!r.hidden),lines=[[...table.tHead.rows[0].cells].map(c=>c.textContent.trim()),...visible.map(r=>[...r.cells].map(c=>c.textContent.trim().replace(/\\s+/g,' ')))].map(row=>row.map(v=>'"'+v.replaceAll('"','""')+'"').join(','));const blob=new Blob([lines.join('\\n')+'\\n'],{{type:'text/csv;charset=utf-8'}}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='pfc-ecn-analysis.csv';a.click();URL.revokeObjectURL(url)}})}})();
-</script></body></html>'''
+(function() {{
+  const table = document.querySelector('#ports');
+  const body = table.tBodies[0];
+  const search = document.querySelector('#search');
+  const statusFilter = document.querySelector('#statusFilter');
+  const deviceSearch = document.querySelector('#deviceSearch');
+  const headers = [...table.tHead.rows[0].cells];
+  let direction = 1;
+  let lastColumn = -1;
+
+  function applyFilters() {{
+    const query = search.value.trim().toLowerCase();
+    const status = statusFilter.value;
+    const device = deviceSearch.value;
+    [...body.rows].forEach(row => {{
+      const searchable = (row.dataset.search + ' ' + row.textContent).toLowerCase();
+      row.hidden = Boolean(
+        (query && !searchable.includes(query)) ||
+        (status && row.dataset.status !== status) ||
+        (device && row.dataset.device !== device)
+      );
+    }});
+  }}
+
+  function populateDevices() {{
+    const devices = [...new Set(
+      [...body.rows].map(row => row.dataset.device).filter(Boolean)
+    )].sort((a, b) => a.localeCompare(b, undefined, {{numeric: true, sensitivity: 'base'}}));
+    devices.forEach(device => {{
+      const option = document.createElement('option');
+      option.value = device;
+      option.textContent = device;
+      option.setAttribute('data-p2p-key', device);
+      option.setAttribute('data-p2p-namespace', 'devices');
+      deviceSearch.appendChild(option);
+    }});
+  }}
+
+  function initDeviceSearch() {{
+    const jq = window.jQuery;
+    if (!jq || !jq.fn || typeof jq.fn.select2 !== 'function') return;
+    const optionLabel = data => data.element ? data.element.textContent : data.text;
+    jq(deviceSearch).select2({{
+      placeholder: 'Search Device...',
+      allowClear: true,
+      width: '220px',
+      dropdownAutoWidth: true,
+      templateResult: optionLabel,
+      templateSelection: optionLabel,
+      matcher: function(params, data) {{
+        const term = jq.trim(params.term || '').toLowerCase();
+        if (!term) return data;
+        const option = data.element;
+        const terms = [
+          data.text, data.id,
+          option && option.textContent,
+          option && option.getAttribute('data-p2p-orig'),
+          option && option.getAttribute('data-p2p-key')
+        ].filter(Boolean).join(' ').toLowerCase();
+        return terms.includes(term) ? data : null;
+      }}
+    }});
+    jq(deviceSearch).on('change', applyFilters);
+  }}
+
+  function resetSortIndicators() {{
+    headers.forEach(header => {{
+      header.classList.remove('asc', 'desc');
+      header.setAttribute('aria-sort', 'none');
+      const arrow = header.querySelector('.sort-arrow');
+      if (arrow) arrow.textContent = '▲▼';
+    }});
+  }}
+
+  search.addEventListener('input', applyFilters);
+  statusFilter.addEventListener('change', applyFilters);
+  deviceSearch.addEventListener('change', applyFilters);
+  headers.forEach((header, index) => header.addEventListener('click', () => {{
+    direction = lastColumn === index ? -direction : 1;
+    lastColumn = index;
+    resetSortIndicators();
+    header.classList.add(direction === 1 ? 'asc' : 'desc');
+    header.setAttribute('aria-sort', direction === 1 ? 'ascending' : 'descending');
+    const arrow = header.querySelector('.sort-arrow');
+    if (arrow) arrow.textContent = direction === 1 ? '▲' : '▼';
+    const numeric = header.dataset.type === 'number';
+    [...body.rows].sort((a, b) => {{
+      let first = a.cells[index].dataset.sort ?? '';
+      let second = b.cells[index].dataset.sort ?? '';
+      if (first === '' && second === '') return 0;
+      if (first === '') return 1;
+      if (second === '') return -1;
+      if (numeric) return (Number(first) - Number(second)) * direction;
+      return first.localeCompare(second, undefined, {{numeric: true, sensitivity: 'base'}}) * direction;
+    }}).forEach(row => body.appendChild(row));
+  }}));
+
+  document.querySelector('#download-csv').addEventListener('click', () => {{
+    const cleanHeader = cell => cell.textContent.replace(/[▲▼]/g, '').trim();
+    const canonicalCell = cell => {{
+      if (cell.dataset.csvValue) return cell.dataset.csvValue;
+      if (window.LLDPqP2P && typeof window.LLDPqP2P.canonicalText === 'function') {{
+        return window.LLDPqP2P.canonicalText(cell).trim().replace(/\\s+/g, ' ');
+      }}
+      return cell.textContent.trim().replace(/\\s+/g, ' ');
+    }};
+    const visibleRows = [...body.rows].filter(row => !row.hidden);
+    const lines = [
+      headers.map(cleanHeader),
+      ...visibleRows.map(row => [...row.cells].map(canonicalCell))
+    ].map(row => row.map(value => '"' + value.replaceAll('"', '""') + '"').join(','));
+    const blob = new Blob([lines.join('\\n') + '\\n'], {{type: 'text/csv;charset=utf-8'}});
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'PFC_ECN_Analysis.csv';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }});
+
+  populateDevices();
+  initDeviceSearch();
+}})();
+
+let metricGuideReturnFocus = null;
+function openMetricGuide() {{
+  const modal = document.getElementById('metricGuideModal');
+  metricGuideReturnFocus = document.activeElement;
+  modal.classList.add('open');
+  modal.setAttribute('aria-hidden', 'false');
+  document.body.style.overflow = 'hidden';
+  const closeButton = modal.querySelector('.guide-modal-close');
+  if (closeButton) closeButton.focus();
+}}
+function closeMetricGuide() {{
+  const modal = document.getElementById('metricGuideModal');
+  if (!modal.classList.contains('open')) return;
+  modal.classList.remove('open');
+  modal.setAttribute('aria-hidden', 'true');
+  document.body.style.overflow = '';
+  const returnTarget = metricGuideReturnFocus;
+  metricGuideReturnFocus = null;
+  if (returnTarget && typeof returnTarget.focus === 'function') returnTarget.focus();
+}}
+document.getElementById('metricGuideModal').addEventListener('click', event => {{
+  if (event.target === event.currentTarget) closeMetricGuide();
+}});
+document.addEventListener('keydown', event => {{
+  if (event.key === 'Escape') closeMetricGuide();
+}});
+
+async function runAnalysis() {{
+  const button = document.getElementById('run-analysis');
+  const original = button.innerHTML;
+  button.disabled = true;
+  button.textContent = 'Running...';
+  try {{
+    let baseline = null;
+    if (typeof window.lldpqCapturePipelineState === 'function') {{
+      baseline = await window.lldpqCapturePipelineState();
+    }}
+    const response = await fetch('/trigger-monitor', {{
+      method: 'POST', headers: {{'Content-Type': 'application/json'}}
+    }});
+    const data = await response.json();
+    if (!response.ok || data.status !== 'success') {{
+      throw new Error(data.message || 'Failed to trigger monitor analysis');
+    }}
+    if (typeof window.waitForLldpqAnalysisCompletion === 'function') {{
+      await window.waitForLldpqAnalysisCompletion(baseline, {{pipelineId: data.trigger_id}});
+    }} else {{
+      await new Promise(resolve => setTimeout(resolve, 35000));
+    }}
+    window.location.reload();
+  }} catch (error) {{
+    alert('Analysis did not complete: ' + (error.message || error));
+    button.disabled = false;
+    button.innerHTML = original;
+  }}
+}}
+</script>
+<script src="/p2p-alias.js"></script>
+<script src="/css/analysis-guard.js"></script>
+</body></html>'''
 
 
 def process_pfc_ecn_data_files(data_dir: str = "monitor-results/pfc-ecn-data") -> bool:

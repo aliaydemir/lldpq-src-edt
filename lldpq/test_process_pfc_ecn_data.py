@@ -159,6 +159,18 @@ class DeltaTests(unittest.TestCase):
         self.assertEqual(missing_record["sample_status"], "missing")
         self.assertIsNone(missing_record["counters"]["tx_pause_frames"])
 
+        partial_discards = dict(counters)
+        partial_discards["wred_discards"] = None
+        partial_discard_record = analyzer.build_port_record(
+            "leaf1", "swp1", partial_discards, previous, 1020
+        )
+        self.assertEqual(partial_discard_record["sample_status"], "analyzed")
+        self.assertIsNone(partial_discard_record["loss_delta"])
+        self.assertEqual(partial_discard_record["signal"], "quiet")
+        partial_report = analyzer.render_report([partial_discard_record], {})
+        self.assertIn("No ECN/PFC activity", partial_report)
+        self.assertNotIn("no new ECN marks, PFC frames, or discards", partial_report)
+
 
 class EndToEndTests(unittest.TestCase):
     def test_unavailable_report_is_explicit_and_not_telemetry_worded(self):
@@ -168,6 +180,50 @@ class EndToEndTests(unittest.TestCase):
         self.assertIn('data-collection-status="unavailable"', report)
         self.assertIn("No current switch collection is available", report)
         self.assertNotIn("telemetry", report.lower())
+
+    def test_report_uses_ber_style_header_human_time_and_metric_guide(self):
+        counters = analyzer.extract_counters(qos_payload())
+        previous = {"timestamp": 1000, "counters": counters}
+        record = analyzer.build_port_record(
+            "leaf1", "swp1", counters, previous, 1010
+        )
+        report = analyzer.render_report([record], {})
+
+        self.assertIn('class="page-header"', report)
+        self.assertIn('id="deviceSearch"', report)
+        self.assertIn('id="metric-guide-btn"', report)
+        self.assertIn('id="run-analysis"', report)
+        self.assertIn('id="download-csv"', report)
+        self.assertIn('/css/select2.min.css', report)
+        self.assertIn('/css/jquery-3.5.1.min.js', report)
+        self.assertIn('/css/select2.min.js', report)
+        self.assertIn("jq(deviceSearch).select2({", report)
+        self.assertIn('/p2p-alias.js', report)
+        self.assertIn('/css/analysis-guard.js', report)
+        self.assertEqual(report.count('class="sortable"'), 13)
+        self.assertEqual(report.count('aria-sort="none"'), 13)
+        self.assertEqual(report.count('class="sort-arrow">▲▼</span>'), 13)
+        self.assertIn("1 Jan 1970, 00:16:50 UTC", report)
+        self.assertIn("10s window", report)
+        self.assertIn('data-device="leaf1"', report)
+        self.assertIn("row.dataset.device", report)
+        self.assertIn("row.dataset.search + ' ' + row.textContent", report)
+        self.assertIn("option.setAttribute('data-p2p-key', device)", report)
+        self.assertIn('data-csv-value="+0 / 0.0000/s"', report)
+        self.assertIn(
+            'data-csv-value="1 Jan 1970, 00:16:50 UTC / 10s window"', report
+        )
+        self.assertIn("window.LLDPqP2P.canonicalText", report)
+        self.assertIn("metricGuideReturnFocus = document.activeElement", report)
+        self.assertIn("returnTarget.focus()", report)
+
+        self.assertNotIn("Aggregate interval trend", report)
+        self.assertNotIn("How to read direction", report)
+        self.assertNotIn('<svg class="trend"', report)
+        self.assertIn("PFC/ECN Metric Guide", report)
+        self.assertIn("SP3 PFC RX — peer paused us", report)
+        self.assertIn("SP3 PFC TX — we paused the peer", report)
+        self.assertIn("There are no arbitrary warning or critical thresholds", report)
 
     def test_partial_unreachable_inventory_reports_partial_coverage(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -200,7 +256,7 @@ class EndToEndTests(unittest.TestCase):
             self.assertIn('data-coverage-status="partial"', report)
             self.assertIn('data-coverage-expected="2"', report)
             self.assertIn('data-coverage-current="1"', report)
-            self.assertIn('<div class="value">1/2</div>', report)
+            self.assertIn('<div class="metric">1/2</div>', report)
 
     def test_all_port_command_errors_publish_missing_values(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -220,7 +276,7 @@ class EndToEndTests(unittest.TestCase):
             )
             self.assertTrue(analyzer.process_pfc_ecn_data_files(str(data_dir)))
             report = (data_dir.parent / "pfc-ecn-analysis.html").read_text()
-            self.assertIn("collection error", report)
+            self.assertIn("Collection failed", report)
             self.assertIn("0/1", report)
             self.assertIn("&mdash;", report)
 
@@ -254,11 +310,11 @@ class EndToEndTests(unittest.TestCase):
 
             report = (root / "monitor-results" / "pfc-ecn-analysis.html").read_text()
             self.assertIn("PFC/ECN Analysis", report)
-            self.assertIn("Export visible CSV", report)
-            self.assertIn("ECN total", report)
+            self.assertIn("Download CSV", report)
+            self.assertIn("ECN marked — total", report)
             self.assertIn("120", report)  # cumulative value requested by the operator
             self.assertIn("+20", report)  # additional interval analysis
-            self.assertNotIn("fetch(", report)
+            self.assertIn("fetch('/trigger-monitor'", report)
             self.assertNotIn("prometheus", report.lower())
 
             baseline = json.loads(

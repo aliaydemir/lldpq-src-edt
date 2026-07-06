@@ -362,12 +362,21 @@ def process_ber_data_files(data_dir="monitor-results/ber-data"):
         )
         return False
     
-    # Save baseline data once after all interfaces processed
+    # Save baseline data once after all interfaces processed.  History is
+    # saved after classification because _analyze_port enriches the current
+    # record with the L1 snapshot required by the next symbol-delta sample.
     ber_analyzer.save_baseline_data()
-    ber_analyzer.save_ber_history()
     if total_interfaces_processed == 0 and not all_devices_unavailable:
         print("❌ No physical interface counters were processed")
         return False
+
+    # Classify every port once, then reuse the exact same objects for anomaly
+    # reporting and HTML generation.  This avoids repeated L1 parsing and
+    # repeated mutation of current history records.
+    summary = ber_analyzer.get_ber_summary()
+    anomalies = ber_analyzer.detect_ber_anomalies(summary)
+    ber_analyzer.save_ber_history()
+
     for required_state in (
         os.path.join(result_dir, "ber_baseline.json"),
         os.path.join(result_dir, "ber_history.json"),
@@ -375,10 +384,6 @@ def process_ber_data_files(data_dir="monitor-results/ber-data"):
         if not os.path.isfile(required_state) or os.path.getsize(required_state) == 0:
             print(f"❌ BER state was not saved: {required_state}")
             return False
-    
-    # Generate summary
-    summary = ber_analyzer.get_ber_summary()
-    anomalies = ber_analyzer.detect_ber_anomalies()
     
     print("\nLink Error / BER Analysis Summary:")
     print(f"  Total devices processed: {processed_devices}")
@@ -418,7 +423,9 @@ def process_ber_data_files(data_dir="monitor-results/ber-data"):
     if snapshot_valid:
         ber_analyzer.coverage_expected_hosts = len(statuses)
         ber_analyzer.coverage_current_hosts = len(hosts_with_interfaces)
-    ber_analyzer.export_ber_data_for_web(output_file)
+    ber_analyzer.export_ber_data_for_web(
+        output_file, summary=summary, anomalies=anomalies
+    )
     if all_devices_unavailable:
         mark_html_collection_unavailable(output_file)
     if not os.path.isfile(output_file) or os.path.getsize(output_file) == 0:
