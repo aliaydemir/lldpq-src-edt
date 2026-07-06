@@ -392,7 +392,7 @@ PY
 
 remove_managed_provision_root_artifacts() {
     local path name target artifact_name
-    local -a image_candidates onie_aliases rollback_candidates
+    local -a image_candidates onie_aliases rollback_candidates onie_temp_candidates
 
     # Provision historically stored uploaded images as regular top-level
     # WEB_ROOT files.  Current releases store them in provision-uploads/ and
@@ -471,12 +471,33 @@ remove_managed_provision_root_artifacts() {
             record_cleanup_failure "Provision image rollback could not be removed: $path"
         fi
     done
+
+    # _publish_symlink() stages only these reserved ONIE aliases using a UUID
+    # sibling before os.replace(). A killed worker may strand the symlink.
+    shopt -s nullglob
+    onie_temp_candidates=("$WEB_ROOT"/.onie-installer*.tmp)
+    shopt -u nullglob
+    for path in "${onie_temp_candidates[@]}"; do
+        artifact_name=$(basename -- "$path")
+        [[ "$artifact_name" =~ ^\.(onie-installer|onie-installer-x86_64|onie-installer-x86_64-mlnx)\.[0-9a-f]{32}\.tmp$ ]] || continue
+        if [[ ! -L "$path" ]]; then
+            record_cleanup_failure "Refused unexpected Provision ONIE staging artifact type: $path"
+            continue
+        fi
+        if $DRY_RUN; then
+            echo "DRY-RUN  sudo rm -f -- $path"
+        elif sudo rm -f -- "$path"; then
+            echo "  removed stranded Provision ONIE stage $path"
+        else
+            record_cleanup_failure "Provision ONIE staging symlink could not be removed: $path"
+        fi
+    done
 }
 
 verify_managed_provision_root_artifacts_absent() {
     $DRY_RUN && return 0
     local path name target artifact_name
-    local -a image_candidates onie_aliases rollback_candidates
+    local -a image_candidates onie_aliases rollback_candidates onie_temp_candidates
 
     shopt -s nullglob
     image_candidates=("$WEB_ROOT"/*.bin "$WEB_ROOT"/*.img "$WEB_ROOT"/*.iso)
@@ -513,6 +534,15 @@ verify_managed_provision_root_artifacts_absent() {
         artifact_name=$(basename -- "$path")
         if [[ "$artifact_name" =~ ^\.[A-Za-z0-9_.-]+\.(bin|img|iso)\.rollback-[1-9][0-9]*-[0-9a-f]{32}$ ]]; then
             record_cleanup_failure "Provision image rollback remains: $path"
+        fi
+    done
+    shopt -s nullglob
+    onie_temp_candidates=("$WEB_ROOT"/.onie-installer*.tmp)
+    shopt -u nullglob
+    for path in "${onie_temp_candidates[@]}"; do
+        artifact_name=$(basename -- "$path")
+        if [[ "$artifact_name" =~ ^\.(onie-installer|onie-installer-x86_64|onie-installer-x86_64-mlnx)\.[0-9a-f]{32}\.tmp$ ]]; then
+            record_cleanup_failure "Provision ONIE staging artifact remains: $path"
         fi
     done
 }
@@ -1493,12 +1523,16 @@ if $WEB_ROOT_CLEANABLE; then
                 "sudo rm -f '$f'" && echo "  removed $f"
         fi
     done
-    # Atomic Setup editors can leave a hidden same-directory staging file only
-    # if the process is killed between creation and cleanup. Match the three
-    # exact managed basenames; do not remove unrelated hidden web-root files.
-    run_required "Atomic editor staging artifacts could not be removed" "sudo find -P '$WEB_ROOT' -mindepth 1 -maxdepth 1 -type f \
+    # Atomic Setup editors and Provision's four root text publishers can leave
+    # a hidden same-directory regular stage only if killed between creation and
+    # replace/cleanup. Match exact managed basenames and suffixes only.
+    run_required "Atomic Setup/Provision staging artifacts could not be removed" "sudo find -P '$WEB_ROOT' -mindepth 1 -maxdepth 1 -type f \
         \( -name '.topology.dot.*' -o -name '.topology_config.yaml.*' \
-           -o -name '.display-aliases.json.*' \) -delete" || true
+           -o -name '.display-aliases.json.*' \
+           -o -name '.inventory.json.*.tmp' \
+           -o -name '.discovery-cache.json.*.tmp' \
+           -o -name '.cumulus-ztp.sh.*.tmp' \
+           -o -name '.serial-mapping.txt.*.tmp' \) -delete" || true
     for d in "${WEB_DIRS[@]}"; do
         # Selected history was copied outside WEB_ROOT above. Never leave it in
         # a directory that another/default nginx virtual host might expose.
@@ -1512,8 +1546,12 @@ if $WEB_ROOT_CLEANABLE; then
     verify_managed_provision_root_artifacts_absent
     if ! $DRY_RUN && sudo find -P "$WEB_ROOT" -mindepth 1 -maxdepth 1 -type f \
         \( -name '.topology.dot.*' -o -name '.topology_config.yaml.*' \
-           -o -name '.display-aliases.json.*' \) -print -quit | grep -q .; then
-        record_cleanup_failure "Atomic editor staging residue remains under $WEB_ROOT"
+           -o -name '.display-aliases.json.*' \
+           -o -name '.inventory.json.*.tmp' \
+           -o -name '.discovery-cache.json.*.tmp' \
+           -o -name '.cumulus-ztp.sh.*.tmp' \
+           -o -name '.serial-mapping.txt.*.tmp' \) -print -quit | grep -q .; then
+        record_cleanup_failure "Atomic Setup/Provision staging residue remains under $WEB_ROOT"
     fi
 fi
 
