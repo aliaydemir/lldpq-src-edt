@@ -610,7 +610,7 @@
                 </a>
                 <a class="summary-card card-info" id="dup-mac-card" href="/monitor-results/duplicate-analysis.html">
                     <div class="card-value status-info" id="dup-mac">--</div>
-                    <div class="card-label">MAC Duplicates</div>
+                    <div class="card-label">Confirmed MAC Conflicts</div>
                 </a>
             </div>
             </div>
@@ -1020,17 +1020,17 @@
                 }
             }
 
-            // The Duplicate report intentionally has a small dashboard contract: active
-            // IP duplicates, quiesced IP duplicates and optional collection coverage.
-            // Ignore MAC, APIPA, mobility and loop cards; those are report details, not
-            // top-level health signals.
+            // Keep the top-level contract narrow: active/quiesced IP duplicates and
+            // confirmed simultaneous MAC conflicts. DAD and mobility remain separate
+            // report details and must not be folded into the conflict count.
             doc.querySelectorAll('.summary-card').forEach(card => {
                 const label = (card.querySelector('.metric-label')?.textContent || '').trim().toLowerCase();
                 const value = (card.querySelector('.metric')?.textContent || '').trim();
                 if (!label) return;
                 if (label.includes('active ip duplicate')) putMetric('ip_active', value);
                 else if (label.includes('quiesced ip')) putMetric('ip_quiesced', value);
-                else if (label.includes('mac duplicate')) putMetric('mac_duplicates', value);
+                else if (label.includes('confirmed mac conflict')) putMetric('confirmed_mac_total', value);
+                else if (label.includes('mac duplicate')) putMetric('mac_duplicates', value); // old report fallback
                 else if (label.includes('coverage') && label.includes('current') && label.includes('expected')) {
                     const ratio = value.match(/(\d[\d,]*)\s*\/\s*(\d[\d,]*)/);
                     if (ratio) {
@@ -1061,7 +1061,9 @@
             ) ?? duplicateMetricNumber(metadata?.dataset?.confirmedIpActive);
             const quiescedIp = numberFor('ip_quiesced', 'quiesced_ip_duplicates') ??
                 duplicateMetricNumber(metadata?.dataset?.ipQuiesced);
-            const macDuplicates = numberFor('mac_duplicates', 'mac_duplicate_count') ??
+            const confirmedMacConflicts = numberFor(
+                'confirmed_mac_total', 'mac_duplicates', 'mac_duplicate_count'
+            ) ?? duplicateMetricNumber(metadata?.dataset?.confirmedMacTotal) ??
                 duplicateMetricNumber(metadata?.dataset?.macDuplicates);
             const coverageExpected = numberFor('coverage_expected_hosts', 'coverage_expected') ??
                 duplicateMetricNumber(metadata?.dataset?.coverageExpected);
@@ -1095,7 +1097,8 @@
             return {
                 confirmedIpActive,
                 quiescedIp,
-                macDuplicates,
+                confirmedMacConflicts,
+                macDuplicates: confirmedMacConflicts,
                 coverageExpected,
                 coverageCurrent,
                 coverageFailures,
@@ -1674,13 +1677,13 @@
 
                 updateDashboardCard('dup-active-ip', duplicateDashboardMetric(dupData, dupData.confirmedIpActive));
                 updateDashboardCard('dup-quiesced-ip', duplicateDashboardMetric(dupData, dupData.quiescedIp));
-                updateDashboardCard('dup-mac', duplicateDashboardMetric(dupData, dupData.macDuplicates));
+                updateDashboardCard('dup-mac', duplicateDashboardMetric(dupData, dupData.confirmedMacConflicts));
 
                 const duplicateMacCard = document.getElementById('dup-mac-card');
                 if (duplicateMacCard) {
                     duplicateMacCard.title = dupData.unavailable
                         ? 'Duplicate analysis is unavailable'
-                        : 'MAC address duplicates seen across the fabric (mobility + conflicts)';
+                        : 'Confirmed simultaneous MAC conflicts; mobility and DAD evidence are shown separately in the report';
                 }
 
                 // Calculate overall network statistics
