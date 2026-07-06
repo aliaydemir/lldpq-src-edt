@@ -55,6 +55,7 @@ while getopts "s" opt; do
 done
 SKIP_OPTICAL="$(normalize_bool "$SKIP_OPTICAL")"
 SKIP_L1="$(normalize_bool "$SKIP_L1")"
+MONITOR_TIMING="$(normalize_bool "${MONITOR_TIMING:-false}")"
 
 # === TUNING PARAMETERS ===
 MAX_PARALLEL="${MONITOR_MAX_PARALLEL:-${MAX_PARALLEL:-100}}"  # Maximum parallel SSH connections
@@ -64,11 +65,25 @@ esac
 SSH_TIMEOUT=60   # SSH connection timeout in seconds
 PFC_ECN_COLLECTION_BUDGET_SECONDS="${PFC_ECN_COLLECTION_BUDGET_SECONDS:-60}"
 PFC_ECN_PORT_TIMEOUT_SECONDS="${PFC_ECN_PORT_TIMEOUT_SECONDS:-5}"
+PFC_ECN_MAX_PARALLEL="${PFC_ECN_MAX_PARALLEL:-4}"
+OPTICAL_COLLECTION_BUDGET_SECONDS="${OPTICAL_COLLECTION_BUDGET_SECONDS:-120}"
+OPTICAL_PORT_TIMEOUT_SECONDS="${OPTICAL_PORT_TIMEOUT_SECONDS:-10}"
 case "$PFC_ECN_COLLECTION_BUDGET_SECONDS" in
     ''|*[!0-9]*|0) PFC_ECN_COLLECTION_BUDGET_SECONDS=60 ;;
 esac
 case "$PFC_ECN_PORT_TIMEOUT_SECONDS" in
     ''|*[!0-9]*|0) PFC_ECN_PORT_TIMEOUT_SECONDS=5 ;;
+esac
+case "$PFC_ECN_MAX_PARALLEL" in
+    ''|*[!0-9]*|0|0*) PFC_ECN_MAX_PARALLEL=4 ;;
+    1|2|3|4|5|6|7|8) ;;
+    *) PFC_ECN_MAX_PARALLEL=8 ;;
+esac
+case "$OPTICAL_COLLECTION_BUDGET_SECONDS" in
+    ''|*[!0-9]*|0) OPTICAL_COLLECTION_BUDGET_SECONDS=120 ;;
+esac
+case "$OPTICAL_PORT_TIMEOUT_SECONDS" in
+    ''|*[!0-9]*|0) OPTICAL_PORT_TIMEOUT_SECONDS=10 ;;
 esac
 
 mkdir -p \
@@ -1590,6 +1605,104 @@ EOF
         SKIP_L1="'"$SKIP_L1"'"
         PFC_ECN_COLLECTION_BUDGET_SECONDS="'"$PFC_ECN_COLLECTION_BUDGET_SECONDS"'"
         PFC_ECN_PORT_TIMEOUT_SECONDS="'"$PFC_ECN_PORT_TIMEOUT_SECONDS"'"
+        PFC_ECN_MAX_PARALLEL="'"$PFC_ECN_MAX_PARALLEL"'"
+        OPTICAL_COLLECTION_BUDGET_SECONDS="'"$OPTICAL_COLLECTION_BUDGET_SECONDS"'"
+        OPTICAL_PORT_TIMEOUT_SECONDS="'"$OPTICAL_PORT_TIMEOUT_SECONDS"'"
+        MONITOR_TIMING="'"$MONITOR_TIMING"'"
+
+        # Take shared snapshots once.  Several reports consume the same
+        # underlying state; re-running these commands was both slower and
+        # could make one collection generation internally inconsistent.
+        _lldpq_snapshot_dir=$(mktemp -d /tmp/lldpq-monitor.XXXXXXXX 2>/dev/null) || exit 70
+        _lldpq_cleanup_snapshots() {
+            _lldpq_cleanup_status=$?
+            trap - EXIT HUP INT TERM
+            rm -rf -- "$_lldpq_snapshot_dir"
+            exit "$_lldpq_cleanup_status"
+        }
+        trap _lldpq_cleanup_snapshots EXIT
+        trap '\''exit 129'\'' HUP
+        trap '\''exit 130'\'' INT
+        trap '\''exit 143'\'' TERM
+        _lldpq_now_ms() {
+            _lldpq_now_value=$(date +%s%3N 2>/dev/null) || _lldpq_now_value="$(date +%s)000"
+            printf "%s" "$_lldpq_now_value"
+        }
+        _lldpq_timing_start=0
+        if [ "$MONITOR_TIMING" = "true" ]; then
+            _lldpq_timing_start=$(_lldpq_now_ms)
+        fi
+        _lldpq_timing_end() {
+            [ "$MONITOR_TIMING" = "true" ] || return 0
+            _lldpq_timing_now=$(_lldpq_now_ms)
+            printf "__LLDPQ_SECTION_TIMING__:%s:%s:%s\n" \
+                "$HOSTNAME_VAR" "$1" "$((_lldpq_timing_now - _lldpq_timing_start))"
+            _lldpq_timing_start=$_lldpq_timing_now
+        }
+
+        ip link show > "$_lldpq_snapshot_dir/link" 2>/dev/null
+        _lldpq_link_status=$?
+        ip addr show > "$_lldpq_snapshot_dir/addr" 2>/dev/null
+        _lldpq_addr_status=$?
+        ip neighbour show > "$_lldpq_snapshot_dir/neigh" 2>/dev/null
+        _lldpq_neigh_status=$?
+        sudo /usr/sbin/bridge fdb show > "$_lldpq_snapshot_dir/fdb" 2>/dev/null
+        _lldpq_fdb_status=$?
+        sudo vtysh -c "show bgp vrf all sum" > "$_lldpq_snapshot_dir/bgp-summary" 2>/dev/null
+        _lldpq_bgp_status=$?
+        sudo vtysh -c "show evpn vni" > "$_lldpq_snapshot_dir/evpn-vni" 2>/dev/null
+        _lldpq_evpn_vni_status=$?
+
+        if [ "$_lldpq_link_status" -eq 0 ]; then
+            awk '\''
+                function emit() {
+                    if (name ~ /^swp[0-9]+(s[0-9]+)?$/) {
+                        print name
+                    }
+                }
+                /^[0-9]+: / {
+                    emit()
+                    name=$2
+                    sub(/:$/, "", name)
+                    sub(/@.*/, "", name)
+                }
+                END { emit() }
+            '\'' "$_lldpq_snapshot_dir/link" > "$_lldpq_snapshot_dir/interfaces"
+            sort -V "$_lldpq_snapshot_dir/interfaces" > "$_lldpq_snapshot_dir/interfaces-sorted"
+        else
+            : > "$_lldpq_snapshot_dir/interfaces"
+            : > "$_lldpq_snapshot_dir/interfaces-sorted"
+        fi
+        : > "$_lldpq_snapshot_dir/ifalias"
+        for _lldpq_alias_path in /sys/class/net/*/ifalias; do
+            [ -r "$_lldpq_alias_path" ] || continue
+            IFS= read -r _lldpq_alias < "$_lldpq_alias_path" 2>/dev/null || _lldpq_alias=""
+            [ -n "$_lldpq_alias" ] || continue
+            _lldpq_alias_name=${_lldpq_alias_path%/ifalias}
+            _lldpq_alias_name=${_lldpq_alias_name##*/}
+            printf "%s|%s\n" "$_lldpq_alias_name" "$_lldpq_alias" \
+                >> "$_lldpq_snapshot_dir/ifalias"
+        done
+        : > "$_lldpq_snapshot_dir/swp-ifalias"
+        while IFS= read -r _lldpq_alias_name; do
+            [ -n "$_lldpq_alias_name" ] || continue
+            _lldpq_alias=""
+            IFS= read -r _lldpq_alias \
+                < "/sys/class/net/${_lldpq_alias_name}/ifalias" 2>/dev/null || _lldpq_alias=""
+            printf "%s|%s\n" "$_lldpq_alias_name" "$_lldpq_alias" \
+                >> "$_lldpq_snapshot_dir/swp-ifalias"
+        done < "$_lldpq_snapshot_dir/interfaces-sorted"
+        awk -F"|" '\''
+            {
+                name=$1
+                sub(/^[^|]*[|]/, "", $0)
+                gsub(/&/, "\\&amp;", $0)
+                gsub(/</, "\\&lt;", $0)
+                gsub(/>/, "\\&gt;", $0)
+                print name "|" $0
+            }
+        '\'' "$_lldpq_snapshot_dir/swp-ifalias" > "$_lldpq_snapshot_dir/swp-ifalias-html"
+        _lldpq_timing_end SNAPSHOTS
         
         # =====================================================================
         # SECTION 1: Interface Overview (for HTML)
@@ -1599,33 +1712,48 @@ EOF
         echo "<h1></h1><h1><font color=\"#b57614\">Port Status '"$hostname"'</font></h1><h3></h3>"
         printf "<span style=\"color:green;\">%-14s %-12s %-12s %s</span>\n" "Interface" "State" "Link" "Description"
         
-        for interface in $(ip link show | awk "/^[0-9]+: swp[0-9]+[s0-9]*/ {gsub(/:/, \"\", \$2); print \$2}" | sort -V); do
+        while IFS="|" read -r interface description; do
+            [ -n "$interface" ] || continue
             if [ -e "/sys/class/net/$interface" ]; then
-                state=$(cat /sys/class/net/$interface/operstate 2>/dev/null || echo "unknown")
-                link_status=$([ "$state" = "up" ] && echo "up" || echo "down")
-                color=$([ "$link_status" = "up" ] && echo "lime" || echo "red")
-                description=$(ip link show "$interface" | grep -o "alias.*" | sed "s/alias //")
+                IFS= read -r state < "/sys/class/net/$interface/operstate" 2>/dev/null || state="unknown"
+                if [ "$state" = "up" ]; then
+                    link_status="up"
+                    color="lime"
+                else
+                    link_status="down"
+                    color="red"
+                fi
                 [ -z "$description" ] && description="No description"
-                # Interface aliases are configuration data, not HTML. Encode
-                # the text before it is appended to the generated report.
-                description=$(printf "%s" "$description" | sed "s/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g")
                 printf "<span style=\"color:steelblue;\">%-14s</span> <span style=\"color:%s;\">%-12s</span> <span style=\"color:%s;\">%-12s</span> %s\n" "$interface" "$color" "$state" "$color" "$link_status" "$description"
             fi
-        done
+        done < "$_lldpq_snapshot_dir/swp-ifalias-html"
 
         echo "<h1></h1><h1><font color=\"#b57614\">Interface IP Addresses '"$hostname"'</font></h1><h3></h3>"
         printf "<span style=\"color:green;\">%-20s %-18s %s</span>\n" "Interface" "IPv4" "IPv6 Global"
         
-        for interface in $(ip addr show | grep "^[0-9]*:" | cut -d: -f2 | cut -d@ -f1); do
-            interface=$(echo "$interface" | xargs)
-            ipv4=$(ip addr show "$interface" 2>/dev/null | grep "inet " | grep -v "127.0.0.1" | grep -o "[0-9]\+\.[0-9]\+\.[0-9]\+\.[0-9]\+/[0-9]\+" | head -1)
-            ipv6=$(ip addr show "$interface" 2>/dev/null | grep "inet6.*scope global" | grep -o "[0-9a-f:]\+/[0-9]\+" | head -1)
-            if [ -n "$ipv4" ] || [ -n "$ipv6" ]; then
-                [ -z "$ipv4" ] && ipv4="-"
-                [ -z "$ipv6" ] && ipv6="-"
-                printf "<span style=\"color:steelblue;\">%-20s</span> <span style=\"color:orange;\">%-18s</span> <span style=\"color:cyan;\">%s</span>\n" "$interface" "$ipv4" "$ipv6"
-            fi
-        done
+        if [ "$_lldpq_addr_status" -eq 0 ]; then
+            awk '\''
+                function emit() {
+                    if (interface != "" && (ipv4 != "" || ipv6 != "")) {
+                        if (ipv4 == "") ipv4="-"
+                        if (ipv6 == "") ipv6="-"
+                        printf "<span style=\"color:steelblue;\">%-20s</span> <span style=\"color:orange;\">%-18s</span> <span style=\"color:cyan;\">%s</span>\n", interface, ipv4, ipv6
+                    }
+                }
+                /^[0-9]+: / {
+                    emit()
+                    interface=$2
+                    sub(/:$/, "", interface)
+                    sub(/@.*/, "", interface)
+                    ipv4=""
+                    ipv6=""
+                    next
+                }
+                $1 == "inet" && $2 !~ /^127[.]0[.]0[.]1\// && ipv4 == "" { ipv4=$2 }
+                $1 == "inet6" && $0 ~ /scope global/ && ipv6 == "" { ipv6=$2 }
+                END { emit() }
+            '\'' "$_lldpq_snapshot_dir/addr"
+        fi
 
         echo "<h1></h1><h1><font color=\"#b57614\">VLAN Configuration Table '"$hostname"'</font></h1><h3></h3>"
         echo "<pre style=\"font-family:monospace;\">"
@@ -1660,24 +1788,34 @@ EOF
         echo "</pre>"
 
         echo "<h1></h1><h1><font color=\"#b57614\">ARP Table '"$hostname"'</font></h1><h3></h3>"
-        ip neighbour | grep -E -v "fe80" | sort -t "." -k1,1n -k2,2n -k3,3n -k4,4n | sed -E "s/^([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)/<span style=\"color:tomato;\">\1<\/span>/; s/dev ([^ ]+)/dev <span style=\"color:steelblue;\">\1<\/span>/; s/lladdr ([0-9a-f:]+)/lladdr <span style=\"color:tomato;\">\1<\/span>/"
+        if [ "$_lldpq_neigh_status" -eq 0 ]; then
+            grep -E -v "fe80" "$_lldpq_snapshot_dir/neigh" | sort -t "." -k1,1n -k2,2n -k3,3n -k4,4n | sed -E "s/^([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)/<span style=\"color:tomato;\">\1<\/span>/; s/dev ([^ ]+)/dev <span style=\"color:steelblue;\">\1<\/span>/; s/lladdr ([0-9a-f:]+)/lladdr <span style=\"color:tomato;\">\1<\/span>/"
+        fi
         
         echo "<h1></h1><h1><font color=\"#b57614\">MAC Table '"$hostname"'</font></h1><h3></h3>"
-        sudo /usr/sbin/bridge fdb 2>/dev/null | grep -E -v "00:00:00:00:00:00" | sort | sed -E "s/^([0-9a-f:]+)/<span style=\"color:tomato;\">\1<\/span>/; s/dev ([^ ]+)/dev <span style=\"color:steelblue;\">\1<\/span>/; s/vlan ([0-9]+)/vlan <span style=\"color:red;\">\1<\/span>/; s/dst ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)/dst <span style=\"color:lime;\">\1<\/span>/"
+        if [ "$_lldpq_fdb_status" -eq 0 ]; then
+            grep -E -v "00:00:00:00:00:00" "$_lldpq_snapshot_dir/fdb" | sort | sed -E "s/^([0-9a-f:]+)/<span style=\"color:tomato;\">\1<\/span>/; s/dev ([^ ]+)/dev <span style=\"color:steelblue;\">\1<\/span>/; s/vlan ([0-9]+)/vlan <span style=\"color:red;\">\1<\/span>/; s/dst ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)/dst <span style=\"color:lime;\">\1<\/span>/"
+        fi
         
         echo "<h1></h1><h1><font color=\"#b57614\">BGP Status '"$hostname"'</font></h1><h3></h3>"
-        sudo vtysh -c "show bgp vrf all sum" 2>/dev/null | sed -E "s/(VRF\s+)([a-zA-Z0-9_-]+)/\1<span style=\"color:tomato;\">\2<\/span>/g; s/Total number of neighbors ([0-9]+)/Total number of neighbors <span style=\"color:steelblue;\">\1<\/span>/g; s/(\S+)\s+(\S+)\s+Summary/<span style=\"color:lime;\">\1 \2<\/span> Summary/g; s/\b(Active|Idle)\b/<span style=\"color:red;\">\1<\/span>/g"
+        if [ "$_lldpq_bgp_status" -eq 0 ]; then
+            sed -E "s/(VRF\s+)([a-zA-Z0-9_-]+)/\1<span style=\"color:tomato;\">\2<\/span>/g; s/Total number of neighbors ([0-9]+)/Total number of neighbors <span style=\"color:steelblue;\">\1<\/span>/g; s/(\S+)\s+(\S+)\s+Summary/<span style=\"color:lime;\">\1 \2<\/span> Summary/g; s/\b(Active|Idle)\b/<span style=\"color:red;\">\1<\/span>/g" "$_lldpq_snapshot_dir/bgp-summary"
+        fi
         
         echo "===HTML_OUTPUT_END==="
+        _lldpq_timing_end HTML_OUTPUT
         
         # =====================================================================
         # SECTION 2: BGP Data (for analysis)
         # =====================================================================
         echo "===BGP_DATA_START==="
-        if ! sudo vtysh -c "show bgp vrf all sum" 2>/dev/null; then
+        if [ "$_lldpq_bgp_status" -eq 0 ]; then
+            cat "$_lldpq_snapshot_dir/bgp-summary"
+        else
             echo "__LLDPQ_COLLECTION_ERROR__:BGP_SUMMARY"
         fi
         echo "===BGP_DATA_END==="
+        _lldpq_timing_end BGP_DATA
         
         # =====================================================================
         # SECTION 2b: EVPN Data (for EVPN route counts)
@@ -1685,7 +1823,9 @@ EOF
         echo "===EVPN_DATA_START==="
         # VNI summary - full output
         echo "=== EVPN VNI SUMMARY ==="
-        if ! sudo vtysh -c "show evpn vni" 2>/dev/null; then
+        if [ "$_lldpq_evpn_vni_status" -eq 0 ]; then
+            cat "$_lldpq_snapshot_dir/evpn-vni"
+        else
             echo "__LLDPQ_COLLECTION_ERROR__:EVPN_VNI"
         fi
         # Exact Type-2 and Type-5 route counts.  Do not truncate a combined
@@ -1711,6 +1851,7 @@ EOF
             rm -f "$_evpn_tmp"
         fi
         echo "===EVPN_DATA_END==="
+        _lldpq_timing_end EVPN_DATA
         
         # =====================================================================
         # SECTION 2c: Duplicate IP/MAC Data (EVPN dup-detection + FDB + neighbours)
@@ -1786,7 +1927,12 @@ EOF
             rm -f "$_dup_tmp" "$_dup_match_tmp"
         }
         echo "=== DUP VNI MAP ==="
-        _dup_run VNI_MAP sudo vtysh -c "show evpn vni"
+        if [ "$_lldpq_evpn_vni_status" -eq 0 ]; then
+            cat "$_lldpq_snapshot_dir/evpn-vni"
+            echo "__LLDPQ_DUP_COVERAGE__:VNI_MAP:OK"
+        else
+            echo "__LLDPQ_DUP_COVERAGE__:VNI_MAP:ERROR"
+        fi
         echo "=== DUP CONFIG ==="
         _dup_filter CONFIG "duplicate|max-moves[[:space:]]+[0-9]+|time[[:space:]]+[0-9]+|freeze|warning-only" sudo vtysh -c "show evpn"
         echo "=== DUP SELF ==="
@@ -1851,67 +1997,97 @@ EOF
         # Interface descriptions (nv set interface swpX description = kernel ifalias): names the
         # device attached to each switch:port so the analysis can show WHICH box is duplicating.
         echo "=== DUP IFALIAS ==="
-        for _f in /sys/class/net/*/ifalias; do _a=$(cat "$_f" 2>/dev/null); [ -n "$_a" ] && echo "$(basename "$(dirname "$_f")")|$_a"; done
+        cat "$_lldpq_snapshot_dir/ifalias"
         echo "__LLDPQ_DUP_COVERAGE__:IFALIAS:OK"
         unset -f _dup_run _dup_filter 2>/dev/null || true
         echo "===DUP_DATA_END==="
+        _lldpq_timing_end DUP_DATA
         
         echo "===FDB_DATA_START==="
-        _fdb_output=$(sudo /usr/sbin/bridge fdb show 2>/dev/null)
-        _fdb_status=$?
-        if [ "$_fdb_status" -ne 0 ]; then
+        if [ "$_lldpq_fdb_status" -ne 0 ]; then
             echo "__LLDPQ_COLLECTION_ERROR__:FDB"
         else
-            printf "%s\n" "$_fdb_output" | grep -E -v "00:00:00:00:00:00" || true
+            grep -E -v "00:00:00:00:00:00" "$_lldpq_snapshot_dir/fdb" || true
         fi
         echo "===FDB_DATA_END==="
+        _lldpq_timing_end FDB_DATA
         
         echo "===NEIGH_DATA_START==="
-        if ! ip -4 neighbour show 2>/dev/null; then
+        if [ "$_lldpq_neigh_status" -ne 0 ]; then
             echo "__LLDPQ_COLLECTION_ERROR__:NEIGH"
+        else
+            awk '\''$1 ~ /^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+$/ { print }'\'' \
+                "$_lldpq_snapshot_dir/neigh"
         fi
         echo "===NEIGH_DATA_END==="
+        _lldpq_timing_end NEIGH_DATA
         
         # =====================================================================
         # SECTION 3: Carrier Transitions (for flap analysis)
         # =====================================================================
         echo "===CARRIER_DATA_START==="
-        _link_output=$(ip link show 2>/dev/null)
-        _link_status=$?
-        if [ "$_link_status" -ne 0 ]; then
+        if [ "$_lldpq_link_status" -ne 0 ]; then
             echo "__LLDPQ_COLLECTION_ERROR__:LINK_INVENTORY"
         fi
-        all_interfaces=$(printf "%s\n" "$_link_output" | awk "/^[0-9]+: swp[0-9]+[s0-9]*/ {gsub(/:/, \"\", \$2); print \$2}")
-        for interface in $all_interfaces; do
+        while IFS= read -r interface; do
+            [ -n "$interface" ] || continue
             if [ -e "/sys/class/net/$interface" ]; then
-                carrier_count=$(cat /sys/class/net/$interface/carrier_changes 2>/dev/null || echo "0")
+                IFS= read -r carrier_count < "/sys/class/net/$interface/carrier_changes" 2>/dev/null || carrier_count="0"
                 echo "$interface:$carrier_count"
             fi
-        done
+        done < "$_lldpq_snapshot_dir/interfaces"
         echo "===CARRIER_DATA_END==="
+        _lldpq_timing_end CARRIER_DATA
         
         # =====================================================================
         # SECTION 4: Optical Transceiver Data (skippable with -s flag)
         # =====================================================================
         echo "===OPTICAL_DATA_START==="
         if [ "$SKIP_OPTICAL" != "true" ]; then
-            _optical_links=$(ip link show 2>/dev/null)
-            _optical_links_status=$?
-            if [ "$_optical_links_status" -ne 0 ]; then
+            if [ "$_lldpq_link_status" -ne 0 ]; then
                 echo "__LLDPQ_COLLECTION_ERROR__:OPTICAL_LINK_INVENTORY"
             else
-                all_interfaces=$(printf "%s\n" "$_optical_links" | awk "/^[0-9]+: swp[0-9]+[s0-9]*/ {gsub(/:/, \"\", \$2); print \$2}")
-                for interface in $all_interfaces; do
+                _optical_deadline=$(($(date +%s) + OPTICAL_COLLECTION_BUDGET_SECONDS))
+                _optical_has_timeout=true
+                command -v timeout >/dev/null 2>&1 || _optical_has_timeout=false
+                while IFS= read -r interface; do
+                    [ -n "$interface" ] || continue
                     echo "--- Interface: $interface"
                     if [ ! -e "/sys/class/net/$interface" ]; then
                         echo "Interface state: unknown"
                         echo "No transceiver data"
                         continue
                     fi
-                    state=$(cat "/sys/class/net/$interface/operstate" 2>/dev/null || echo "unknown")
+                    IFS= read -r state < "/sys/class/net/$interface/operstate" 2>/dev/null || state="unknown"
                     echo "Interface state: ${state:-unknown}"
                     if [ "$state" = "up" ]; then
-                        ethtool_output=$(sudo ethtool -m "$interface" 2>/dev/null || true)
+                        if [ "$_optical_has_timeout" = "true" ]; then
+                            _optical_remaining=$((_optical_deadline - $(date +%s)))
+                            if [ "$_optical_remaining" -le 0 ]; then
+                                # A current report must never silently omit
+                                # the unvisited tail.  Reject this device
+                                # generation and preserve its last-known-good
+                                # bundle instead.
+                                echo "__LLDPQ_COLLECTION_ERROR__:OPTICAL_BUDGET:${interface}"
+                                ethtool_output=""
+                            else
+                                _optical_limit=$OPTICAL_PORT_TIMEOUT_SECONDS
+                                if [ "$_optical_remaining" -lt "$_optical_limit" ]; then
+                                    _optical_limit=$_optical_remaining
+                                fi
+                                ethtool_output=$(timeout -k 1s "${_optical_limit}s" \
+                                    sudo ethtool -m "$interface" 2>/dev/null)
+                                _optical_status=$?
+                                if [ "$_optical_status" -eq 124 ] || \
+                                   [ "$_optical_status" -eq 137 ]; then
+                                    echo "__LLDPQ_COLLECTION_ERROR__:OPTICAL_TIMEOUT:${interface}"
+                                fi
+                            fi
+                        else
+                            # Older Cumulus releases without timeout retain
+                            # the previous successful collection behavior.
+                            ethtool_output=$(sudo ethtool -m "$interface" 2>/dev/null || true)
+                        fi
                         if [ -n "$ethtool_output" ]; then
                             echo "$ethtool_output"
                         else
@@ -1920,10 +2096,11 @@ EOF
                     else
                         echo "No transceiver data"
                     fi
-                done
+                done < "$_lldpq_snapshot_dir/interfaces"
             fi
         fi
         echo "===OPTICAL_DATA_END==="
+        _lldpq_timing_end OPTICAL_DATA
         
         # =====================================================================
         # SECTION 5: BER/Interface Statistics
@@ -1933,6 +2110,7 @@ EOF
             echo "__LLDPQ_COLLECTION_ERROR__:INTERFACE_COUNTERS"
         fi
         echo "===BER_DATA_END==="
+        _lldpq_timing_end BER_DATA
         
         # =====================================================================
         # SECTION 6: L1-Show (if available)
@@ -1946,6 +2124,7 @@ EOF
             echo "l1-show not available"
         fi
         echo "===L1_DATA_END==="
+        _lldpq_timing_end L1_DATA
         
         # =====================================================================
         # SECTION 7: PFC/ECN QoS Counters
@@ -1953,15 +2132,7 @@ EOF
         echo "===PFC_ECN_DATA_START==="
         _pfc_ecn_collection_utc=$(date -u "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || true)
         echo "__LLDPQ_PFC_ECN_COLLECTION_UTC__:${_pfc_ecn_collection_utc:-UNKNOWN}"
-        _pfc_ecn_inventory=$(
-            for _pfc_ecn_path in /sys/class/net/*; do
-                [ -e "$_pfc_ecn_path" ] || continue
-                _pfc_ecn_name=${_pfc_ecn_path##*/}
-                if printf "%s\n" "$_pfc_ecn_name" | grep -Eq "^swp[0-9]+(s[0-9]+)?$"; then
-                    printf "%s\n" "$_pfc_ecn_name"
-                fi
-            done | sort -V
-        )
+        _pfc_ecn_inventory=$(cat "$_lldpq_snapshot_dir/interfaces-sorted")
         _pfc_ecn_port_count=0
         for _pfc_ecn_port in $_pfc_ecn_inventory; do
             _pfc_ecn_port_count=$((_pfc_ecn_port_count + 1))
@@ -1971,53 +2142,81 @@ EOF
         else
             echo "__LLDPQ_PFC_ECN_INVENTORY_STATUS__:EMPTY:0"
         fi
-        # Keep the reads sequential inside this single SSH session.  A failed
-        # port is represented in-band and must not invalidate other ports or
-        # the complete device collection bundle.  Bound both each command and
-        # the whole QoS section so a stuck NVUE daemon cannot consume the
-        # device-wide 300-second SSH budget and suppress every other report.
+        # NVUE does not expose one portable bulk QoS-counter schema across the
+        # supported releases.  Use a small bounded worker batch instead, then
+        # emit the completed files in inventory order.  This keeps the parser
+        # contract byte-compatible and avoids unbounded pressure on nvued.
         _pfc_ecn_deadline=$(($(date +%s) + PFC_ECN_COLLECTION_BUDGET_SECONDS))
         _pfc_ecn_has_nv=true
         _pfc_ecn_has_timeout=true
         command -v nv >/dev/null 2>&1 || _pfc_ecn_has_nv=false
         command -v timeout >/dev/null 2>&1 || _pfc_ecn_has_timeout=false
-        for _pfc_ecn_port in $_pfc_ecn_inventory; do
-            echo "__LLDPQ_PFC_ECN_PORT_START__:${_pfc_ecn_port}"
+        _pfc_ecn_collect_port() {
+            _pfc_worker_port=$1
+            _pfc_worker_output="$_lldpq_snapshot_dir/pfc-${_pfc_worker_port}.output"
+            _pfc_worker_status_file="$_lldpq_snapshot_dir/pfc-${_pfc_worker_port}.status"
             if [ "$_pfc_ecn_has_nv" != "true" ]; then
-                _pfc_ecn_output="nv command is not available"
-                _pfc_ecn_status=127
+                _pfc_worker_text="nv command is not available"
+                _pfc_worker_status=127
             elif [ "$_pfc_ecn_has_timeout" != "true" ]; then
-                _pfc_ecn_output="timeout command is not available; QoS read skipped"
-                _pfc_ecn_status=125
+                _pfc_worker_text="timeout command is not available; QoS read skipped"
+                _pfc_worker_status=125
             else
-                _pfc_ecn_remaining=$((_pfc_ecn_deadline - $(date +%s)))
-                if [ "$_pfc_ecn_remaining" -le 0 ]; then
-                    _pfc_ecn_output="PFC/ECN collection budget exhausted"
-                    _pfc_ecn_status=124
+                _pfc_worker_remaining=$((_pfc_ecn_deadline - $(date +%s)))
+                if [ "$_pfc_worker_remaining" -le 0 ]; then
+                    _pfc_worker_text="PFC/ECN collection budget exhausted"
+                    _pfc_worker_status=124
                 else
-                    _pfc_ecn_limit=$PFC_ECN_PORT_TIMEOUT_SECONDS
-                    if [ "$_pfc_ecn_remaining" -lt "$_pfc_ecn_limit" ]; then
-                        _pfc_ecn_limit=$_pfc_ecn_remaining
+                    _pfc_worker_limit=$PFC_ECN_PORT_TIMEOUT_SECONDS
+                    if [ "$_pfc_worker_remaining" -lt "$_pfc_worker_limit" ]; then
+                        _pfc_worker_limit=$_pfc_worker_remaining
                     fi
-                    _pfc_ecn_output=$(timeout -k 1s "${_pfc_ecn_limit}s" \
-                        nv show interface "$_pfc_ecn_port" counters qos -o json 2>&1)
-                    _pfc_ecn_status=$?
+                    _pfc_worker_text=$(timeout -k 1s "${_pfc_worker_limit}s" \
+                        nv show interface "$_pfc_worker_port" counters qos -o json 2>&1)
+                    _pfc_worker_status=$?
                 fi
             fi
+            printf "%s\n" "$_pfc_worker_text" > "$_pfc_worker_output"
+            printf "%s\n" "$_pfc_worker_status" > "$_pfc_worker_status_file"
+        }
+
+        _pfc_ecn_batch_pids=""
+        _pfc_ecn_batch_count=0
+        for _pfc_ecn_port in $_pfc_ecn_inventory; do
+            _pfc_ecn_collect_port "$_pfc_ecn_port" &
+            _pfc_ecn_batch_pids="${_pfc_ecn_batch_pids} $!"
+            _pfc_ecn_batch_count=$((_pfc_ecn_batch_count + 1))
+            if [ "$_pfc_ecn_batch_count" -ge "$PFC_ECN_MAX_PARALLEL" ]; then
+                for _pfc_ecn_pid in $_pfc_ecn_batch_pids; do
+                    wait "$_pfc_ecn_pid"
+                done
+                _pfc_ecn_batch_pids=""
+                _pfc_ecn_batch_count=0
+            fi
+        done
+        for _pfc_ecn_pid in $_pfc_ecn_batch_pids; do
+            wait "$_pfc_ecn_pid"
+        done
+
+        for _pfc_ecn_port in $_pfc_ecn_inventory; do
+            echo "__LLDPQ_PFC_ECN_PORT_START__:${_pfc_ecn_port}"
+            IFS= read -r _pfc_ecn_status \
+                < "$_lldpq_snapshot_dir/pfc-${_pfc_ecn_port}.status" || _pfc_ecn_status=125
             if [ "$_pfc_ecn_status" -eq 0 ]; then
                 echo "__LLDPQ_PFC_ECN_PORT_STATUS__:${_pfc_ecn_port}:OK:0"
             else
                 echo "__LLDPQ_PFC_ECN_PORT_STATUS__:${_pfc_ecn_port}:ERROR:${_pfc_ecn_status}"
             fi
-            printf "%s\n" "$_pfc_ecn_output"
+            cat "$_lldpq_snapshot_dir/pfc-${_pfc_ecn_port}.output"
             echo "__LLDPQ_PFC_ECN_PORT_END__:${_pfc_ecn_port}"
         done
-        unset _pfc_ecn_collection_utc _pfc_ecn_inventory _pfc_ecn_path \
-            _pfc_ecn_name _pfc_ecn_port_count _pfc_ecn_port \
-            _pfc_ecn_output _pfc_ecn_status _pfc_ecn_deadline \
-            _pfc_ecn_has_nv _pfc_ecn_has_timeout _pfc_ecn_remaining \
-            _pfc_ecn_limit
+        unset -f _pfc_ecn_collect_port 2>/dev/null || true
+        unset _pfc_ecn_collection_utc _pfc_ecn_inventory \
+            _pfc_ecn_port_count _pfc_ecn_port _pfc_ecn_status \
+            _pfc_ecn_deadline _pfc_ecn_has_nv _pfc_ecn_has_timeout \
+            _pfc_ecn_batch_pids _pfc_ecn_batch_count _pfc_ecn_pid
         echo "===PFC_ECN_DATA_END==="
+        _lldpq_timing_end PFC_ECN_DATA
 
         # =====================================================================
         # SECTION 8: Hardware Health (with fallback)
@@ -2121,6 +2320,7 @@ EOF
         fi
         echo "CPU_CORES: $(nproc 2>/dev/null || grep -c ^processor /proc/cpuinfo 2>/dev/null || echo 0)"
         echo "===HARDWARE_DATA_END==="
+        _lldpq_timing_end HARDWARE_DATA
         
         # =====================================================================
         # SECTION 9: System Logs (comprehensive)
@@ -2343,6 +2543,7 @@ EOF
         fi
         
         echo "===LOG_DATA_END==="
+        _lldpq_timing_end LOG_DATA
         
         
     ' > "$raw_file" 2>/dev/null
@@ -2359,6 +2560,16 @@ EOF
         echo "Data collection failed for ${hostname} (invalid collection bundle)" >&2
         rm -rf "$bundle_stage"
         return 1
+    fi
+    if [[ "$MONITOR_TIMING" == "true" ]]; then
+        awk -F: -v host="$hostname" '
+            /^__LLDPQ_SECTION_TIMING__:/ && $2 == host {
+                timing = timing (timing ? " " : "") $3 "=" $4 "ms"
+            }
+            END {
+                if (timing != "") print "Collection timing " host ": " timing > "/dev/stderr"
+            }
+        ' "$raw_file"
     fi
     
     local ssh_end=$(date +%s)
@@ -2473,6 +2684,11 @@ EOF
         return 1
     fi
     rm -rf "$bundle_stage"
+
+    if [[ "$MONITOR_TIMING" == "true" ]]; then
+        printf 'Local timing %s: ssh=%ss parse=%ss config=%ss\n' \
+            "$hostname" "$ssh_duration" "$parse_duration" "$config_duration" >&2
+    fi
 
     # Silent completion - no per-device output for performance
     return 0

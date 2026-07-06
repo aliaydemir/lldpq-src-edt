@@ -2,7 +2,6 @@
 """Focused regression tests for bounded BER history and report reuse."""
 
 import json
-import os
 import sys
 import tempfile
 import time
@@ -95,18 +94,23 @@ class BERHistoryTests(unittest.TestCase):
 
 
 class BERProcessingTests(unittest.TestCase):
+    @staticmethod
+    def _write_current_fixture(temporary):
+        result_dir = Path(temporary, "monitor-results")
+        data_dir = result_dir / "ber-data"
+        data_dir.mkdir(parents=True)
+        (data_dir / "leaf-01_interface_errors.txt").write_text(
+            "Inter-|   Receive                                                |  Transmit\n"
+            " face |bytes packets errs drop fifo frame compressed multicast|"
+            "bytes packets errs drop fifo colls carrier compressed\n"
+            " swp1: 1000 10 0 0 0 0 0 0 2000 20 0 0 0 0 0 0\n",
+            encoding="utf-8",
+        )
+        return result_dir, data_dir
+
     def test_successful_run_serializes_history_once_and_reuses_analysis(self):
         with tempfile.TemporaryDirectory() as temporary:
-            result_dir = Path(temporary, "monitor-results")
-            data_dir = result_dir / "ber-data"
-            data_dir.mkdir(parents=True)
-            (data_dir / "leaf-01_interface_errors.txt").write_text(
-                "Inter-|   Receive                                                |  Transmit\n"
-                " face |bytes packets errs drop fifo frame compressed multicast|"
-                "bytes packets errs drop fifo colls carrier compressed\n"
-                " swp1: 1000 10 0 0 0 0 0 0 2000 20 0 0 0 0 0 0\n",
-                encoding="utf-8",
-            )
+            result_dir, data_dir = self._write_current_fixture(temporary)
 
             original_save = BERAnalyzer.save_ber_history
             save_calls = []
@@ -129,6 +133,43 @@ class BERProcessingTests(unittest.TestCase):
             # Summary classification enriches the record before the sole save.
             self.assertIn("effective_grade", current)
             self.assertEqual(saved["history_schema_version"], 2)
+
+    def test_state_write_failure_fails_closed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            _result_dir, data_dir = self._write_current_fixture(temporary)
+            with (
+                mock.patch.object(
+                    processor.BERAnalyzer,
+                    "save_baseline_data",
+                    return_value=False,
+                ) as baseline_save,
+                mock.patch.object(
+                    processor.BERAnalyzer,
+                    "save_ber_history",
+                    return_value=True,
+                ) as history_save,
+            ):
+                self.assertFalse(processor.process_ber_data_files(str(data_dir)))
+            baseline_save.assert_called_once_with()
+            history_save.assert_not_called()
+
+        with tempfile.TemporaryDirectory() as temporary:
+            _result_dir, data_dir = self._write_current_fixture(temporary)
+            with (
+                mock.patch.object(
+                    processor.BERAnalyzer,
+                    "save_baseline_data",
+                    return_value=True,
+                ) as baseline_save,
+                mock.patch.object(
+                    processor.BERAnalyzer,
+                    "save_ber_history",
+                    return_value=False,
+                ) as history_save,
+            ):
+                self.assertFalse(processor.process_ber_data_files(str(data_dir)))
+            baseline_save.assert_called_once_with()
+            history_save.assert_called_once_with()
 
 
 if __name__ == "__main__":

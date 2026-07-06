@@ -203,6 +203,30 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual(report.count('class="sortable"'), 13)
         self.assertEqual(report.count('aria-sort="none"'), 13)
         self.assertEqual(report.count('class="sort-arrow">▲▼</span>'), 13)
+        thead = report.split("<thead><tr>", 1)[1].split("</tr></thead>", 1)[0]
+        compact_headers = (
+            "Device", "Port", "Status", "ECN Total", "ECN Δ / Rate", "ECN %",
+            "PFC RX Total", "PFC RX Δ / Rate", "PFC TX Total",
+            "PFC TX Δ / Rate", "TC3 TX Δ", "Discard Δ", "Sample / Window",
+        )
+        for label in compact_headers:
+            self.assertIn(f'>{label} <span class="sort-arrow">', thead)
+        self.assertNotIn("since last sample", thead.lower())
+        self.assertIn("min-width:1200px", report)
+        self.assertNotIn("min-width:1480px", report)
+
+        self.assertEqual(report.count('data-card-filter="'), 8)
+        self.assertEqual(report.count('role="button" tabindex="0" aria-pressed="false"'), 8)
+        for card_filter in ("all", "exact", "ecn", "rx", "tx", "loss", "attention"):
+            self.assertIn(f'data-card-filter="{card_filter}"', report)
+        self.assertIn(".summary-card.active", report)
+        self.assertIn("function matchesCardFilter(row)", report)
+        self.assertIn("!matchesCardFilter(row)", report)
+        self.assertIn("function clearNonCardFilters()", report)
+        self.assertIn("if (activeCardFilter === 'all') clearNonCardFilters()", report)
+        self.assertIn("toggleCardFilter(card)", report)
+        self.assertIn("event.key === 'Enter' || event.key === ' '", report)
+        self.assertIn("Card filter: ", report)
         self.assertIn("1 Jan 1970, 00:16:50 UTC", report)
         self.assertIn("10s window", report)
         self.assertIn('data-device="leaf1"', report)
@@ -223,7 +247,43 @@ class EndToEndTests(unittest.TestCase):
         self.assertIn("PFC/ECN Metric Guide", report)
         self.assertIn("SP3 PFC RX — peer paused us", report)
         self.assertIn("SP3 PFC TX — we paused the peer", report)
+        self.assertIn("<h3>Table columns</h3>", report)
+        for guide_label in (
+            "Δ", "ECN %", "PFC RX", "PFC TX", "TC3 TX Δ", "Discard Δ",
+            "Sample / Window",
+        ):
+            self.assertIn(f"<th>{guide_label}</th>", report)
+        self.assertIn("average in frames/s", report)
+        self.assertIn("denominator for ECN %", report)
+        self.assertIn("direct drop evidence", report)
+        self.assertIn("Signal cards work together with device, status, and text filters", report)
+        self.assertIn("Ports checked return the table to all rows", report)
         self.assertIn("There are no arbitrary warning or critical thresholds", report)
+
+    def test_summary_card_flags_follow_actual_counter_activity(self):
+        previous_counters = analyzer.extract_counters(qos_payload())
+        current_counters = analyzer.extract_counters(
+            qos_payload(
+                ecn=110, rx=205, tx=303, tx_frames=1100, no_buffer=5, wred=5
+            )
+        )
+        record = analyzer.build_port_record(
+            "leaf1", "swp1", current_counters,
+            {"timestamp": 1000, "counters": previous_counters}, 1010,
+        )
+        report = analyzer.render_report([record], {})
+        self.assertIn('data-exact="1"', report)
+        self.assertIn('data-ecn-active="1"', report)
+        self.assertIn('data-rx-active="1"', report)
+        self.assertIn('data-tx-active="1"', report)
+        self.assertIn('data-loss-active="1"', report)
+        self.assertIn('data-attention="0"', report)
+
+        baseline = analyzer.build_port_record(
+            "leaf2", "swp2", previous_counters, None, 1010
+        )
+        baseline_report = analyzer.render_report([baseline], {})
+        self.assertIn('data-attention="1"', baseline_report)
 
     def test_partial_unreachable_inventory_reports_partial_coverage(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -311,7 +371,7 @@ class EndToEndTests(unittest.TestCase):
             report = (root / "monitor-results" / "pfc-ecn-analysis.html").read_text()
             self.assertIn("PFC/ECN Analysis", report)
             self.assertIn("Download CSV", report)
-            self.assertIn("ECN marked — total", report)
+            self.assertIn("ECN Total", report)
             self.assertIn("120", report)  # cumulative value requested by the operator
             self.assertIn("+20", report)  # additional interval analysis
             self.assertIn("fetch('/trigger-monitor'", report)

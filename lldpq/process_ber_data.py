@@ -365,7 +365,9 @@ def process_ber_data_files(data_dir="monitor-results/ber-data"):
     # Save baseline data once after all interfaces processed.  History is
     # saved after classification because _analyze_port enriches the current
     # record with the L1 snapshot required by the next symbol-delta sample.
-    ber_analyzer.save_baseline_data()
+    if not ber_analyzer.save_baseline_data():
+        print("❌ BER baseline state could not be saved")
+        return False
     if total_interfaces_processed == 0 and not all_devices_unavailable:
         print("❌ No physical interface counters were processed")
         return False
@@ -375,7 +377,9 @@ def process_ber_data_files(data_dir="monitor-results/ber-data"):
     # repeated mutation of current history records.
     summary = ber_analyzer.get_ber_summary()
     anomalies = ber_analyzer.detect_ber_anomalies(summary)
-    ber_analyzer.save_ber_history()
+    if not ber_analyzer.save_ber_history():
+        print("❌ BER history state could not be saved")
+        return False
 
     for required_state in (
         os.path.join(result_dir, "ber_baseline.json"),

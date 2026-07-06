@@ -15,7 +15,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
-from typing import BinaryIO, Dict, Mapping, Sequence, Tuple
+from typing import BinaryIO, Dict, Mapping, Optional, Sequence, Tuple, Union
 
 
 SECTIONS: Tuple[str, ...] = (
@@ -48,7 +48,10 @@ def _markers(section: str) -> Tuple[bytes, bytes]:
     )
 
 
-def _validate_outputs(outputs: Mapping[str, os.PathLike[str] | str]) -> Dict[str, Path]:
+PathValue = Union[os.PathLike[str], str]
+
+
+def _validate_outputs(outputs: Mapping[str, PathValue]) -> Dict[str, Path]:
     missing = [section for section in SECTIONS if section not in outputs]
     extra = [section for section in outputs if section not in SECTIONS]
     if missing or extra or len(outputs) != len(SECTIONS):
@@ -119,8 +122,8 @@ def _cleanup(
 
 
 def split_collection_bundle(
-    raw_file: os.PathLike[str] | str,
-    outputs: Mapping[str, os.PathLike[str] | str],
+    raw_file: PathValue,
+    outputs: Mapping[str, PathValue],
 ) -> None:
     """Validate *raw_file* and atomically replace all section *outputs*.
 
@@ -243,7 +246,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_argument_parser()
     args = parser.parse_args(argv)
     outputs: Dict[str, Path] = {}

@@ -70,7 +70,10 @@ class CollectionBundleTests(unittest.TestCase):
         )
         for section in SECTIONS:
             self.assertTrue(self.outputs[section].is_file())
-            self.assertNotIn(b"===" + section.encode("ascii"), self.outputs[section].read_bytes())
+            self.assertNotIn(
+                b"===" + section.encode("ascii"),
+                self.outputs[section].read_bytes(),
+            )
 
     def test_missing_end_marker_rejects_without_replacing_destinations(self):
         self.raw.write_bytes(
@@ -131,7 +134,11 @@ class CollectionBundleTests(unittest.TestCase):
 
     def test_cli_contract_writes_all_outputs(self):
         self.raw.write_bytes(bundle_bytes())
-        command = [sys.executable, str(SCRIPT_DIR / "collection_bundle.py"), str(self.raw)]
+        command = [
+            sys.executable,
+            str(SCRIPT_DIR / "collection_bundle.py"),
+            str(self.raw),
+        ]
         for section in SECTIONS:
             command.extend(["--output", section, str(self.outputs[section])])
 
