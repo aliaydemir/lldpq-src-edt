@@ -48,13 +48,12 @@ normalize_bool() {
 # Parse flags
 SKIP_OPTICAL="${SKIP_OPTICAL:-false}"
 SKIP_L1="${SKIP_L1:-true}"
+CLI_SKIP_OPTICAL=false
 while getopts "s" opt; do
     case $opt in
-        s) SKIP_OPTICAL=true ;;
+        s) CLI_SKIP_OPTICAL=true ;;
     esac
 done
-SKIP_OPTICAL="$(normalize_bool "$SKIP_OPTICAL")"
-SKIP_L1="$(normalize_bool "$SKIP_L1")"
 
 # Use copy-on-write clones when GNU cp and the backing filesystem support
 # them.  --reflink=auto transparently falls back to an ordinary copy on ext4;
@@ -63,36 +62,46 @@ declare -a CP_REFLINK_ARGS=()
 if cp --help 2>&1 | grep -- '--reflink' >/dev/null; then
     CP_REFLINK_ARGS=(--reflink=auto)
 fi
-MONITOR_TIMING="$(normalize_bool "${MONITOR_TIMING:-false}")"
 
 # === TUNING PARAMETERS ===
-MAX_PARALLEL="${MONITOR_MAX_PARALLEL:-${MAX_PARALLEL:-100}}"  # Maximum parallel SSH connections
-case "$MAX_PARALLEL" in
-    ''|*[!0-9]*|0) MAX_PARALLEL=100 ;;
-esac
 SSH_TIMEOUT=60   # SSH connection timeout in seconds
-PFC_ECN_COLLECTION_BUDGET_SECONDS="${PFC_ECN_COLLECTION_BUDGET_SECONDS:-60}"
-PFC_ECN_PORT_TIMEOUT_SECONDS="${PFC_ECN_PORT_TIMEOUT_SECONDS:-5}"
-PFC_ECN_MAX_PARALLEL="${PFC_ECN_MAX_PARALLEL:-4}"
-OPTICAL_COLLECTION_BUDGET_SECONDS="${OPTICAL_COLLECTION_BUDGET_SECONDS:-120}"
-OPTICAL_PORT_TIMEOUT_SECONDS="${OPTICAL_PORT_TIMEOUT_SECONDS:-10}"
-case "$PFC_ECN_COLLECTION_BUDGET_SECONDS" in
-    ''|*[!0-9]*|0) PFC_ECN_COLLECTION_BUDGET_SECONDS=60 ;;
-esac
-case "$PFC_ECN_PORT_TIMEOUT_SECONDS" in
-    ''|*[!0-9]*|0) PFC_ECN_PORT_TIMEOUT_SECONDS=5 ;;
-esac
-case "$PFC_ECN_MAX_PARALLEL" in
-    ''|*[!0-9]*|0|0*) PFC_ECN_MAX_PARALLEL=4 ;;
-    1|2|3|4|5|6|7|8) ;;
-    *) PFC_ECN_MAX_PARALLEL=8 ;;
-esac
-case "$OPTICAL_COLLECTION_BUDGET_SECONDS" in
-    ''|*[!0-9]*|0) OPTICAL_COLLECTION_BUDGET_SECONDS=120 ;;
-esac
-case "$OPTICAL_PORT_TIMEOUT_SECONDS" in
-    ''|*[!0-9]*|0) OPTICAL_PORT_TIMEOUT_SECONDS=10 ;;
-esac
+apply_monitor_tuning() {
+    SKIP_OPTICAL="$(normalize_bool "${SKIP_OPTICAL:-false}")"
+    if [[ "$CLI_SKIP_OPTICAL" == "true" ]]; then
+        SKIP_OPTICAL=true
+    fi
+    SKIP_L1="$(normalize_bool "${SKIP_L1:-true}")"
+    MONITOR_TIMING="$(normalize_bool "${MONITOR_TIMING:-false}")"
+
+    MAX_PARALLEL="${MONITOR_MAX_PARALLEL:-${MAX_PARALLEL:-100}}"
+    case "$MAX_PARALLEL" in
+        ''|*[!0-9]*|0) MAX_PARALLEL=100 ;;
+    esac
+
+    PFC_ECN_COLLECTION_BUDGET_SECONDS="${PFC_ECN_COLLECTION_BUDGET_SECONDS:-60}"
+    PFC_ECN_PORT_TIMEOUT_SECONDS="${PFC_ECN_PORT_TIMEOUT_SECONDS:-5}"
+    PFC_ECN_MAX_PARALLEL="${PFC_ECN_MAX_PARALLEL:-4}"
+    OPTICAL_COLLECTION_BUDGET_SECONDS="${OPTICAL_COLLECTION_BUDGET_SECONDS:-120}"
+    OPTICAL_PORT_TIMEOUT_SECONDS="${OPTICAL_PORT_TIMEOUT_SECONDS:-10}"
+    case "$PFC_ECN_COLLECTION_BUDGET_SECONDS" in
+        ''|*[!0-9]*|0) PFC_ECN_COLLECTION_BUDGET_SECONDS=60 ;;
+    esac
+    case "$PFC_ECN_PORT_TIMEOUT_SECONDS" in
+        ''|*[!0-9]*|0) PFC_ECN_PORT_TIMEOUT_SECONDS=5 ;;
+    esac
+    case "$PFC_ECN_MAX_PARALLEL" in
+        ''|*[!0-9]*|0|0*) PFC_ECN_MAX_PARALLEL=4 ;;
+        1|2|3|4|5|6|7|8) ;;
+        *) PFC_ECN_MAX_PARALLEL=8 ;;
+    esac
+    case "$OPTICAL_COLLECTION_BUDGET_SECONDS" in
+        ''|*[!0-9]*|0) OPTICAL_COLLECTION_BUDGET_SECONDS=120 ;;
+    esac
+    case "$OPTICAL_PORT_TIMEOUT_SECONDS" in
+        ''|*[!0-9]*|0) OPTICAL_PORT_TIMEOUT_SECONDS=10 ;;
+    esac
+}
+apply_monitor_tuning
 
 mkdir -p \
     "$SCRIPT_DIR/monitor-results/flap-data" \
@@ -2755,6 +2764,7 @@ if [[ -z "${WEB_ROOT:-}" ]]; then
     eval "$LLDPQ_CONFIG_ASSIGNMENTS" || exit 1
     unset LLDPQ_CONFIG_ASSIGNMENTS
 fi
+apply_monitor_tuning
 [[ -n "${WEB_ROOT:-}" ]] || { echo "Error: WEB_ROOT is not configured" >&2; exit 1; }
 LLDPQ_USER="${LLDPQ_USER:-$(whoami)}"
 load_devices "$SCRIPT_DIR/parse_devices.py" || exit 1
