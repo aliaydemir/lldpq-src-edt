@@ -1502,7 +1502,7 @@ class OpticalAnalyzer:
 
                 if (typeof window.waitForLldpqAnalysisCompletion === 'function') {
                     await window.waitForLldpqAnalysisCompletion(
-                        baseline, {{ pipelineId: data.trigger_id }}
+                        baseline, { pipelineId: data.trigger_id }
                     );
                 } else {
                     // Compatibility fallback for older installations that do

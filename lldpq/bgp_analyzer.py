@@ -2143,7 +2143,7 @@ class BGPAnalyzer:
                     document.body.appendChild(notification);
                     const completion = typeof window.waitForLldpqAnalysisCompletion === 'function'
                         ? window.waitForLldpqAnalysisCompletion(
-                            baseline, {{ pipelineId: data.trigger_id }})
+                            baseline, { pipelineId: data.trigger_id })
                         : new Promise(resolve => setTimeout(resolve, 35000));
                     Promise.resolve(completion)
                         .then(() => window.location.reload())
