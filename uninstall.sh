@@ -845,7 +845,7 @@ while [[ $# -gt 0 ]]; do
         --remove-source) REMOVE_SOURCE=true ;;
         --force-partial) FORCE_PARTIAL=true ;;
         -h|--help)
-            sed -n '1,40p' "$0"
+            sed -n '1,35p' "$0"
             exit 0
             ;;
         *)
