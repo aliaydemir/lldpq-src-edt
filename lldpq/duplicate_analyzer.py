@@ -1280,8 +1280,15 @@ __MACHINE_SUMMARY__
       on one IP, or a high but flat sequence. A flat high sequence is NOT "active".<br>
       <b>Aged</b> &mdash; a quiesced duplicate whose sequence has not moved for &ge;__STALE_DAYS__ days is
       collapsed out of the list (use <i>Show aged</i> to reveal). These persist in FRR until the address is
-      removed / re-learned or <code>clear evpn dup-addr</code> is run &mdash; the tool only mirrors that state.<br>
+      removed / re-learned or its DAD flag is cleared &mdash; the tool only mirrors that state.<br>
       APIPA &mdash; CRITICAL when &ge; __APIPA_CRIT__ APIPA addresses on one switch+VLAN, else WARNING.
+      <h4>Clear a resolved FRR DAD flag</h4>
+      After confirming the conflict is resolved, run the targeted command on every VTEP that still reports
+      the duplicate. Replace the placeholders with the row's VNI and address:<br>
+      <code>sudo vtysh -c "clear evpn dup-addr vni &lt;VNI&gt; ip &lt;IP_ADDRESS&gt;"</code><br>
+      For a duplicate MAC, use:<br>
+      <code>sudo vtysh -c "clear evpn dup-addr vni &lt;VNI&gt; mac &lt;MAC_ADDRESS&gt;"</code><br>
+      Use a targeted VNI plus IP/MAC; do not use <code>vni all</code> for routine cleanup.
       <h4>EVPN duplicate-address-detection (DAD) &amp; multihoming</h4>
       Configured threshold: <code>__CFG__</code> (max-moves / window). FRR <b>automatically disables DAD on
       switches where EVPN multihoming (Ethernet Segments / dual-homed bonds) is enabled</b> &mdash; this is

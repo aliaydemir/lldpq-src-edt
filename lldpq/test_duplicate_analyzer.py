@@ -143,6 +143,14 @@ class DuplicateIpSeverityTests(unittest.TestCase):
         self.assertIn('data-confirmed-ip-active="0"', report)
         self.assertIn('data-ip-quiesced="1"', report)
         self.assertIn("quiesced / latched", report)
+        self.assertIn(
+            'clear evpn dup-addr vni &lt;VNI&gt; ip &lt;IP_ADDRESS&gt;',
+            report,
+        )
+        self.assertIn(
+            'clear evpn dup-addr vni &lt;VNI&gt; mac &lt;MAC_ADDRESS&gt;',
+            report,
+        )
 
 
 if __name__ == "__main__":
