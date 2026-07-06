@@ -55,6 +55,14 @@ while getopts "s" opt; do
 done
 SKIP_OPTICAL="$(normalize_bool "$SKIP_OPTICAL")"
 SKIP_L1="$(normalize_bool "$SKIP_L1")"
+
+# Use copy-on-write clones when GNU cp and the backing filesystem support
+# them.  --reflink=auto transparently falls back to an ordinary copy on ext4;
+# an actual copy error is still fatal and is never hidden by a retry.
+declare -a CP_REFLINK_ARGS=()
+if cp --help 2>&1 | grep -- '--reflink' >/dev/null; then
+    CP_REFLINK_ARGS=(--reflink=auto)
+fi
 MONITOR_TIMING="$(normalize_bool "${MONITOR_TIMING:-false}")"
 
 # === TUNING PARAMETERS ===
@@ -154,7 +162,7 @@ snapshot_analysis_state() {
                 return 1
             }
             mkdir -p "$(dirname "$backup")" || return 1
-            cp -a "$source" "$backup" || return 1
+            cp -a "${CP_REFLINK_ARGS[@]}" -- "$source" "$backup" || return 1
             [[ -f "$backup" && ! -L "$backup" ]] || {
                 echo "Analyzer backup is not a regular file: $backup" >&2
                 return 1
@@ -243,7 +251,7 @@ rollback_analysis_state() {
                 failed=true
                 continue
             }
-            if ! cp -a -- "$backup" "$restore_temp" ||
+            if ! cp -a "${CP_REFLINK_ARGS[@]}" -- "$backup" "$restore_temp" ||
                ! mv -f -- "$restore_temp" "$destination"; then
                 rm -f -- "$restore_temp" 2>/dev/null || true
                 failed=true
@@ -668,7 +676,7 @@ publish_monitor_results() {
     local source_dir="$SCRIPT_DIR/monitor-results"
     local destination_dir="$WEB_ROOT/monitor-results"
     local stage_dir backup_dir=""
-    local old_hup old_int old_term fallback_status
+    local old_hup old_int old_term fallback_status exchange_status
 
     restore_publish_traps() {
         if [[ -n "$old_hup" ]]; then eval "$old_hup"; else trap - HUP; fi
@@ -682,7 +690,7 @@ publish_monitor_results() {
     # self-heals the legacy Docker layout where destination_dir is a symlink to
     # source_dir: the symlink itself is exchanged for the independent tree.
     stage_dir=$(sudo mktemp -d "$WEB_ROOT/.monitor-results.new.XXXXXXXXXX") || return 1
-    if ! sudo cp -a "$source_dir/." "$stage_dir/"; then
+    if ! sudo cp -a "${CP_REFLINK_ARGS[@]}" -- "$source_dir/." "$stage_dir/"; then
         sudo rm -rf "$stage_dir" 2>/dev/null || true
         return 1
     fi
@@ -707,8 +715,8 @@ EOF
     fi
 
     if ! sudo chown -R "${LLDPQ_USER:-$(whoami)}:www-data" "$stage_dir" ||
-       ! sudo find "$stage_dir" -type d -exec chmod 775 {} \; ||
-       ! sudo find "$stage_dir" -type f -exec chmod 664 {} \;; then
+       ! sudo find "$stage_dir" -type d -exec chmod 775 {} + ||
+       ! sudo find "$stage_dir" -type f -exec chmod 664 {} +; then
         sudo rm -rf "$stage_dir" 2>/dev/null || true
         return 1
     fi
@@ -717,11 +725,18 @@ EOF
         # Linux renameat2(RENAME_EXCHANGE) swaps the complete trees without a
         # moment where /monitor-results is absent.  Keep the portable fallback
         # for older kernels/filesystems and roll it back on activation failure.
-        if atomic_exchange_paths "$stage_dir" "$destination_dir" 2>/dev/null; then
+        atomic_exchange_paths "$stage_dir" "$destination_dir" 2>/dev/null
+        exchange_status=$?
+        if [[ "$exchange_status" -eq 0 ]]; then
             if ! sudo rm -rf "$stage_dir"; then
                 echo "Warning: previous monitor web tree remains at $stage_dir" >&2
             fi
             return 0
+        fi
+        if [[ "$exchange_status" -ne 2 ]]; then
+            echo "Atomic monitor web activation failed (status $exchange_status)" >&2
+            sudo rm -rf "$stage_dir" 2>/dev/null || true
+            return 1
         fi
 
         old_hup=$(trap -p HUP)
@@ -2755,6 +2770,8 @@ fi
 total_devices=${#devices[@]}
 completed_file="/tmp/monitor_completed_$$"
 echo "0" > "$completed_file"
+collection_phase_start=$(date +%s)
+startup_recovery_duration=$((collection_phase_start - START_TIME))
 
 # Simple parallel execution without animation (animation causes hangs)
 declare -a collection_pids=()
@@ -2801,6 +2818,7 @@ done
 echo "Collected $device_count devices"
 data_collection_end=$(date +%s)
 data_collection_duration=$((data_collection_end - START_TIME))
+collection_wall_duration=$((data_collection_end - collection_phase_start))
 
 if [ "${#collection_failures[@]}" -gt 0 ]; then
     failure_text="collection jobs failed: ${collection_failures[*]}"
@@ -2813,11 +2831,14 @@ fi
 # ============================================================================
 echo "Analyzing..."
 analysis_start=$(date +%s)
+snapshot_start=$analysis_start
 
 if ! snapshot_analysis_state; then
     mark_reports_stale "could not snapshot analyzer state"
     exit 1
 fi
+snapshot_end=$(date +%s)
+snapshot_duration=$((snapshot_end - snapshot_start))
 
 # Run all analyses in parallel and retain each status/log independently.
 analysis_log_dir=$(mktemp -d "${TMPDIR:-/tmp}/lldpq-analysis.XXXXXX") || exit 1
@@ -2884,6 +2905,7 @@ PYTHON
 
 analysis_output_marker="$analysis_log_dir/.analysis-start"
 : > "$analysis_output_marker" || exit 1
+analyzer_jobs_start=$(date +%s)
 start_analysis bgp python3 process_bgp_data.py
 start_analysis flap python3 process_flap_data.py
 if [[ "$SKIP_OPTICAL" != "true" ]]; then
@@ -2905,6 +2927,8 @@ for index in "${!analysis_pids[@]}"; do
         tail -20 "${analysis_logs[$index]}" >&2 || true
     fi
 done
+analyzer_jobs_end=$(date +%s)
+analyzer_jobs_duration=$((analyzer_jobs_end - analyzer_jobs_start))
 
 analysis_end=$(date +%s)
 analysis_duration=$((analysis_end - analysis_start))
@@ -2916,17 +2940,23 @@ if [ "${#analysis_failures[@]}" -gt 0 ]; then
     exit 1
 fi
 
+validation_start=$(date +%s)
 if ! validate_analysis_outputs "$analysis_output_marker"; then
     rollback_analysis_state || true
     mark_reports_stale "analysis outputs were incomplete"
     exit 1
 fi
+validation_end=$(date +%s)
+validation_duration=$((validation_end - validation_start))
 
+manifest_start=$(date +%s)
 if ! write_current_manifest; then
     rollback_analysis_state || true
     mark_reports_stale "could not write current-run manifest"
     exit 1
 fi
+manifest_end=$(date +%s)
+manifest_duration=$((manifest_end - manifest_start))
 
 # ============================================================================
 # COPY RESULTS
@@ -2934,11 +2964,15 @@ fi
 # Keep the local in-progress marker until the complete web tree is active.
 # check_alerts reads the source tree and must never accept a manifest whose web
 # publication can still fail.
+publication_start=$(date +%s)
 if ! publish_monitor_results; then
     rollback_analysis_state || true
     mark_reports_stale "report publication failed"
     exit 1
 fi
+publication_end=$(date +%s)
+publication_duration=$((publication_end - publication_start))
+commit_start=$(date +%s)
 if ! commit_analysis_state; then
     mark_reports_stale "published reports but could not remove analyzer rollback snapshot"
     exit 1
@@ -2947,6 +2981,8 @@ if ! clear_stale_marker; then
     mark_reports_stale "could not clear stale report marker"
     exit 1
 fi
+commit_end=$(date +%s)
+commit_duration=$((commit_end - commit_start))
 
 # Calculate execution time
 END_TIME=$(date +%s)
@@ -2955,4 +2991,5 @@ MINUTES=$((DURATION / 60))
 SECONDS=$((DURATION % 60))
 
 echo "Done: ${#devices[@]} devices, ${MINUTES}m${SECONDS}s (collect:${data_collection_duration}s, analyze:${analysis_duration}s)"
+echo "Phases: startup/recovery:${startup_recovery_duration}s collection:${collection_wall_duration}s snapshot:${snapshot_duration}s analyzers:${analyzer_jobs_duration}s validation:${validation_duration}s manifest:${manifest_duration}s publication:${publication_duration}s commit:${commit_duration}s"
 exit 0
