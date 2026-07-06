@@ -167,8 +167,14 @@ class DuplicateAnalyzer:
             if "_dup.txt" in files:
                 self._parse_dup(ch, self._read(files["_dup.txt"]))
             if "_fdb.txt" in files:
-                fdb_text = self._read(files["_fdb.txt"])
-                fdb_ok = bool(fdb_text.strip()) and \
+                fdb_read_ok, fdb_text = self._read_with_status(
+                    files["_fdb.txt"]
+                )
+                # A successful FDB query may legitimately return no rows on
+                # L3-only devices.  Section presence is guaranteed by the
+                # validated collection bundle; only an explicit collector
+                # error makes the sample unusable.
+                fdb_ok = fdb_read_ok and \
                     "__LLDPQ_COLLECTION_ERROR__:FDB" not in fdb_text
                 self.collection_meta[ch]["sources"]["FDB_LOCAL"] = (
                     "OK" if fdb_ok else "ERROR"
@@ -183,11 +189,16 @@ class DuplicateAnalyzer:
 
     @staticmethod
     def _read(path):
+        _read_ok, content = DuplicateAnalyzer._read_with_status(path)
+        return content
+
+    @staticmethod
+    def _read_with_status(path):
         try:
             with open(path, "r", errors="replace") as f:
-                return f.read()
+                return True, f.read()
         except Exception:
-            return ""
+            return False, ""
 
     def _split_sections(self, text):
         """Split a _dup.txt into the labelled sections."""
