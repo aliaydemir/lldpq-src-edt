@@ -450,7 +450,7 @@ class DuplicateAnalyzer:
                 "seq_by_host": {}, "flagged": False, "flagged_hosts": set(),
                 "dad_flagged": False, "dad_event": False,
                 "local": {}, "vteps": set(),
-                "delta": None, "fdb_multi": False,
+                "delta": None, "fdb_multi": False, "physical_local_count": 0,
                 "confirmed_conflict": False, "mobility": False,
                 "mobility_only": False, "sequence_active": False,
                 "seq_interval_sec": None, "seq_rate_per_min": None,
@@ -768,6 +768,7 @@ class DuplicateAnalyzer:
             if port.startswith("swp")
         }
         rec["fdb_multi"] = len(physical) >= 2
+        rec["physical_local_count"] = len(physical)
         rec["confirmed_conflict"] = rec["fdb_multi"]
         rec["dad_flagged"] = bool(
             set(rec.get("flagged_hosts", set())) & current_hosts
@@ -785,10 +786,10 @@ class DuplicateAnalyzer:
         )
         if rec["confirmed_conflict"]:
             rec["incident_type"] = "confirmed_mac_conflict"
-        elif rec["dad_flagged"]:
-            rec["incident_type"] = "dad_flagged_mac"
         elif rec.get("dad_event"):
             rec["incident_type"] = "dad_event_mac"
+        elif rec["dad_flagged"]:
+            rec["incident_type"] = "dad_flagged_mac"
         elif rec.get("mobility"):
             rec["incident_type"] = (
                 "mac_mobility_active" if rec["sequence_active"]
@@ -1239,12 +1240,12 @@ class DuplicateAnalyzer:
             cport.update(mac_ip_ports.get((r["vlan"], r["mac"]), {}))
             vteps = self._vtep_cell(r["vteps"], set(r["local"].keys()), cport)
             vlanvni = "vlan %s<br><span class='dim'>VNI %s</span>" % (html.escape(r["vlan"]), html.escape(r["vni"]))
-            if r.get("classification") == "ip-conflict-participant":
-                note = "Participant in current IP conflict"
-            elif r.get("classification") == "loop":
+            if r.get("classification") == "loop":
                 note = "Possible loop (%d MACs)" % r.get("loop_count", 0)
             elif r.get("confirmed_conflict"):
-                note = "Confirmed MAC conflict: LOCAL on %d physical switches" % len(r["local"])
+                note = "Confirmed MAC conflict: LOCAL on %d physical switches" % r.get(
+                    "physical_local_count", len(r["local"])
+                )
             elif r.get("incident_type") == "dad_flagged_mac":
                 note = "FRR MAC DAD flag (latched; not proven simultaneous)"
             elif r.get("incident_type") == "dad_event_mac":
@@ -1263,6 +1264,9 @@ class DuplicateAnalyzer:
                     note = "Historical MAC mobility (flat); not a simultaneous conflict"
             else:
                 note = ""
+            if r.get("classification") == "ip-conflict-participant":
+                participant = "Participant in current IP conflict"
+                note = "%s; %s" % (note, participant) if note else participant
             note_html = html.escape(note)
             if r.get("stale"):
                 note_html += " <span class='dim'>(aged %dd)</span>" % int((r.get("quiet_age") or 0) // 86400)
@@ -1321,15 +1325,19 @@ class DuplicateAnalyzer:
             ("card-critical", s["ip_active"], "ACTIVE IP DUPLICATES", "active"),
             ("card-warning", s["ip_quiesced"], "QUIESCED IP DUPLICATES", "quiesced"),
             ("card-critical" if s["confirmed_mac_total"] else "card-excellent",
-             s["confirmed_mac_total"], "CONFIRMED MAC CONFLICTS", "mac"),
+             s["confirmed_mac_total"], "CONFIRMED MAC CONFLICTS",
+             "mac" if s["confirmed_mac_total"] else ""),
             ("card-warning" if s["mac_dad_total"] else "card-excellent",
-             s["mac_dad_total"], "MAC DAD FINDINGS", "dad"),
+             s["mac_dad_total"], "MAC DAD FINDINGS",
+             "dad" if s["mac_dad_total"] else ""),
             ("card-critical" if s["mac_mobility_active"] else "card-excellent",
-             s["mac_mobility_active"], "ACTIVE MAC MOBILITY", "mobility-active"),
+             s["mac_mobility_active"], "ACTIVE MAC MOBILITY",
+             "mobility-active" if s["mac_mobility_active"] else ""),
             ("card-warning" if s["mac_mobility_total"] else "card-excellent",
-             s["mac_mobility_total"], "MAC MOBILITY SIGNALS", "mobility"),
+             s["mac_mobility_total"], "MAC MOBILITY SIGNALS",
+             "mobility" if s["mac_mobility_total"] else ""),
             ("card-warning" if s["apipa_total"] else "card-excellent", s["apipa_total"], "APIPA (DHCP FAILED)", "apipa"),
-            ("card-info", s["vlans"], "VLANS AFFECTED", ""),
+            ("card-info", s["vlans"], "VLANS WITH FINDINGS", ""),
             ("card-warning" if s["disabled"] else "card-excellent", len(s["disabled"]), "DUP-DETECT DISABLED", "disabled"),
         ]
         cards_html = "".join(

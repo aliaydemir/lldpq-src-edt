@@ -1062,9 +1062,8 @@
             const quiescedIp = numberFor('ip_quiesced', 'quiesced_ip_duplicates') ??
                 duplicateMetricNumber(metadata?.dataset?.ipQuiesced);
             const confirmedMacConflicts = numberFor(
-                'confirmed_mac_total', 'mac_duplicates', 'mac_duplicate_count'
-            ) ?? duplicateMetricNumber(metadata?.dataset?.confirmedMacTotal) ??
-                duplicateMetricNumber(metadata?.dataset?.macDuplicates);
+                'confirmed_mac_total'
+            ) ?? duplicateMetricNumber(metadata?.dataset?.confirmedMacTotal);
             const coverageExpected = numberFor('coverage_expected_hosts', 'coverage_expected') ??
                 duplicateMetricNumber(metadata?.dataset?.coverageExpected);
             const coverageCurrent = numberFor('coverage_current_hosts', 'coverage_current') ??
@@ -1678,6 +1677,9 @@
                 updateDashboardCard('dup-active-ip', duplicateDashboardMetric(dupData, dupData.confirmedIpActive));
                 updateDashboardCard('dup-quiesced-ip', duplicateDashboardMetric(dupData, dupData.quiescedIp));
                 updateDashboardCard('dup-mac', duplicateDashboardMetric(dupData, dupData.confirmedMacConflicts));
+                setDashboardProblemSeverity(
+                    'dup-mac', dupData, dupData.confirmedMacConflicts, 0
+                );
 
                 const duplicateMacCard = document.getElementById('dup-mac-card');
                 if (duplicateMacCard) {
@@ -1743,6 +1745,7 @@
                 'Log Warning': logData.warning || 0,
                 'Active IP Duplicates': dupData.confirmedIpActive || 0,
                 'Quiesced IP Duplicates': dupData.quiescedIp || 0,
+                'Confirmed MAC Conflicts': dupData.confirmedMacConflicts || 0,
                 'Duplicate Coverage Partial': (!dupData.unavailable && dupData.coveragePartial) ? 1 : 0,
                 'Partial Analyses': otherPartialAnalyses,
                 'Unavailable Analyses': unavailableAnalyses,
@@ -1756,7 +1759,8 @@
             const CRITICAL_SOURCES = new Set([
                 'Assets Failed', 'LLDP Failed Ports', 'BGP Critical',
                 'Optical Critical', 'BER Critical', 'Link Flap Critical',
-                'Hardware Critical', 'Log Critical', 'Active IP Duplicates'
+                'Hardware Critical', 'Log Critical', 'Active IP Duplicates',
+                'Confirmed MAC Conflicts'
             ]);
             let tooltipHtml = '<div class="tooltip-title">Open Issues Breakdown</div>';
             for (const [source, count] of Object.entries(criticalBreakdown)) {
