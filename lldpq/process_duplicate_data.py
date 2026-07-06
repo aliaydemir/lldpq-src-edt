@@ -28,7 +28,7 @@ def main():
     print("  Active MAC mobility    : %d" % summary["mac_mobility_active"])
     print("  MAC mobility signals   : %d" % summary["mac_mobility_total"])
     print("  APIPA addresses      : %d" % summary["apipa_total"])
-    print("  VLANs affected       : %d" % summary["vlans"])
+    print("  VLANs with findings  : %d" % summary["vlans"])
     print("  Coverage              : %d/%d devices%s" % (
         summary["coverage_current"], summary["coverage_expected"],
         " (partial)" if summary["coverage_partial"] else "",

@@ -107,6 +107,8 @@ class DuplicateAnalyzer:
         self.collection_meta = {}      # host -> collector timestamp/source status
         self.coverage = {
             "expected": set(), "current": set(), "mac_current": set(),
+            "mac_dad_current": set(), "mac_mobility_current": set(),
+            "fdb_current": set(),
             "failures": [], "partial": True,
         }
         self.prev_state = self._load_state()
@@ -166,7 +168,8 @@ class DuplicateAnalyzer:
                 self._parse_dup(ch, self._read(files["_dup.txt"]))
             if "_fdb.txt" in files:
                 fdb_text = self._read(files["_fdb.txt"])
-                fdb_ok = "__LLDPQ_COLLECTION_ERROR__:FDB" not in fdb_text
+                fdb_ok = bool(fdb_text.strip()) and \
+                    "__LLDPQ_COLLECTION_ERROR__:FDB" not in fdb_text
                 self.collection_meta[ch]["sources"]["FDB_LOCAL"] = (
                     "OK" if fdb_ok else "ERROR"
                 )
@@ -285,6 +288,9 @@ class DuplicateAnalyzer:
 
         current = set()
         mac_current = set()
+        mac_dad_current = set()
+        mac_mobility_current = set()
+        fdb_current = set()
         failures = []
         ip_required = ("ARP_DUPLICATES",)
         mac_required = ("MAC_DUPLICATES", "MAC_MOBILITY", "FDB_LOCAL")
@@ -343,6 +349,14 @@ class DuplicateAnalyzer:
 
             if ip_ok:
                 current.add(host)
+            if base_ok and sources.get("MAC_DUPLICATES") == "OK":
+                mac_dad_current.add(host)
+            if base_ok and sources.get("MAC_MOBILITY") in ("OK", "TRUNCATED"):
+                # Truncation makes zero incomplete, but each emitted row is
+                # still valid positive mobility evidence.
+                mac_mobility_current.add(host)
+            if base_ok and sources.get("FDB_LOCAL") == "OK":
+                fdb_current.add(host)
             if mac_ok:
                 mac_current.add(host)
 
@@ -353,12 +367,18 @@ class DuplicateAnalyzer:
             failures.append("inventory:%s" % snapshot_problem)
             current.clear()
             mac_current.clear()
+            mac_dad_current.clear()
+            mac_mobility_current.clear()
+            fdb_current.clear()
 
         failures = sorted(set(failures))
         self.coverage = {
             "expected": expected,
             "current": current,
             "mac_current": mac_current,
+            "mac_dad_current": mac_dad_current,
+            "mac_mobility_current": mac_mobility_current,
+            "fdb_current": fdb_current,
             "failures": failures,
             "partial": bool(
                 failures or current != expected or mac_current != expected
@@ -689,8 +709,24 @@ class DuplicateAnalyzer:
         return "mac-observer:%s|%s|%s" % (vni, mac, host)
 
     def _mac_current_hosts(self):
-        """Hosts with complete MAC DAD, mobility and FDB evidence."""
+        """Hosts with complete MAC DAD, mobility and FDB evidence (zero trust)."""
         return set(self.coverage.get("mac_current", self.coverage.get("current", set())))
+
+    def _mac_dad_current_hosts(self):
+        return set(self.coverage.get("mac_dad_current", self.coverage.get("current", set())))
+
+    def _mac_mobility_current_hosts(self):
+        return set(self.coverage.get("mac_mobility_current", self.coverage.get("current", set())))
+
+    def _fdb_current_hosts(self):
+        return set(self.coverage.get("fdb_current", self.coverage.get("current", set())))
+
+    def _mac_evidence_current_hosts(self):
+        return (
+            self._mac_dad_current_hosts()
+            | self._mac_mobility_current_hosts()
+            | self._fdb_current_hosts()
+        )
 
     def _apply_mac_sequence_sample(self, rec):
         """Compare MAC mobility sequence only against the same observing switch.
@@ -701,7 +737,7 @@ class DuplicateAnalyzer:
         per observer and rate-normalised to the configured DAD window.
         """
         samples = []
-        current_hosts = self._mac_current_hosts()
+        current_hosts = self._mac_mobility_current_hosts()
         seq_by_host = {
             host: seq for host, seq in (rec.get("seq_by_host") or {}).items()
             if host in current_hosts and isinstance(seq, int) and seq >= 0
@@ -720,7 +756,7 @@ class DuplicateAnalyzer:
                 interval = observed_at - float(prev_observed)
                 if interval > 0 and seq >= prev_seq:
                     delta = seq - prev_seq
-            else:
+            elif self.prev_state.get("__mac_observer_state_version__") != MAC_OBSERVER_STATE_VERSION:
                 # Old state tracked only one fabric-wide maximum.  Use it once
                 # for display/threshold continuity, then persist host samples.
                 old = self.prev_state.get(
@@ -789,12 +825,26 @@ class DuplicateAnalyzer:
             rec["seq_activity_window"] = None
         rec["sequence_active"] = bool(active)
 
+    def _carry_mac_observer_state(self):
+        """Keep temporarily absent observers without reusing aggregate migration state."""
+        cutoff = self.analysis_now.timestamp() - MAC_OBSERVER_STATE_TTL_SEC
+        for key, value in self.prev_state.items():
+            if not key.startswith("mac-observer:") or key in self.new_state:
+                continue
+            if not isinstance(value, dict):
+                continue
+            observed_at = value.get("observed_at")
+            if isinstance(observed_at, (int, float)) and observed_at >= cutoff:
+                self.new_state[key] = value
+        self.new_state["__mac_observer_state_version__"] = MAC_OBSERVER_STATE_VERSION
+
     def _finalize_mac_semantics(self, vlan, mac, rec):
-        current_hosts = self._mac_current_hosts()
+        fdb_current_hosts = self._fdb_current_hosts()
+        dad_current_hosts = self._mac_dad_current_hosts()
         current_fdb = {
             host: port
             for host, port in self.fdb_local.get((vlan, mac), {}).items()
-            if host in current_hosts
+            if host in fdb_current_hosts
         }
         for host, port in current_fdb.items():
             rec["local"][host] = port
@@ -808,7 +858,7 @@ class DuplicateAnalyzer:
         rec["physical_local_count"] = len(physical)
         rec["confirmed_conflict"] = rec["fdb_multi"]
         rec["dad_flagged"] = bool(
-            set(rec.get("flagged_hosts", set())) & current_hosts
+            set(rec.get("flagged_hosts", set())) & dad_current_hosts
         )
         rec["flagged"] = rec["dad_flagged"]
 
@@ -863,7 +913,7 @@ class DuplicateAnalyzer:
 
         for (vlan, mac), rec in self.mac_dups.items():
             for h, port in self.fdb_local.get((vlan, mac), {}).items():
-                if h in self._mac_current_hosts():
+                if h in self._fdb_current_hosts():
                     rec["local"].setdefault(h, port)
 
         # FDB-only MAC duplicates: same MAC LOCAL on >=2 switches via PHYSICAL (swp) ports.
@@ -876,7 +926,7 @@ class DuplicateAnalyzer:
                 continue
             phys = {
                 h: p for h, p in hosts.items()
-                if h in self._mac_current_hosts() and p.startswith("swp")
+                if h in self._fdb_current_hosts() and p.startswith("swp")
             }
             if len(phys) >= 2:
                 rec = self._blank_mac(vlan, vlan, mac)
@@ -917,7 +967,7 @@ class DuplicateAnalyzer:
             elif rec["vni"] == str(vlan) and str(mob["vni"]).isdigit():
                 rec["vni"] = str(mob["vni"])
             for host, port in mob.get("ports", {}).items():
-                if host in self._mac_current_hosts():
+                if host in self._mac_mobility_current_hosts():
                     rec["local"].setdefault(host, port)
             rec["vteps"].update(mob["vteps"])
             rec["mobility"] = True
@@ -1051,6 +1101,7 @@ class DuplicateAnalyzer:
         for (vlan, mac), rec in self.mac_dups.items():
             _mark_stale(rec, "mac", mac)
 
+        self._carry_mac_observer_state()
         self._save_state()
 
     def _ip_sev(self, rec):
@@ -1131,10 +1182,11 @@ class DuplicateAnalyzer:
             "ip_total": ip_active + ip_quiesced,
             "coverage_expected": len(self.coverage["expected"]),
             "coverage_ip_current": len(self.coverage["current"]),
-            "coverage_current": min(
-                len(self.coverage["current"]), len(self._mac_current_hosts())
+            "coverage_current": len(
+                set(self.coverage["current"]) & self._mac_current_hosts()
             ),
             "coverage_mac_current": len(self._mac_current_hosts()),
+            "coverage_mac_evidence_current": len(self._mac_evidence_current_hosts()),
             "coverage_failures": len(self.coverage["failures"]),
             "coverage_partial": self.coverage["partial"],
         }
@@ -1306,7 +1358,7 @@ class DuplicateAnalyzer:
             else:
                 note = ""
             if r.get("classification") == "ip-conflict-participant":
-                participant = "Participant in current IP conflict"
+                participant = "Participant in current authoritative IP DAD finding"
                 note = "%s; %s" % (note, participant) if note else participant
             note_html = html.escape(note)
             if r.get("stale"):
@@ -1397,7 +1449,9 @@ class DuplicateAnalyzer:
                     % (STALE_AGE_SEC // 86400, stale_count))
 
         html_doc = _PAGE_TEMPLATE
-        if not s["coverage_expected"] or not s["coverage_current"]:
+        if (not s["coverage_expected"]
+                or (not s["coverage_ip_current"]
+                    and not s["coverage_mac_evidence_current"])):
             collection_status = "unavailable"
         elif s["coverage_partial"]:
             collection_status = "partial"
@@ -1416,6 +1470,7 @@ class DuplicateAnalyzer:
             ' data-coverage-current="%d"'
             ' data-coverage-ip-current="%d"'
             ' data-coverage-mac-current="%d"'
+            ' data-coverage-mac-evidence-current="%d"'
             ' data-coverage-failures="%d"'
             ' data-coverage-partial="%s"'
             ' data-coverage-failure-details="%s" style="display:none"></div>'
@@ -1427,6 +1482,7 @@ class DuplicateAnalyzer:
             s["coverage_expected"], s["coverage_current"],
             s["coverage_ip_current"],
             s["coverage_mac_current"],
+            s["coverage_mac_evidence_current"],
             s["coverage_failures"], str(s["coverage_partial"]).lower(),
             html.escape(json.dumps(self.coverage["failures"]), quote=True),
         )
@@ -1641,8 +1697,8 @@ __MACHINE_SUMMARY__
       <b>Confirmed MAC conflict</b> requires the same MAC to be simultaneously LOCAL on at least two
       physical switch ports. <b>FRR MAC DAD</b> is a current/latched DAD finding but does not by itself
       prove simultaneous owners. <b>MAC mobility</b> records moves and is not counted as a duplicate.
-      <b>IP conflict participant</b> is shown only when the MAC appears in a current authoritative IP
-      conflict. <b>Possible loop</b> &mdash; &ge; __LOOP_MIN__ active MACs moving between the same
+      <b>IP DAD participant</b> is shown only when the MAC appears in a current authoritative IP
+      DAD finding. <b>Possible loop</b> &mdash; &ge; __LOOP_MIN__ active MACs moving between the same
       switch pair with no per-MAC IP duplicate (frames circulating, not a single device).
     </div>
   </div>
