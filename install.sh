@@ -3854,6 +3854,12 @@ quiesce_recovery_units_for_fresh_install() {
         fi
         sudo systemctl disable "$unit" >/dev/null 2>&1 || true
     done
+    # Prevent the old cron/trigger generation from starting collectors while
+    # the fresh tree and its locks are being rebuilt.
+    sudo rm -f /etc/cron.d/lldpq
+    pkill -f "$LLDPQ_INSTALL_DIR/monitor.sh" 2>/dev/null || true
+    pkill -f "/usr/local/bin/lldpq-trigger" 2>/dev/null || true
+    sudo systemctl stop lldpq-console.service 2>/dev/null || true
     sudo rm -f \
         /etc/systemd/system/lldpq-recovery.path \
         /etc/systemd/system/lldpq-recovery.service \
