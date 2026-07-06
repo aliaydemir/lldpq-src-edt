@@ -3476,6 +3476,11 @@ lldpq_install_exit_handler() {
     local web_restore_ok=true
     local final_tree_safe=true
 
+    if [[ -n "${_config_validation_snapshot:-}" ]]; then
+        rm -f -- "$_config_validation_snapshot" 2>/dev/null || true
+        _config_validation_snapshot=""
+    fi
+
     if [[ "$disposition" == "return" ]]; then
         # Keep the installed EXIT trap armed throughout explicit success-path
         # finalization. A TERM/HUP/INT must still enter the recovery path while
@@ -3664,7 +3669,10 @@ for arg in "$@"; do
 done
 
 LLDPQ_CONFIG_FILE="${LLDPQ_CONFIG_FILE:-/etc/lldpq.conf}"
-load_lldpq_config "$LLDPQ_CONFIG_FILE"
+if ! load_lldpq_config "$LLDPQ_CONFIG_FILE"; then
+    echo "[!] Existing runtime configuration could not be read safely: $LLDPQ_CONFIG_FILE" >&2
+    exit 1
+fi
 
 # ============================================================================
 # TELEMETRY-ONLY MODE (early exit — no other changes needed)
