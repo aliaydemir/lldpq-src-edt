@@ -4891,13 +4891,26 @@ prepare_shared_lock_files /etc/lldpq.conf.lock
 sudo chown root:"$CONFIG_GROUP" /etc/lldpq.conf.lock
 sudo chmod 660 /etc/lldpq.conf.lock
 if [[ "$CONFIG_GROUP" != "www-data" ]]; then
-    sudo usermod -a -G "$CONFIG_GROUP" www-data 2>/dev/null || true
+    if ! sudo usermod -a -G "$CONFIG_GROUP" www-data; then
+        echo "[!] Could not grant the web worker access to the LLDPq configuration group" >&2
+        exit 1
+    fi
 fi
-sudo usermod -a -G www-data "$LLDPQ_USER" 2>/dev/null || true
+if [[ "$LLDPQ_USER" != "root" ]] && \
+   ! sudo usermod -a -G www-data "$LLDPQ_USER"; then
+    echo "[!] Could not grant '$LLDPQ_USER' access to the LLDPq web/runtime group" >&2
+    exit 1
+fi
 if ! sudo -u "$LLDPQ_USER" /usr/local/bin/lldpq-config --require-config \
    --require-key LLDPQ_DIR --require-key LLDPQ_USER --require-key WEB_ROOT \
    --config /etc/lldpq.conf >/dev/null; then
     echo "[!] Runtime user '$LLDPQ_USER' cannot read the installed LLDPq configuration" >&2
+    exit 1
+fi
+if ! sudo -u www-data /usr/local/bin/lldpq-config --require-config \
+   --require-key LLDPQ_DIR --require-key LLDPQ_USER --require-key WEB_ROOT \
+   --config /etc/lldpq.conf >/dev/null; then
+    echo "[!] Web worker cannot read the installed LLDPq configuration" >&2
     exit 1
 fi
 echo "  Configuration saved to /etc/lldpq.conf"
@@ -5813,7 +5826,8 @@ fi
 # manage the telemetry stack. Without this the UI hits "permission denied ...
 # /var/run/docker.sock". Granted idempotently whenever telemetry is enabled and
 # Docker is present, so existing deployments self-heal on their next update.
-if command -v docker >/dev/null 2>&1 && grep -q "^TELEMETRY_ENABLED=true" /etc/lldpq.conf 2>/dev/null; then
+if command -v docker >/dev/null 2>&1 && \
+   [[ "${TELEMETRY_ENABLED:-false}" == "true" ]]; then
     _docker_granted=false
     for _u in www-data "$LLDPQ_USER"; do
         [[ -z "$_u" ]] && continue
