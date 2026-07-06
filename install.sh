@@ -2825,6 +2825,7 @@ DEPENDENCIES
 install_update_recovery_guard() {
     [[ "$INSTALL_MODE" == "update" ]] || return 0
     local temporary_dir helper_tmp service_tmp verify_output
+    local recovery_was_required=false
     temporary_dir=$(mktemp -d "${TMPDIR:-/tmp}/lldpq-update-recovery.XXXXXX") || return 1
     helper_tmp="$temporary_dir/lldpq-update-recovery.py"
     service_tmp="$temporary_dir/lldpq-update-recovery.service"
@@ -3055,10 +3056,12 @@ def recover():
 
     run(["systemctl", "daemon-reload"])
     run(["nginx", "-t"])
-    run(["systemctl", "try-restart", "fcgiwrap"], required=False)
-    run(["systemctl", "try-restart", "lldpq-console.service"], required=False)
-    run(["systemctl", "try-restart", "rsyslog"], required=False)
-    run(["systemctl", "start", "nginx"])
+
+    # Do not start/restart units from this recovery service.  The unit is
+    # ordered Before=nginx/fcgiwrap/console/cron; waiting for one of those jobs
+    # here creates a systemd dependency deadlock.  At boot, their queued start
+    # jobs continue automatically after this oneshot exits.  An interactive
+    # installer performs any required restarts after `systemctl start` returns.
 
     MARKER.unlink()
     directory_fd = os.open(STATE_DIR, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
@@ -3133,10 +3136,24 @@ EOF
     sudo systemctl enable lldpq-update-recovery.service >/dev/null 2>&1 || return 1
     # Consume an authority retained by a previously killed update before this
     # invocation creates a new transaction.
+    if sudo test -f "$UPDATE_RECOVERY_MARKER"; then
+        recovery_was_required=true
+    fi
     sudo systemctl start lldpq-update-recovery.service || {
         echo "[!] A previous interrupted update could not be recovered" >&2
         return 1
     }
+    if [[ "$recovery_was_required" == "true" ]]; then
+        # These calls run outside the Before= recovery unit, so they cannot
+        # wait on the very oneshot that is issuing them.
+        sudo systemctl try-restart fcgiwrap 2>/dev/null || true
+        sudo systemctl try-restart lldpq-console.service 2>/dev/null || true
+        sudo systemctl try-restart rsyslog 2>/dev/null || true
+        if ! sudo systemctl start nginx; then
+            echo "[!] Interrupted update was restored, but nginx could not be started" >&2
+            return 1
+        fi
+    fi
     echo "  Interrupted-update boot recovery guard verified"
 }
 
@@ -3821,6 +3838,33 @@ if [[ $EUID -eq 0 ]]; then
     sleep 2
 fi
 
+quiesce_recovery_units_for_fresh_install() {
+    local unit
+    # A clean/fresh install deliberately discards retained transactions. Stop
+    # their oneshots before deleting /var/lib/lldpq; otherwise an already
+    # running recovery process can keep nginx/fcgiwrap start jobs waiting even
+    # after its marker directory has been removed.
+    for unit in lldpq-recovery.path lldpq-recovery.service \
+                lldpq-update-recovery.service; do
+        if systemctl is-active --quiet "$unit" 2>/dev/null; then
+            if ! sudo timeout 30s systemctl stop "$unit"; then
+                echo "[!] Could not stop stale recovery unit: $unit" >&2
+                return 1
+            fi
+        fi
+        sudo systemctl disable "$unit" >/dev/null 2>&1 || true
+    done
+    sudo rm -f \
+        /etc/systemd/system/lldpq-recovery.path \
+        /etc/systemd/system/lldpq-recovery.service \
+        /etc/systemd/system/lldpq-update-recovery.service \
+        /etc/systemd/system/multi-user.target.wants/lldpq-recovery.path \
+        /etc/systemd/system/multi-user.target.wants/lldpq-recovery.service \
+        /etc/systemd/system/multi-user.target.wants/lldpq-update-recovery.service \
+        /usr/local/libexec/lldpq-update-recovery.py
+    sudo systemctl daemon-reload
+}
+
 # ============================================================================
 # MODE DETECTION
 # ============================================================================
@@ -3846,6 +3890,7 @@ if [[ -f /etc/lldpq.conf ]] || [[ -f /etc/lldpq-users.conf ]] || [[ -d /var/lib/
         read -p "  Clean install? [y/N]: " clean_response
         if [[ "$clean_response" =~ ^[Yy]$ ]]; then
             echo "  Cleaning existing installation..."
+            quiesce_recovery_units_for_fresh_install || exit 1
             sudo rm -f /etc/lldpq.conf
             sudo rm -f /etc/lldpq-users.conf
             sudo rm -rf /var/lib/lldpq
@@ -3874,6 +3919,10 @@ fi
 # FRESH-ONLY: Package installation
 # ============================================================================
 if [[ "$INSTALL_MODE" == "fresh" ]]; then
+
+    # Also cover machines where config/state was removed manually but an old
+    # recovery unit is still enabled or activating.
+    quiesce_recovery_units_for_fresh_install || exit 1
 
     step "Checking for conflicting services..."
     if systemctl is-active --quiet apache2 2>/dev/null; then
@@ -3909,8 +3958,16 @@ if [[ "$INSTALL_MODE" == "fresh" ]]; then
         echo "    Try running: sudo apt --fix-broken install"
         exit 1
     }
-    sudo systemctl enable --now nginx
-    sudo systemctl enable --now fcgiwrap
+    if ! sudo systemctl enable --now nginx; then
+        echo "[!] nginx could not be enabled/started" >&2
+        systemctl list-jobs --no-pager 2>/dev/null || true
+        exit 1
+    fi
+    if ! sudo systemctl enable --now fcgiwrap; then
+        echo "[!] fcgiwrap could not be enabled/started" >&2
+        systemctl list-jobs --no-pager 2>/dev/null || true
+        exit 1
+    fi
 
     step "Downloading Monaco Editor for offline use..."
     MONACO_VERSION="0.45.0"
