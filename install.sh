@@ -123,6 +123,29 @@ for path in sys.argv[1:]:
 PYTHON
 }
 
+# Copy the fixed system configuration into a private, unprivileged snapshot.
+# This is used when either the config or its stable lock inode cannot be opened
+# by the invoking shell (for example after an interrupted root-owned recovery,
+# or before a newly-added supplementary group is visible to that shell).  Never
+# extend this privileged read to a caller-supplied path.
+snapshot_system_lldpq_config() {
+    local config_file="$1" snapshot lock_file="${1}.lock"
+
+    [[ "$config_file" == "/etc/lldpq.conf" ]] || return 1
+    snapshot=$(mktemp "${TMPDIR:-/tmp}/lldpq-config-read.XXXXXX") || return 1
+    chmod 600 "$snapshot" || { rm -f "$snapshot"; return 1; }
+    if [[ -e "$lock_file" ]] && command -v flock >/dev/null 2>&1; then
+        if ! sudo flock -s "$lock_file" cat -- "$config_file" > "$snapshot"; then
+            rm -f "$snapshot"
+            return 1
+        fi
+    elif ! sudo cat -- "$config_file" > "$snapshot"; then
+        rm -f "$snapshot"
+        return 1
+    fi
+    printf '%s\n' "$snapshot"
+}
+
 # Read legacy KEY=value configuration without executing it as shell code.  The
 # file is intentionally writable by the shared web/CLI group, so `source` would
 # turn a configuration write into arbitrary code execution during install.
@@ -131,24 +154,10 @@ load_lldpq_config() {
     local line key raw value config_lock_fd="" config_snapshot=""
 
     [[ -f "$config_file" ]] || return 0
-    if [[ ! -r "$config_file" ]]; then
-        # Interrupted recovery can restore the root-owned config before its
-        # final group ownership pass. Read only the fixed system config through
-        # sudo, under the same shared lock, into a private snapshot. Never
-        # extend this read privilege to a caller-supplied path.
-        [[ "$config_file" == "/etc/lldpq.conf" ]] || return 1
-        config_snapshot=$(mktemp "${TMPDIR:-/tmp}/lldpq-config-read.XXXXXX") || return 1
-        chmod 600 "$config_snapshot" || { rm -f "$config_snapshot"; return 1; }
-        if [[ -e "${config_file}.lock" ]] && command -v flock >/dev/null 2>&1; then
-            if ! sudo flock -s "${config_file}.lock" cat -- "$config_file" \
-                    > "$config_snapshot"; then
-                rm -f "$config_snapshot"
-                return 1
-            fi
-        elif ! sudo cat -- "$config_file" > "$config_snapshot"; then
-            rm -f "$config_snapshot"
-            return 1
-        fi
+    if [[ ! -r "$config_file" ]] || \
+       { [[ -e "${config_file}.lock" ]] && \
+         { [[ ! -r "${config_file}.lock" ]] || [[ ! -w "${config_file}.lock" ]]; }; }; then
+        config_snapshot=$(snapshot_system_lldpq_config "$config_file") || return 1
         config_file="$config_snapshot"
     elif [[ -e "${config_file}.lock" ]] && command -v flock >/dev/null 2>&1; then
         exec {config_lock_fd}<>"${config_file}.lock" || return 1
@@ -4418,12 +4427,31 @@ if [[ ! -x /usr/local/bin/lldpq-config ]]; then
     echo "[!] Required runtime config helper was not installed: /usr/local/bin/lldpq-config" >&2
     exit 1
 fi
-if ! /usr/local/bin/lldpq-config --require-config \
-   --require-key LLDPQ_DIR --require-key LLDPQ_USER --require-key WEB_ROOT \
-   --config "$LLDPQ_CONFIG_FILE" >/dev/null 2>&1 && \
-   [[ "$INSTALL_MODE" == "update" ]]; then
-    echo "[!] Existing runtime configuration cannot be read safely: $LLDPQ_CONFIG_FILE" >&2
-    exit 1
+if [[ "$INSTALL_MODE" == "update" ]]; then
+    _config_validation_file="$LLDPQ_CONFIG_FILE"
+    _config_validation_snapshot=""
+    # Validate content with the freshly installed parser, but never execute
+    # that newly copied program as root.  A private snapshot also avoids
+    # rejecting a valid update merely because the invoking admin is not the
+    # configured runtime account or has not refreshed group membership yet.
+    if [[ "$LLDPQ_CONFIG_FILE" == "/etc/lldpq.conf" ]]; then
+        _config_validation_snapshot=$(
+            snapshot_system_lldpq_config "$LLDPQ_CONFIG_FILE"
+        ) || {
+            echo "[!] Existing runtime configuration could not be snapshotted safely: $LLDPQ_CONFIG_FILE" >&2
+            exit 1
+        }
+        _config_validation_file="$_config_validation_snapshot"
+    fi
+    if ! /usr/local/bin/lldpq-config --require-config \
+       --require-key LLDPQ_DIR --require-key LLDPQ_USER --require-key WEB_ROOT \
+       --config "$_config_validation_file" >/dev/null; then
+        [[ -z "$_config_validation_snapshot" ]] || rm -f "$_config_validation_snapshot"
+        echo "[!] Existing runtime configuration is invalid: $LLDPQ_CONFIG_FILE" >&2
+        exit 1
+    fi
+    [[ -z "$_config_validation_snapshot" ]] || rm -f "$_config_validation_snapshot"
+    unset _config_validation_file _config_validation_snapshot
 fi
 
 echo "  - Installing root-owned backup/import helper"
@@ -4845,6 +4873,12 @@ sudo chmod 660 /etc/lldpq.conf
 prepare_shared_lock_files /etc/lldpq.conf.lock
 sudo usermod -a -G $USER_GROUP www-data 2>/dev/null || true
 sudo usermod -a -G www-data "$LLDPQ_USER" 2>/dev/null || true
+if ! sudo -u "$LLDPQ_USER" /usr/local/bin/lldpq-config --require-config \
+   --require-key LLDPQ_DIR --require-key LLDPQ_USER --require-key WEB_ROOT \
+   --config /etc/lldpq.conf >/dev/null; then
+    echo "[!] Runtime user '$LLDPQ_USER' cannot read the installed LLDPq configuration" >&2
+    exit 1
+fi
 echo "  Configuration saved to /etc/lldpq.conf"
 
 # ============================================================================
