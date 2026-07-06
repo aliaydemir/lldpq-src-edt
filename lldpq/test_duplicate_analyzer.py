@@ -311,6 +311,19 @@ class DuplicateMacClassificationTests(unittest.TestCase):
         self.assertEqual(1, summary["mac_mobility_active"])
         self.assertEqual(1, summary["mac_mobility_settled"])
 
+        output = Path(self.tmp.name) / "duplicate-summary.html"
+        self.analyzer.export_html(str(output))
+        report = output.read_text(encoding="utf-8")
+        self.assertIn('data-confirmed-mac-total="1"', report)
+        self.assertIn('data-mac-dad-total="1"', report)
+        self.assertIn('data-mac-mobility-active="1"', report)
+        self.assertIn('data-mac-mobility-total="2"', report)
+        self.assertIn("CONFIRMED MAC CONFLICTS", report)
+        self.assertIn("MAC DAD FINDINGS", report)
+        self.assertIn("ACTIVE MAC MOBILITY", report)
+        self.assertIn("MAC MOBILITY SIGNALS", report)
+        self.assertNotIn("MAC DUPLICATES", report)
+
     def test_high_flat_single_owner_sequence_is_historical_not_critical(self):
         mac = "00:11:22:33:44:77"
         self.add_mac_mobility(mac, seq=20000, prev_seq=20000)

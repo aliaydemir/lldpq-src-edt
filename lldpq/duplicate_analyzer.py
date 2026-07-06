@@ -13,9 +13,9 @@ network, grouped per VLAN/VNI. Combines several signals collected by monitor.sh
   * bridge fdb show                        -> same MAC LOCAL on >=2 switches (non-EVPN + location)
   * ip -4 neigh show                       -> APIPA (169.254/16 = DHCP failed) + IP<->multi-MAC
 
-Severity is driven by *recency* (a duplicate logged in the last hour = actively
-flapping = CRITICAL) and by the EVPN mobility *sequence delta* between monitor
-cycles (climbing seq = active). A flagged-but-stale entry is WARNING.
+IP severity keeps authoritative DAD rows separate from historical context. MAC
+severity additionally compares per-switch mobility samples against the configured
+DAD move-rate policy; a small positive delta alone is not a CRITICAL conflict.
 
 Copyright (c) 2024 LLDPq Project - MIT License
 """
@@ -52,9 +52,9 @@ LOG_RE = re.compile(
 ACTIVE_WINDOW_SEC = 3600       # a dup event within this window = actively flapping
 APIPA_CRITICAL = 50            # APIPA neighbours on one switch >= this = critical
 SEQ_WARN = 10                  # EVPN mobility seq >= this = the entry has moved at all (collection floor)
-# A single-MAC, single-location, non-climbing entry is only treated as a (past) duplicate if its
-# sequence is this high -- real duplicate storms reach 100k+, whereas normal EVPN-MH failover churn
-# stays in the hundreds. This keeps genuine settled duplicates while dropping MH mobility noise.
+# A single-MAC, single-location, non-climbing mobility record is retained as history only when its
+# sequence is this high. Incident counts still keep this separate from confirmed simultaneous MAC
+# conflicts, so ordinary EVPN-MH churn cannot inflate the duplicate total.
 SEQ_STORM = 10000
 DEFAULT_DAD_MOVES = 5          # FRR default/fallback when per-switch policy is unavailable
 DEFAULT_DAD_WINDOW_SEC = 180
@@ -847,9 +847,8 @@ class DuplicateAnalyzer:
                 rec["severity"] = "CRITICAL"
                 self.mac_dups[(vlan, mac)] = rec
 
-        # Mobility-based detection (high EVPN sequence). Works even where dup-address-detection
-        # is OFF (EVPN-MH fabrics) because the mobility sequence is always tracked. A stable
-        # dual-homed entry is 0/0 (never collected); a climbing/high seq is a real duplicate.
+        # Mobility context (high EVPN sequence). This remains available where DAD is OFF, but it is
+        # evidence of movement rather than proof of a simultaneous duplicate.
         for (vlan, ip), mob in self.ip_mob.items():
             rec = self.ip_dups.get((vlan, ip))
             if rec is None:
@@ -1544,16 +1543,18 @@ __MACHINE_SUMMARY__
     <div class="modal-body">
       <h4>Data sources (collected per switch each cycle)</h4>
       <code>show evpn arp-cache vni all duplicate</code> &mdash; authoritative duplicate IPs + EVPN mobility sequence.<br>
-      <code>show evpn mac vni all duplicate</code> &mdash; duplicate MACs (when FRR latches them).<br>
+      <code>show evpn mac vni all duplicate</code> &mdash; current/latched FRR MAC DAD findings.<br>
       <code>show evpn mac / arp-cache vni all</code> &mdash; mobility evidence (works with DAD off); this is shown separately from confirmed conflicts.<br>
       <code>bridge fdb show</code> &mdash; same MAC LOCAL on &ge;2 <i>physical</i> ports (bonds excluded = EVPN-MH dual-homing).<br>
       <code>ip -4 neigh show</code> &mdash; APIPA (169.254/16 = DHCP failed) + IP&harr;multi-MAC.<br>
       zebra log <code>"detected as duplicate"</code> &mdash; timestamped event history (recency &amp; rate).
       <h4>Severity</h4>
-      <b>CRITICAL</b> &mdash; a confirmed simultaneous physical MAC conflict, a recent DAD event, or
-      mobility that reaches the configured move-rate threshold.<br>
-      <b>WARNING</b> &mdash; a latched DAD flag or below-threshold / historical mobility evidence.
-      A positive &#916; below policy is movement context, not proof of a duplicate.<br>
+      <b>IP CRITICAL</b> &mdash; a current duplicate event or an IP sequence that increased in this
+      collection cycle. A current but flat/old authoritative IP DAD row is quiesced WARNING.<br>
+      <b>MAC CRITICAL</b> &mdash; a confirmed simultaneous physical MAC conflict, a recent DAD event,
+      or mobility that reaches the configured move-rate threshold.<br>
+      <b>MAC WARNING</b> &mdash; a latched DAD flag or below-threshold / historical mobility evidence.
+      A positive MAC &#916; below policy is movement context, not proof of a duplicate.<br>
       <b>Aged</b> &mdash; a quiesced duplicate whose sequence has not moved for &ge;__STALE_DAYS__ days is
       collapsed out of the list (use <i>Show aged</i> to reveal). These persist in FRR until the address is
       removed / re-learned or its DAD flag is cleared &mdash; the tool only mirrors that state.<br>
@@ -1569,7 +1570,7 @@ __MACHINE_SUMMARY__
       Configured threshold: <code>__CFG__</code> (max-moves / window). FRR <b>automatically disables DAD on
       switches where EVPN multihoming (Ethernet Segments / dual-homed bonds) is enabled</b> &mdash; this is
       normal, not a misconfiguration. There the EVPN <i>duplicate</i> flag &amp; zebra log are unavailable;
-      duplicates are instead caught by the mobility sequence below (always tracked).__DAD_NOTE__
+      movement anomalies are instead observed through the mobility sequence below (always tracked).__DAD_NOTE__
       <h4>Mobility sequence &amp; &#916; (works even with DAD off)</h4>
       Every MAC/IP carries an EVPN mobility <b>sequence</b> that increments each time it moves between
       owners. A stable / dual-homed entry stays at <code>0/0</code>. The <code>(+N)</code> next to a seq is
