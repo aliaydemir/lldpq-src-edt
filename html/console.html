@@ -139,7 +139,7 @@
             </div>
             <div class="bcast-bar" id="bcastBar" hidden>
                 <span class="bcast-label">Broadcast →</span>
-                <input id="bcastInput" autocomplete="off" placeholder="send commands to all tabs" aria-label="Broadcast command to connected sessions" onkeydown="if(event.key==='Enter'){broadcastSend()} if(event.key==='Escape'){closeBroadcast()}">
+                <input id="bcastInput" autocomplete="off" placeholder="send commands to all tabs" aria-label="Broadcast command to connected sessions" onkeydown="if(event.key==='Enter'){event.preventDefault();broadcastSend()} if(event.key==='Escape'){closeBroadcast()}">
                 <button onclick="closeBroadcast()" title="Close broadcast">✕</button>
             </div>
         </main>
@@ -729,10 +729,8 @@
     function broadcastSend() {
         const inp = document.getElementById('bcastInput');
         const cmd = inp.value;
-        if (!cmd) return;
         const all = Object.values(sessions);
         const connected = all.filter(s => s.ws && s.ws.readyState === WebSocket.OPEN);
-        const skipped = all.length - connected.length;
         if (!connected.length) {
             showToast('Broadcast skipped because no console sessions are connected.', 'warning');
             return;
@@ -742,7 +740,7 @@
             connected.forEach(s => {
                 if (s.ws && s.ws.readyState === WebSocket.OPEN) {
                     try {
-                        s.ws.send(JSON.stringify({ t: 'i', d: cmd + '\n' }));
+                        s.ws.send(JSON.stringify({ t: 'i', d: cmd + '\r' }));
                         sent += 1;
                     } catch (e) {}
                 }
@@ -751,16 +749,7 @@
             if (nowSkipped) showToast(`Broadcast skipped ${nowSkipped} disconnected target${nowSkipped === 1 ? '' : 's'}.`, 'warning');
             if (sent) inp.value = '';   // placeholder stays "send commands to all tabs"
         };
-        if (connected.length > 1) {
-            requestConfirmation(
-                'Confirm broadcast',
-                `Send this command to ${connected.length} connected targets?${skipped ? ` ${skipped} disconnected target${skipped === 1 ? '' : 's'} will be skipped.` : ''}`,
-                send,
-                { confirmText: 'Send', danger: false }
-            );
-        } else {
-            send();
-        }
+        send();
     }
 
     function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }

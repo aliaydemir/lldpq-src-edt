@@ -264,8 +264,35 @@ cleanup_assets_job_statuses() {
 TRIGGER_REPORT_DIR="$LLDPQ_DIR/monitor-results"
 TRIGGER_STALE_MARKER="$TRIGGER_REPORT_DIR/.lldpq-stale"
 
+publish_trigger_web_marker() {
+    local source_marker=$1
+    local web_dir="$WEB_ROOT/monitor-results"
+    local web_marker="$web_dir/.lldpq-stale"
+    local web_temporary=""
+
+    [[ -d "$web_dir" ]] || return 0
+
+    if [[ -e "$web_marker" || -L "$web_marker" ]] && \
+       [[ "$source_marker" -ef "$web_marker" ]]; then
+        sudo chown "$LLDPQ_USER:www-data" "$source_marker" 2>/dev/null && \
+            sudo chmod 0640 "$source_marker" 2>/dev/null
+        return $?
+    fi
+
+    web_temporary=$(sudo mktemp "$web_dir/.lldpq-stale.tmp.XXXXXXXX" 2>/dev/null) || \
+        return 1
+    if ! sudo cp -- "$source_marker" "$web_temporary" 2>/dev/null || \
+       ! sudo chown "$LLDPQ_USER:www-data" "$web_temporary" 2>/dev/null || \
+       ! sudo chmod 0640 "$web_temporary" 2>/dev/null || \
+       ! sudo mv -fT -- "$web_temporary" "$web_marker" 2>/dev/null; then
+        sudo rm -f -- "$web_temporary" 2>/dev/null || true
+        return 1
+    fi
+    return 0
+}
+
 write_trigger_report_marker() {
-    local marker_status=$1 reason=$2 timestamp temporary web_marker
+    local marker_status=$1 reason=$2 timestamp temporary
     mkdir -p "$TRIGGER_REPORT_DIR" || return 1
     timestamp=$(date -Is) || return 1
     temporary=$(mktemp "$TRIGGER_REPORT_DIR/.lldpq-stale.tmp.XXXXXXXX") || return 1
@@ -280,13 +307,7 @@ write_trigger_report_marker() {
         return 1
     fi
 
-    if [[ -d "$WEB_ROOT/monitor-results" ]]; then
-        web_marker="$WEB_ROOT/monitor-results/.lldpq-stale"
-        if [[ ! -e "$web_marker" || ! "$TRIGGER_STALE_MARKER" -ef "$web_marker" ]]; then
-            sudo cp "$TRIGGER_STALE_MARKER" "$web_marker" 2>/dev/null || return 1
-        fi
-    fi
-    return 0
+    publish_trigger_web_marker "$TRIGGER_STALE_MARKER"
 }
 
 mark_trigger_reports_stale() {

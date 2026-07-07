@@ -727,12 +727,22 @@
 
     <script>
         const DASHBOARD_DEFAULT_MAX_AGE_SECONDS = 30 * 60;
+        const DASHBOARD_STATUS_POLL_MILLISECONDS = 5000;
         let dashboardPipelineState = {
             marker: null,
             manifest: null,
             manifestValid: false,
-            generation: null
+            generation: null,
+            metadataReliable: false
         };
+        let dashboardStatusPollTimer = null;
+        let dashboardStatusPollInFlight = false;
+        let dashboardStatusInitialized = false;
+        let dashboardObservedGeneration = null;
+        let dashboardRenderedGeneration = null;
+        let dashboardRefreshRequestedGeneration = null;
+        let dashboardRefreshInFlight = false;
+        let dashboardQueuedRefreshGeneration = null;
 
         function noCacheUrl(path) {
             return path + (path.includes('?') ? '&' : '?') + '_=' + Date.now();
@@ -841,35 +851,48 @@
             return text;
         }
 
-        async function readDashboardPipelineState() {
+        async function readDashboardMarkerState() {
             let marker = null;
-            let manifest = null;
+            let markerReadSuccessful = false;
             try {
                 const response = await fetch(noCacheUrl('monitor-results/.lldpq-stale'), { cache: 'no-store' });
-                if (response.ok) {
+                if (response.status === 404) {
+                    markerReadSuccessful = true;
+                } else if (response.ok) {
                     marker = parsePipelineMarker(await response.text());
                     if (!['collecting', 'stale'].includes(marker.status)) {
                         marker = { status: 'stale', reason: 'invalid pipeline marker' };
                     }
+                    markerReadSuccessful = true;
                 }
             } catch (error) {}
+            return { marker, reliable: markerReadSuccessful };
+        }
+
+        async function readDashboardPipelineState() {
+            const markerState = await readDashboardMarkerState();
+            let manifest = null;
+            let manifestReadSuccessful = false;
             try {
                 const response = await fetch(noCacheUrl('monitor-results/.lldpq-current.json'), { cache: 'no-store' });
-                if (response.ok) manifest = await response.json();
+                if (response.ok) {
+                    manifest = await response.json();
+                    manifestReadSuccessful = true;
+                }
             } catch (error) {}
             const validation = validateDashboardManifest(manifest);
             dashboardPipelineState = {
-                marker,
+                marker: markerState.marker,
                 manifest,
                 manifestValid: Boolean(validation),
-                generation: validation?.generation || null
+                generation: validation?.generation || null,
+                metadataReliable: markerState.reliable && manifestReadSuccessful
             };
             return dashboardPipelineState;
         }
 
         // Show the report generation time, not the viewer's current clock.
-        async function setLastUpdated() {
-            const state = await readDashboardPipelineState();
+        function renderLastUpdated(state) {
             const completedAt = state.manifestValid && state.manifest?.completed_at;
             const reportDate = completedAt ? new Date(completedAt) : null;
             const options = { 
@@ -1597,9 +1620,12 @@
                 const verifiedPipelineState = await readDashboardPipelineState();
                 if (verifiedPipelineState.generation !== pipelineState.generation) {
                     // Publication is atomic, but this browser batch straddled
-                    // the swap. Retry shortly and never render the mixed set.
-                    setTimeout(updateNetworkStats, 250);
-                    return;
+                    // the swap. Retry through the shared refresh coordinator
+                    // and never render the mixed set or start parallel loads.
+                    setTimeout(() => requestDashboardRefresh(
+                        verifiedPipelineState.generation
+                    ), 250);
+                    return null;
                 }
                 pipelineState = verifiedPipelineState;
                 
@@ -1838,9 +1864,15 @@
             } else {
                 criticalElement.style.color = '#ff9800';
             }
-                
+
+                // The heavy 120-second path also refreshes its trusted
+                // timestamp/generation metadata. Unreliable marker reads are
+                // ignored by applyDashboardPipelineMetadata.
+                applyDashboardPipelineMetadata(pipelineState, false);
+                return pipelineState.generation;
             } catch (error) {
                 console.error('Failed to update network stats:', error);
+                return null;
             }
         }
 
@@ -1883,16 +1915,124 @@
             }
         }
 
+        function requestDashboardRefresh(targetGeneration = null) {
+            if (targetGeneration && targetGeneration === dashboardRenderedGeneration) {
+                dashboardRefreshRequestedGeneration = targetGeneration;
+                return Promise.resolve(targetGeneration);
+            }
+
+            if (dashboardRefreshInFlight) {
+                // Periodic refreshes are redundant while one is active. A
+                // completed generation is not: remember only that generation
+                // and load it once after the current batch settles.
+                if (targetGeneration && targetGeneration !== dashboardRenderedGeneration) {
+                    dashboardQueuedRefreshGeneration = targetGeneration;
+                }
+                return Promise.resolve(null);
+            }
+
+            if (targetGeneration) {
+                dashboardRefreshRequestedGeneration = targetGeneration;
+            }
+            dashboardRefreshInFlight = true;
+            return updateNetworkStats().then(renderedGeneration => {
+                if (renderedGeneration) {
+                    dashboardRenderedGeneration = renderedGeneration;
+                    dashboardRefreshRequestedGeneration = renderedGeneration;
+                }
+                return renderedGeneration;
+            }).finally(() => {
+                dashboardRefreshInFlight = false;
+                const queuedGeneration = dashboardQueuedRefreshGeneration;
+                dashboardQueuedRefreshGeneration = null;
+                if (queuedGeneration && queuedGeneration !== dashboardRenderedGeneration) {
+                    requestDashboardRefresh(queuedGeneration);
+                }
+            });
+        }
+
+        function applyDashboardPipelineMetadata(state, allowRefresh) {
+            if (!state.metadataReliable) return state;
+
+            const wasInitialized = dashboardStatusInitialized;
+            const previousGeneration = dashboardObservedGeneration;
+            dashboardStatusInitialized = true;
+            renderLastUpdated(state);
+
+            // The web tree is activated before its collecting marker is
+            // cleared. Do not consume that generation early: otherwise the
+            // subsequent collecting -> current transition would look
+            // unchanged and its immediate card refresh would be lost.
+            const completedState = !state.marker && state.manifestValid &&
+                Boolean(state.generation);
+            const generationChanged = wasInitialized && completedState &&
+                state.generation !== previousGeneration;
+            if (completedState) {
+                dashboardObservedGeneration = state.generation;
+            }
+            if (allowRefresh && generationChanged && !state.marker &&
+                state.manifestValid &&
+                state.generation !== dashboardRefreshRequestedGeneration &&
+                state.generation !== dashboardRenderedGeneration) {
+                requestDashboardRefresh(state.generation);
+            }
+            return state;
+        }
+
+        async function pollDashboardPipelineState({ allowRefresh = true } = {}) {
+            if (dashboardStatusPollInFlight) return null;
+            dashboardStatusPollInFlight = true;
+            try {
+                // These are the two tiny pipeline metadata files. Polling them
+                // catches even a complete run that begins and ends between
+                // timer ticks; the large analysis reports are not fetched here.
+                const state = await readDashboardPipelineState();
+                return applyDashboardPipelineMetadata(state, allowRefresh);
+            } finally {
+                dashboardStatusPollInFlight = false;
+            }
+        }
+
+        function scheduleDashboardStatusPoll() {
+            if (dashboardStatusPollTimer !== null) {
+                clearTimeout(dashboardStatusPollTimer);
+            }
+            dashboardStatusPollTimer = setTimeout(async () => {
+                try {
+                    await pollDashboardPipelineState();
+                } catch (error) {
+                    console.warn('Failed to poll pipeline status:', error);
+                } finally {
+                    scheduleDashboardStatusPoll();
+                }
+            }, DASHBOARD_STATUS_POLL_MILLISECONDS);
+        }
+
         // Initialize dashboard
-        document.addEventListener('DOMContentLoaded', function() {
-            setLastUpdated().catch(error => console.warn('Failed to load report timestamp:', error));
-            updateNetworkStats();
-            
+        document.addEventListener('DOMContentLoaded', async function() {
+            let initialState = null;
+            try {
+                initialState = await pollDashboardPipelineState({
+                    allowRefresh: false
+                });
+            } catch (error) {
+                console.warn('Failed to load report timestamp:', error);
+            }
+            requestDashboardRefresh(initialState?.generation || null);
+            scheduleDashboardStatusPoll();
+
             // Update every 2 minutes (large data files)
             setInterval(function() {
-                setLastUpdated().catch(error => console.warn('Failed to load report timestamp:', error));
-                updateNetworkStats();
+                requestDashboardRefresh();
             }, 120000);
+        });
+
+        document.addEventListener('visibilitychange', function() {
+            if (document.visibilityState === 'visible') {
+                pollDashboardPipelineState().catch(error =>
+                    console.warn('Failed to poll pipeline status:', error)
+                );
+            }
         });
 
         // Add hover effects for clickable cards
