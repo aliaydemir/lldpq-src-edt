@@ -2002,6 +2002,8 @@ _PORTABLE_BOOLEAN_KEYS = {
     "AUTO_SET_HOSTNAME", "TELEMETRY_ENABLED", "MONITOR_TIMING",
 }
 _PORTABLE_INTEGER_RANGES = {
+    "AI_CONTEXT_WINDOW_TOKENS": (8_000, 2_000_000),
+    "AI_FALLBACK_CONTEXT_WINDOW_TOKENS": (8_000, 2_000_000),
     "SCAN_INTERVAL": (0, 86400),
     "MONITOR_MAX_PARALLEL": (1, 1000),
     "PFC_ECN_MAX_PARALLEL": (1, 8),
@@ -2018,6 +2020,9 @@ _PORTABLE_INTEGER_RANGES = {
     "GET_CONFIGS_SSH_TIMEOUT": (1, 86400),
     "TRANSCEIVER_FW_SSH_TIMEOUT": (1, 86400),
     "TRANSCEIVER_FW_MIN_INTERVAL": (0, 604800),
+}
+_PORTABLE_OPTIONAL_INTEGER_KEYS = {
+    "AI_CONTEXT_WINDOW_TOKENS", "AI_FALLBACK_CONTEXT_WINDOW_TOKENS",
 }
 _PORTABLE_URL_KEYS = {
     "PROMETHEUS_URL", "AI_API_URL", "OLLAMA_URL", "AI_PROXY_URL", "AI_SEARCH_URL",
@@ -2057,6 +2062,8 @@ def _validate_portable_preference(key, candidate, validate_cron):
             )
         return normalized
     if key in _PORTABLE_INTEGER_RANGES:
+        if not value and key in _PORTABLE_OPTIONAL_INTEGER_KEYS:
+            return shlex.quote(value)
         if not re.fullmatch(r"[0-9]+", value):
             raise BackupImportError(
                 f"Portable preference {key} must be a whole number"

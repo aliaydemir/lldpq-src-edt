@@ -2934,6 +2934,7 @@ WEB_TARGETS=(
     "$WEB_ROOT/fabric-editor.html" "$WEB_ROOT/fabric-exit.html"
     "$WEB_ROOT/auth-api.sh" "$WEB_ROOT/auth-guard.sh" "$WEB_ROOT/ansible-api.sh"
     "$WEB_ROOT/ai-api.sh" "$WEB_ROOT/ai.html" "$WEB_ROOT/ai_command_policy.py"
+    "$WEB_ROOT/ai_insights.py" "$WEB_ROOT/ai_context.py"
     "$WEB_ROOT/assets-api.sh" "$WEB_ROOT/setup_safety.py"
     "$WEB_ROOT/provision.html" "$WEB_ROOT/provision-api.sh"
     "$WEB_ROOT/search.html" "$WEB_ROOT/search-api.sh"

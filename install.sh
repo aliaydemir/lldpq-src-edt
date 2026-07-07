@@ -363,7 +363,7 @@ load_lldpq_config() {
             TRANSCEIVER_FW_SSH_TIMEOUT|TELEMETRY_ENABLED|PROMETHEUS_URL|\
             TELEMETRY_COLLECTOR_IP|TELEMETRY_COLLECTOR_PORT|\
             TELEMETRY_COLLECTOR_VRF|DISCOVERY_RANGE|SCAN_INTERVAL|AI_PROVIDER|AI_MODEL|\
-            AI_FALLBACK_MODEL|\
+            AI_FALLBACK_MODEL|AI_CONTEXT_WINDOW_TOKENS|AI_FALLBACK_CONTEXT_WINDOW_TOKENS|\
             AI_API_KEY|AI_API_URL|OLLAMA_URL|AI_PROXY_URL|AI_SEARCH_MODEL|\
             AI_SEARCH_URL|AI_SEARCH_KEY)
                 ;;
@@ -828,9 +828,12 @@ render_ai_config() {
     local provider="$1" model="$2" api_key="$3" api_url="$4" ollama_url="$5"
     local proxy_url="$6" search_model="$7" search_url="$8" search_key="$9"
     local fallback_model="${10}"
+    local context_window="${11}" fallback_context_window="${12}"
     printf 'AI_PROVIDER=%s\n' "$provider"
     printf 'AI_MODEL=%s\n' "$model"
     printf 'AI_FALLBACK_MODEL=%s\n' "$fallback_model"
+    printf 'AI_CONTEXT_WINDOW_TOKENS=%s\n' "$context_window"
+    printf 'AI_FALLBACK_CONTEXT_WINDOW_TOKENS=%s\n' "$fallback_context_window"
     printf 'AI_API_KEY=%s\n' "$api_key"
     printf 'AI_API_URL=%s\n' "$api_url"
     printf 'OLLAMA_URL=%s\n' "$ollama_url"
@@ -4803,6 +4806,8 @@ if [[ "$INSTALL_MODE" == "update" ]]; then
     _SAVE_AI_PROVIDER="${AI_PROVIDER:-ollama}"
     _SAVE_AI_MODEL="${AI_MODEL:-llama3.2}"
     _SAVE_AI_FALLBACK_MODEL="${AI_FALLBACK_MODEL:-}"
+    _SAVE_AI_CONTEXT_WINDOW_TOKENS="${AI_CONTEXT_WINDOW_TOKENS:-}"
+    _SAVE_AI_FALLBACK_CONTEXT_WINDOW_TOKENS="${AI_FALLBACK_CONTEXT_WINDOW_TOKENS:-}"
     _SAVE_AI_API_KEY="${AI_API_KEY:-}"
     _SAVE_AI_API_URL="${AI_API_URL:-https://api.openai.com/v1}"
     _SAVE_OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
@@ -5376,7 +5381,7 @@ echo "TRANSCEIVER_FW_MIN_INTERVAL=1800" | sudo tee -a /etc/lldpq.conf > /dev/nul
 echo "TRANSCEIVER_FW_SSH_TIMEOUT=300" | sudo tee -a /etc/lldpq.conf > /dev/null
 render_ai_config \
     ollama llama3.2 "" https://api.openai.com/v1 http://localhost:11434 \
-    "" "" "" "" "" | sudo tee -a /etc/lldpq.conf > /dev/null
+    "" "" "" "" "" "" "" | sudo tee -a /etc/lldpq.conf > /dev/null
 
 # Preserve telemetry settings (update mode)
 if [[ "$INSTALL_MODE" == "update" ]]; then
@@ -5410,7 +5415,7 @@ if [[ "$INSTALL_MODE" == "update" ]]; then
     # contain '/', '|', '&' which break `sed s///` ("unknown option to s"), so delete
     # the freshly-written default lines and re-append the preserved values with echo
     # (safe for ANY value).
-    sudo sed -i '/^AI_PROVIDER=/d;/^AI_MODEL=/d;/^AI_FALLBACK_MODEL=/d;/^AI_API_KEY=/d;/^AI_API_URL=/d;/^OLLAMA_URL=/d;/^AI_PROXY_URL=/d;/^AI_SEARCH_MODEL=/d;/^AI_SEARCH_URL=/d;/^AI_SEARCH_KEY=/d' /etc/lldpq.conf
+    sudo sed -i '/^AI_PROVIDER=/d;/^AI_MODEL=/d;/^AI_FALLBACK_MODEL=/d;/^AI_CONTEXT_WINDOW_TOKENS=/d;/^AI_FALLBACK_CONTEXT_WINDOW_TOKENS=/d;/^AI_API_KEY=/d;/^AI_API_URL=/d;/^OLLAMA_URL=/d;/^AI_PROXY_URL=/d;/^AI_SEARCH_MODEL=/d;/^AI_SEARCH_URL=/d;/^AI_SEARCH_KEY=/d' /etc/lldpq.conf
     render_ai_config \
         "$_SAVE_AI_PROVIDER" \
         "$_SAVE_AI_MODEL" \
@@ -5421,7 +5426,9 @@ if [[ "$INSTALL_MODE" == "update" ]]; then
         "$_SAVE_AI_SEARCH_MODEL" \
         "$_SAVE_AI_SEARCH_URL" \
         "$_SAVE_AI_SEARCH_KEY" \
-        "$_SAVE_AI_FALLBACK_MODEL" | sudo tee -a /etc/lldpq.conf > /dev/null
+        "$_SAVE_AI_FALLBACK_MODEL" \
+        "$_SAVE_AI_CONTEXT_WINDOW_TOKENS" \
+        "$_SAVE_AI_FALLBACK_CONTEXT_WINDOW_TOKENS" | sudo tee -a /etc/lldpq.conf > /dev/null
 fi
 
 # Create cache and data files with correct permissions

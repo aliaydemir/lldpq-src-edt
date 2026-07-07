@@ -117,6 +117,7 @@
         .tool-kind { font-size: 9px; font-weight: 700; letter-spacing: .5px; padding: 1px 5px; border-radius: 3px; background: #243; color: #9c6; white-space: nowrap; }
         .tool-status { font-size: 9px; font-weight: 700; color: #6bbf59; white-space: nowrap; }
         .tool-row.fail .tool-status { color: #ef5350; }
+        .tool-row.warn .tool-status { color: #ffca28; }
 
         /* Suggested remediation (one-click → Commands, prefilled) */
         /* follow-up question chips */
@@ -320,14 +321,196 @@ let requestGeneration = 0;
 let chatRequestController = null;
 let analysisRequestController = null;
 const STORAGE_KEY = 'lldpq_ai_chat_history';
+const MAX_STORED_CHAT_CHARS = 1500000;
+// Keep these request limits in lockstep with ai-api.sh. The browser trims only
+// the outbound copy: full answers remain visible and persisted for the operator.
+const MAX_CHAT_MESSAGE_CHARS = 12000;
+const MAX_HISTORY_MESSAGES = 50;
+const MAX_HISTORY_CHARS = 50000;
+const MAX_ATTACHED_LOG_LINES = 200;
+const MAX_ATTACHED_LOG_CHARS = 8000;
+const MAX_ATTACHED_LOG_LINE_CHARS = 600;
+const CONTEXT_OMISSION_MARKER = '\n[... middle omitted to fit context budget ...]\n';
+const LOG_OMISSION_MARKER = '[... additional attached logs omitted to fit request budget ...]\n';
+
+function truncateContextText(value, maxChars, marker = CONTEXT_OMISSION_MARKER) {
+    const text = typeof value === 'string' ? value : String(value ?? '');
+    const limit = Math.max(0, Math.floor(Number(maxChars) || 0));
+    if (text.length <= limit) return text;
+    if (limit === 0) return '';
+    if (limit <= marker.length) return text.slice(0, limit);
+    const retained = limit - marker.length;
+    const headLength = Math.ceil(retained / 2);
+    const tailLength = Math.floor(retained / 2);
+    return text.slice(0, headLength) + marker + text.slice(text.length - tailLength);
+}
+
+function buildHistoryPayload(history) {
+    if (!Array.isArray(history)) return [];
+
+    // Pair adjacent user/assistant messages into turns. Selection then walks
+    // newest-first, but the payload itself remains chronological for the LLM.
+    const groups = [];
+    history.forEach(raw => {
+        if (!raw || (raw.role !== 'user' && raw.role !== 'assistant') ||
+            typeof raw.content !== 'string') return;
+        const entry = {
+            role: raw.role,
+            content: truncateContextText(raw.content, MAX_CHAT_MESSAGE_CHARS),
+        };
+        const previous = groups[groups.length - 1];
+        if (entry.role === 'assistant' && previous && previous.length === 1 &&
+            previous[0].role === 'user') {
+            previous.push(entry);
+        } else {
+            groups.push([entry]);
+        }
+    });
+
+    const selectedGroups = [];
+    let selectedMessages = 0;
+    let selectedChars = 0;
+    for (let i = groups.length - 1; i >= 0; i--) {
+        const group = groups[i];
+        const groupChars = group.reduce((total, item) => total + item.content.length, 0);
+        if (selectedMessages + group.length > MAX_HISTORY_MESSAGES ||
+            selectedChars + groupChars > MAX_HISTORY_CHARS) break;
+        selectedGroups.unshift(group);
+        selectedMessages += group.length;
+        selectedChars += groupChars;
+    }
+    return selectedGroups.flat();
+}
+
+function normalizeLogCount(value) {
+    const count = Number(value);
+    if (!Number.isFinite(count) || count <= 0) return 0;
+    return Math.min(Number.MAX_SAFE_INTEGER, Math.floor(count));
+}
+
+function buildAttachedLogContext(message, logData) {
+    const safeMessage = truncateContextText(message, MAX_CHAT_MESSAGE_CHARS);
+    const source = logData && logData.messages;
+    if (!source || typeof source !== 'object' || Array.isArray(source)) {
+        return { finalMessage: safeMessage, attached: false, omitted: false };
+    }
+
+    const lines = [];
+    let omitted = false;
+    let limitReached = false;
+    const devices = Object.keys(source).sort();
+    for (const device of devices) {
+        const messages = Array.isArray(source[device]) ? source[device] : [];
+        for (const rawMessage of messages) {
+            if (lines.length >= MAX_ATTACHED_LOG_LINES) {
+                omitted = true;
+                limitReached = true;
+                break;
+            }
+            const rawLine = `${String(device)}: ${String(rawMessage ?? '')}`
+                .replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+            const line = truncateContextText(
+                rawLine,
+                MAX_ATTACHED_LOG_LINE_CHARS,
+                ' ... [line middle omitted] ... ',
+            );
+            if (line !== rawLine) omitted = true;
+            lines.push(line + '\n');
+        }
+        if (limitReached) break;
+    }
+    if (lines.length === 0) {
+        return { finalMessage: safeMessage, attached: false, omitted: false };
+    }
+
+    const totals = logData.totals && typeof logData.totals === 'object' ? logData.totals : {};
+    const header = '[ATTACHED: Fabric Log Messages]\n' +
+        `Totals: ${normalizeLogCount(totals.critical)} critical, ` +
+        `${normalizeLogCount(totals.error)} error, ` +
+        `${normalizeLogCount(totals.warning)} warning\n\n`;
+    const footer = '[END ATTACHED LOGS]\n\n';
+    const available = Math.min(
+        MAX_ATTACHED_LOG_CHARS,
+        Math.max(0, MAX_CHAT_MESSAGE_CHARS - safeMessage.length),
+    );
+
+    let selectedLines = lines.slice();
+    let logText = header + selectedLines.join('') + footer;
+    if (logText.length > available) omitted = true;
+    if (omitted) {
+        while (selectedLines.length > 0 &&
+            (header.length + selectedLines.join('').length +
+                LOG_OMISSION_MARKER.length + footer.length) > available) {
+            selectedLines.pop();
+        }
+        logText = header + selectedLines.join('') + LOG_OMISSION_MARKER + footer;
+    }
+
+    // A nearly full operator message can leave too little space even for the
+    // attachment envelope. In that case the original message wins unchanged.
+    if (logText.length > available) {
+        return { finalMessage: safeMessage, attached: false, omitted: true };
+    }
+    return {
+        finalMessage: logText + safeMessage,
+        attached: true,
+        omitted,
+    };
+}
+
+function sanitizeStoredChatMessage(msg) {
+    if (!msg || typeof msg !== 'object' ||
+        (msg.role !== 'user' && msg.role !== 'assistant') ||
+        typeof msg.content !== 'string') return null;
+    const clean = { role: msg.role, content: msg.content };
+    if (msg.analysis === true) clean.analysis = true;
+    const limits = { tools: 20, fixes: 10, followups: 8, consoles: 20, evidence: 40 };
+    Object.entries(limits).forEach(([key, limit]) => {
+        if (Array.isArray(msg[key])) clean[key] = msg[key].slice(0, limit);
+    });
+    if (msg.confidence && typeof msg.confidence === 'object' && !Array.isArray(msg.confidence)) {
+        clean.confidence = {
+            level: msg.confidence.level,
+            reason: msg.confidence.reason,
+            complete: msg.confidence.complete,
+        };
+    }
+    if (msg.timeline && typeof msg.timeline === 'object' && !Array.isArray(msg.timeline)) {
+        const timeline = msg.timeline;
+        clean.timeline = {
+            window: timeline.window,
+            from: timeline.from,
+            to: timeline.to,
+            truncated: timeline.truncated === true,
+            events: Array.isArray(timeline.events) ? timeline.events.slice(0, 120) : [],
+            correlations: Array.isArray(timeline.correlations) ? timeline.correlations.slice(0, 40) : [],
+            coverage: Array.isArray(timeline.coverage) ? timeline.coverage.slice(0, 30) : timeline.coverage,
+            limitations: Array.isArray(timeline.limitations) ? timeline.limitations.slice(0, 10) : [],
+        };
+    }
+    return clean;
+}
 
 // ===================== LOCALSTORAGE =====================
 function saveChatToStorage() {
     try {
-        // Keep last 50 messages to avoid storage bloat
-        const toSave = chatHistory.slice(-50);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
-    } catch (e) { /* storage full or unavailable */ }
+        // Bound nested provenance data as well as message count. Timeline-heavy
+        // sessions must not silently leave an older, stale history in storage.
+        const toSave = chatHistory.slice(-50).map(sanitizeStoredChatMessage).filter(Boolean);
+        let serialized = JSON.stringify(toSave);
+        while (serialized.length > MAX_STORED_CHAT_CHARS && toSave.length > 2) {
+            toSave.shift();
+            serialized = JSON.stringify(toSave);
+        }
+        localStorage.setItem(STORAGE_KEY, serialized);
+    } catch (e) {
+        try {
+            const fallback = chatHistory.slice(-10).map(sanitizeStoredChatMessage).filter(Boolean);
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(fallback));
+        } catch (fallbackError) {
+            try { localStorage.removeItem(STORAGE_KEY); } catch (removeError) {}
+        }
+    }
 }
 
 function loadChatFromStorage() {
@@ -335,19 +518,8 @@ function loadChatFromStorage() {
         const saved = localStorage.getItem(STORAGE_KEY);
         if (saved) {
             const parsed = JSON.parse(saved);
-            chatHistory = Array.isArray(parsed) ? parsed
-                .filter(msg => msg && typeof msg === 'object' &&
-                    (msg.role === 'user' || msg.role === 'assistant') &&
-                    typeof msg.content === 'string')
-                .slice(-50)
-                .map(msg => {
-                    const clean = { role: msg.role, content: msg.content };
-                    if (msg.analysis === true) clean.analysis = true;
-                    ['tools', 'fixes', 'followups', 'consoles'].forEach(key => {
-                        if (Array.isArray(msg[key])) clean[key] = msg[key];
-                    });
-                    return clean;
-                }) : [];
+            chatHistory = Array.isArray(parsed) ? parsed.slice(-50)
+                .map(sanitizeStoredChatMessage).filter(Boolean) : [];
             if (chatHistory.length > 0) {
                 // Restore messages to UI
                 const area = document.getElementById('chatArea');
@@ -357,7 +529,15 @@ function loadChatFromStorage() {
                     // Re-render through addMessage so restored answers keep their agent-activity
                     // trace, one-click fix buttons, device links and copy/re-ask actions.
                     if (msg.analysis) addMessage('system', 'Autonomous fabric health analysis:');
-                    addMessage(msg.role, msg.content, { tools: msg.tools, fixes: msg.fixes, followups: msg.followups, consoles: msg.consoles });
+                    addMessage(msg.role, msg.content, {
+                        tools: msg.tools,
+                        fixes: msg.fixes,
+                        followups: msg.followups,
+                        consoles: msg.consoles,
+                        evidence: msg.evidence,
+                        confidence: msg.confidence,
+                        timeline: msg.timeline,
+                    });
                 });
                 area.scrollTop = area.scrollHeight;
                 return true;
@@ -719,6 +899,8 @@ function addMessage(role, content, info) {
         if (info.consoles && info.consoles.length) wrapper.appendChild(renderConsoleBtns(info.consoles));
         if (info.followups && info.followups.length) wrapper.appendChild(renderFollowups(info.followups));
         if (info.tools && info.tools.length) wrapper.appendChild(renderToolTrace(info.tools));
+        if (info.evidence && info.evidence.length) wrapper.appendChild(renderEvidencePanel(info.evidence, info.confidence));
+        if (info.timeline && typeof info.timeline === 'object') wrapper.appendChild(renderTimeline(info.timeline));
     }
     
     // Meta row: timestamp + action buttons
@@ -782,6 +964,232 @@ function renderToolTrace(tools) {
         row.appendChild(status);
         body.appendChild(row);
     });
+    det.appendChild(body);
+    return det;
+}
+
+function compactDisplay(value, limit) {
+    if (value === null || value === undefined) return '';
+    const text = String(value).replace(/\s+/g, ' ').trim();
+    const max = Number.isFinite(limit) ? limit : 500;
+    return text.length > max ? text.slice(0, max - 1) + '\u2026' : text;
+}
+
+function formatEvidenceTimestamp(value) {
+    if (value === null || value === undefined || value === '') return '';
+    let raw = value;
+    if (typeof raw === 'string' && /^\d+(?:\.\d+)?$/.test(raw.trim())) raw = Number(raw);
+    if (typeof raw === 'number' && Number.isFinite(raw) && Math.abs(raw) < 1e12) raw *= 1000;
+    const date = new Date(raw);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleString([], {
+        month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+    });
+}
+
+function formatEvidenceAge(value) {
+    const seconds = Number(value);
+    if (!Number.isFinite(seconds) || seconds < 0) return '';
+    if (seconds < 60) return `${Math.round(seconds)}s old`;
+    if (seconds < 3600) return `${Math.round(seconds / 60)}m old`;
+    if (seconds < 86400) return `${Math.round(seconds / 3600)}h old`;
+    return `${Math.round(seconds / 86400)}d old`;
+}
+
+function evidenceRowState(status, freshness) {
+    const text = `${status || ''} ${freshness || ''}`.toLowerCase();
+    if (/\b(error|fail|failed|missing|critical|unavailable)\b/.test(text)) return 'fail';
+    if (/\b(warn|warning|stale|partial|degraded|medium|low|unknown)\b/.test(text)) return 'warn';
+    return '';
+}
+
+function createTraceRow(kind, label, status, state) {
+    const row = document.createElement('div');
+    row.className = 'tool-row' + (state ? ` ${state}` : '');
+    const kindEl = document.createElement('span');
+    kindEl.className = 'tool-kind';
+    kindEl.textContent = compactDisplay(kind || 'INFO', 12).toUpperCase();
+    const code = document.createElement('code');
+    code.textContent = compactDisplay(label || 'No details available', 1000);
+    const statusEl = document.createElement('span');
+    statusEl.className = 'tool-status';
+    statusEl.textContent = compactDisplay(status || 'OK', 16).toUpperCase();
+    row.appendChild(kindEl);
+    row.appendChild(code);
+    row.appendChild(statusEl);
+    return row;
+}
+
+// Evidence records are supplied by the backend. All fields are rendered through
+// textContent so device output and source metadata remain inert in the page.
+function renderEvidencePanel(evidence, confidence) {
+    const records = Array.isArray(evidence) ? evidence : [];
+    const conf = confidence && typeof confidence === 'object' ? confidence : {};
+    const level = compactDisplay(conf.level || 'unknown', 16).toLowerCase();
+    const det = document.createElement('details');
+    det.className = 'tool-trace';
+    const sum = document.createElement('summary');
+    sum.textContent = `Evidence — ${records.length} ${records.length === 1 ? 'record' : 'records'} · ${level.toUpperCase()} confidence${conf.complete === false ? ' · partial' : ''}`;
+    det.appendChild(sum);
+    const body = document.createElement('div');
+    body.className = 'tool-trace-body';
+
+    const reason = compactDisplay(conf.reason, 600);
+    if (reason) {
+        let confState = evidenceRowState(level, conf.complete === false ? 'partial' : '');
+        body.appendChild(createTraceRow('CONF', reason, level, confState));
+    }
+
+    records.forEach(rawRecord => {
+        const record = rawRecord && typeof rawRecord === 'object' ? rawRecord : {};
+        const parts = [];
+        const label = compactDisplay(record.label, 300);
+        const source = compactDisplay(record.source, 200);
+        const command = compactDisplay(record.command, 400);
+        const detail = compactDisplay(record.detail, 500);
+        const observed = formatEvidenceTimestamp(record.observed_at);
+        const age = formatEvidenceAge(record.age_seconds);
+        const coverage = compactDisplay(record.coverage, 100);
+        if (label) parts.push(label);
+        if (source && source !== label) parts.push(source);
+        if (command) parts.push(command);
+        if (detail) parts.push(detail);
+        if (observed) parts.push(observed);
+        if (age) parts.push(age);
+        if (coverage) parts.push(`coverage ${coverage}`);
+        const status = compactDisplay(record.status || record.freshness || 'ok', 16);
+        body.appendChild(createTraceRow(
+            record.kind || 'source',
+            parts.join(' · '),
+            status,
+            evidenceRowState(record.status, record.freshness),
+        ));
+    });
+    det.appendChild(body);
+    return det;
+}
+
+function timelineCoverageLabel(rawCoverage) {
+    if (rawCoverage === null || rawCoverage === undefined) return '';
+    if (typeof rawCoverage !== 'object') return compactDisplay(rawCoverage, 300);
+    if (Array.isArray(rawCoverage)) {
+        return rawCoverage.map(item => {
+            if (item && typeof item === 'object') {
+                const source = compactDisplay(item.label || item.source || item.name, 100);
+                const status = compactDisplay(item.status || item.freshness, 40);
+                const detail = compactDisplay(item.detail, 180);
+                const head = [source, status].filter(Boolean).join(': ');
+                return detail ? `${head} — ${detail}` : head;
+            }
+            return compactDisplay(item, 100);
+        }).filter(Boolean).join(', ');
+    }
+    return Object.entries(rawCoverage).map(([key, value]) => {
+        const rendered = value && typeof value === 'object'
+            ? compactDisplay(value.status || value.freshness || value.coverage, 60)
+            : compactDisplay(value, 60);
+        return `${compactDisplay(key, 80)}${rendered ? ': ' + rendered : ''}`;
+    }).join(', ');
+}
+
+function timelineCoverageState(rawCoverage) {
+    const values = [];
+    if (Array.isArray(rawCoverage)) {
+        rawCoverage.forEach(item => {
+            if (item && typeof item === 'object') values.push(String(item.status || item.freshness || '').toLowerCase());
+        });
+    } else if (rawCoverage && typeof rawCoverage === 'object') {
+        Object.values(rawCoverage).forEach(item => {
+            if (item && typeof item === 'object') values.push(String(item.status || item.freshness || '').toLowerCase());
+            else values.push(String(item || '').toLowerCase());
+        });
+    }
+    if (values.some(value => /\b(error|failed|missing|invalid|unavailable)\b/.test(value))) {
+        return { status: 'unavailable', state: 'fail' };
+    }
+    if (values.some(value => /\b(stale|partial|unsupported|empty|warning|unknown)\b/.test(value))) {
+        return { status: 'partial', state: 'warn' };
+    }
+    return { status: 'ok', state: '' };
+}
+
+function renderTimeline(timeline) {
+    const data = timeline && typeof timeline === 'object' ? timeline : {};
+    const events = Array.isArray(data.events) ? data.events : [];
+    const correlations = Array.isArray(data.correlations) ? data.correlations : [];
+    const windowLabel = compactDisplay(data.window || '', 30);
+    const det = document.createElement('details');
+    det.className = 'tool-trace';
+    const sum = document.createElement('summary');
+    let summary = `Timeline — ${events.length} ${events.length === 1 ? 'event' : 'events'} · ${correlations.length} ${correlations.length === 1 ? 'correlation' : 'correlations'}`;
+    if (windowLabel) summary += ` · ${windowLabel}`;
+    if (data.truncated === true) summary += ' · truncated';
+    sum.textContent = summary;
+    det.appendChild(sum);
+    const body = document.createElement('div');
+    body.className = 'tool-trace-body';
+
+    const from = formatEvidenceTimestamp(data.from);
+    const to = formatEvidenceTimestamp(data.to);
+    if (from || to) {
+        body.appendChild(createTraceRow('RANGE', [from, to].filter(Boolean).join(' — '), data.truncated === true ? 'partial' : 'ok', data.truncated === true ? 'warn' : ''));
+    }
+
+    correlations.forEach(rawCorrelation => {
+        const correlation = rawCorrelation && typeof rawCorrelation === 'object' ? rawCorrelation : {};
+        const parts = [];
+        const start = formatEvidenceTimestamp(correlation.start_ts ?? correlation.start_timestamp);
+        const end = formatEvidenceTimestamp(correlation.end_ts ?? correlation.end_timestamp);
+        const when = start && end && start !== end ? `${start} — ${end}` : (start || end);
+        const devices = Array.isArray(correlation.devices)
+            ? correlation.devices.map(v => compactDisplay(v, 80)).filter(Boolean).join(', ')
+            : '';
+        const categories = Array.isArray(correlation.categories)
+            ? correlation.categories.map(v => compactDisplay(v, 80)).filter(Boolean).join(' + ')
+            : '';
+        const text = compactDisplay(correlation.summary, 600);
+        const note = compactDisplay(correlation.note, 300);
+        if (when) parts.push(when);
+        if (devices) parts.push(devices);
+        if (categories) parts.push(categories);
+        if (text) parts.push(text);
+        if (note && !/caus/i.test(text)) parts.push(note);
+        const confidence = compactDisplay(correlation.confidence || 'unknown', 16);
+        body.appendChild(createTraceRow('CORR', parts.join(' · '), confidence, evidenceRowState(confidence, '')));
+    });
+
+    events.forEach(rawEvent => {
+        const event = rawEvent && typeof rawEvent === 'object' ? rawEvent : {};
+        const parts = [];
+        const when = formatEvidenceTimestamp(event.ts ?? event.timestamp);
+        const device = compactDisplay(event.device, 100);
+        const text = compactDisplay(event.summary, 600);
+        const source = compactDisplay(event.source, 160);
+        if (when) parts.push(when);
+        if (device) parts.push(device);
+        if (text) parts.push(text);
+        if (source) parts.push(source);
+        const severity = compactDisplay(event.severity || 'info', 16);
+        body.appendChild(createTraceRow(event.category || 'event', parts.join(' · '), severity, evidenceRowState(severity, '')));
+    });
+
+    const coverage = timelineCoverageLabel(data.coverage);
+    if (coverage) {
+        const coverageState = timelineCoverageState(data.coverage);
+        if (data.truncated === true && coverageState.state !== 'fail') {
+            coverageState.status = 'partial';
+            coverageState.state = 'warn';
+        }
+        body.appendChild(createTraceRow('COVER', coverage, coverageState.status, coverageState.state));
+    }
+    const limitations = Array.isArray(data.limitations) ? data.limitations : [];
+    limitations.slice(0, 10).forEach(item => {
+        const limitation = compactDisplay(item, 500);
+        if (limitation) body.appendChild(createTraceRow('LIMIT', limitation, 'note', 'warn'));
+    });
+    if (!correlations.length && !events.length && !coverage) {
+        body.appendChild(createTraceRow('EVENT', 'No timestamped events were found in this window.', 'none', 'warn'));
+    }
     det.appendChild(body);
     return det;
 }
@@ -962,6 +1370,15 @@ async function sendMessage() {
     const input = document.getElementById('chatInput');
     const message = input.value.trim();
     if (!message || isStreaming || isAnalysisRunning) return;
+    if (message.length > MAX_CHAT_MESSAGE_CHARS) {
+        showToast(
+            `Message is too long (${message.length.toLocaleString()} characters). ` +
+            `The limit is ${MAX_CHAT_MESSAGE_CHARS.toLocaleString()}.`,
+            'error',
+        );
+        input.focus();
+        return;
+    }
 
     // Claim the operation before any await (including log attachment) so a
     // fast double click cannot create two requests. Clear increments the
@@ -986,19 +1403,16 @@ async function sendMessage() {
             const logData = await apiCall('get-log-messages', null, { signal: controller.signal });
             if (generation !== requestGeneration || controller.signal.aborted) return;
             if (logData.success && logData.messages && Object.keys(logData.messages).length > 0) {
-                let logText = '[ATTACHED: Fabric Log Messages]\n';
-                const totals = logData.totals || {};
-                logText += `Totals: ${totals.critical || 0} critical, ${totals.error || 0} error, ${totals.warning || 0} warning\n\n`;
-                let lineCount = 0;
-                for (const [dev, msgs] of Object.entries(logData.messages).sort()) {
-                    for (const msg of msgs) {
-                        logText += `${dev}: ${msg}\n`;
-                        if (++lineCount >= 200) break;
-                    }
-                    if (lineCount >= 200) break;
+                const attached = buildAttachedLogContext(message, logData);
+                finalMessage = attached.finalMessage;
+                if (attached.omitted) {
+                    showToast(
+                        attached.attached
+                            ? 'Attached logs were shortened to fit the request context limit.'
+                            : 'Attached logs were omitted because the message leaves no context space.',
+                        'info',
+                    );
                 }
-                logText += '[END ATTACHED LOGS]\n\n';
-                finalMessage = logText + message;
             }
         } catch (e) {}
         attachLogsActive = false;
@@ -1011,8 +1425,9 @@ async function sendMessage() {
 
     if (generation !== requestGeneration || controller.signal.aborted) return;
     
-    // Conversation history (PRIOR turns only) sent to the model — role+content only.
-    const historyPayload = chatHistory.slice(-10).map(m => ({ role: m.role, content: m.content }));
+    // Conversation history (PRIOR turns only) sent to the model — role+content
+    // only. The outbound copy is bounded; full UI/storage content is untouched.
+    const historyPayload = buildHistoryPayload(chatHistory);
     // Add user message (show original, send with logs)
     addMessage('user', message);
     chatHistory.push({ role: 'user', content: message });
@@ -1025,7 +1440,15 @@ async function sendMessage() {
         if (generation !== requestGeneration || controller.signal.aborted || data.aborted) return;
         
         if (data.success && data.response) {
-            const _info = { tools: data.tools_used, fixes: data.fixes, followups: data.followups, consoles: data.consoles };
+            const _info = {
+                tools: data.tools_used,
+                fixes: data.fixes,
+                followups: data.followups,
+                consoles: data.consoles,
+                evidence: data.evidence,
+                confidence: data.confidence,
+                timeline: data.timeline,
+            };
             addMessage('assistant', data.response, _info);
             chatHistory.push(Object.assign({ role: 'assistant', content: data.response }, _info));
             saveChatToStorage();
@@ -1117,8 +1540,17 @@ async function runAnalysis() {
             if (suggestions) suggestions.remove();
 
             addMessage('system', 'Autonomous fabric health analysis:');
-            addMessage('assistant', data.analysis);
-            chatHistory.push({ role: 'assistant', content: data.analysis, analysis: true });
+            const _info = {
+                tools: data.tools_used,
+                fixes: data.fixes,
+                followups: data.followups,
+                consoles: data.consoles,
+                evidence: data.evidence,
+                confidence: data.confidence,
+                timeline: data.timeline,
+            };
+            addMessage('assistant', data.analysis, _info);
+            chatHistory.push(Object.assign({ role: 'assistant', content: data.analysis, analysis: true }, _info));
             saveChatToStorage();
             document.getElementById('analysisBadge').style.display = 'none';
             showToast('Analysis complete', 'success');
@@ -1194,6 +1626,8 @@ const PROMPT_CATEGORIES = [
         prompts: [
             { chip: 'Trace a path', full: 'Trace the path between two endpoints. I will give you a source and destination (device hostname or IP + destination IP) — use the path tool to show the hop-by-hop route and tell me exactly where it breaks if it does.' },
             { chip: 'Discard trend (1h)', full: 'Using live telemetry, show the interface in/out discard trend over the last hour and tell me which ports are rising. If telemetry is disabled, say so and analyze the collected error/BER data instead.' },
+            { chip: 'What changed (1h)', full: 'What changed in the fabric during the last hour? Build a timestamped event timeline, group related events by device and time, and distinguish observed correlation from proven causation.' },
+            { chip: 'Correlate events (24h)', full: 'Correlate timestamped network events from the last 24 hours across BGP, links, optics, errors, logs, and config data. Show event clusters and evidence, but do not claim causation unless the data proves it.' },
             { chip: 'Optic degradation', full: 'Correlate optical DOM data (Rx/Tx power, link margin, temperature) with the BER/interface-error data. Which optics are degrading or pre-failing? Rank by severity and suggest one-click fixes.' },
             { chip: 'Flap hotspots', full: 'Which interfaces are flapping the most? Correlate carrier transitions with optical and BER data, identify the likely bad optic/cable, and suggest remediation for the worst offenders.' },
         ]
