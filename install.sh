@@ -4589,8 +4589,35 @@ if [[ "$INSTALL_MODE" == "update" ]]; then
             echo "  • $description"
         }
 
+        _backup_inventory_tracking_pair() {
+            local wait_seconds="${LLDPQ_UPDATE_LOCK_TIMEOUT:-600}"
+            local inventory_lock="$WEB_ROOT/.inventory.lock"
+            local -a sources=()
+            case "$wait_seconds" in
+                ''|*[!0-9]*|0) return 1 ;;
+            esac
+            [[ ! -e "$LLDPQ_INSTALL_DIR/devices.yaml" ]] || \
+                sources+=("$LLDPQ_INSTALL_DIR/devices.yaml")
+            [[ ! -e "$LLDPQ_INSTALL_DIR/tracking.yaml" ]] || \
+                sources+=("$LLDPQ_INSTALL_DIR/tracking.yaml")
+            ((${#sources[@]} > 0)) || return 0
+            prepare_shared_lock_files /etc/lldpq.conf.lock "$inventory_lock" || \
+                return 1
+            # Match Setup/Provision's global -> inventory order so this
+            # optional rollback snapshot cannot capture a mixed generation.
+            root_run flock -w "$wait_seconds" /etc/lldpq.conf.lock \
+                flock -w "$wait_seconds" "$inventory_lock" \
+                cp -a -- "${sources[@]}" "$BACKUP_DIR/" || return 1
+            [[ ! -e "$LLDPQ_INSTALL_DIR/devices.yaml" ]] || echo "  • devices.yaml"
+            [[ ! -e "$LLDPQ_INSTALL_DIR/tracking.yaml" ]] || echo "  • tracking.yaml"
+        }
+
         # Configuration files
-        _backup_copy "$LLDPQ_INSTALL_DIR/devices.yaml" "$BACKUP_DIR/" devices.yaml || exit 1
+        _backup_inventory_tracking_pair || {
+            echo "[!] Requested backup is incomplete; could not snapshot inventory/tracking" >&2
+            echo "    Partial backup retained for inspection: $BACKUP_DIR" >&2
+            exit 1
+        }
         _backup_copy "$LLDPQ_INSTALL_DIR/notifications.yaml" "$BACKUP_DIR/" notifications.yaml || exit 1
         _backup_copy "$WEB_ROOT/topology.dot" "$BACKUP_DIR/" topology.dot || exit 1
         _backup_copy "$WEB_ROOT/topology_config.yaml" "$BACKUP_DIR/" topology_config.yaml || exit 1
@@ -4735,6 +4762,12 @@ if [[ "$INSTALL_MODE" == "update" ]]; then
     if [[ -f "$LLDPQ_INSTALL_DIR/devices.yaml" ]]; then
         sudo cp -a "$LLDPQ_INSTALL_DIR/devices.yaml" "$_preserved_dir/" || {
             echo "[!] Could not preserve devices.yaml; update was not started" >&2
+            exit 1
+        }
+    fi
+    if [[ -f "$LLDPQ_INSTALL_DIR/tracking.yaml" ]]; then
+        sudo cp -a "$LLDPQ_INSTALL_DIR/tracking.yaml" "$_preserved_dir/" || {
+            echo "[!] Could not preserve tracking.yaml; update was not started" >&2
             exit 1
         }
     fi
@@ -5069,6 +5102,13 @@ if [[ -n "$_preserved_dir" ]] && [[ -d "$_preserved_dir" ]]; then
         }
         echo "    • devices.yaml"
     fi
+    if [[ -f "$_preserved_dir/tracking.yaml" ]]; then
+        sudo cp "$_preserved_dir/tracking.yaml" "$LLDPQ_INSTALL_DIR/" || {
+            echo "[!] Could not restore preserved tracking.yaml" >&2
+            exit 1
+        }
+        echo "    • tracking.yaml"
+    fi
     if [[ -f "$_preserved_dir/notifications.yaml" ]]; then
         sudo cp "$_preserved_dir/notifications.yaml" "$LLDPQ_INSTALL_DIR/" || {
             echo "[!] Could not restore preserved notifications.yaml" >&2
@@ -5113,6 +5153,7 @@ echo "  - Setting permissions on $LLDPQ_INSTALL_DIR"
 sudo chown -R "$LLDPQ_USER:www-data" "$LLDPQ_INSTALL_DIR"
 sudo chmod 750 "$LLDPQ_INSTALL_DIR"
 sudo chmod 664 "$LLDPQ_INSTALL_DIR/devices.yaml" 2>/dev/null || true
+sudo chmod 664 "$LLDPQ_INSTALL_DIR/tracking.yaml" 2>/dev/null || true
 sudo chmod 664 "$LLDPQ_INSTALL_DIR/notifications.yaml" 2>/dev/null || true
 sudo find "$LLDPQ_INSTALL_DIR" -name '*.sh' -exec chmod 755 {} \;
 sudo find "$LLDPQ_INSTALL_DIR" -name '*.py' -exec chmod 755 {} \;
@@ -5134,6 +5175,7 @@ if [[ -d "$LLDPQ_INSTALL_DIR/.git" ]]; then
 # Fix permissions after git pull/merge (preserve group read access for www-data)
 chmod 750 "$(git rev-parse --show-toplevel)" 2>/dev/null || true
 chmod 664 "$(git rev-parse --show-toplevel)/devices.yaml" 2>/dev/null || true
+chmod 664 "$(git rev-parse --show-toplevel)/tracking.yaml" 2>/dev/null || true
 if [ -d "$(git rev-parse --show-toplevel)/monitor-results" ]; then
     chmod -R 750 "$(git rev-parse --show-toplevel)/monitor-results" 2>/dev/null || true
 fi
@@ -6155,6 +6197,7 @@ if [[ "$INSTALL_MODE" == "update" ]]; then
     step "Update summary"
     echo "  Preserved:"
     echo "    • $LLDPQ_INSTALL_DIR/devices.yaml"
+    echo "    • $LLDPQ_INSTALL_DIR/tracking.yaml"
     echo "    • $WEB_ROOT/topology.dot"
     echo "    • $WEB_ROOT/topology_config.yaml"
     [[ -f "$LLDPQ_INSTALL_DIR/notifications.yaml" ]] && echo "    • $LLDPQ_INSTALL_DIR/notifications.yaml"
@@ -6336,6 +6379,7 @@ EOF
 # Fix permissions after git pull/merge (preserve group read access for www-data)
 chmod 750 "$(git rev-parse --show-toplevel)" 2>/dev/null || true
 chmod 664 "$(git rev-parse --show-toplevel)/devices.yaml" 2>/dev/null || true
+chmod 664 "$(git rev-parse --show-toplevel)/tracking.yaml" 2>/dev/null || true
 if [ -d "$(git rev-parse --show-toplevel)/monitor-results" ]; then
     chmod -R 750 "$(git rev-parse --show-toplevel)/monitor-results" 2>/dev/null || true
 fi

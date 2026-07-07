@@ -7633,6 +7633,166 @@ def action_list_roles():
         pass
     result_json({"success": True, "roles": sorted(roles)})
 
+# ======================== HANDOVER TRACKING ========================
+
+def _load_tracking_support():
+    """Load the lifecycle helper from the configured LLDPq installation."""
+    if LLDPQ_DIR not in sys.path:
+        sys.path.insert(0, LLDPQ_DIR)
+    try:
+        from tracking_config import (
+            TrackingConfigError,
+            TrackingConflictError,
+            TrackingValidationError,
+            get_tracking_payload,
+            save_tracking,
+        )
+    except Exception as exc:
+        raise RuntimeError("Tracking API support is unavailable") from exc
+    return (
+        TrackingConfigError,
+        TrackingConflictError,
+        TrackingValidationError,
+        get_tracking_payload,
+        save_tracking,
+    )
+
+
+def action_get_tracking():
+    """Return the effective state of every switch in devices.yaml."""
+    try:
+        (
+            TrackingConfigError,
+            _TrackingConflictError,
+            TrackingValidationError,
+            get_tracking_payload,
+            _save_tracking,
+        ) = _load_tracking_support()
+    except Exception:
+        result_json({
+            'success': False,
+            'error_code': 'tracking_unavailable',
+            'error': 'Tracking API support is unavailable',
+        })
+    try:
+        payload = get_tracking_payload(
+            os.path.join(LLDPQ_DIR, 'devices.yaml'),
+            os.path.join(LLDPQ_DIR, 'tracking.yaml'),
+        )
+        result_json(payload)
+    except TrackingValidationError as exc:
+        result_json({
+            'success': False,
+            'error_code': 'tracking_validation',
+            'error': str(exc),
+        })
+    except TrackingConfigError as exc:
+        result_json({
+            'success': False,
+            'error_code': 'tracking_unavailable',
+            'error': str(exc),
+        })
+    except Exception:
+        result_json({
+            'success': False,
+            'error_code': 'tracking_unavailable',
+            'error': 'Tracking configuration could not be read',
+        })
+
+
+def _save_tracking_as_collector(request):
+    """Run the atomic writer as LLDPQ_USER, which owns the 0750 config dir."""
+    if not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9._-]*[$]?', LLDPQ_USER):
+        raise RuntimeError('Configured LLDPq service user is invalid')
+    helper = os.path.join(LLDPQ_DIR, 'tracking_config.py')
+    if not os.path.isfile(helper):
+        raise RuntimeError('Tracking API support is unavailable')
+    helper_arguments = [
+        sys.executable,
+        helper,
+        'save-json',
+        '--devices', os.path.join(LLDPQ_DIR, 'devices.yaml'),
+        '--tracking', os.path.join(LLDPQ_DIR, 'tracking.yaml'),
+        '--changed-by', os.environ.get('LLDPQ_AUTH_USER', ''),
+        '--file-group', 'www-data',
+    ]
+    try:
+        service_account = pwd.getpwnam(LLDPQ_USER)
+    except KeyError as exc:
+        raise RuntimeError('Configured LLDPq service user is unavailable') from exc
+    if os.geteuid() == service_account.pw_uid:
+        command = helper_arguments
+    else:
+        # Native installs intentionally keep LLDPQ_DIR at 0750.  The existing
+        # sudoers policy permits this fixed bash launcher as LLDPQ_USER; all
+        # variable values remain positional argv and are never shell-expanded.
+        command = [
+            'sudo', '-n', '-H', '-u', LLDPQ_USER,
+            '/usr/bin/bash', '-c', 'exec "$@"', '--',
+        ] + helper_arguments
+    try:
+        completed = subprocess.run(
+            command,
+            input=json.dumps(request, separators=(',', ':')),
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError('Tracking save timed out') from exc
+    except OSError as exc:
+        raise RuntimeError('Tracking writer could not be started') from exc
+    if completed.returncode != 0 or not completed.stdout.strip():
+        raise RuntimeError('Tracking writer failed')
+    try:
+        payload = json.loads(completed.stdout)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError('Tracking writer returned an invalid response') from exc
+    if not isinstance(payload, dict) or 'success' not in payload:
+        raise RuntimeError('Tracking writer returned an invalid response')
+    return payload
+
+
+def action_save_tracking():
+    """Atomically replace the desired handed-over switch set."""
+    if os.environ.get('REQUEST_METHOD', 'GET').upper() != 'POST':
+        result_json({
+            'success': False,
+            'error_code': 'method_not_allowed',
+            'error': 'POST method required',
+        })
+    try:
+        request = json.loads(POST_DATA)
+    except (TypeError, ValueError):
+        result_json({
+            'success': False,
+            'error_code': 'tracking_validation',
+            'error': 'Invalid JSON',
+        })
+    if not isinstance(request, dict):
+        result_json({
+            'success': False,
+            'error_code': 'tracking_validation',
+            'error': 'JSON body must be an object',
+        })
+
+    try:
+        # Backup/restore and Setup editors own the global configuration lock;
+        # Provision inventory writers own the inventory lock.  Take both in
+        # the installer's canonical global -> inventory order so neither can
+        # replace devices/tracking between revision validation and publish.
+        with _exclusive_regular_lock(
+                CONFIG_LOCK_FILE, DEFAULT_CONFIG_LOCK_FILE), \
+             exclusive_file_lock(INVENTORY_LOCK_FILE):
+            payload = _save_tracking_as_collector(request)
+        result_json(payload)
+    except Exception as exc:
+        result_json({
+            'success': False,
+            'error_code': 'tracking_write_failed',
+            'error': str(exc) or 'Handover assignments could not be saved',
+        })
+
 # ======================== ZTP TAB BULK LOAD ========================
 
 def action_load_ztp_tab():
@@ -7818,6 +7978,10 @@ elif ACTION == 'list-roles':
     action_list_roles()
 elif ACTION == 'rebuild-devices-yaml':
     action_rebuild_devices_yaml()
+elif ACTION == 'get-tracking':
+    action_get_tracking()
+elif ACTION == 'save-tracking':
+    action_save_tracking()
 else:
     error_json(f"Unknown action: {ACTION}")
 

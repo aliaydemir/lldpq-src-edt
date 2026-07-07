@@ -447,7 +447,7 @@
                 <!-- Step 9: Backup & Restore -->
                 <div class="su-panel" data-step-key="backup">
                     <h2>9. Backup &amp; Restore <span class="p-file">config bundle</span></h2>
-                    <p class="p-desc">Export LLDPq config &mdash; <code>devices.yaml</code>, <code>topology.dot</code>, <code>topology_config.yaml</code>, <code>notifications.yaml</code>, <code>display-aliases.json</code> &mdash; plus your tunable <strong>settings</strong> (schedules, parallelism, toggles) and (optionally) the collector <strong>SSH key</strong>, as one <code>.tar.gz</code> to migrate LLDPq to another host or keep as a restore point. On restore, settings are merged back <em>by key</em> &mdash; host paths &amp; secrets (e.g. AI key) are never carried or overwritten.</p>
+                    <p class="p-desc">Export LLDPq config &mdash; <code>devices.yaml</code>, <code>tracking.yaml</code>, <code>topology.dot</code>, <code>topology_config.yaml</code>, <code>notifications.yaml</code>, <code>display-aliases.json</code> &mdash; plus your tunable <strong>settings</strong> (schedules, parallelism, toggles) and (optionally) the collector <strong>SSH key</strong>, as one <code>.tar.gz</code> to migrate LLDPq to another host or keep as a restore point. On restore, settings are merged back <em>by key</em> &mdash; host paths &amp; secrets (e.g. AI key) are never carried or overwritten.</p>
                     <div class="sched-card">
                         <label style="display:flex;align-items:center;gap:8px;color:#d4d4d4;font-size:13px;cursor:pointer;margin-bottom:10px;"><input type="checkbox" id="bk-include-key" checked style="width:16px;height:16px;accent-color:#76b900;"> Include the collector SSH key &mdash; complete set for migration <strong style="color:#ffb74d;">(adds the private key)</strong></label>
                         <div class="p-toolbar">
@@ -456,7 +456,7 @@
                         </div>
                     </div>
                     <div class="sched-card">
-                        <label class="key-lbl">Restore from a bundle (overwrites the five config files):</label>
+                        <label class="key-lbl">Restore from a bundle (overwrites the included config files):</label>
                         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
                             <input type="file" id="bk-file" accept=".tar.gz,.tgz,application/gzip,application/x-gzip" style="flex:1;min-width:240px;padding:8px;background:#1a1a1a;color:#d4d4d4;border:1px solid #404040;border-radius:6px;font-size:13px;">
                             <button class="btn secondary" id="bk-import-btn" onclick="backupImport()"><svg viewBox="0 0 24 24"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M13,13V18H10V13H7L12,8L17,13H13Z"/></svg>Upload &amp; restore</button>

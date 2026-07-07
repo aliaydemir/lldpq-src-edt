@@ -1,7 +1,7 @@
 # LLDPq Docker Compose
 # Usage: docker compose up -d
 #
-# All 3 config files (devices.yaml, topology.dot, topology_config.yaml) come with
+# Core config files (including devices/tracking/topology) come with
 # example data baked into the image. Override with volume mounts if needed.
 #
 # SSH keys, Provision inventory/cache and job state persist in named volumes
@@ -26,7 +26,7 @@ services:
       # Recommended: manage ALL config from ONE directory (single mount).
       # On first run the files self-seed from the baked-in defaults; afterwards
       # they persist on the host and are editable (UI or directly). Includes:
-      # devices.yaml, inventory.json, topology.dot, topology_config.yaml,
+      # devices.yaml, tracking.yaml, inventory.json, topology.dot, topology_config.yaml,
       # notifications.yaml, lldpq-users.conf, cumulus-ztp.sh, serial mapping
       # and display aliases.
       - lldpq-app-config:/home/lldpq/lldpq/config

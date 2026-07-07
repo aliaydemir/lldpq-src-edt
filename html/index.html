@@ -411,6 +411,45 @@
             box-shadow: 0 4px 12px rgba(0,0,0,0.3);
             transform: translateY(-2px);
         }
+
+        .tracking-view-control {
+            margin: 8px 0 16px;
+            padding: 9px 10px;
+            background: rgba(0, 0, 0, 0.16);
+            border: 1px solid rgba(255, 255, 255, 0.10);
+            border-radius: 7px;
+        }
+
+        .tracking-view-control label {
+            display: block;
+            margin-bottom: 5px;
+            color: #8f8f8f;
+            font-size: 9px;
+            font-weight: 700;
+            letter-spacing: 0.7px;
+            text-transform: uppercase;
+        }
+
+        .tracking-view-control select {
+            width: 100%;
+            height: 30px;
+            padding: 0 8px;
+            color: #d6d6d6;
+            background: #242424;
+            border: 1px solid #4a4a4a;
+            border-radius: 4px;
+            outline: none;
+            font-size: 11px;
+            cursor: pointer;
+        }
+
+        .tracking-view-control select:focus {
+            border-color: #76b900;
+        }
+
+        #sidebar.collapsed .tracking-view-control {
+            display: none;
+        }
         
     </style>
 </head>
@@ -624,6 +663,72 @@
         
         // Initialize sidebar state
         document.addEventListener('DOMContentLoaded', restoreSidebarState);
+
+        const TRACKING_VIEW_STORAGE_KEY = 'lldpq_tracking_view';
+        const TRACKING_VIEWS = new Set(['all', 'commissioning', 'handed_over']);
+
+        function storedTrackingView() {
+            try {
+                const value = sessionStorage.getItem(TRACKING_VIEW_STORAGE_KEY);
+                return TRACKING_VIEWS.has(value) ? value : 'all';
+            } catch (e) {
+                return 'all';
+            }
+        }
+
+        function rememberTrackingView(value) {
+            if (!TRACKING_VIEWS.has(value)) value = 'all';
+            try { sessionStorage.setItem(TRACKING_VIEW_STORAGE_KEY, value); } catch (e) {}
+            const selector = document.getElementById('tracking-view-select');
+            if (selector) selector.value = value;
+            return value;
+        }
+
+        function trackingViewUrl(value) {
+            if (value === 'commissioning' || value === 'handed_over') {
+                return `handover.html?scope=${encodeURIComponent(value)}`;
+            }
+            return 'start.html';
+        }
+
+        function activateFabricMenu() {
+            document.querySelectorAll('.menu-item').forEach(item => item.classList.remove('active'));
+            const fabric = document.querySelector('a[href="start.html"]');
+            if (fabric) fabric.classList.add('active');
+        }
+
+        function applyTrackingView(value, navigate = true) {
+            value = rememberTrackingView(value);
+            if (navigate) {
+                const iframe = document.getElementById('content-iframe');
+                const target = trackingViewUrl(value);
+                if (iframe.getAttribute('src') !== target) iframe.src = target;
+                activateFabricMenu();
+            }
+        }
+
+        function addTrackingViewControl() {
+            const container = document.getElementById('user-menu-container');
+            if (!container || document.getElementById('tracking-view-select')) return;
+            const wrapper = document.createElement('div');
+            wrapper.className = 'tracking-view-control';
+            wrapper.title = 'Commissioning and Handed Over use the scoped tracking overview. All opens the full Fabric dashboard.';
+            const label = document.createElement('label');
+            label.htmlFor = 'tracking-view-select';
+            label.textContent = 'Tracking View';
+            const select = document.createElement('select');
+            select.id = 'tracking-view-select';
+            select.setAttribute('aria-label', 'Tracking View');
+            [
+                ['all', 'All Switches'],
+                ['commissioning', 'Commissioning'],
+                ['handed_over', 'Handed Over']
+            ].forEach(([value, text]) => select.add(new Option(text, value)));
+            select.value = storedTrackingView();
+            select.addEventListener('change', () => applyTrackingView(select.value));
+            wrapper.append(label, select);
+            container.appendChild(wrapper);
+        }
         
         // Initialize authentication
         async function initAuth() {
@@ -637,6 +742,7 @@
             
             // Add user menu
             document.getElementById('user-menu-container').innerHTML = LLDPqAuth.createUserMenu();
+            addTrackingViewControl();
             
             // Add modals (for admin)
             if (LLDPqAuth.isAdmin()) {
@@ -656,15 +762,21 @@
                 const resp = await fetch('/fabric-api.sh?action=ansible-status');
                 const data = await resp.json();
                 if (!data.configured) {
-                    document.getElementById('ansible-menu').style.display = 'none';
+                    const ansibleMenu = document.getElementById('ansible-menu');
+                    if (ansibleMenu) ansibleMenu.style.display = 'none';
                 }
             } catch (e) {
                 // If check fails, hide Ansible menu (safe default)
-                document.getElementById('ansible-menu').style.display = 'none';
+                const ansibleMenu = document.getElementById('ansible-menu');
+                if (ansibleMenu) ansibleMenu.style.display = 'none';
             }
             
             // Check for updates after auth is ready (admin only)
             checkForUpdates();
+
+            // The selection is per browser tab. "All" preserves the existing
+            // unfiltered dashboard; lifecycle scopes use the read-only overview.
+            applyTrackingView(storedTrackingView());
         }
         
         // Run auth check
@@ -672,7 +784,18 @@
         
         // Add active state management
         document.querySelectorAll('.menu-item').forEach(item => {
-            item.addEventListener('click', function() {
+            item.addEventListener('click', function(event) {
+                const href = this.getAttribute('href');
+                const trackingView = storedTrackingView();
+                if (href === 'start.html' && trackingView !== 'all') {
+                    event.preventDefault();
+                    document.getElementById('content-iframe').src = trackingViewUrl(trackingView);
+                } else if (href !== 'start.html' && trackingView !== 'all') {
+                    // Existing analysis/detail pages are not lifecycle-aware yet.
+                    // Reset the badge before opening an unscoped report so the UI
+                    // never claims that an all-device page is filtered.
+                    rememberTrackingView('all');
+                }
                 // Remove active class from all items
                 document.querySelectorAll('.menu-item').forEach(i => i.classList.remove('active'));
                 // Add active class to clicked item

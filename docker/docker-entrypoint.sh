@@ -291,6 +291,7 @@ if command -v mountpoint >/dev/null 2>&1 && mountpoint -q "$CONFIG_DIR" 2>/dev/n
         fi
     }
     _setup_config_file devices.yaml         /home/lldpq/lldpq/devices.yaml      lldpq:www-data    664
+    _setup_config_file tracking.yaml        /home/lldpq/lldpq/tracking.yaml     lldpq:www-data    664
     _setup_config_file topology.dot         /var/www/html/topology.dot          lldpq:www-data    664
     _setup_config_file topology_config.yaml /var/www/html/topology_config.yaml  lldpq:www-data    664
     _setup_config_file lldpq-users.conf     /etc/lldpq-users.conf               www-data:www-data 600
@@ -331,6 +332,14 @@ else
     echo "⚠ No devices.yaml found"
     echo "  Mount with: -v /path/to/devices.yaml:/home/lldpq/lldpq/devices.yaml"
 fi
+
+# ─── Switch lifecycle tracking ───
+if [ ! -f /home/lldpq/lldpq/tracking.yaml ]; then
+    printf 'version: 1\ndefault_state: commissioning\nswitches: {}\n' \
+        > /home/lldpq/lldpq/tracking.yaml
+fi
+chown lldpq:www-data /home/lldpq/lldpq/tracking.yaml
+chmod 664 /home/lldpq/lldpq/tracking.yaml
 
 # ─── Topology files Setup ───
 # Real files in web root (editable from web UI), symlinks in lldpq dir (used by scripts)

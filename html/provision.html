@@ -130,11 +130,57 @@
             display: block;
         }
 
-        /* Discover and Inventory tabs use flex to fill viewport */
+        /* Table-heavy tabs use flex to fill viewport */
         #tab-discover.active,
-        #tab-bindings.active {
+        #tab-bindings.active,
+        #tab-handover.active {
             display: flex;
             flex-direction: column;
+        }
+
+        #handoverBody tr.handover-selected {
+            background: #1a2e00;
+        }
+
+        #handoverBody input[type="checkbox"],
+        #handoverSelectAll {
+            accent-color: #76b900;
+            cursor: pointer;
+        }
+
+        .handover-bulk-panel {
+            display: flex;
+            gap: 10px;
+            align-items: stretch;
+            padding: 12px;
+            margin-bottom: 15px;
+            background: #1e1e1e;
+            border: 1px solid #3c3c3c;
+            border-radius: 6px;
+        }
+
+        .handover-bulk-panel textarea {
+            flex: 1;
+            min-height: 58px;
+            max-height: 140px;
+            resize: vertical;
+            padding: 8px 12px;
+            background: #1a1a1a;
+            border: 1px solid #555;
+            border-radius: 4px;
+            color: #d4d4d4;
+            font-family: 'Cascadia Code', 'Consolas', monospace;
+            font-size: 12px;
+        }
+
+        .handover-bulk-panel textarea:focus {
+            outline: none;
+            border-color: #76b900;
+        }
+
+        #tab-handover .toolbar-right {
+            flex-wrap: wrap;
+            justify-content: flex-end;
         }
 
         /* Toolbar */
@@ -734,6 +780,7 @@
         @media (max-width: 768px) {
             .tab-btn { padding: 10px 16px; font-size: 12px; }
             .toolbar { flex-direction: column; }
+            .handover-bulk-panel { flex-direction: column; }
             .config-grid { grid-template-columns: 1fr; }
         }
     </style>
@@ -763,6 +810,7 @@
 <div class="tab-nav">
     <button class="tab-btn active" data-tab="discover">Discover</button>
     <button class="tab-btn" data-tab="bindings">Inventory</button>
+    <button class="tab-btn" data-tab="handover">Handover</button>
     <button class="tab-btn" data-tab="dhcpd">DHCP Server</button>
     <button class="tab-btn" data-tab="ztp-script">ZTP</button>
     <button class="tab-btn" data-tab="upgrade">Upgrade</button>
@@ -1034,6 +1082,92 @@
             </thead>
             <tbody id="bindingsBody">
                 <tr><td colspan="10" class="loading">Loading inventory...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ==================== TAB 2: HANDOVER ==================== -->
+<div class="tab-content" id="tab-handover">
+    <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:20px; flex-wrap:wrap;">
+        <div>
+            <div class="section-title">Switch Handover</div>
+            <div class="section-desc" style="margin-bottom:10px;">Admin-only lifecycle tracking. Classification changes monitoring views only; device collection and <code style="color:#76b900;">devices.yaml</code> are not changed.</div>
+            <div id="trackingWarning" style="display:none; margin-bottom:10px; padding:8px 10px; border:1px solid #e65100; border-radius:4px; background:#3b2600; color:#ffb74d; font-size:12px;"></div>
+        </div>
+        <a class="btn btn-secondary" href="/handover.html" style="text-decoration:none;" title="Open monitoring scoped to handed-over switches">
+            Open Handed Over Monitoring
+            <svg viewBox="0 0 24 24"><path d="M14 3h7v7h-2V6.41l-9.29 9.3-1.42-1.42L17.59 5H14V3zM5 5h6v2H5v12h12v-6h2v6c0 1.1-.9 2-2 2H5c-1.11 0-2-.9-2-2V7c0-1.1.89-2 2-2z"/></svg>
+        </a>
+    </div>
+
+    <div class="stats-row" id="handoverStats">
+        <div class="stat-card" style="border-left-color:#888; cursor:pointer;" onclick="setTrackingStateFilter('all')">
+            <div class="stat-value" id="trackingStatTotal">-</div>
+            <div class="stat-label">All Switches</div>
+        </div>
+        <div class="stat-card" style="border-left-color:#76b900; cursor:pointer;" onclick="setTrackingStateFilter('commissioning')">
+            <div class="stat-value" id="trackingStatCommissioning">-</div>
+            <div class="stat-label">Commissioning</div>
+        </div>
+        <div class="stat-card" style="border-left-color:#42a5f5; cursor:pointer;" onclick="setTrackingStateFilter('handed_over')">
+            <div class="stat-value" id="trackingStatHandedOver">-</div>
+            <div class="stat-label">Handed Over</div>
+        </div>
+        <div class="stat-card" style="border-left-color:#ff9800;">
+            <div class="stat-value" id="trackingStatSelected">0</div>
+            <div class="stat-label">Selected</div>
+        </div>
+    </div>
+
+    <div class="handover-bulk-panel">
+        <textarea id="trackingPasteHostnames" spellcheck="false" aria-label="Paste switch hostnames" placeholder="Paste switch hostnames (one per line, or separated by spaces/commas)"></textarea>
+        <div style="display:flex; flex-direction:column; gap:6px; justify-content:center;">
+            <button class="btn btn-secondary btn-sm" onclick="selectPastedTrackingHostnames()">Select Hostnames</button>
+            <button class="btn btn-secondary btn-sm" onclick="clearTrackingSelection()">Clear Selection</button>
+        </div>
+    </div>
+
+    <div class="toolbar">
+        <div class="toolbar-left">
+            <input type="search" class="search-filter" id="trackingSearch" placeholder="Filter by hostname, IP, or role..." oninput="renderTracking()" autocomplete="off" readonly onfocus="this.removeAttribute('readonly');">
+            <select class="form-input" id="trackingStateFilter" onchange="renderTracking()" style="width:170px;">
+                <option value="all">All states</option>
+                <option value="commissioning">Commissioning</option>
+                <option value="handed_over">Handed Over</option>
+            </select>
+            <select class="form-input" id="trackingRoleFilter" onchange="renderTracking()" style="width:170px;">
+                <option value="all">All roles</option>
+            </select>
+            <span id="trackingListInfo" style="font-size:12px; color:#888;"></span>
+        </div>
+        <div class="toolbar-right">
+            <button class="btn btn-secondary" onclick="selectAllTrackingFiltered(true)" id="btnTrackingSelectFiltered">Select All Filtered</button>
+            <button class="btn btn-secondary" onclick="loadTracking(true)" id="btnTrackingRefresh">
+                <svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+                Refresh
+            </button>
+            <button class="btn btn-primary" onclick="previewTrackingMove('handed_over')" id="btnMoveToHandedOver" disabled>Move to Handed Over</button>
+            <button class="btn btn-secondary" onclick="previewTrackingMove('commissioning')" id="btnMoveToCommissioning" disabled>Move Back to Commissioning</button>
+        </div>
+    </div>
+
+    <div class="table-wrapper">
+        <table class="data-table" id="handoverTable">
+            <thead>
+                <tr>
+                    <th style="width:42px; text-align:center;"><input type="checkbox" id="handoverSelectAll" onchange="selectAllTrackingFiltered(this.checked)" aria-label="Select all filtered switches"></th>
+                    <th>Hostname</th>
+                    <th>IP Address</th>
+                    <th>Role</th>
+                    <th>State</th>
+                    <th>Changed At</th>
+                    <th>Changed By</th>
+                    <th>Note</th>
+                </tr>
+            </thead>
+            <tbody id="handoverBody">
+                <tr><td colspan="8" class="loading">Open this tab to load switch tracking...</td></tr>
             </tbody>
         </table>
     </div>
@@ -1394,6 +1528,20 @@
     </div>
 </div>
 
+<!-- Handover Change Preview Modal -->
+<div class="modal-overlay" id="trackingPreviewModal" style="display:none;" onclick="if(event.target===this)closeTrackingPreview()">
+    <div class="modal" style="width:620px; max-width:90vw;">
+        <h3 id="trackingPreviewTitle">Confirm Handover Change</h3>
+        <div id="trackingPreviewSummary" style="font-size:13px; color:#ccc; line-height:1.6; margin-bottom:12px;"></div>
+        <div id="trackingPreviewList" style="max-height:240px; overflow:auto; padding:10px 12px; background:#1e1e1e; border:1px solid #3c3c3c; border-radius:4px; color:#aaa; font-family:'Cascadia Code','Consolas',monospace; font-size:12px; line-height:1.65;"></div>
+        <div style="margin-top:12px; color:#888; font-size:11px;">This updates tracking classification only. Collection settings and device configuration are unchanged.</div>
+        <div class="modal-actions">
+            <button class="btn btn-secondary" onclick="closeTrackingPreview()">Cancel</button>
+            <button class="btn btn-primary" onclick="saveTrackingMove()" id="btnConfirmTrackingMove">Confirm</button>
+        </div>
+    </div>
+</div>
+
 <!-- Toast container -->
 <div class="toast" id="toast"></div>
 
@@ -1407,6 +1555,13 @@ let allDiscovered = [];
 let deviceList = [];
 let knownRoles = []; // populated from devices.yaml via list-roles API
 let pendingRemovals = []; // hostnames to remove from devices.yaml on save
+let trackingDevices = [];
+let trackingRevision = '';
+let trackingLoaded = false;
+let trackingBusy = false;
+let trackingSelected = new Set();
+let trackingPendingState = '';
+let trackingPendingHostnames = [];
 
 const BASE_CONFIG_FILES = [
     { name: 'bash.bashrc', dest: '/etc/bash.bashrc', destAlt: '/home/cumulus/.bashrc', type: 'config', desc: 'Shell aliases & VRF helpers' },
@@ -1482,6 +1637,10 @@ function onTabSwitch(tab) {
         // Load generated configs for Cfg column (if not loaded yet)
         if (generatedConfigs.length === 0) apiCall('list-generated-configs').then(d => { if (d.success) { generatedConfigs = d.configs || []; renderBindings(); } });
     }
+    if (tab === 'handover') {
+        if (!trackingLoaded) loadTracking();
+        else renderTracking();
+    }
     if (tab === 'ztp-script') loadZTPScript();
     if (tab === 'upgrade') loadUpgradeCandidates();
 }
@@ -1491,6 +1650,325 @@ function setDiscoveredFilter(status) {
     renderDiscovered();
     // Scroll to discovered table
     document.getElementById('discoveredTable').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ===================== TAB 2: HANDOVER TRACKING =====================
+function normalizeTrackingState(state) {
+    const value = String(state || '').trim().toLowerCase().replace(/[ -]+/g, '_');
+    return value === 'handed_over' ? 'handed_over' : 'commissioning';
+}
+
+function trackingMetadataMap(data) {
+    const switches = (data && data.switches) || (data && data.tracking && data.tracking.switches) || {};
+    if (!switches || Array.isArray(switches) || typeof switches !== 'object') return {};
+    return switches;
+}
+
+function applyTrackingPayload(data, fallbackDevices = []) {
+    const source = Array.isArray(data.devices) ? data.devices : (Array.isArray(fallbackDevices) ? fallbackDevices : []);
+    const hasHandedOverList = Array.isArray(data.handed_over_switches);
+    const handedOver = new Set((hasHandedOverList ? data.handed_over_switches : []).map(value => String(value)));
+    const metadata = trackingMetadataMap(data);
+    const unique = new Map();
+
+    source.forEach(raw => {
+        if (!raw || typeof raw !== 'object') return;
+        const hostname = String(raw.hostname || raw.name || '').trim();
+        if (!hostname || unique.has(hostname)) return;
+        const extra = metadata[hostname] && typeof metadata[hostname] === 'object' ? metadata[hostname] : {};
+        const state = hasHandedOverList
+            ? (handedOver.has(hostname) ? 'handed_over' : data.default_state)
+            : (raw.state || extra.state || data.default_state);
+        unique.set(hostname, {
+            hostname,
+            ip: String(raw.ip || raw.address || ''),
+            role: String(raw.role || 'ungrouped'),
+            state: normalizeTrackingState(state),
+            changed_at: String(raw.changed_at || extra.changed_at || ''),
+            changed_by: String(raw.changed_by || extra.changed_by || ''),
+            note: String(raw.note || extra.note || ''),
+        });
+    });
+
+    trackingDevices = Array.from(unique.values()).sort((a, b) =>
+        a.hostname.localeCompare(b.hostname, undefined, { numeric: true, sensitivity: 'base' })
+    );
+    trackingRevision = data.revision !== undefined ? String(data.revision || '') : trackingRevision;
+    trackingLoaded = true;
+
+    const currentNames = new Set(trackingDevices.map(device => device.hostname));
+    trackingSelected = new Set(Array.from(trackingSelected).filter(hostname => currentNames.has(hostname)));
+
+    const orphaned = Array.isArray(data.orphaned_switches) ? data.orphaned_switches : [];
+    const orphanedNames = orphaned.map(item =>
+        typeof item === 'string' ? item : String((item && (item.hostname || item.name)) || '')
+    ).filter(Boolean);
+    const warning = document.getElementById('trackingWarning');
+    if (orphanedNames.length > 0) {
+        const preview = orphanedNames.slice(0, 6).map(escHtml).join(', ');
+        const more = orphanedNames.length > 6 ? ` and ${orphanedNames.length - 6} more` : '';
+        warning.innerHTML = `<strong>${orphanedNames.length} orphaned tracking entr${orphanedNames.length === 1 ? 'y' : 'ies'}:</strong> ${preview}${more}. These switches are not in devices.yaml and are preserved until they are reconciled.`;
+        warning.style.display = '';
+    } else {
+        warning.textContent = '';
+        warning.style.display = 'none';
+    }
+
+    refreshTrackingRoleFilter();
+    renderTracking();
+}
+
+async function loadTracking(force = false) {
+    if (trackingBusy) return;
+    if (!force && trackingLoaded) {
+        renderTracking();
+        return;
+    }
+
+    trackingBusy = true;
+    updateTrackingControls();
+    document.getElementById('handoverBody').innerHTML = '<tr><td colspan="8" class="loading">Loading switch tracking...</td></tr>';
+    const data = await apiCall('get-tracking');
+    if (!data.success) {
+        document.getElementById('handoverBody').innerHTML = `<tr><td colspan="8" style="color:#f44336;padding:20px;">Error: ${escHtml(String(data.error || 'Unable to load tracking'))}</td></tr>`;
+        showToast('Tracking load failed: ' + (data.error || 'Unknown error'), 'error');
+        trackingBusy = false;
+        updateTrackingControls();
+        return;
+    }
+
+    let fallbackDevices = deviceList;
+    if (!Array.isArray(data.devices) && fallbackDevices.length === 0) {
+        const devicesData = await apiCall('list-devices');
+        if (devicesData.success && Array.isArray(devicesData.devices)) fallbackDevices = devicesData.devices;
+    }
+    trackingSelected.clear();
+    applyTrackingPayload(data, fallbackDevices);
+    trackingBusy = false;
+    updateTrackingControls();
+}
+
+function refreshTrackingRoleFilter() {
+    const select = document.getElementById('trackingRoleFilter');
+    if (!select) return;
+    const current = select.value || 'all';
+    const roles = Array.from(new Set(trackingDevices.map(device => device.role || 'ungrouped')))
+        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+    select.innerHTML = '<option value="all">All roles</option>' + roles.map(role =>
+        `<option value="${escHtml(role)}">${escHtml(role)}</option>`
+    ).join('');
+    select.value = roles.includes(current) ? current : 'all';
+}
+
+function filteredTrackingDevices() {
+    const search = (document.getElementById('trackingSearch').value || '').trim().toLowerCase();
+    const state = document.getElementById('trackingStateFilter').value || 'all';
+    const role = document.getElementById('trackingRoleFilter').value || 'all';
+    return trackingDevices.filter(device => {
+        if (state !== 'all' && device.state !== state) return false;
+        if (role !== 'all' && device.role !== role) return false;
+        return !search || device.hostname.toLowerCase().includes(search) ||
+            device.ip.toLowerCase().includes(search) || device.role.toLowerCase().includes(search);
+    });
+}
+
+function formatTrackingDate(value) {
+    if (!value) return '-';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return escHtml(String(value));
+    return escHtml(date.toLocaleString());
+}
+
+function renderTracking() {
+    if (!trackingLoaded) return;
+    const filtered = filteredTrackingDevices();
+    const commissioning = trackingDevices.filter(device => device.state === 'commissioning').length;
+    const handedOver = trackingDevices.length - commissioning;
+    document.getElementById('trackingStatTotal').textContent = trackingDevices.length;
+    document.getElementById('trackingStatCommissioning').textContent = commissioning;
+    document.getElementById('trackingStatHandedOver').textContent = handedOver;
+    document.getElementById('trackingStatSelected').textContent = trackingSelected.size;
+    document.getElementById('trackingListInfo').textContent = `${filtered.length} of ${trackingDevices.length} switches`;
+
+    const selectAll = document.getElementById('handoverSelectAll');
+    const selectedFiltered = filtered.filter(device => trackingSelected.has(device.hostname)).length;
+    selectAll.checked = filtered.length > 0 && selectedFiltered === filtered.length;
+    selectAll.indeterminate = selectedFiltered > 0 && selectedFiltered < filtered.length;
+    selectAll.disabled = trackingBusy || filtered.length === 0;
+
+    if (filtered.length === 0) {
+        document.getElementById('handoverBody').innerHTML = `<tr><td colspan="8" style="text-align:center; padding:40px; color:#666;">${trackingDevices.length === 0 ? 'No switches found in devices.yaml.' : 'No switches match the current filters.'}</td></tr>`;
+        updateTrackingControls();
+        return;
+    }
+
+    document.getElementById('handoverBody').innerHTML = filtered.map(device => {
+        const selected = trackingSelected.has(device.hostname);
+        const stateBadge = device.state === 'handed_over'
+            ? '<span class="badge badge-info">Handed Over</span>'
+            : '<span class="badge badge-success">Commissioning</span>';
+        return `<tr class="${selected ? 'handover-selected' : ''}">
+            <td style="text-align:center;"><input type="checkbox" ${selected ? 'checked' : ''} onchange="toggleTrackingSelection('${escAttr(device.hostname)}', this.checked)" aria-label="Select ${escHtml(device.hostname)}"></td>
+            <td><strong>${escHtml(device.hostname)}</strong></td>
+            <td style="font-family:'Cascadia Code','Consolas',monospace; font-size:12px;">${escHtml(device.ip) || '-'}</td>
+            <td>${escHtml(device.role) || '-'}</td>
+            <td>${stateBadge}</td>
+            <td style="color:#888; white-space:nowrap;">${formatTrackingDate(device.changed_at)}</td>
+            <td>${escHtml(device.changed_by) || '-'}</td>
+            <td style="color:#888; max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escAttr(device.note)}">${escHtml(device.note) || '-'}</td>
+        </tr>`;
+    }).join('');
+    updateTrackingControls();
+}
+
+function updateTrackingControls() {
+    const selectedDevices = trackingDevices.filter(device => trackingSelected.has(device.hostname));
+    const toHandedOver = selectedDevices.some(device => device.state !== 'handed_over');
+    const toCommissioning = selectedDevices.some(device => device.state === 'handed_over');
+    const refresh = document.getElementById('btnTrackingRefresh');
+    const selectFiltered = document.getElementById('btnTrackingSelectFiltered');
+    const handover = document.getElementById('btnMoveToHandedOver');
+    const commissioning = document.getElementById('btnMoveToCommissioning');
+    if (refresh) refresh.disabled = trackingBusy;
+    if (selectFiltered) selectFiltered.disabled = trackingBusy || filteredTrackingDevices().length === 0;
+    if (handover) handover.disabled = trackingBusy || !toHandedOver;
+    if (commissioning) commissioning.disabled = trackingBusy || !toCommissioning;
+}
+
+function setTrackingStateFilter(state) {
+    document.getElementById('trackingStateFilter').value = state;
+    renderTracking();
+}
+
+function toggleTrackingSelection(hostname, checked) {
+    if (checked) trackingSelected.add(hostname);
+    else trackingSelected.delete(hostname);
+    renderTracking();
+}
+
+function selectAllTrackingFiltered(checked) {
+    filteredTrackingDevices().forEach(device => {
+        if (checked) trackingSelected.add(device.hostname);
+        else trackingSelected.delete(device.hostname);
+    });
+    renderTracking();
+}
+
+function clearTrackingSelection() {
+    trackingSelected.clear();
+    renderTracking();
+}
+
+function selectPastedTrackingHostnames() {
+    const input = document.getElementById('trackingPasteHostnames');
+    const tokens = Array.from(new Set((input.value || '').split(/[\s,;]+/).map(value => value.trim()).filter(Boolean)));
+    if (tokens.length === 0) {
+        showToast('Paste at least one switch hostname', 'info');
+        return;
+    }
+    const canonical = new Map(trackingDevices.map(device => [device.hostname.toLowerCase(), device.hostname]));
+    const unknown = [];
+    let added = 0;
+    tokens.forEach(token => {
+        const hostname = canonical.get(token.toLowerCase());
+        if (!hostname) unknown.push(token);
+        else if (!trackingSelected.has(hostname)) {
+            trackingSelected.add(hostname);
+            added++;
+        }
+    });
+    renderTracking();
+    if (unknown.length > 0) {
+        const preview = unknown.slice(0, 5).join(', ');
+        const more = unknown.length > 5 ? ` and ${unknown.length - 5} more` : '';
+        showToast(`${added} selected; unknown hostname${unknown.length === 1 ? '' : 's'}: ${preview}${more}`, 'error');
+    } else {
+        showToast(`${added} switch${added === 1 ? '' : 'es'} added to selection`, 'success');
+    }
+}
+
+function previewTrackingMove(targetState) {
+    const state = normalizeTrackingState(targetState);
+    const actionable = trackingDevices.filter(device =>
+        trackingSelected.has(device.hostname) && device.state !== state
+    );
+    if (actionable.length === 0) {
+        showToast(`Selected switches are already ${state === 'handed_over' ? 'Handed Over' : 'Commissioning'}`, 'info');
+        return;
+    }
+
+    trackingPendingState = state;
+    trackingPendingHostnames = actionable.map(device => device.hostname).sort((a, b) =>
+        a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
+    );
+    const handedOver = state === 'handed_over';
+    document.getElementById('trackingPreviewTitle').textContent = handedOver ? 'Move to Handed Over' : 'Move Back to Commissioning';
+    document.getElementById('trackingPreviewSummary').innerHTML = `<strong>${actionable.length}</strong> switch${actionable.length === 1 ? '' : 'es'} will move to <strong>${handedOver ? 'Handed Over' : 'Commissioning'}</strong>.`;
+    document.getElementById('trackingPreviewList').textContent = trackingPendingHostnames.join('\n');
+    const confirm = document.getElementById('btnConfirmTrackingMove');
+    confirm.textContent = handedOver ? 'Confirm Handover' : 'Confirm Move Back';
+    confirm.disabled = false;
+    document.getElementById('trackingPreviewModal').style.display = 'flex';
+}
+
+function closeTrackingPreview() {
+    if (trackingBusy) return;
+    document.getElementById('trackingPreviewModal').style.display = 'none';
+    trackingPendingState = '';
+    trackingPendingHostnames = [];
+}
+
+async function saveTrackingMove() {
+    if (trackingBusy || !trackingPendingState || trackingPendingHostnames.length === 0) return;
+    const targetState = trackingPendingState;
+    const changedHostnames = trackingPendingHostnames.slice();
+    const handedOver = new Set(
+        trackingDevices.filter(device => device.state === 'handed_over').map(device => device.hostname)
+    );
+    changedHostnames.forEach(hostname => {
+        if (targetState === 'handed_over') handedOver.add(hostname);
+        else handedOver.delete(hostname);
+    });
+
+    trackingBusy = true;
+    updateTrackingControls();
+    const confirm = document.getElementById('btnConfirmTrackingMove');
+    confirm.disabled = true;
+    confirm.textContent = 'Saving...';
+    const data = await apiCall('save-tracking', {
+        revision: trackingRevision,
+        handed_over_switches: Array.from(handedOver).sort((a, b) =>
+            a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
+        ),
+    });
+
+    trackingBusy = false;
+    if (data.success) {
+        document.getElementById('trackingPreviewModal').style.display = 'none';
+        trackingPendingState = '';
+        trackingPendingHostnames = [];
+        trackingSelected.clear();
+        document.getElementById('trackingPasteHostnames').value = '';
+        applyTrackingPayload(data, trackingDevices);
+        showToast(data.message || `${changedHostnames.length} switch${changedHostnames.length === 1 ? '' : 'es'} updated`, 'success');
+        return;
+    }
+
+    if (data.error_code === 'tracking_conflict' || data.conflict) {
+        document.getElementById('trackingPreviewModal').style.display = 'none';
+        trackingPendingState = '';
+        trackingPendingHostnames = [];
+        trackingSelected.clear();
+        showToast('Tracking changed by another admin. Reloaded the latest version; review your selection and try again.', 'error');
+        trackingLoaded = false;
+        await loadTracking(true);
+        return;
+    }
+
+    confirm.disabled = false;
+    confirm.textContent = targetState === 'handed_over' ? 'Confirm Handover' : 'Confirm Move Back';
+    updateTrackingControls();
+    showToast('Tracking save failed: ' + (data.error || 'Unknown error'), 'error');
 }
 
 // ===================== API HELPER =====================

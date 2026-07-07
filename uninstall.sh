@@ -5,7 +5,7 @@
 #   ./uninstall.sh            # interactive (requires exact UNINSTALL confirmation)
 #   ./uninstall.sh -y|--yes   # non-interactive
 #   ./uninstall.sh --dry-run  # show what would be removed, do nothing
-#   ./uninstall.sh --keep-data  # retain five Setup configs + selected runtime/history
+#   ./uninstall.sh --keep-data  # retain six Setup configs + selected runtime/history
 #   ./uninstall.sh --force-partial # also remove an unrecognized partial install tree
 #   ./uninstall.sh --remove-source # also remove the provenance-bound LLDPQ_SRC checkout
 #   ./uninstall.sh --remove-nginx  # also remove nginx + fcgiwrap packages
@@ -2539,9 +2539,11 @@ if $KEEP_DATA; then
 
     run "sudo install -d -o '$LLDPQ_USER' -g www-data -m 0750 '$KEEP_DATA_STAGE' '$KEEP_DATA_STAGE/setup' '$KEEP_DATA_STAGE/runtime' '$KEEP_DATA_STAGE/history'" || keep_data_abort
 
-    # The exact five Setup configuration files. Private SSH keys are excluded.
+    # The exact six Setup configuration files. Private SSH keys are excluded.
     preserve_keep_file "$LLDPQ_INSTALL_DIR/devices.yaml" \
         "$KEEP_DATA_STAGE/setup/devices.yaml" "devices.yaml" || keep_data_abort
+    preserve_keep_file "$LLDPQ_INSTALL_DIR/tracking.yaml" \
+        "$KEEP_DATA_STAGE/setup/tracking.yaml" "tracking.yaml" || keep_data_abort
     preserve_keep_file "$LLDPQ_INSTALL_DIR/notifications.yaml" \
         "$KEEP_DATA_STAGE/setup/notifications.yaml" "notifications.yaml" || keep_data_abort
     preserve_keep_file "$WEB_ROOT/topology.dot" \
@@ -2937,6 +2939,7 @@ WEB_TARGETS=(
     "$WEB_ROOT/ai_insights.py" "$WEB_ROOT/ai_context.py"
     "$WEB_ROOT/assets-api.sh" "$WEB_ROOT/setup_safety.py"
     "$WEB_ROOT/provision.html" "$WEB_ROOT/provision-api.sh"
+    "$WEB_ROOT/handover.html" "$WEB_ROOT/tracking-api.sh"
     "$WEB_ROOT/search.html" "$WEB_ROOT/search-api.sh"
     "$WEB_ROOT/setup-api.sh" "$WEB_ROOT/telemetry.html"
     "$WEB_ROOT/tracepath.html" "$WEB_ROOT/transceiver.html"

@@ -37,6 +37,85 @@ DISPLAY_ALIAS_LIMITS = {
     "devices": (2000, 128, 64),
 }
 
+TRACKING_STATES = frozenset(("commissioning", "handed_over"))
+TRACKING_METADATA_LIMITS = {
+    "changed_at": 253,
+    "changed_by": 253,
+    "note": 1000,
+}
+
+
+def validate_tracking_config(value):
+    """Validate the portable switch lifecycle configuration."""
+    if not isinstance(value, dict):
+        raise BackupImportError("tracking.yaml must contain a YAML mapping")
+    supported_fields = {"version", "default_state", "switches"}
+    unexpected = [key for key in value if key not in supported_fields]
+    if unexpected:
+        raise BackupImportError(
+            "tracking.yaml contains unsupported keys: "
+            + ", ".join(sorted(repr(key) for key in unexpected))
+        )
+    if value.get("version", 1) != 1:
+        raise BackupImportError("tracking.yaml version must be 1")
+    if value.get("default_state", "commissioning") != "commissioning":
+        raise BackupImportError(
+            "tracking.yaml default_state must be 'commissioning'"
+        )
+    switches = value.get("switches", {})
+    if switches is None:
+        switches = {}
+    if not isinstance(switches, dict):
+        raise BackupImportError("tracking.yaml 'switches' must be a mapping")
+    if len(switches) > 10000:
+        raise BackupImportError("tracking.yaml contains too many switches")
+
+    folded = set()
+    for hostname, entry in switches.items():
+        if (
+            not isinstance(hostname, str)
+            or hostname != hostname.strip()
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.()-]{0,252}", hostname)
+            or ".." in hostname
+        ):
+            raise BackupImportError("tracking.yaml contains an invalid hostname")
+        identity = hostname.casefold()
+        if identity in folded:
+            raise BackupImportError(
+                f"tracking.yaml contains a duplicate hostname: {hostname}"
+            )
+        folded.add(identity)
+        if not isinstance(entry, dict):
+            raise BackupImportError(
+                f"tracking.yaml entry for {hostname!r} must be a mapping"
+            )
+        supported_entry_fields = {"state"} | set(TRACKING_METADATA_LIMITS)
+        unknown_fields = [
+            key for key in entry if key not in supported_entry_fields
+        ]
+        if unknown_fields:
+            raise BackupImportError(
+                f"tracking.yaml entry for {hostname!r} contains unsupported fields"
+            )
+        if entry.get("state") not in TRACKING_STATES:
+            raise BackupImportError(
+                f"tracking.yaml state for {hostname!r} is invalid"
+            )
+        for field, maximum in TRACKING_METADATA_LIMITS.items():
+            candidate = entry.get(field)
+            if candidate is None:
+                continue
+            if (
+                not isinstance(candidate, str)
+                or not candidate.strip()
+                or len(candidate.strip()) > maximum
+                or any(char in candidate for char in ("\x00", "\r", "\n"))
+            ):
+                raise BackupImportError(
+                    f"tracking.yaml {field} for {hostname!r} is invalid"
+                )
+    return value
+
 
 def validate_display_aliases(value):
     """Validate and normalize the public display-alias configuration.
@@ -1954,6 +2033,8 @@ def _validate_config(name, content, validation_dir, lldpq_dir):
         _validate_topology_config(_load_yaml_mapping(text, name))
     elif name == "notifications.yaml":
         _validate_notifications(_load_yaml_mapping(text, name, allow_empty=True))
+    elif name == "tracking.yaml":
+        validate_tracking_config(_load_yaml_mapping(text, name, allow_empty=True))
     elif name == "display-aliases.json":
         value = _load_json_no_duplicate_keys(text, name)
         normalized = validate_display_aliases(value)
@@ -1967,7 +2048,7 @@ def validate_config_for_bundle(name, content, *, lldpq_dir):
     """Apply restore-time validation before advertising a backup as usable."""
     supported = {
         "devices.yaml", "topology.dot", "topology_config.yaml",
-        "notifications.yaml", "display-aliases.json",
+        "notifications.yaml", "tracking.yaml", "display-aliases.json",
     }
     if name not in supported:
         raise BackupImportError(f"Unsupported managed backup config: {name}")
@@ -2165,7 +2246,7 @@ def _parse_bundle(raw, allowed, key_names, pref_keys, validate_cron, lldpq_dir):
                 if member.size < 0 or member.size > 2 * 1024 * 1024:
                     raise BackupImportError(f"Backup entry is too large: {name}")
                 total_size += member.size
-                # Five managed configs, portable preferences and four possible
+                # Six managed configs, portable preferences and four possible
                 # SSH key members can each legally reach the 2 MiB entry cap.
                 # Keep import at least as permissive as bundles export can make.
                 if total_size > 20 * 1024 * 1024:
@@ -2373,6 +2454,7 @@ def restore_bundle(
     """Validate and restore a Setup bundle as one all-or-rollback transaction."""
     allowed = {
         "devices.yaml": lldpq_dir,
+        "tracking.yaml": lldpq_dir,
         "topology.dot": web_root,
         "topology_config.yaml": web_root,
         "notifications.yaml": lldpq_dir,
@@ -2655,6 +2737,7 @@ def recover_retained_import(*, lldpq_dir, user, web_root):
     """Recover a retained transaction without reading the potentially partial config."""
     allowed = {
         "devices.yaml": lldpq_dir,
+        "tracking.yaml": lldpq_dir,
         "topology.dot": web_root,
         "topology_config.yaml": web_root,
         "notifications.yaml": lldpq_dir,
@@ -2854,6 +2937,44 @@ def _acquire_configuration_lock(path="/etc/lldpq.conf.lock"):
         raise BackupImportError(f"Could not acquire configuration lock: {exc}") from exc
 
 
+def _acquire_inventory_lock(web_root):
+    """Join Provision's inventory transaction during retained recovery."""
+    path = os.path.join(web_root, ".inventory.lock")
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    descriptor = None
+    handle = None
+    try:
+        descriptor = os.open(path, flags, 0o664)
+        if os.geteuid() == 0:
+            try:
+                inventory_gid = grp.getgrnam("www-data").gr_gid
+            except KeyError as exc:
+                raise BackupImportError(
+                    "Required inventory lock group is unavailable"
+                ) from exc
+            os.fchown(descriptor, 0, inventory_gid)
+            os.fchmod(descriptor, 0o660)
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_mode & stat.S_IWOTH:
+            raise BackupImportError("Inventory lock has unsafe type or permissions")
+        handle = os.fdopen(descriptor, "a+")
+        descriptor = None
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        return handle
+    except Exception as exc:
+        try:
+            if handle is not None:
+                handle.close()
+            elif descriptor is not None:
+                os.close(descriptor)
+        except OSError:
+            pass
+        if isinstance(exc, BackupImportError):
+            raise
+        raise BackupImportError(f"Could not acquire inventory lock: {exc}") from exc
+
+
 def _main(argv=None):
     parser = argparse.ArgumentParser(description="LLDPq backup-import recovery helper")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -2874,12 +2995,16 @@ def _main(argv=None):
             if not os.path.isabs(value) or "\x00" in value:
                 parser.error("recovery paths must be absolute")
     lock_handle = None
+    inventory_lock_handle = None
     try:
         # This is the same lock used by Setup imports. A path-triggered service
         # waits for a normal transaction; after release it either recovers the
         # retained authority or observes that the completed import removed it.
         lock_handle = _acquire_configuration_lock()
         if args.command == "recover":
+            inventory_lock_handle = _acquire_inventory_lock(
+                os.path.normpath(args.web_root)
+            )
             result = recover_retained_import(
                 lldpq_dir=os.path.normpath(args.lldpq_dir), user=args.user,
                 web_root=os.path.normpath(args.web_root),
@@ -2890,6 +3015,11 @@ def _main(argv=None):
         print(f"backup-import recovery failed: {exc}", file=sys.stderr)
         return 1
     finally:
+        if inventory_lock_handle is not None:
+            try:
+                fcntl.flock(inventory_lock_handle.fileno(), fcntl.LOCK_UN)
+            finally:
+                inventory_lock_handle.close()
         if lock_handle is not None:
             try:
                 fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)

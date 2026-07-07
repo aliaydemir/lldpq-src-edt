@@ -673,7 +673,7 @@ Changes are validated and written atomically; existing comments and unrelated YA
 ### Backup & Restore (step 9)
 
 Export a portable configuration bundle (`.tar.gz`) and re-import it on a new install for painless migration:
-- **Included:** `devices.yaml`, `topology.dot`, `topology_config.yaml`, `notifications.yaml`, `display-aliases.json`, and a whitelist of **portable** `/etc/lldpq.conf` preferences (schedules, parallelism, feature toggles, AI settings)
+- **Included:** `devices.yaml`, `tracking.yaml`, `topology.dot`, `topology_config.yaml`, `notifications.yaml`, `display-aliases.json`, and a whitelist of **portable** `/etc/lldpq.conf` preferences (schedules, parallelism, feature toggles, AI settings)
 - **Excluded from portable prefs:** host-specific paths and secrets (e.g. the AI API key)
 - **SSH key** (optional checkbox, on by default): includes the collector key pair so the restored install can reach devices immediately. Bundles can already contain notification webhooks; always store them securely, especially when the private key is included.
 - **Import** restores every file to the right location, merges the portable prefs into `/etc/lldpq.conf`, and applies any schedule changes to cron.
@@ -706,7 +706,7 @@ It first copies the retained items into
 `$LLDPQ_INSTALL_DIR/uninstall-kept-data/`, then removes their former live/web
 locations. The retained set is exactly:
 
-- Setup configuration: `devices.yaml`, `notifications.yaml`, `topology.dot`,
+- Setup configuration: `devices.yaml`, `tracking.yaml`, `notifications.yaml`, `topology.dot`,
   `topology_config.yaml`, and `display-aliases.json`;
 - runtime data: `monitor-results/`, `lldp-results/`, and `alert-states/`;
 - history: collected `configs/`, command-history `hstr/`, and the web
@@ -824,7 +824,7 @@ after every requested copy succeeds; any copy failure aborts before the live
 installation is stopped:
 
 ### what gets backed up & preserved:
-- **config files**: devices.yaml, notifications.yaml, topology.dot, topology_config.yaml
+- **config files**: devices.yaml, tracking.yaml, notifications.yaml, topology.dot, topology_config.yaml
 - **monitoring data**: assets.ini, monitor-results/, lldp-results/, alert-states/
 - **system configs**: /etc/lldpq.conf, /etc/lldpq-users.conf
 - **DHCP configs**: /etc/dhcp/dhcpd.conf, /etc/dhcp/dhcpd.hosts

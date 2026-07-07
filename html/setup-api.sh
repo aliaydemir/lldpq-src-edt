@@ -166,6 +166,7 @@ LIFECYCLE_LOCK_FILE = '/etc/lldpq.lifecycle.lock'
 UNINSTALL_ACTIVE_MARKER = '/run/lldpq-uninstall.active'
 SETUP_SAFETY = os.environ.get('SETUP_SAFETY', '')
 _CONFIG_LOCK_HANDLE = None
+_INVENTORY_LOCK_HANDLE = None
 _SSH_KEY_LOCK_HANDLE = None
 
 def load_setup_safety():
@@ -371,6 +372,30 @@ def ensure_configuration_lock():
         raise RuntimeError('Global configuration lock changed while opening.')
     fcntl.flock(descriptor, fcntl.LOCK_EX)
     _CONFIG_LOCK_HANDLE = os.fdopen(descriptor, 'r+')
+
+def ensure_inventory_lock():
+    """Serialize backup snapshots/restores with Provision inventory writers."""
+    global _INVENTORY_LOCK_HANDLE
+    if _INVENTORY_LOCK_HANDLE is not None:
+        return
+    path = os.path.join(os.environ.get('WEB_ROOT', '/var/www/html'), '.inventory.lock')
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, 'O_CLOEXEC', 0)
+    flags |= getattr(os, 'O_NOFOLLOW', 0)
+    descriptor = os.open(path, flags, 0o664)
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_mode & stat.S_IWOTH:
+            raise RuntimeError('Inventory lock has unsafe type or permissions.')
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+    except Exception:
+        os.close(descriptor)
+        raise
+    _INVENTORY_LOCK_HANDLE = os.fdopen(descriptor, 'r+')
+
+def ensure_backup_locks():
+    """Use the shared global -> inventory order for portable config bundles."""
+    ensure_configuration_lock()
+    ensure_inventory_lock()
 
 def ensure_ssh_key_lock():
     """Lock order is global configuration first, then the SSH-key transaction."""
@@ -2017,14 +2042,15 @@ if action == 'test-alert':
         print(json.dumps({'success': False, 'error': 'Send failed: ' + str(e)[:200]}))
     sys.exit(0)
 
-# ─── Action: Export config bundle (devices/topology/topology_config/notifications) ───
+# ─── Action: Export config bundle (inventory/tracking/topology/notifications) ───
 if action == 'backup-export':
     import base64, importlib.util, io, tarfile, time as _t
     include_key = post_data.get('include_key', False)
     if not isinstance(include_key, bool):
         print(json.dumps({'success': False, 'error': 'include_key must be true or false'}))
         sys.exit(0)
-    wanted = [('devices.yaml', lldpq_dir), ('topology.dot', lldpq_dir),
+    wanted = [('devices.yaml', lldpq_dir), ('tracking.yaml', lldpq_dir),
+              ('topology.dot', lldpq_dir),
               ('topology_config.yaml', lldpq_dir), ('notifications.yaml', lldpq_dir),
               ('display-aliases.json', web_root)]
     buf = io.BytesIO()
@@ -2032,7 +2058,7 @@ if action == 'backup-export':
     has_key = False
     sensitive_files = []
     try:
-        ensure_configuration_lock()
+        ensure_backup_locks()
         if include_key:
             ensure_ssh_key_lock()
         backup_tools = load_backup_import_helper('lldpq_backup_tools')
@@ -2142,7 +2168,7 @@ if action == 'backup-import':
         result = importer.restore_bundle(
             b64, lldpq_user=lldpq_user, lldpq_dir=lldpq_dir, web_root=web_root,
             pref_keys=LLDPQ_PREF_KEYS, validate_cron=valid_cron_schedule,
-            acquire_lock=ensure_configuration_lock,
+            acquire_lock=ensure_backup_locks,
         )
     except Exception as exc:
         print(json.dumps({'success': False, 'error': 'Backup restore failed: ' + str(exc)[:300]}))

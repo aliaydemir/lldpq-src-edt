@@ -1,0 +1,927 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="shortcut icon" href="/png/favicon.ico">
+    <link rel="stylesheet" href="/css/main_styles.css">
+    <script src="/css/auth.js"></script>
+    <title>Tracking Overview</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            visibility: hidden;
+        }
+        .page {
+            width: 100%;
+            max-width: 1700px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .page-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 20px;
+            padding: 18px 20px;
+            margin-bottom: 16px;
+            background: #252526;
+            border: 1px solid #383838;
+            border-left: 4px solid #76b900;
+            border-radius: 6px;
+        }
+        .title-row { display: flex; align-items: center; gap: 10px; }
+        .title-icon {
+            width: 28px;
+            height: 28px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            color: #76b900;
+        }
+        .title-icon svg { width: 26px; height: 26px; fill: currentColor; }
+        h1 { margin: 0; color: #f0f0f0; font-size: 22px; font-weight: 600; }
+        .subtitle { margin: 6px 0 0 38px; color: #8f8f8f; font-size: 13px; }
+        .header-actions { display: flex; align-items: center; gap: 12px; }
+        .report-time { color: #888; font-size: 12px; text-align: right; line-height: 1.45; }
+        .btn {
+            border: 1px solid #4a4a4a;
+            border-radius: 4px;
+            background: #333;
+            color: #ddd;
+            padding: 8px 12px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .btn:hover { border-color: #76b900; color: #fff; }
+        .btn:disabled { cursor: wait; opacity: 0.55; }
+        .notice {
+            display: none;
+            margin-bottom: 16px;
+            padding: 11px 14px;
+            border: 1px solid #4b4025;
+            border-left: 4px solid #ffb74d;
+            border-radius: 5px;
+            background: #2d2a20;
+            color: #dfc889;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+        .notice.error {
+            display: block;
+            border-color: #603737;
+            border-left-color: #f44336;
+            background: #302222;
+            color: #ff9b96;
+        }
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(130px, 1fr));
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .summary-card {
+            appearance: none;
+            text-align: left;
+            padding: 14px 16px;
+            background: #252526;
+            color: inherit;
+            border: 1px solid #383838;
+            border-left: 4px solid #777;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+        .summary-card:hover, .summary-card.active { background: #2c2c2d; border-color: #555; }
+        .summary-card.active { box-shadow: inset 0 0 0 1px #666; }
+        .summary-card.total { border-left-color: #4fc3f7; }
+        .summary-card.healthy { border-left-color: #76b900; }
+        .summary-card.warning { border-left-color: #ffb74d; }
+        .summary-card.critical { border-left-color: #ff6b6b; }
+        .summary-card.no-data { border-left-color: #9e9e9e; }
+        .summary-value { display: block; font-size: 25px; font-weight: 700; color: #e6e6e6; }
+        .summary-card.healthy .summary-value { color: #76b900; }
+        .summary-card.warning .summary-value { color: #ffb74d; }
+        .summary-card.critical .summary-value { color: #ff6b6b; }
+        .summary-card.no-data .summary-value { color: #aaa; }
+        .summary-label { display: block; margin-top: 4px; color: #999; font-size: 11px; text-transform: uppercase; letter-spacing: .35px; }
+        .section {
+            background: #252526;
+            border: 1px solid #383838;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+        .toolbar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            padding: 12px 14px;
+            border-bottom: 1px solid #383838;
+        }
+        .toolbar input, .toolbar select {
+            height: 34px;
+            padding: 0 10px;
+            border: 1px solid #484848;
+            border-radius: 4px;
+            outline: none;
+            background: #1e1e1e;
+            color: #ddd;
+            font-size: 12px;
+        }
+        .toolbar input { width: min(360px, 100%); }
+        .toolbar input:focus, .toolbar select:focus { border-color: #76b900; }
+        .result-count { margin-left: auto; color: #888; font-size: 12px; }
+        .table-wrap { width: 100%; overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; min-width: 1220px; }
+        th {
+            padding: 10px 12px;
+            text-align: left;
+            color: #aaa;
+            background: #202020;
+            border-bottom: 1px solid #444;
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: .45px;
+            white-space: nowrap;
+        }
+        td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #343434;
+            color: #d0d0d0;
+            font-size: 12px;
+            vertical-align: middle;
+        }
+        tbody tr:hover { background: #2d2d2d; }
+        tbody tr:last-child td { border-bottom: 0; }
+        .mono { font-family: 'Cascadia Code', 'Consolas', monospace; }
+        .device-link { color: #76b900; text-decoration: none; font-weight: 600; }
+        .device-link:hover { text-decoration: underline; }
+        .muted { color: #777; }
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            min-height: 22px;
+            padding: 3px 7px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 700;
+            line-height: 1.2;
+            white-space: nowrap;
+        }
+        .badge.healthy { background: rgba(118,185,0,.16); color: #8ed100; }
+        .badge.warning { background: rgba(255,183,77,.14); color: #ffb74d; }
+        .badge.critical { background: rgba(244,67,54,.15); color: #ff7870; }
+        .badge.no-data { background: rgba(158,158,158,.14); color: #aaa; }
+        .issues { display: flex; flex-wrap: wrap; gap: 5px; max-width: 330px; }
+        .issue-link { text-decoration: none; }
+        .issue-link:hover .badge { filter: brightness(1.18); }
+        .note {
+            display: block;
+            max-width: 240px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .links { display: flex; gap: 8px; white-space: nowrap; }
+        .links a { color: #4fc3f7; text-decoration: none; }
+        .links a:hover { text-decoration: underline; }
+        .empty-row td { padding: 42px 20px; color: #888; text-align: center; }
+        .section-footer {
+            padding: 9px 14px;
+            border-top: 1px solid #383838;
+            color: #777;
+            font-size: 11px;
+            line-height: 1.45;
+        }
+        @media (max-width: 950px) {
+            .summary-grid { grid-template-columns: repeat(2, minmax(130px, 1fr)); }
+            .summary-card.total { grid-column: span 2; }
+            .page-header { flex-direction: column; }
+            .header-actions { width: 100%; justify-content: space-between; }
+            .report-time { text-align: left; }
+        }
+    </style>
+</head>
+<body>
+    <main class="page">
+        <header class="page-header">
+            <div>
+                <div class="title-row">
+                    <span class="title-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><path d="M4 4h16v4H4V4m0 6h16v4H4v-4m0 6h16v4H4v-4m2-11v2h2V5H6m0 6v2h2v-2H6m0 6v2h2v-2H6Z"/></svg>
+                    </span>
+                    <h1 id="page-title">Tracking Overview</h1>
+                </div>
+                <p class="subtitle" id="page-subtitle">Read-only operational status by lifecycle state.</p>
+            </div>
+            <div class="header-actions">
+                <div class="report-time" id="report-time">Monitoring report: loading…</div>
+                <button class="btn" id="refresh-button" type="button">Refresh</button>
+            </div>
+        </header>
+
+        <div class="notice" id="notice" role="status" aria-live="polite"></div>
+
+        <section class="summary-grid" aria-label="Switch health summary">
+            <button class="summary-card total active" data-card-status="all" type="button">
+                <span class="summary-value" id="summary-total">—</span>
+                <span class="summary-label" id="summary-total-label">Switches</span>
+            </button>
+            <button class="summary-card healthy" data-card-status="healthy" type="button">
+                <span class="summary-value" id="summary-healthy">—</span>
+                <span class="summary-label">Healthy</span>
+            </button>
+            <button class="summary-card warning" data-card-status="warning" type="button">
+                <span class="summary-value" id="summary-warning">—</span>
+                <span class="summary-label">Warning</span>
+            </button>
+            <button class="summary-card critical" data-card-status="critical" type="button">
+                <span class="summary-value" id="summary-critical">—</span>
+                <span class="summary-label">Critical</span>
+            </button>
+            <button class="summary-card no-data" data-card-status="no-data" type="button">
+                <span class="summary-value" id="summary-no-data">—</span>
+                <span class="summary-label">No data</span>
+            </button>
+        </section>
+
+        <section class="section">
+            <div class="toolbar">
+                <input id="search" type="search" placeholder="Filter by switch, IP, role, issue, or note…" autocomplete="off">
+                <select id="role-filter" aria-label="Filter by role"><option value="all">All roles</option></select>
+                <select id="status-filter" aria-label="Filter by status">
+                    <option value="all">All statuses</option>
+                    <option value="healthy">Healthy</option>
+                    <option value="warning">Warning</option>
+                    <option value="critical">Critical</option>
+                    <option value="no-data">No data</option>
+                </select>
+                <span class="result-count" id="result-count">Loading…</span>
+            </div>
+            <div class="table-wrap">
+                <table aria-label="Tracked switch operational health">
+                    <thead>
+                        <tr>
+                            <th>Switch</th>
+                            <th>IP</th>
+                            <th>Role</th>
+                            <th>Asset reachability</th>
+                            <th>Issue domains</th>
+                            <th>Overall</th>
+                            <th>Changed</th>
+                            <th>Note</th>
+                            <th>Links</th>
+                        </tr>
+                    </thead>
+                    <tbody id="switch-rows"></tbody>
+                </table>
+            </div>
+            <div class="section-footer" id="coverage-note">
+                Health is derived from the current published monitoring generation. Lifecycle changes do not trigger a second collection.
+            </div>
+        </section>
+    </main>
+
+    <script>
+        const VALID_SCOPES = new Set(['commissioning', 'handed_over']);
+        const requestedScope = new URLSearchParams(window.location.search).get('scope');
+        const scope = VALID_SCOPES.has(requestedScope) ? requestedScope : 'handed_over';
+        const REPORT_ROOT = '/monitor-results/';
+        const severityRank = Object.freeze({ healthy: 0, 'no-data': 1, warning: 2, critical: 3 });
+        const domainReports = Object.freeze({
+            LLDP: '/lldp.html',
+            BGP: '/monitor-results/bgp-analysis.html',
+            Duplicate: '/monitor-results/duplicate-analysis.html',
+            Flap: '/monitor-results/link-flap-analysis.html',
+            Optical: '/monitor-results/optical-analysis.html',
+            BER: '/monitor-results/ber-analysis.html',
+            'PFC/ECN': '/monitor-results/pfc-ecn-analysis.html',
+            Hardware: '/monitor-results/hardware-analysis.html',
+            Logs: '/monitor-results/log-analysis.html'
+        });
+
+        let isAdmin = false;
+        let allRows = [];
+        let activeStatus = 'all';
+
+        function keyFor(value) {
+            return String(value || '').trim().toLocaleLowerCase('en-US');
+        }
+
+        function noCacheUrl(path) {
+            return path + (path.includes('?') ? '&' : '?') + '_=' + Date.now();
+        }
+
+        function setScopeCopy() {
+            const handedOver = scope === 'handed_over';
+            const title = handedOver ? 'Handed Over Monitoring' : 'Commissioning Monitoring';
+            document.title = `${title} — LLDPq`;
+            document.getElementById('page-title').textContent = title;
+            document.getElementById('page-subtitle').textContent = handedOver
+                ? 'Read-only health for switches already handed over to operations.'
+                : 'Read-only health for switches whose commissioning is still in progress.';
+            document.getElementById('summary-total-label').textContent = handedOver
+                ? 'Handed over switches'
+                : 'Commissioning switches';
+        }
+
+        function showNotice(message, error = false) {
+            const notice = document.getElementById('notice');
+            notice.textContent = message;
+            notice.className = `notice${error ? ' error' : ''}`;
+            notice.style.display = message ? 'block' : 'none';
+        }
+
+        function formatDate(value) {
+            if (!value) return '—';
+            const date = new Date(value);
+            if (Number.isNaN(date.getTime())) return String(value);
+            return date.toLocaleString('en-GB', {
+                year: 'numeric', month: '2-digit', day: '2-digit',
+                hour: '2-digit', minute: '2-digit', hour12: false
+            });
+        }
+
+        function validateTrackingPayload(payload) {
+            if (!payload || payload.success !== true || !Array.isArray(payload.devices) ||
+                !Array.isArray(payload.orphaned_switches)) {
+                throw new Error(payload?.error || 'Tracking response is invalid');
+            }
+            return payload;
+        }
+
+        async function fetchTracking() {
+            const response = await fetch(noCacheUrl('/tracking-api.sh?action=status'), {
+                cache: 'no-store',
+                headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' }
+            });
+            let payload;
+            try {
+                payload = await response.json();
+            } catch (_) {
+                throw new Error(`Tracking request returned invalid JSON (${response.status})`);
+            }
+            if (response.status === 401) {
+                LLDPqAuth.redirectToLogin();
+                throw new Error('Session expired');
+            }
+            if (!response.ok || payload?.success !== true) {
+                throw new Error(payload?.error || `Tracking request failed (${response.status})`);
+            }
+            return validateTrackingPayload(payload);
+        }
+
+        async function sha256Hex(buffer) {
+            if (!globalThis.crypto?.subtle) return null;
+            const digest = await globalThis.crypto.subtle.digest('SHA-256', buffer);
+            return Array.from(new Uint8Array(digest), byte =>
+                byte.toString(16).padStart(2, '0')).join('');
+        }
+
+        async function readMarker() {
+            try {
+                const response = await fetch(noCacheUrl(`${REPORT_ROOT}.lldpq-stale`), { cache: 'no-store' });
+                if (response.status === 404) return null;
+                if (!response.ok) return { status: 'unknown' };
+                const marker = {};
+                (await response.text()).split(/\r?\n/).forEach(line => {
+                    const separator = line.indexOf('=');
+                    if (separator > 0) marker[line.slice(0, separator)] = line.slice(separator + 1);
+                });
+                return marker;
+            } catch (_) {
+                return { status: 'unknown' };
+            }
+        }
+
+        function validateManifest(manifest) {
+            if (!manifest || manifest.status !== 'current' || manifest.pipeline_complete !== true ||
+                typeof manifest.pipeline_id !== 'string' || !manifest.pipeline_id ||
+                !Array.isArray(manifest.analyses) || !manifest.sources ||
+                !Number.isInteger(manifest.device_count) || manifest.device_count < 0) {
+                return { valid: false, reason: 'No complete monitoring generation is available.' };
+            }
+            const completed = new Date(manifest.completed_at);
+            const completedMs = completed.getTime();
+            const configuredMaxAge = Number(manifest.max_age_seconds);
+            const maxAge = Number.isFinite(configuredMaxAge) && configuredMaxAge >= 0
+                ? configuredMaxAge : 1800;
+            const age = Date.now() - completedMs;
+            if (!Number.isFinite(completedMs) || age < -300000 || age > maxAge * 1000) {
+                return { valid: false, reason: 'The last complete monitoring generation is stale.' };
+            }
+            return { valid: true, completed };
+        }
+
+        async function readPipeline() {
+            const [marker, manifestResponse] = await Promise.all([
+                readMarker(),
+                fetch(noCacheUrl(`${REPORT_ROOT}.lldpq-current.json`), { cache: 'no-store' })
+                    .catch(() => null)
+            ]);
+            if (!manifestResponse?.ok) {
+                return { valid: false, marker, reason: 'Monitoring manifest is unavailable.' };
+            }
+            let manifest;
+            try {
+                manifest = await manifestResponse.json();
+            } catch (_) {
+                return { valid: false, marker, reason: 'Monitoring manifest is invalid.' };
+            }
+            const validation = validateManifest(manifest);
+            return { ...validation, marker, manifest };
+        }
+
+        async function fetchVerifiedSource(pipeline, name, expectedPath) {
+            const identity = pipeline.manifest?.sources?.[name];
+            if (!identity || identity.path !== expectedPath ||
+                !Number.isInteger(identity.size) || identity.size < 0 ||
+                !/^[a-f0-9]{64}$/i.test(identity.sha256 || '')) {
+                throw new Error(`${name} snapshot identity is invalid`);
+            }
+            const response = await fetch(noCacheUrl(`${REPORT_ROOT}${identity.path}`), { cache: 'no-store' });
+            if (!response.ok) throw new Error(`${name} snapshot is unavailable`);
+            const bytes = await response.arrayBuffer();
+            if (bytes.byteLength !== identity.size) throw new Error(`${name} snapshot size changed`);
+            const digest = await sha256Hex(bytes);
+            if (digest && digest.toLowerCase() !== identity.sha256.toLowerCase()) {
+                throw new Error(`${name} snapshot checksum changed`);
+            }
+            const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+            if (text.split(/\r?\n/, 1)[0] !== identity.created_header) {
+                throw new Error(`${name} snapshot header changed`);
+            }
+            return text;
+        }
+
+        function addIssue(health, hostname, domain, severity) {
+            if (!['warning', 'critical'].includes(severity)) return;
+            const item = health.get(keyFor(hostname));
+            if (!item) return;
+            const existing = item.issues.get(domain);
+            if (!existing) {
+                item.issues.set(domain, { severity, count: 1 });
+                return;
+            }
+            existing.count += 1;
+            if (severityRank[severity] > severityRank[existing.severity]) existing.severity = severity;
+        }
+
+        function parseAssets(text, health) {
+            const lines = String(text).split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+            if (lines.length < 3 || !lines[0].startsWith('Created on ') ||
+                lines[1].split(/\s+/).join('|') !==
+                    'DEVICE-NAME|IP|ETH0-MAC|SERIAL|MODEL|RELEASE|UPTIME|STATUS|LAST-SEEN') {
+                throw new Error('Assets snapshot format is invalid');
+            }
+            const valid = new Set(['OK', 'UNREACHABLE', 'SSH-FAILED', 'NO-INFO']);
+            lines.slice(2).forEach(line => {
+                const parts = line.split(/\s+/);
+                if (parts.length < 9 || !valid.has(parts[7].toUpperCase())) {
+                    throw new Error('Assets snapshot contains an invalid row');
+                }
+                const target = health.get(keyFor(parts[0]));
+                if (target) target.asset = parts[7].toUpperCase();
+            });
+        }
+
+        function parseLldp(text, health) {
+            const lines = String(text).split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+            if (!lines.length || !lines[0].startsWith('Created on ')) {
+                throw new Error('LLDP snapshot format is invalid');
+            }
+            let device = '';
+            lines.slice(1).forEach(line => {
+                const heading = line.match(/^=+\s+(\S+)\s+=+$/);
+                if (heading) { device = heading[1]; return; }
+                const parts = line.split(/\s+/);
+                if (/^-{3,}$/.test(line) || parts.join('|') ===
+                    'Port|Status|Exp-Nbr|Exp-Nbr-Port|Act-Nbr|Act-Nbr-Port|Port-Status') return;
+                if (!device || parts.length !== 7 || !['Pass', 'Fail', 'No-Info'].includes(parts[1])) {
+                    throw new Error('LLDP snapshot contains an invalid row');
+                }
+                const port = parts[0].toLowerCase();
+                const portState = parts[6].toUpperCase();
+                if (port === 'none' || port === 'n/a' || (parts[1] === 'Fail' && portState === 'DOWN')) {
+                    addIssue(health, device, 'LLDP', 'critical');
+                } else if (parts[1] === 'Fail') {
+                    addIssue(health, device, 'LLDP', 'warning');
+                } else if (parts[1] === 'No-Info') {
+                    addIssue(health, device, 'LLDP', 'warning');
+                }
+            });
+        }
+
+        function reportUnavailable(doc) {
+            return !doc?.body || doc.body.dataset.analysisStatus === 'skipped' || Boolean(doc.querySelector(
+                '[data-collection-status="unavailable"], [data-analysis-status="skipped"]'));
+        }
+
+        function firstCellDevice(row) {
+            return row.cells?.[0]?.textContent?.trim() || '';
+        }
+
+        function parseStandardReport(html, health, domain, rowSelector, statusReader) {
+            const doc = new DOMParser().parseFromString(html, 'text/html');
+            if (reportUnavailable(doc)) throw new Error(`${domain} report is unavailable`);
+            doc.querySelectorAll(rowSelector).forEach(row => {
+                const device = row.dataset.device || firstCellDevice(row);
+                addIssue(health, device, domain, statusReader(row));
+            });
+        }
+
+        function statusSeverity(value, warningValues = ['warning'], criticalValues = ['critical']) {
+            const normalized = String(value || '').trim().toLowerCase();
+            if (criticalValues.includes(normalized)) return 'critical';
+            if (warningValues.includes(normalized)) return 'warning';
+            return null;
+        }
+
+        function parseDuplicateReport(html, health) {
+            const doc = new DOMParser().parseFromString(html, 'text/html');
+            if (reportUnavailable(doc)) throw new Error('Duplicate report is unavailable');
+            doc.querySelectorAll('tr[data-devices]').forEach(row => {
+                const rank = row.dataset.sev;
+                const badgeText = row.cells?.[0]?.textContent || '';
+                const severity = rank === '0' || /critical/i.test(badgeText)
+                    ? 'critical'
+                    : rank === '1' || /warning/i.test(badgeText) ? 'warning' : null;
+                String(row.dataset.devices || '').split(/\s+/).filter(Boolean).forEach(device =>
+                    addIssue(health, device, 'Duplicate', severity));
+            });
+        }
+
+        function parseLogSummary(payload, health) {
+            if (!payload || payload.collection_status !== 'current' ||
+                !payload.device_counts || typeof payload.device_counts !== 'object') {
+                throw new Error('Log summary is unavailable');
+            }
+            Object.entries(payload.device_counts).forEach(([device, counts]) => {
+                const critical = Number(counts?.critical || 0);
+                // Match the Fabric dashboard: generic log "error" volume is
+                // informational here and must not inflate lifecycle health.
+                const warning = Number(counts?.warning || 0);
+                if (critical > 0) addIssue(health, device, 'Logs', 'critical');
+                else if (warning > 0) addIssue(health, device, 'Logs', 'warning');
+            });
+        }
+
+        async function fetchReportText(filename) {
+            const response = await fetch(noCacheUrl(`${REPORT_ROOT}${filename}`), { cache: 'no-store' });
+            if (!response.ok) throw new Error(`${filename} is unavailable`);
+            return response.text();
+        }
+
+        async function loadHealth(records) {
+            const health = new Map(records.map(device => [keyFor(device.hostname), {
+                asset: null,
+                issues: new Map()
+            }]));
+            const pipeline = await readPipeline();
+            const availability = [];
+            if (!pipeline.valid) return { health, pipeline, availability };
+
+            const tasks = [
+                (async () => {
+                    const text = await fetchVerifiedSource(pipeline, 'assets', '.pipeline-inputs/assets.ini');
+                    parseAssets(text, health);
+                    availability.push('Assets');
+                })(),
+                (async () => {
+                    const text = await fetchVerifiedSource(pipeline, 'lldp', '.pipeline-inputs/lldp_results.ini');
+                    parseLldp(text, health);
+                    availability.push('LLDP');
+                })()
+            ];
+
+            const analyses = new Set(pipeline.manifest.analyses || []);
+            const specs = [
+                ['bgp', 'BGP', 'bgp-analysis.html', html => parseStandardReport(
+                    html, health, 'BGP', 'tbody tr[data-health]', row =>
+                        statusSeverity(row.dataset.health))],
+                ['duplicate', 'Duplicate', 'duplicate-analysis.html', html => parseDuplicateReport(html, health)],
+                ['flap', 'Flap', 'link-flap-analysis.html', html => parseStandardReport(
+                    html, health, 'Flap', 'tbody tr[data-flap-status]', row =>
+                        statusSeverity(row.dataset.flapStatus))],
+                ['optical', 'Optical', 'optical-analysis.html', html => parseStandardReport(
+                    html, health, 'Optical', 'tbody tr[data-health]', row =>
+                        statusSeverity(row.dataset.health, ['warning', 'down'], ['critical']))],
+                ['ber', 'BER', 'ber-analysis.html', html => parseStandardReport(
+                    html, health, 'BER', 'tbody tr[data-status]', row =>
+                        statusSeverity(row.dataset.status))],
+                ['pfc-ecn', 'PFC/ECN', 'pfc-ecn-analysis.html', html => parseStandardReport(
+                    html, health, 'PFC/ECN', 'tbody tr[data-device][data-status]', row =>
+                        statusSeverity(row.dataset.status, ['pfc', 'combined'], ['loss', 'collection_error']))],
+                ['hardware', 'Hardware', 'hardware-analysis.html', html => parseStandardReport(
+                    html, health, 'Hardware', 'tbody tr[data-status]', row =>
+                        statusSeverity(row.dataset.status))]
+            ];
+            specs.forEach(([analysis, label, filename, parser]) => {
+                if (!analyses.has(analysis)) return;
+                tasks.push((async () => {
+                    parser(await fetchReportText(filename));
+                    availability.push(label);
+                })());
+            });
+            if (analyses.has('log')) {
+                tasks.push((async () => {
+                    const response = await fetch(noCacheUrl(`${REPORT_ROOT}log_summary.json`), { cache: 'no-store' });
+                    if (!response.ok) throw new Error('Log summary is unavailable');
+                    parseLogSummary(await response.json(), health);
+                    availability.push('Logs');
+                })());
+            }
+
+            const results = await Promise.allSettled(tasks);
+            pipeline.reportFailures = results.filter(result => result.status === 'rejected')
+                .map(result => result.reason?.message || 'Unknown report error');
+            return { health, pipeline, availability };
+        }
+
+        function assetPresentation(status) {
+            switch (status) {
+                case 'OK': return { label: 'Reachable', status: 'healthy' };
+                case 'UNREACHABLE': return { label: 'Unreachable', status: 'critical' };
+                case 'SSH-FAILED': return { label: 'SSH failed', status: 'critical' };
+                case 'NO-INFO': return { label: 'No info', status: 'no-data' };
+                default: return { label: 'No current data', status: 'no-data' };
+            }
+        }
+
+        function overallFor(health) {
+            const asset = assetPresentation(health.asset);
+            let overall = asset.status;
+            health.issues.forEach(issue => {
+                if (severityRank[issue.severity] > severityRank[overall]) overall = issue.severity;
+            });
+            return overall;
+        }
+
+        function normalizeRows(tracking, healthResult) {
+            const selected = tracking.devices
+                .filter(device => device?.state === scope && device.hostname)
+                .map(device => ({ ...device, orphaned: false }));
+            if (scope === 'handed_over') {
+                const existing = new Set(selected.map(device => keyFor(device.hostname)));
+                tracking.orphaned_switches.forEach(hostname => {
+                    if (!hostname || existing.has(keyFor(hostname))) return;
+                    selected.push({
+                        hostname, ip: '', address: '', role: '', state: 'handed_over',
+                        changed_at: null, note: 'Missing from devices.yaml', orphaned: true
+                    });
+                });
+            }
+            return selected.map(device => {
+                const health = healthResult.health.get(keyFor(device.hostname)) || { asset: null, issues: new Map() };
+                const issues = Array.from(health.issues, ([domain, detail]) => ({ domain, ...detail }))
+                    .sort((a, b) => severityRank[b.severity] - severityRank[a.severity] ||
+                        a.domain.localeCompare(b.domain));
+                const overall = device.orphaned ? 'no-data' : overallFor(health);
+                return { ...device, health, issues, overall };
+            }).sort((a, b) => severityRank[b.overall] - severityRank[a.overall] ||
+                String(a.hostname).localeCompare(String(b.hostname), undefined, { numeric: true }));
+        }
+
+        function badge(label, status) {
+            const span = document.createElement('span');
+            span.className = `badge ${status}`;
+            span.textContent = label;
+            return span;
+        }
+
+        function appendTextCell(row, value, className = '') {
+            const cell = document.createElement('td');
+            if (className) cell.className = className;
+            cell.textContent = value || '—';
+            row.appendChild(cell);
+            return cell;
+        }
+
+        function overallLabel(status) {
+            return { healthy: 'Healthy', warning: 'Warning', critical: 'Critical', 'no-data': 'No data' }[status] || 'No data';
+        }
+
+        function renderTable() {
+            const query = keyFor(document.getElementById('search').value);
+            const role = document.getElementById('role-filter').value;
+            const status = document.getElementById('status-filter').value;
+            const visible = allRows.filter(item => {
+                if (role !== 'all' && String(item.role || '') !== role) return false;
+                if (status !== 'all' && item.overall !== status) return false;
+                if (!query) return true;
+                const haystack = [item.hostname, item.ip, item.address, item.role, item.note,
+                    item.overall, ...item.issues.map(issue => issue.domain)].join(' ').toLocaleLowerCase('en-US');
+                return haystack.includes(query);
+            });
+            const body = document.getElementById('switch-rows');
+            body.replaceChildren();
+            if (!visible.length) {
+                const row = document.createElement('tr');
+                row.className = 'empty-row';
+                const cell = document.createElement('td');
+                cell.colSpan = 9;
+                cell.textContent = allRows.length
+                    ? 'No switches match the current filters.'
+                    : `No ${scope === 'handed_over' ? 'handed-over' : 'commissioning'} switches are configured.`;
+                row.appendChild(cell);
+                body.appendChild(row);
+            }
+            visible.forEach(item => {
+                const row = document.createElement('tr');
+                const deviceCell = document.createElement('td');
+                if (isAdmin && !item.orphaned) {
+                    const link = document.createElement('a');
+                    link.className = 'device-link mono';
+                    link.href = `/device.html?device=${encodeURIComponent(item.hostname)}`;
+                    link.target = '_blank';
+                    link.rel = 'noopener noreferrer';
+                    link.textContent = item.hostname;
+                    deviceCell.appendChild(link);
+                } else {
+                    const name = document.createElement('span');
+                    name.className = 'mono';
+                    name.textContent = item.hostname;
+                    deviceCell.appendChild(name);
+                }
+                row.appendChild(deviceCell);
+                appendTextCell(row, item.ip || item.address, 'mono');
+                appendTextCell(row, item.role);
+
+                const assetCell = document.createElement('td');
+                const asset = assetPresentation(item.health.asset);
+                assetCell.appendChild(badge(asset.label, item.orphaned ? 'no-data' : asset.status));
+                row.appendChild(assetCell);
+
+                const issueCell = document.createElement('td');
+                const issueWrap = document.createElement('div');
+                issueWrap.className = 'issues';
+                if (!item.issues.length) {
+                    const none = document.createElement('span');
+                    none.className = 'muted';
+                    none.textContent = item.overall === 'no-data' ? 'No current analysis' : 'None reported';
+                    issueWrap.appendChild(none);
+                } else {
+                    item.issues.forEach(issue => {
+                        const anchor = document.createElement('a');
+                        anchor.className = 'issue-link';
+                        anchor.href = domainReports[issue.domain] || '/start.html';
+                        anchor.target = '_blank';
+                        anchor.rel = 'noopener noreferrer';
+                        anchor.title = `Open ${issue.domain} report`;
+                        const label = issue.count > 1 ? `${issue.domain} (${issue.count})` : issue.domain;
+                        anchor.appendChild(badge(label, issue.severity));
+                        issueWrap.appendChild(anchor);
+                    });
+                }
+                issueCell.appendChild(issueWrap);
+                row.appendChild(issueCell);
+
+                const overallCell = document.createElement('td');
+                overallCell.appendChild(badge(overallLabel(item.overall), item.overall));
+                row.appendChild(overallCell);
+                appendTextCell(row, formatDate(item.changed_at));
+                const noteCell = document.createElement('td');
+                const note = document.createElement('span');
+                note.className = 'note';
+                note.textContent = item.note || '—';
+                note.title = item.note || '';
+                noteCell.appendChild(note);
+                row.appendChild(noteCell);
+
+                const linksCell = document.createElement('td');
+                const links = document.createElement('div');
+                links.className = 'links';
+                const assetsLink = document.createElement('a');
+                assetsLink.href = '/assets.html';
+                assetsLink.target = '_blank';
+                assetsLink.rel = 'noopener noreferrer';
+                assetsLink.textContent = 'Assets';
+                links.appendChild(assetsLink);
+                if (isAdmin && !item.orphaned) {
+                    const detailsLink = document.createElement('a');
+                    detailsLink.href = `/device.html?device=${encodeURIComponent(item.hostname)}`;
+                    detailsLink.target = '_blank';
+                    detailsLink.rel = 'noopener noreferrer';
+                    detailsLink.textContent = 'Details';
+                    links.appendChild(detailsLink);
+                }
+                linksCell.appendChild(links);
+                row.appendChild(linksCell);
+                body.appendChild(row);
+            });
+            document.getElementById('result-count').textContent =
+                `Showing ${visible.length} of ${allRows.length} switches`;
+        }
+
+        function renderSummary() {
+            const counts = { healthy: 0, warning: 0, critical: 0, 'no-data': 0 };
+            allRows.forEach(row => { counts[row.overall] += 1; });
+            document.getElementById('summary-total').textContent = allRows.length;
+            Object.entries(counts).forEach(([status, count]) => {
+                document.getElementById(`summary-${status}`).textContent = count;
+            });
+        }
+
+        function populateRoles() {
+            const select = document.getElementById('role-filter');
+            const current = select.value;
+            select.replaceChildren(new Option('All roles', 'all'));
+            Array.from(new Set(allRows.map(row => String(row.role || '').trim()).filter(Boolean)))
+                .sort((a, b) => a.localeCompare(b))
+                .forEach(role => select.add(new Option(role, role)));
+            select.value = Array.from(select.options).some(option => option.value === current) ? current : 'all';
+        }
+
+        function renderPipelineState(result, orphanCount) {
+            const pipeline = result.pipeline;
+            const reportTime = document.getElementById('report-time');
+            reportTime.textContent = pipeline.valid
+                ? `Monitoring report: ${formatDate(pipeline.manifest.completed_at)}`
+                : `Monitoring report: unavailable`;
+            const messages = [];
+            if (!pipeline.valid) messages.push(pipeline.reason);
+            if (pipeline.marker?.status === 'collecting') {
+                messages.push('A new collection is in progress; the previous complete report is shown.');
+            } else if (pipeline.marker?.status === 'stale') {
+                messages.push('The latest collection failed; the previous complete report is shown.');
+            }
+            if (pipeline.reportFailures?.length) {
+                messages.push(`${pipeline.reportFailures.length} monitoring source(s) could not be read.`);
+            }
+            if (orphanCount) {
+                messages.push(`${orphanCount} handed-over switch(es) are no longer present in devices.yaml and are shown without health data.`);
+            }
+            showNotice(messages.join(' '), !pipeline.valid);
+            const loaded = result.availability.length;
+            document.getElementById('coverage-note').textContent = pipeline.valid
+                ? `Health uses generation ${pipeline.manifest.pipeline_id}. ${loaded} monitoring source(s) were read. Lifecycle changes do not trigger a second collection.`
+                : 'Lifecycle data is available, but no current complete monitoring generation could be used for health.';
+        }
+
+        async function loadPage() {
+            const button = document.getElementById('refresh-button');
+            button.disabled = true;
+            button.textContent = 'Loading…';
+            try {
+                showNotice('');
+                const tracking = await fetchTracking();
+                const baseRecords = tracking.devices.filter(device => device?.state === scope && device.hostname);
+                const healthResult = await loadHealth(baseRecords);
+                allRows = normalizeRows(tracking, healthResult);
+                populateRoles();
+                renderSummary();
+                renderTable();
+                const orphanCount = scope === 'handed_over' ? tracking.orphaned_switches.length : 0;
+                renderPipelineState(healthResult, orphanCount);
+            } catch (error) {
+                console.error('Tracking overview failed:', error);
+                allRows = [];
+                renderSummary();
+                renderTable();
+                document.getElementById('report-time').textContent = 'Monitoring report: unavailable';
+                document.getElementById('result-count').textContent = 'Unavailable';
+                showNotice(error.message || 'Tracking data could not be loaded.', true);
+            } finally {
+                button.disabled = false;
+                button.textContent = 'Refresh';
+            }
+        }
+
+        document.getElementById('search').addEventListener('input', renderTable);
+        document.getElementById('role-filter').addEventListener('change', renderTable);
+        document.getElementById('status-filter').addEventListener('change', event => {
+            activeStatus = event.target.value;
+            document.querySelectorAll('[data-card-status]').forEach(card =>
+                card.classList.toggle('active', card.dataset.cardStatus === activeStatus));
+            renderTable();
+        });
+        document.querySelectorAll('[data-card-status]').forEach(card => {
+            card.addEventListener('click', () => {
+                activeStatus = card.dataset.cardStatus;
+                document.getElementById('status-filter').value = activeStatus;
+                document.querySelectorAll('[data-card-status]').forEach(item =>
+                    item.classList.toggle('active', item === card));
+                renderTable();
+            });
+        });
+        document.getElementById('refresh-button').addEventListener('click', loadPage);
+
+        async function init() {
+            setScopeCopy();
+            const authenticated = await LLDPqAuth.check();
+            if (!authenticated) return;
+            isAdmin = LLDPqAuth.isAdmin();
+            document.body.style.visibility = 'visible';
+            await loadPage();
+        }
+        init();
+    </script>
+</body>
+</html>
