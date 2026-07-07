@@ -1232,7 +1232,9 @@ class BGPAnalyzer:
         /* Sortable */
         .sortable {{ cursor: pointer; user-select: none; padding-right: 20px; }}
         .sortable:hover {{ background: #3c3c3c; }}
+        .sortable:focus-visible {{ outline: 2px solid #76b900; outline-offset: -2px; }}
         .sort-arrow {{ font-size: 10px; color: #666; margin-left: 5px; opacity: 0.5; }}
+        .sort-arrow::before {{ content: '▲▼'; }}
         .sortable.asc .sort-arrow::before {{ content: '▲'; color: #76b900; opacity: 1; }}
         .sortable.desc .sort-arrow::before {{ content: '▼'; color: #76b900; opacity: 1; }}
         .sortable.asc .sort-arrow, .sortable.desc .sort-arrow {{ opacity: 1; }}
@@ -1515,16 +1517,16 @@ class BGPAnalyzer:
             <table class="bgp-table" id="bgp-table">
                 <thead>
                 <tr>
-                    <th class="sortable" data-column="0" data-type="string">Device <span class="sort-arrow">▲▼</span></th>
-                    <th class="sortable" data-column="1" data-type="string">Neighbor <span class="sort-arrow">▲▼</span></th>
-                    <th class="sortable" data-column="2" data-type="port">Interface <span class="sort-arrow">▲▼</span></th>
-                    <th class="sortable" data-column="3" data-type="bgp-state">State <span class="sort-arrow">▲▼</span></th>
-                    <th class="sortable" data-column="4" data-type="number">ASN <span class="sort-arrow">▲▼</span></th>
-                    <th class="sortable" data-column="5" data-type="uptime">Uptime <span class="sort-arrow">▲▼</span></th>
-                    <th class="sortable" data-column="6" data-type="ratio">Prefixes RX/TX <span class="sort-arrow">▲▼</span></th>
-                    <th class="sortable" data-column="7" data-type="ratio">Messages RX/TX <span class="sort-arrow">▲▼</span></th>
-                    <th class="sortable" data-column="8" data-type="ratio">Queue In/Out <span class="sort-arrow">▲▼</span></th>
-                    <th class="sortable" data-column="9" data-type="bgp-health">Health <span class="sort-arrow">▲▼</span></th>
+                    <th class="sortable" data-column="0" data-type="string">Device <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-column="1" data-type="string">Neighbor <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-column="2" data-type="port">Interface <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-column="3" data-type="bgp-state">State <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-column="4" data-type="number">ASN <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-column="5" data-type="uptime">Uptime <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-column="6" data-type="ratio">Prefixes RX/TX <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-column="7" data-type="ratio">Messages RX/TX <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-column="8" data-type="ratio">Queue In/Out <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-column="9" data-type="bgp-health">Health <span class="sort-arrow"></span></th>
                 </tr>
                 </thead>
                 <tbody id="bgp-data">
@@ -1649,6 +1651,104 @@ class BGPAnalyzer:
         // EVPN per-device data
         const evpnPerDevice = __EVPN_DATA_PLACEHOLDER__;
         const evpnUniqueVnis = __EVPN_UNIQUE_VNI_PLACEHOLDER__;
+
+        function evpnSortableHeader(label, column, type) {
+            return '<th class="sortable evpn-sortable" data-column="' + column +
+                '" data-type="' + type + '" scope="col" tabindex="0" aria-sort="none"' +
+                ' title="Sort by ' + label + '">' + label +
+                ' <span class="sort-arrow" aria-hidden="true"></span></th>';
+        }
+
+        function sortEvpnTable(table, columnIndex, direction, type) {
+            const tbody = table.tBodies[0];
+            if (!tbody) return;
+
+            const rows = Array.from(tbody.rows).map((row, originalIndex) => ({
+                row,
+                originalIndex
+            }));
+
+            const cellValue = (row) => {
+                const cell = row.cells[columnIndex];
+                if (!cell) return '';
+                return cell.dataset.sortValue !== undefined
+                    ? cell.dataset.sortValue
+                    : cell.textContent.trim();
+            };
+
+            rows.sort((a, b) => {
+                const aValue = cellValue(a.row);
+                const bValue = cellValue(b.row);
+                let result = 0;
+
+                if (type === 'number') {
+                    const parseNumber = (value) => {
+                        const normalized = String(value).replace(/[^0-9.+-]/g, '');
+                        return normalized === '' ? Number.NaN : Number(normalized);
+                    };
+                    const aNumber = parseNumber(aValue);
+                    const bNumber = parseNumber(bValue);
+
+                    if (Number.isNaN(aNumber) && Number.isNaN(bNumber)) result = 0;
+                    else if (Number.isNaN(aNumber)) result = 1;
+                    else if (Number.isNaN(bNumber)) result = -1;
+                    else result = aNumber - bNumber;
+                } else {
+                    result = String(aValue).localeCompare(String(bValue), undefined, {
+                        numeric: true,
+                        sensitivity: 'base'
+                    });
+                }
+
+                const directedResult = direction === 'desc' ? -result : result;
+                return directedResult || a.originalIndex - b.originalIndex;
+            });
+
+            const fragment = document.createDocumentFragment();
+            rows.forEach(item => fragment.appendChild(item.row));
+            tbody.appendChild(fragment);
+        }
+
+        function initEvpnTableSorting() {
+            const table = document.querySelector('#evpnModalBody .evpn-table');
+            if (!table) return;
+
+            const headers = Array.from(table.querySelectorAll('th.evpn-sortable'));
+            const sortState = { column: -1, direction: 'asc' };
+
+            const activateSort = (header) => {
+                const column = Number(header.dataset.column);
+                const type = header.dataset.type || 'string';
+
+                if (sortState.column === column) {
+                    sortState.direction = sortState.direction === 'asc' ? 'desc' : 'asc';
+                } else {
+                    sortState.column = column;
+                    sortState.direction = 'asc';
+                }
+
+                headers.forEach(item => {
+                    item.classList.remove('asc', 'desc');
+                    item.setAttribute('aria-sort', 'none');
+                });
+                header.classList.add(sortState.direction);
+                header.setAttribute(
+                    'aria-sort',
+                    sortState.direction === 'asc' ? 'ascending' : 'descending'
+                );
+                sortEvpnTable(table, column, sortState.direction, type);
+            };
+
+            headers.forEach(header => {
+                header.addEventListener('click', () => activateSort(header));
+                header.addEventListener('keydown', event => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        activateSort(header);
+                    }
+                });
+            });
+        }
         
         // EVPN Modal functions
         function showEvpnModal(filterType) {
@@ -1664,7 +1764,10 @@ class BGPAnalyzer:
                 const routeKey = filterType === 'type2' ? 'type2_routes' : 'type5_routes';
                 title.textContent = routeType + ' - Per Device';
                 
-                html = '<table class="evpn-table"><thead><tr><th>Device</th><th>Route Count</th></tr></thead><tbody>';
+                html = '<table class="evpn-table"><thead><tr>' +
+                    evpnSortableHeader('Device', 0, 'string') +
+                    evpnSortableHeader('Route Count', 1, 'number') +
+                    '</tr></thead><tbody>';
                 
                 // Sort by route count descending
                 const sorted = Object.entries(evpnPerDevice)
@@ -1673,7 +1776,8 @@ class BGPAnalyzer:
                     .sort((a, b) => b.count - a.count);
                 
                 sorted.forEach(item => {
-                    html += '<tr><td>' + item.device + '</td><td>' + item.count.toLocaleString() + '</td></tr>';
+                    html += '<tr><td>' + item.device + '</td><td data-sort-value="' +
+                        item.count + '">' + item.count.toLocaleString() + '</td></tr>';
                 });
                 
                 html += '</tbody></table>';
@@ -1694,11 +1798,24 @@ class BGPAnalyzer:
                     return a.vni - b.vni;
                 });
                 
-                html = '<table class="evpn-table"><thead><tr><th>VNI</th><th>Type</th><th>VRF</th><th>MACs</th><th>ARPs</th><th>Remote VTEPs</th></tr></thead><tbody>';
+                html = '<table class="evpn-table"><thead><tr>' +
+                    evpnSortableHeader('VNI', 0, 'number') +
+                    evpnSortableHeader('Type', 1, 'string') +
+                    evpnSortableHeader('VRF', 2, 'string') +
+                    evpnSortableHeader('MACs', 3, 'number') +
+                    evpnSortableHeader('ARPs', 4, 'number') +
+                    evpnSortableHeader('Remote VTEPs', 5, 'number') +
+                    '</tr></thead><tbody>';
                 
                 uniqueVnis.forEach(vni => {
                     const badge = vni.type === 'L2' ? 'evpn-badge-l2' : 'evpn-badge-l3';
-                    html += '<tr><td>' + vni.vni + '</td><td><span class="evpn-badge ' + badge + '">' + vni.type + '</span></td><td>' + (vni.vrf || 'default') + '</td><td>' + (vni.macs || 0) + '</td><td>' + (vni.arps || 0) + '</td><td>' + (vni.remote_vteps || 0) + '</td></tr>';
+                    html += '<tr><td data-sort-value="' + vni.vni + '">' + vni.vni +
+                        '</td><td><span class="evpn-badge ' + badge + '">' + vni.type +
+                        '</span></td><td>' + (vni.vrf || 'default') +
+                        '</td><td data-sort-value="' + (vni.macs || 0) + '">' + (vni.macs || 0) +
+                        '</td><td data-sort-value="' + (vni.arps || 0) + '">' + (vni.arps || 0) +
+                        '</td><td data-sort-value="' + (vni.remote_vteps || 0) + '">' +
+                        (vni.remote_vteps || 0) + '</td></tr>';
                 });
                 
                 html += '</tbody></table>';
@@ -1706,6 +1823,7 @@ class BGPAnalyzer:
             }
             
             body.innerHTML = html;
+            initEvpnTableSorting();
             modal.classList.add('show');
         }
         
