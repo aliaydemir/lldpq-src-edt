@@ -18,6 +18,17 @@ server {
             add_header Expires "Thu, 01 Jan 1970 00:00:00 GMT";
         }
 
+        # Every page omitted from the operator menu is also admin-gated when
+        # its URL is entered directly. The gateway validates the same session
+        # cookie as the APIs before it releases any static HTML bytes.
+        location ~ ^/(?:setup|provision|ai|device|console|commands|vlan-report|vrf-report|fabric-exit|fabric-config|fabric-editor|fabric-deploy|lldpq-ztp-new-device-flow)\.html$ {
+            fastcgi_pass unix:/var/run/fcgiwrap.socket;
+            fastcgi_param SCRIPT_FILENAME /var/www/html/admin-page.sh;
+            fastcgi_param LLDPQ_ADMIN_PAGE $uri;
+            fastcgi_param REQUEST_METHOD $request_method;
+            fastcgi_param HTTP_COOKIE $http_cookie;
+        }
+
         # Ask-AI state belongs behind the admin API. Block legacy files that
         # may still exist briefly while an upgraded installation migrates them.
         location ~ ^/ai-(analysis|learnings|analysis-snapshot)\.json$ {
@@ -31,6 +42,21 @@ server {
         }
         location = /device-cache.json {
             return 404;
+        }
+        # Provisioning state is available only through its admin API. The
+        # Fabric Deploy cache keeps its existing URL but is session-gated.
+        location = /inventory.json {
+            return 404;
+        }
+        location = /discovery-cache.json {
+            return 404;
+        }
+        location = /fabric-scan-cache.json {
+            fastcgi_pass unix:/var/run/fcgiwrap.socket;
+            fastcgi_param SCRIPT_FILENAME /var/www/html/admin-page.sh;
+            fastcgi_param LLDPQ_ADMIN_PAGE $uri;
+            fastcgi_param REQUEST_METHOD $request_method;
+            fastcgi_param HTTP_COOKIE $http_cookie;
         }
         # Setup editors use same-directory lock, backup and temporary files for
         # atomic replacement. Only the canonical public config names may be read.

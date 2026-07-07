@@ -10,6 +10,7 @@ Licensed under MIT License - see LICENSE file for details
 import os
 import re
 import json
+import html
 import time
 import collections
 from datetime import datetime, timedelta
@@ -614,8 +615,9 @@ class LinkFlapAnalyzer:
 """
             for anomaly in anomalies:
                 severity_class = "warning" if anomaly['severity'] == 'warning' else ""
+                anomaly_device_key = html.escape(str(anomaly['device']), quote=True)
                 html_content += f"""
-            <div class="anomaly-card {severity_class}">
+            <div class="anomaly-card {severity_class}" data-device-key="{anomaly_device_key}">
                 <h4>{anomaly['device']} - {anomaly['interface']}</h4>
                 <p><strong>Issue:</strong> {anomaly['message']}</p>
                 <p><strong>Recommended Action:</strong> {anomaly['action']}</p>
@@ -700,8 +702,9 @@ class LinkFlapAnalyzer:
                 transition_class = "transition-good"
 
             dashboard_status = "ok" if status_val == "ok" else "problematic"
+            device_key = html.escape(str(port['device']), quote=True)
             table_rows.append(f"""
-        <tr data-status="{dashboard_status}" data-flap-status="{status_val}">
+        <tr data-device-key="{device_key}" data-status="{dashboard_status}" data-flap-status="{status_val}">
             <td>{canonical(port['device'])}</td>
             <td>{port['interface']}</td>
             <td><span class="{badge_class}">{status_val.upper()}</span></td>

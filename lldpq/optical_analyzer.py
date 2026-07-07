@@ -12,6 +12,7 @@ import time
 import re
 import os
 import math
+import html
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 from enum import Enum
@@ -1031,6 +1032,7 @@ class OpticalAnalyzer:
             if bias_lane is not None:
                 bias_current += f" (L{bias_lane})"
             recommended_action = self.get_recommended_action(port)
+            device_key = html.escape(str(device_name), quote=True)
             # Badge class based on health
             health = port['health']
             if health == 'excellent':
@@ -1049,7 +1051,7 @@ class OpticalAnalyzer:
                 badge_class = 'badge badge-gray'
 
             html_content += f"""
-                <tr data-health="{port['health']}">
+                <tr data-device-key="{device_key}" data-health="{port['health']}">
                     <td>{canonical(device_name)}</td>
                     <td>{interface_name}</td>
                     <td><span class="{badge_class}">{port['health'].upper()}</span></td>

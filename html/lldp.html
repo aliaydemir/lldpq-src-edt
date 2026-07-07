@@ -1074,6 +1074,9 @@
                 const status = determineLLDPStatus(connection);
                 const row = tbody.insertRow();
                 rowConnectionMap.set(row, connection);
+                // Raw lifecycle identity. Display aliases must never influence
+                // Commissioning/Handed Over scope membership.
+                row.dataset.deviceKey = connection.localDevice;
                 row.className = status.healthClass;
                 
                 setAliasedCell(row.insertCell(0), connection.localDevice, deviceAliasLc);

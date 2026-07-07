@@ -663,13 +663,15 @@ let suppressNotifDirty = false;
 
 document.addEventListener('DOMContentLoaded', async () => {
     // Admin-only: hidden from operators in the menu, and refused here too.
-    if (window.LLDPqAuth) {
-        const ok = await LLDPqAuth.check();
-        if (!ok) return;
-        if (!LLDPqAuth.isAdmin()) {
-            document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#888;font-family:sans-serif;">Access denied. Setup is admin only.</div>';
-            return;
-        }
+    if (typeof LLDPqAuth === 'undefined') {
+        document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#888;font-family:sans-serif;">Access denied. Authentication is unavailable.</div>';
+        return;
+    }
+    const ok = await LLDPqAuth.check();
+    if (!ok) return;
+    if (!LLDPqAuth.isAdmin()) {
+        document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#888;font-family:sans-serif;">Access denied. Setup is admin only.</div>';
+        return;
     }
     initDirtyGuards();
     renderSteps();

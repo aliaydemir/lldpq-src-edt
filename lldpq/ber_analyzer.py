@@ -13,6 +13,7 @@ import os
 import math
 import stat
 import tempfile
+import html
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
 from enum import Enum
@@ -1274,8 +1275,9 @@ class BERAnalyzer:
 """
             for anomaly in anomalies[:10]:  # Show top 10 anomalies
                 severity_class = "warning" if anomaly['severity'] == 'warning' else ""
+                anomaly_device_key = html.escape(str(anomaly['device']), quote=True)
                 html_content += f"""
-            <div class="anomaly-card {severity_class}">
+            <div class="anomaly-card {severity_class}" data-device-key="{anomaly_device_key}">
                 <h4>{anomaly['device']}:{anomaly['interface']}</h4>
                 <p>{anomaly['message']}</p>
                 <p><strong>Action:</strong> {anomaly['action']}</p>
@@ -1395,9 +1397,10 @@ class BERAnalyzer:
             sample_window = self._format_duration(
                 port_info.get('sample_duration_seconds', 0)
             )
+            device_key = html.escape(str(device), quote=True)
             
             html_content += f"""
-                <tr data-status="{status.lower()}">
+                <tr data-device-key="{device_key}" data-status="{status.lower()}">
                     <td>{canonical(device)}</td>
                     <td>{interface}</td>
                     <td><span class="{badge_class}">{status}</span></td>

@@ -1212,6 +1212,7 @@ def generate_hardware_html():
 
         # Get model information from assets
         device_label = html.escape(str(canonical(device_name)))
+        device_key = html.escape(str(device_name), quote=True)
         device_model = html.escape(
             str(assets_data.get(device_name, {}).get("model", "N/A"))
         )
@@ -1225,7 +1226,7 @@ def generate_hardware_html():
         )
         
         html_content += f"""
-                <tr data-status="{health_grade.lower()}">
+                <tr data-device-key="{device_key}" data-status="{health_grade.lower()}">
                     <td>{device_label}</td>
                     <td><span class="{health_badge_class}">{health_grade.upper()}</span></td>
                     <td>{cpu_temp_str}{cpu_cell_suffix}</td>

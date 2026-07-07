@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>..::LLDPQ::..</title>
     <link rel="shortcut icon" href="/png/favicon.ico">
+    <script src="/css/auth.js"></script>
     <style>
         * {
             margin: 0;
@@ -20,6 +21,10 @@
             overflow-x: hidden;
             overflow-y: auto;
         }
+
+        /* Admin shortcuts stay fail-closed until the authenticated role is known. */
+        .admin-only-tool { display: none; }
+        body.lldpq-admin .admin-only-tool { display: block; }
         
         .dashboard-container {
             max-width: 1400px;
@@ -344,13 +349,13 @@
             </div>
             <div class="section-content">
             <div class="summary-grid">
-                <div class="summary-card" style="border-left-color: #78909c;" onclick="window.location.href='setup.html'">
+                <div class="summary-card admin-only-tool" style="border-left-color: #78909c;" onclick="window.location.href='setup.html'">
                     <div class="card-value" style="color: #b0bec5;">
                         <svg viewBox="0 0 24 24" width="32" height="32" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
                     </div>
                     <div class="card-label">Setup</div>
                 </div>
-                <div class="summary-card" style="border-left-color: #ff9800;" onclick="window.location.href='provision.html'">
+                <div class="summary-card admin-only-tool" style="border-left-color: #ff9800;" onclick="window.location.href='provision.html'">
                     <div class="card-value" style="color: #ffb74d;">
                         <svg viewBox="0 0 24 24" width="32" height="32" fill="currentColor"><path d="M20 13H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1v-6c0-.55-.45-1-1-1zM7 19c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zM20 3H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1V4c0-.55-.45-1-1-1zM7 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z"/></svg>
                     </div>
@@ -2010,6 +2015,13 @@
 
         // Initialize dashboard
         document.addEventListener('DOMContentLoaded', async function() {
+            try {
+                const authenticated = await LLDPqAuth.check();
+                if (!authenticated) return;
+                if (LLDPqAuth.isAdmin()) document.body.classList.add('lldpq-admin');
+            } catch (error) {
+                console.warn('Could not resolve dashboard role:', error);
+            }
             let initialState = null;
             try {
                 initialState = await pollDashboardPipelineState({

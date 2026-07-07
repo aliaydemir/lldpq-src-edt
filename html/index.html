@@ -412,44 +412,135 @@
             transform: translateY(-2px);
         }
 
-        .tracking-view-control {
-            margin: 8px 0 16px;
-            padding: 9px 10px;
-            background: rgba(0, 0, 0, 0.16);
-            border: 1px solid rgba(255, 255, 255, 0.10);
-            border-radius: 7px;
+        /* Admin navigation is fail-closed: reveal it only after the
+           authenticated role and optional Ansible capability are known. */
+        .admin-only-menu,
+        #ansible-menu {
+            display: none !important;
         }
 
-        .tracking-view-control label {
-            display: block;
-            margin-bottom: 5px;
-            color: #8f8f8f;
-            font-size: 9px;
-            font-weight: 700;
-            letter-spacing: 0.7px;
-            text-transform: uppercase;
+        body.lldpq-admin .admin-only-menu {
+            display: flex !important;
         }
 
-        .tracking-view-control select {
+        body.lldpq-admin.lldpq-ansible-enabled #ansible-menu {
+            display: block !important;
+        }
+
+        .tracking-view-trigger {
             width: 100%;
-            height: 30px;
-            padding: 0 8px;
-            color: #d6d6d6;
-            background: #242424;
-            border: 1px solid #4a4a4a;
-            border-radius: 4px;
-            outline: none;
-            font-size: 11px;
+            min-height: 38px;
+            margin: 8px 0 16px;
+            padding: 7px 10px;
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            color: #d4d4d4;
+            background: rgba(0, 0, 0, 0.13);
+            border: 1px solid rgba(255, 255, 255, 0.10);
+            border-radius: 6px;
             cursor: pointer;
+            text-align: left;
         }
 
-        .tracking-view-control select:focus {
+        .tracking-view-trigger:hover,
+        .tracking-view-trigger:focus-visible {
             border-color: #76b900;
+            background: #30342c;
+            outline: none;
         }
 
-        #sidebar.collapsed .tracking-view-control {
-            display: none;
+        .tracking-view-trigger svg {
+            width: 17px;
+            height: 17px;
+            flex: 0 0 auto;
+            fill: #76b900;
         }
+
+        .tracking-trigger-copy { min-width: 0; flex: 1; }
+        .tracking-trigger-title { display: block; font-size: 11px; font-weight: 600; }
+        .tracking-trigger-current {
+            display: block;
+            margin-top: 1px;
+            overflow: hidden;
+            color: #909090;
+            font-size: 9px;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .tracking-trigger-chevron { color: #777; font-size: 14px; }
+
+        .tracking-modal-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 10050;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            background: rgba(0, 0, 0, 0.72);
+        }
+
+        .tracking-modal {
+            width: min(520px, 100%);
+            overflow: hidden;
+            color: #d4d4d4;
+            background: #252526;
+            border: 1px solid #474747;
+            border-radius: 8px;
+            box-shadow: 0 18px 55px rgba(0, 0, 0, 0.55);
+        }
+
+        .tracking-modal-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 18px 20px 14px;
+            border-bottom: 1px solid #3b3b3b;
+        }
+        .tracking-modal-header h2 { margin: 0; color: #f0f0f0; font-size: 18px; }
+        .tracking-modal-header p { margin: 5px 0 0; color: #8c8c8c; font-size: 11px; line-height: 1.45; }
+        .tracking-modal-close {
+            padding: 0;
+            color: #999;
+            background: transparent;
+            border: 0;
+            cursor: pointer;
+            font-size: 24px;
+            line-height: 1;
+        }
+        .tracking-modal-options { display: grid; gap: 9px; padding: 16px 20px 20px; }
+        .tracking-modal-option {
+            display: grid;
+            grid-template-columns: 20px 1fr 20px;
+            align-items: center;
+            gap: 11px;
+            padding: 12px 13px;
+            color: #d7d7d7;
+            background: #202020;
+            border: 1px solid #3f3f3f;
+            border-radius: 6px;
+            cursor: pointer;
+            text-align: left;
+        }
+        .tracking-modal-option:hover { border-color: #6b8f28; background: #292d25; }
+        .tracking-modal-option.selected { border-color: #76b900; background: #2a341c; }
+        .tracking-option-dot { width: 10px; height: 10px; border: 2px solid #777; border-radius: 50%; }
+        .tracking-modal-option.selected .tracking-option-dot { border-color: #76b900; background: #76b900; }
+        .tracking-option-title { display: block; font-size: 13px; font-weight: 600; }
+        .tracking-option-desc { display: block; margin-top: 3px; color: #888; font-size: 10px; line-height: 1.35; }
+        .tracking-option-check { color: #76b900; font-size: 16px; opacity: 0; }
+        .tracking-modal-option.selected .tracking-option-check { opacity: 1; }
+
+        #sidebar.collapsed .tracking-view-trigger {
+            width: 48px;
+            margin-left: auto;
+            margin-right: auto;
+            justify-content: center;
+        }
+        #sidebar.collapsed .tracking-trigger-copy,
+        #sidebar.collapsed .tracking-trigger-chevron { display: none; }
         
     </style>
 </head>
@@ -679,8 +770,16 @@
         function rememberTrackingView(value) {
             if (!TRACKING_VIEWS.has(value)) value = 'all';
             try { sessionStorage.setItem(TRACKING_VIEW_STORAGE_KEY, value); } catch (e) {}
-            const selector = document.getElementById('tracking-view-select');
-            if (selector) selector.value = value;
+            const labels = {
+                all: 'All Switches', commissioning: 'Commissioning', handed_over: 'Handed Over'
+            };
+            const current = document.getElementById('tracking-view-current');
+            if (current) current.textContent = labels[value];
+            document.querySelectorAll('.tracking-modal-option').forEach(option => {
+                const selected = option.dataset.trackingView === value;
+                option.classList.toggle('selected', selected);
+                option.setAttribute('aria-checked', selected ? 'true' : 'false');
+            });
             return value;
         }
 
@@ -689,6 +788,20 @@
                 return `handover.html?scope=${encodeURIComponent(value)}`;
             }
             return 'start.html';
+        }
+
+        function installLifecycleScope() {
+            const iframe = document.getElementById('content-iframe');
+            try {
+                const doc = iframe.contentDocument;
+                if (!doc || !doc.head || doc.getElementById('lldpq-lifecycle-scope-script')) return;
+                const script = doc.createElement('script');
+                script.id = 'lldpq-lifecycle-scope-script';
+                script.src = '/lifecycle-scope.js?v=20260707-1';
+                doc.head.appendChild(script);
+            } catch (e) {
+                // Optional cross-origin pages cannot inherit the LLDPq scope.
+            }
         }
 
         function activateFabricMenu() {
@@ -707,33 +820,64 @@
             }
         }
 
+        function closeTrackingViewModal() {
+            const overlay = document.getElementById('tracking-view-modal');
+            if (overlay) overlay.style.display = 'none';
+        }
+
+        function openTrackingViewModal() {
+            rememberTrackingView(storedTrackingView());
+            const overlay = document.getElementById('tracking-view-modal');
+            if (!overlay) return;
+            overlay.style.display = 'flex';
+            overlay.querySelector('.tracking-modal-option.selected')?.focus();
+        }
+
+        function selectTrackingView(value) {
+            closeTrackingViewModal();
+            applyTrackingView(value);
+        }
+
         function addTrackingViewControl() {
             const container = document.getElementById('user-menu-container');
-            if (!container || document.getElementById('tracking-view-select')) return;
-            const wrapper = document.createElement('div');
-            wrapper.className = 'tracking-view-control';
-            wrapper.title = 'Commissioning and Handed Over use the scoped tracking overview. All opens the full Fabric dashboard.';
-            const label = document.createElement('label');
-            label.htmlFor = 'tracking-view-select';
-            label.textContent = 'Tracking View';
-            const select = document.createElement('select');
-            select.id = 'tracking-view-select';
-            select.setAttribute('aria-label', 'Tracking View');
-            [
-                ['all', 'All Switches'],
-                ['commissioning', 'Commissioning'],
-                ['handed_over', 'Handed Over']
-            ].forEach(([value, text]) => select.add(new Option(text, value)));
-            select.value = storedTrackingView();
-            select.addEventListener('change', () => applyTrackingView(select.value));
-            wrapper.append(label, select);
-            container.appendChild(wrapper);
+            if (!container || document.getElementById('tracking-view-button')) return;
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.id = 'tracking-view-button';
+            button.className = 'tracking-view-trigger';
+            button.title = 'Choose which switch lifecycle group LLDPq displays';
+            button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v4H4V5m0 5h16v4H4v-4m0 5h16v4H4v-4Z"/></svg><span class="tracking-trigger-copy"><span class="tracking-trigger-title">Tracking</span><span class="tracking-trigger-current" id="tracking-view-current"></span></span><span class="tracking-trigger-chevron" aria-hidden="true">›</span>';
+            button.addEventListener('click', openTrackingViewModal);
+            container.appendChild(button);
+
+            if (!document.getElementById('tracking-view-modal')) {
+                const overlay = document.createElement('div');
+                overlay.id = 'tracking-view-modal';
+                overlay.className = 'tracking-modal-overlay';
+                overlay.setAttribute('role', 'dialog');
+                overlay.setAttribute('aria-modal', 'true');
+                overlay.setAttribute('aria-labelledby', 'tracking-modal-title');
+                overlay.innerHTML = '<div class="tracking-modal"><div class="tracking-modal-header"><div><h2 id="tracking-modal-title">Tracking View</h2><p>Choose the switch group shown by Fabric and analysis pages in this browser tab.</p></div><button type="button" class="tracking-modal-close" aria-label="Close">×</button></div><div class="tracking-modal-options"><button type="button" class="tracking-modal-option" role="radio" data-tracking-view="all"><span class="tracking-option-dot"></span><span><span class="tracking-option-title">All Switches</span><span class="tracking-option-desc">Show the complete managed inventory.</span></span><span class="tracking-option-check">✓</span></button><button type="button" class="tracking-modal-option" role="radio" data-tracking-view="commissioning"><span class="tracking-option-dot"></span><span><span class="tracking-option-title">Commissioning</span><span class="tracking-option-desc">Show only switches still being commissioned.</span></span><span class="tracking-option-check">✓</span></button><button type="button" class="tracking-modal-option" role="radio" data-tracking-view="handed_over"><span class="tracking-option-dot"></span><span><span class="tracking-option-title">Handed Over</span><span class="tracking-option-desc">Show only switches already handed over to operations.</span></span><span class="tracking-option-check">✓</span></button></div></div>';
+                overlay.addEventListener('click', event => {
+                    if (event.target === overlay) closeTrackingViewModal();
+                });
+                overlay.querySelector('.tracking-modal-close').addEventListener('click', closeTrackingViewModal);
+                overlay.querySelectorAll('.tracking-modal-option').forEach(option => {
+                    option.addEventListener('click', () => selectTrackingView(option.dataset.trackingView));
+                });
+                document.body.appendChild(overlay);
+            }
+            rememberTrackingView(storedTrackingView());
         }
         
         // Initialize authentication
         async function initAuth() {
             const isAuth = await LLDPqAuth.check();
             if (!isAuth) return;
+
+            if (LLDPqAuth.isAdmin()) {
+                document.body.classList.add('lldpq-admin');
+            }
             
             // Add auth styles
             const style = document.createElement('style');
@@ -761,21 +905,25 @@
             try {
                 const resp = await fetch('/fabric-api.sh?action=ansible-status');
                 const data = await resp.json();
-                if (!data.configured) {
+                if (data.configured && LLDPqAuth.isAdmin()) {
+                    document.body.classList.add('lldpq-ansible-enabled');
+                } else {
+                    document.body.classList.remove('lldpq-ansible-enabled');
                     const ansibleMenu = document.getElementById('ansible-menu');
-                    if (ansibleMenu) ansibleMenu.style.display = 'none';
+                    if (ansibleMenu) ansibleMenu.style.display = '';
                 }
             } catch (e) {
                 // If check fails, hide Ansible menu (safe default)
+                document.body.classList.remove('lldpq-ansible-enabled');
                 const ansibleMenu = document.getElementById('ansible-menu');
-                if (ansibleMenu) ansibleMenu.style.display = 'none';
+                if (ansibleMenu) ansibleMenu.style.display = '';
             }
             
             // Check for updates after auth is ready (admin only)
             checkForUpdates();
 
-            // The selection is per browser tab. "All" preserves the existing
-            // unfiltered dashboard; lifecycle scopes use the read-only overview.
+            // The selection is per browser tab. The outer shell injects the
+            // lifecycle predicate into each same-origin monitoring report.
             applyTrackingView(storedTrackingView());
         }
         
@@ -790,11 +938,6 @@
                 if (href === 'start.html' && trackingView !== 'all') {
                     event.preventDefault();
                     document.getElementById('content-iframe').src = trackingViewUrl(trackingView);
-                } else if (href !== 'start.html' && trackingView !== 'all') {
-                    // Existing analysis/detail pages are not lifecycle-aware yet.
-                    // Reset the badge before opening an unscoped report so the UI
-                    // never claims that an all-device page is filtered.
-                    rememberTrackingView('all');
                 }
                 // Remove active class from all items
                 document.querySelectorAll('.menu-item').forEach(i => i.classList.remove('active'));
@@ -805,6 +948,7 @@
         
         // Set initial active state
         document.querySelector('a[href="start.html"]').classList.add('active');
+        document.getElementById('content-iframe').addEventListener('load', installLifecycleScope);
         
         // Version and update check
         const GITHUB_VERSION_URL = 'https://raw.githubusercontent.com/aliaydemir/lldpq-src/main/VERSION';

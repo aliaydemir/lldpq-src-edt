@@ -1483,12 +1483,13 @@ class BGPAnalyzer:
 """
             for anomaly in anomalies:
                 severity_class = "warning" if anomaly['severity'] == 'warning' else ""
+                anomaly_device_key = html.escape(str(anomaly['device']), quote=True)
                 anomaly_device = html.escape(str(anomaly['device']))
                 anomaly_neighbor = html.escape(str(anomaly['neighbor']))
                 anomaly_message = html.escape(str(anomaly['message']))
                 anomaly_action = html.escape(str(anomaly['action']))
                 html_content += f"""
-            <div class="anomaly-card {severity_class}">
+            <div class="anomaly-card {severity_class}" data-device-key="{anomaly_device_key}">
                 <h4>{anomaly_device} - {anomaly_neighbor}</h4>
                 <p><strong>Issue:</strong> {anomaly_message}</p>
                 <p><strong>Recommended Action:</strong> {anomaly_action}</p>
@@ -1580,6 +1581,7 @@ class BGPAnalyzer:
             if neighbor_occurrences.get((hostname, vrf, neighbor.neighbor_name), 0) > 1:
                 neighbor_display = f"{neighbor_display} [{address_family}]"
             display_hostname = html.escape(str(canonical(hostname)))
+            device_key = html.escape(str(hostname), quote=True)
             display_neighbor = html.escape(str(neighbor_display))
             display_interface = html.escape(str(neighbor.interface or 'N/A'))
             display_vrf = html.escape(str(vrf), quote=True)
@@ -1587,7 +1589,7 @@ class BGPAnalyzer:
             display_uptime = html.escape(str(neighbor.uptime))
             
             html_content += f"""
-        <tr data-health="{health_val}" data-state="{dashboard_state}" data-bgp-state="{state_val}" data-vrf="{display_vrf}" data-address-family="{display_address_family}">
+        <tr data-device-key="{device_key}" data-health="{health_val}" data-state="{dashboard_state}" data-bgp-state="{state_val}" data-vrf="{display_vrf}" data-address-family="{display_address_family}">
             <td>{display_hostname}</td>
             <td>{display_neighbor}</td>
             <td>{display_interface}</td>

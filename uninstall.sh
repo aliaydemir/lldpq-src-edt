@@ -2938,7 +2938,8 @@ WEB_TARGETS=(
     "$WEB_ROOT/ai-api.sh" "$WEB_ROOT/ai.html" "$WEB_ROOT/ai_command_policy.py"
     "$WEB_ROOT/ai_insights.py" "$WEB_ROOT/ai_context.py"
     "$WEB_ROOT/assets-api.sh" "$WEB_ROOT/setup_safety.py"
-    "$WEB_ROOT/provision.html" "$WEB_ROOT/provision-api.sh"
+    "$WEB_ROOT/provision.html" "$WEB_ROOT/provision-api.sh" "$WEB_ROOT/admin-page.sh" \
+    "$WEB_ROOT/lifecycle-scope.js"
     "$WEB_ROOT/handover.html" "$WEB_ROOT/tracking-api.sh"
     "$WEB_ROOT/search.html" "$WEB_ROOT/search-api.sh"
     "$WEB_ROOT/setup-api.sh" "$WEB_ROOT/telemetry.html"
