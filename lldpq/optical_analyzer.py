@@ -1464,16 +1464,16 @@ class OpticalAnalyzer:
                 // new one.  The shared analysis guard resolves only after a
                 // newer complete generation has been published.
                 let baseline = null;
-                if (typeof window.lldpqCapturePipelineState === 'function') {
-                    baseline = await window.lldpqCapturePipelineState();
+                if (typeof window.lldpqCaptureAnalysisState === 'function') {
+                    baseline = await window.lldpqCaptureAnalysisState('optical');
                 }
 
-                const response = await fetch('/trigger-monitor', {
+                const response = await fetch('/trigger-monitor?scope=optical', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' }
                 });
                 const data = await response.json();
-                if (data.status !== 'success') {
+                if (!response.ok || data.status !== 'success' || !data.trigger_id || data.scope !== 'optical') {
                     throw new Error(data.message || 'Failed to trigger monitor analysis');
                 }
 
@@ -1495,14 +1495,14 @@ class OpticalAnalyzer:
                     `;
                     notification.innerHTML = `
                         <strong>✅ Monitor Analysis Started</strong><br>
-                        The full system analysis is running in the background.<br>
-                        <small>Page will refresh after the new analysis is completely published.</small>
+                        The optical analysis is running in the background.<br>
+                        <small>Page will refresh after the new optical results are completely published.</small>
                     `;
                 document.body.appendChild(notification);
 
                 if (typeof window.waitForLldpqAnalysisCompletion === 'function') {
                     await window.waitForLldpqAnalysisCompletion(
-                        baseline, { pipelineId: data.trigger_id }
+                        baseline, { scope: 'optical', pipelineId: data.trigger_id }
                     );
                 } else {
                     // Compatibility fallback for older installations that do

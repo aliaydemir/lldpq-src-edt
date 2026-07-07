@@ -869,7 +869,7 @@
                     <th style="cursor:pointer;" onclick="sortDiscovered('device_type')">Access <span id="sort-device_type" style="opacity:0.4;">&#9650;</span></th>
                     <th style="cursor:pointer;" onclick="sortDiscovered('post_provision')">Base Config <span id="sort-post_provision" style="opacity:0.4;">&#9650;</span></th>
                     <th style="cursor:pointer;" onclick="sortDiscovered('mac_status')">Status <span id="sort-mac_status" style="opacity:0.4;">&#9650;</span></th>
-                    <th style="width:80px;" title="Deploy generated NVUE configuration">NVUE Config</th>
+                    <th style="width:80px;" title="Re-deploy a matching saved NVUE configuration">NVUE Config</th>
                 </tr>
             </thead>
             <tbody id="discoveredBody">
@@ -1456,8 +1456,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Load initial data
     loadDiscoverySettings();
     loadDiscoveryCache();
-    // Load generated configs up-front so the Deploy button in the discovered table is deterministic.
-    // (Discover is the default tab; without this the button only appeared once some later render
+    // Load generated configs up-front so the NVUE re-deploy action is deterministic.
+    // (Discover is the default tab; without this the action only appeared once some later render
     //  happened to run after configs loaded — hence the "comes and goes" flicker.)
     apiCall('list-generated-configs').then(d => { if (d.success) { generatedConfigs = d.configs || []; renderDiscovered(); } });
     loadDeviceList();
@@ -1471,7 +1471,7 @@ function onTabSwitch(tab) {
     if (tab !== 'dhcpd') stopDhcpLog();   // stop log polling when leaving the DHCP tab
     if (tab === 'discover') {
         loadDiscoveryCache();
-        // Re-render after configs load so the Deploy button appears deterministically (no flicker).
+        // Re-render after configs load so the re-deploy action has no flicker.
         if (generatedConfigs.length === 0) apiCall('list-generated-configs').then(d => { if (d.success) { generatedConfigs = d.configs || []; renderDiscovered(); } });
     }
     if (tab === 'dhcpd') { loadDHCPConfig(); loadDHCPHosts(); updateDhcpLiveBtn(); restartDhcpLogTimer(); }
@@ -2948,6 +2948,60 @@ function renderPostProvisionBadge(device) {
     return '-';
 }
 
+function generatedConfigDeployState(device, configHostnames) {
+    if (!device.hostname || !configHostnames.has(device.hostname)) {
+        return { visible: false, enabled: false, reason: '' };
+    }
+    if (device.device_type !== 'provisioned') {
+        const reason = device.device_type === 'unreachable'
+            ? 'Re-deploy unavailable: the device is unreachable.'
+            : device.device_type === 'not_provisioned'
+                ? 'Re-deploy unavailable: passwordless SSH key access is not configured.'
+                : 'Re-deploy unavailable: the device is not classified as provisioned.';
+        return { visible: true, enabled: false, reason };
+    }
+    if (device.mac_status === 'mismatch') {
+        return {
+            visible: true,
+            enabled: false,
+            reason: 'Re-deploy blocked: the discovered MAC does not match Inventory.',
+        };
+    }
+    if (device.identity_verified !== true) {
+        const hasVerdict = Object.prototype.hasOwnProperty.call(
+            device, 'identity_verified'
+        );
+        return {
+            visible: true,
+            enabled: false,
+            reason: device.identity_error || (hasVerdict
+                ? 'Re-deploy blocked because the live MAC or serial identity could not be verified.'
+                : 'Re-deploy blocked until a fresh scan verifies the live MAC or serial.'),
+        };
+    }
+    return {
+        visible: true,
+        enabled: true,
+        reason: 'Matching saved NVUE config is available. Re-deploy will fully replace the switch configuration.',
+    };
+}
+
+function renderGeneratedConfigAction(device, configHostnames) {
+    const state = generatedConfigDeployState(device, configHostnames);
+    if (!state.visible) return '';
+    const style = 'font-size:11px;padding:2px 8px;';
+    if (!state.enabled) {
+        const reason = escHtml(state.reason);
+        return `<button type="button" class="btn btn-primary btn-sm" disabled ` +
+            `title="${reason}" aria-label="${reason}" style="${style}">Re-deploy</button>`;
+    }
+    return `<button type="button" class="btn btn-primary btn-sm" ` +
+        `onclick="deployGeneratedConfig('${escAttr(device.hostname)}','${escAttr(device.ip)}')" ` +
+        `title="${escHtml(state.reason)}" ` +
+        `aria-label="Re-deploy NVUE config to ${escHtml(device.hostname)}" ` +
+        `style="${style}">Re-deploy</button>`;
+}
+
 function renderDiscovered() {
     const filter = document.getElementById('discoveredSearch').value.toLowerCase();
     const typeFilter = document.getElementById('discoveredFilter').value;
@@ -3020,14 +3074,10 @@ function renderDiscovered() {
         // Role badge
         const roleHtml = d.role ? `<span style="padding:2px 8px;border-radius:3px;font-size:11px;background:#2d2d2d;color:#aaa;">${escHtml(d.role)}</span>` : '-';
 
-        // Deploy Config button: show only for provisioned devices with a generated config
+        // A matching generated config is an operator re-deploy capability, not
+        // evidence that this is a new device or that deployment is required.
         const gcSet = new Set((generatedConfigs || []).map(c => c.hostname));
-        const canDeploy = d.device_type === 'provisioned' && d.hostname &&
-            d.mac_status !== 'mismatch' && d.identity_verified !== false &&
-            gcSet.has(d.hostname);
-        const deployHtml = canDeploy
-            ? `<button class="btn btn-primary btn-sm" onclick="deployGeneratedConfig('${escAttr(d.hostname)}','${escAttr(d.ip)}')" style="font-size:11px;padding:2px 8px;">Deploy</button>`
-            : '';
+        const deployHtml = renderGeneratedConfigAction(d, gcSet);
 
         return `<tr>
             <td><strong>${escHtml(d.hostname || '-')}</strong></td>
@@ -3123,13 +3173,13 @@ function ipToNum(ip) {
 function filterDiscovered() { renderDiscovered(); }
 
 async function deployGeneratedConfig(hostname, ip) {
-    showConfirmModal('Deploy Generated Config',
-        `Deploy NVUE config to <strong>${escHtml(hostname)}</strong> (${escHtml(ip)})?<br><br>` +
+    showConfirmModal('Re-deploy NVUE Config',
+        `Re-deploy the saved NVUE config to <strong>${escHtml(hostname)}</strong> (${escHtml(ip)})?<br><br>` +
         `This will run:<br>` +
         `<code style="font-size:11px;color:#76b900;">nv config replace + apply + save</code><br><br>` +
         `<span style="color:#ff9800;">The switch configuration will be fully replaced.</span>`,
         async () => {
-            showToast(`Deploying config to ${hostname}...`, 'info');
+            showToast(`Re-deploying config to ${hostname}...`, 'info');
             const data = await apiCall('deploy-generated-config', { hostname, ip });
             if (data.success && data.results) {
                 const r = data.results[0];
@@ -3141,7 +3191,8 @@ async function deployGeneratedConfig(hostname, ip) {
             } else {
                 showToast(`Deploy failed: ${data.error || 'Unknown error'}`, 'error');
             }
-        }
+        },
+        'Deploy'
     );
 }
 

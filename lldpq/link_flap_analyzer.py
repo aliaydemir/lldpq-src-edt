@@ -1077,12 +1077,12 @@ class LinkFlapAnalyzer:
                 Running...
             `;
             let baseline = null;
-            if (typeof window.lldpqCapturePipelineState === 'function') {
-                try { baseline = await window.lldpqCapturePipelineState(); } catch (error) { baseline = null; }
+            if (typeof window.lldpqCaptureAnalysisState === 'function') {
+                try { baseline = await window.lldpqCaptureAnalysisState('flap'); } catch (error) { baseline = null; }
             }
             
             // Send POST request to trigger monitor
-            fetch('/trigger-monitor', {
+            fetch('/trigger-monitor?scope=flap', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -1090,7 +1090,7 @@ class LinkFlapAnalyzer:
             })
             .then(response => response.json())
             .then(data => {
-                if (data.status === 'success') {
+                if (data.status === 'success' && data.trigger_id && data.scope === 'flap') {
                     console.log('✅ Monitor analysis triggered successfully');
                     // Show notification
                     const notification = document.createElement('div');
@@ -1110,13 +1110,13 @@ class LinkFlapAnalyzer:
                     `;
                     notification.innerHTML = `
                         <strong>✅ Monitor Analysis Started</strong><br>
-                        The full system analysis is running in the background.<br>
-                        <small>Waiting for the current pipeline to complete before refreshing.</small>
+                        The link flap analysis is running in the background.<br>
+                        <small>Waiting for the link flap results to be published before refreshing.</small>
                     `;
                     document.body.appendChild(notification);
                     const completion = typeof window.waitForLldpqAnalysisCompletion === 'function'
                         ? window.waitForLldpqAnalysisCompletion(
-                            baseline, { pipelineId: data.trigger_id })
+                            baseline, { scope: 'flap', pipelineId: data.trigger_id })
                         : new Promise(resolve => setTimeout(resolve, 35000));
                     Promise.resolve(completion)
                         .then(() => window.location.reload())

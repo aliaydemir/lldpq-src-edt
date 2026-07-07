@@ -1613,18 +1613,18 @@ def generate_hardware_html():
                 // Capture the current pipeline generation before starting a
                 // new run, so completion means "new output is ready" rather
                 // than merely "some output exists".
-                const baseline = typeof window.lldpqCapturePipelineState === 'function'
-                    ? await window.lldpqCapturePipelineState()
+                const baseline = typeof window.lldpqCaptureAnalysisState === 'function'
+                    ? await window.lldpqCaptureAnalysisState('hardware')
                     : null;
 
-                const response = await fetch('/trigger-monitor', {
+                const response = await fetch('/trigger-monitor?scope=hardware', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     }
                 });
                 const data = await response.json();
-                if (!response.ok || data.status !== 'success') {
+                if (!response.ok || data.status !== 'success' || !data.trigger_id || data.scope !== 'hardware') {
                     throw new Error(data.message || `HTTP ${response.status}`);
                 }
 
@@ -1648,7 +1648,7 @@ def generate_hardware_html():
                     typeof window.waitForLldpqAnalysisCompletion === 'function';
                 notification.innerHTML = `
                         <strong>Monitor Analysis Started</strong><br>
-                        The full system analysis is running in the background.<br>
+                        The hardware analysis is running in the background.<br>
                         <small>${completionHelperAvailable
                             ? 'Page will refresh when the latest results are ready.'
                             : 'Page will automatically refresh in 35 seconds.'}</small>
@@ -1663,7 +1663,7 @@ def generate_hardware_html():
                 }
 
                 await window.waitForLldpqAnalysisCompletion(
-                    baseline, { pipelineId: data.trigger_id });
+                    baseline, { scope: 'hardware', pipelineId: data.trigger_id });
                 window.location.reload();
             } catch (error) {
                 console.error('❌ Analysis did not complete:', error);

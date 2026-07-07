@@ -92,6 +92,60 @@
         return { marker: marker, manifest: manifest, observedAt: observedAt };
     }
 
+    var analysisScopes = {
+        bgp: true,
+        duplicate: true,
+        flap: true,
+        optical: true,
+        ber: true,
+        'pfc-ecn': true,
+        hardware: true,
+        logs: true
+    };
+
+    function requireAnalysisScope(scope) {
+        scope = String(scope || '');
+        if (!analysisScopes[scope]) throw new Error('Unsupported analysis scope: ' + scope);
+        return scope;
+    }
+
+    async function readScopedAnalysisState(scope) {
+        scope = requireAnalysisScope(scope);
+        var observedAt = Date.now() / 1000;
+        var response;
+        try {
+            response = await fetch(noCacheUrl(
+                '/monitor-results/.analysis-state/' + scope + '.status'
+            ), { cache: 'no-store' });
+        } catch (error) {
+            // A short network interruption should not turn an in-flight run
+            // into a false failure. Keep polling, while retaining the error for
+            // diagnostics and eventual timeout reporting.
+            return {
+                scope: scope,
+                marker: null,
+                observedAt: observedAt,
+                error: error
+            };
+        }
+        // The marker is created when the daemon accepts the request. A 404
+        // before that point is an expected pending state, never success.
+        if (response.status === 404) {
+            return { scope: scope, marker: null, observedAt: observedAt };
+        }
+        // Authentication, permission, and server errors are durable protocol
+        // failures. Surface them now instead of making the user wait 15 minutes.
+        if (!response.ok) {
+            throw new Error('Could not read ' + scope + ' analysis state (HTTP ' +
+                response.status + ')');
+        }
+        return {
+            scope: scope,
+            marker: parseStateMarker(await response.text()),
+            observedAt: observedAt
+        };
+    }
+
     function manifestIdentity(manifest) {
         if (!manifest || typeof manifest !== 'object') return '';
         return String(manifest.pipeline_id || manifest.completed_at || '');
@@ -106,12 +160,57 @@
         return new Promise(function (resolve) { setTimeout(resolve, milliseconds); });
     }
 
+    async function waitForScopedAnalysisCompletion(scope, pipelineId, timeoutMs, pollMs) {
+        scope = requireAnalysisScope(scope);
+        pipelineId = String(pipelineId || '');
+        if (!pipelineId) throw new Error('Scoped analysis request identity is missing');
+
+        var startedAt = Date.now();
+        var lastReadError = null;
+        while (Date.now() - startedAt < timeoutMs) {
+            var state = await readScopedAnalysisState(scope);
+            if (state.error) lastReadError = state.error;
+            var marker = state.marker;
+            var markerPipelineId = String((marker && marker.pipeline_id) || '');
+
+            // Persistent markers also describe previous runs. Only the marker
+            // carrying this trigger's opaque identity may complete or fail it.
+            if (marker && markerPipelineId === pipelineId) {
+                if (String(marker.scope || '') !== scope) {
+                    throw new Error('Analysis state scope does not match the request');
+                }
+                if (marker.status === 'current') return marker;
+                if (marker.status === 'stale') {
+                    throw new Error(marker.reason || (scope + ' analysis failed'));
+                }
+                if (marker.status !== 'collecting') {
+                    throw new Error('Unknown ' + scope + ' analysis state: ' +
+                        String(marker.status || 'missing'));
+                }
+            }
+            await delay(pollMs);
+        }
+
+        var message = scope + ' analysis did not complete before the timeout';
+        if (lastReadError && lastReadError.message) {
+            message += ' (' + lastReadError.message + ')';
+        }
+        throw new Error(message);
+    }
+
     window.lldpqReadPipelineState = readPipelineState;
     window.lldpqCapturePipelineState = readPipelineState;
+    window.lldpqReadScopedAnalysisState = readScopedAnalysisState;
+    window.lldpqCaptureAnalysisState = readScopedAnalysisState;
     window.waitForLldpqAnalysisCompletion = async function (baseline, options) {
         options = options || {};
         var timeoutMs = Number(options.timeoutMs) || 15 * 60 * 1000;
         var pollMs = Math.max(Number(options.pollMs) || 2000, 500);
+        if (options.scope) {
+            return waitForScopedAnalysisCompletion(
+                options.scope, options.pipelineId, timeoutMs, pollMs
+            );
+        }
         var startedAt = Date.now();
         var baselineIdentity = manifestIdentity(baseline && baseline.manifest);
         var baselineMarkerIdentity = markerIdentity(baseline && baseline.marker);

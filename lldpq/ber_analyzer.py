@@ -1822,16 +1822,16 @@ class BERAnalyzer:
             
             try {
                 let baseline = null;
-                if (typeof window.lldpqCapturePipelineState === 'function') {
-                    baseline = await window.lldpqCapturePipelineState();
+                if (typeof window.lldpqCaptureAnalysisState === 'function') {
+                    baseline = await window.lldpqCaptureAnalysisState('ber');
                 }
 
-                const response = await fetch('/trigger-monitor', {
+                const response = await fetch('/trigger-monitor?scope=ber', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' }
                 });
                 const data = await response.json();
-                if (data.status !== 'success') {
+                if (!response.ok || data.status !== 'success' || !data.trigger_id || data.scope !== 'ber') {
                     throw new Error(data.message || 'Failed to trigger monitor analysis');
                 }
 
@@ -1853,14 +1853,14 @@ class BERAnalyzer:
                     `;
                     notification.innerHTML = `
                         <strong>✅ Monitor Analysis Started</strong><br>
-                        The full system analysis is running in the background.<br>
-                        <small>Page will refresh after the new analysis is completely published.</small>
+                        The BER analysis is running in the background.<br>
+                        <small>Page will refresh after the new BER results are completely published.</small>
                     `;
                 document.body.appendChild(notification);
 
                 if (typeof window.waitForLldpqAnalysisCompletion === 'function') {
                     await window.waitForLldpqAnalysisCompletion(
-                        baseline, { pipelineId: data.trigger_id });
+                        baseline, { scope: 'ber', pipelineId: data.trigger_id });
                 } else {
                     await new Promise(resolve => setTimeout(resolve, 35000));
                 }

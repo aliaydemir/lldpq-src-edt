@@ -1801,18 +1801,18 @@ async function runAnalysis(){
   var b=document.getElementById('run-analysis'); var o=b.innerHTML;
   b.disabled=true; b.innerHTML='<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="animation:spin 1s linear infinite"><path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4Z"/></svg> Running...';
   try {
-    var baseline = typeof window.lldpqCapturePipelineState === 'function'
-      ? await window.lldpqCapturePipelineState() : null;
-    var response = await fetch('/trigger-monitor',{
+    var baseline = typeof window.lldpqCaptureAnalysisState === 'function'
+      ? await window.lldpqCaptureAnalysisState('duplicate') : null;
+    var response = await fetch('/trigger-monitor?scope=duplicate',{
       method:'POST', headers:{'Content-Type':'application/json'}
     });
     var data = await response.json();
-    if(!response.ok || !data || data.status!=='success' || !data.trigger_id){
+    if(!response.ok || !data || data.status!=='success' || !data.trigger_id || data.scope!=='duplicate'){
       throw new Error((data && data.message) || 'Failed to trigger analysis.');
     }
     if(typeof window.waitForLldpqAnalysisCompletion === 'function'){
       await window.waitForLldpqAnalysisCompletion(
-        baseline, {pipelineId:data.trigger_id});
+        baseline, {scope:'duplicate', pipelineId:data.trigger_id});
     }else{
       await new Promise(function(resolve){ setTimeout(resolve,35000); });
     }

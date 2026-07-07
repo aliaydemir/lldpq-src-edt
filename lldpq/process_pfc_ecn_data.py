@@ -951,18 +951,19 @@ async function runAnalysis() {{
   button.textContent = 'Running...';
   try {{
     let baseline = null;
-    if (typeof window.lldpqCapturePipelineState === 'function') {{
-      baseline = await window.lldpqCapturePipelineState();
+    if (typeof window.lldpqCaptureAnalysisState === 'function') {{
+      baseline = await window.lldpqCaptureAnalysisState('pfc-ecn');
     }}
-    const response = await fetch('/trigger-monitor', {{
+    const response = await fetch('/trigger-monitor?scope=pfc-ecn', {{
       method: 'POST', headers: {{'Content-Type': 'application/json'}}
     }});
     const data = await response.json();
-    if (!response.ok || data.status !== 'success') {{
+    if (!response.ok || data.status !== 'success' || !data.trigger_id || data.scope !== 'pfc-ecn') {{
       throw new Error(data.message || 'Failed to trigger monitor analysis');
     }}
     if (typeof window.waitForLldpqAnalysisCompletion === 'function') {{
-      await window.waitForLldpqAnalysisCompletion(baseline, {{pipelineId: data.trigger_id}});
+      await window.waitForLldpqAnalysisCompletion(
+        baseline, {{scope: 'pfc-ecn', pipelineId: data.trigger_id}});
     }} else {{
       await new Promise(resolve => setTimeout(resolve, 35000));
     }}

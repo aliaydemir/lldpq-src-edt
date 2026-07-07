@@ -1,11 +1,126 @@
 #!/usr/bin/env bash
-# Monitor Script - OPTIMIZED VERSION
-# Single SSH session per device + Parallel limits + Parallel analysis
+# Monitor Script - full and page-scoped analysis
+# Single SSH session per device + Parallel limits + scoped/full analysis
 #
 # Copyright (c) 2024 LLDPq Project
 # Licensed under MIT License - see LICENSE file for details
 
 set -o pipefail
+
+show_usage() {
+    cat <<'EOF'
+Usage: monitor.sh [OPTIONS]
+
+Collect switch telemetry and regenerate analysis reports. With no --only
+option, monitor.sh runs every collection and analyzer.
+
+Options:
+  --only SCOPE          Refresh exactly one analysis scope:
+                          bgp        BGP neighbors and EVPN summary
+                          duplicate  Duplicate IP/MAC analysis
+                          flap       Link flap analysis
+                          optical    Optical diagnostics
+                          ber        BER/interface error analysis
+                          pfc-ecn    PFC/ECN QoS analysis
+                          hardware   Hardware health analysis
+                          logs       System log analysis
+                          all        Full collection (same as no --only)
+  -s, --skip-optical   Skip optical collection during a full run
+  -h, --help           Show this help and exit
+
+Examples:
+  ./monitor.sh
+  ./monitor.sh --only bgp
+  ./monitor.sh --only pfc-ecn
+  ./monitor.sh -s
+
+Scoped runs use the same global monitor lock as full runs, update only the
+selected analyzer output/state, and leave the full-pipeline manifest unchanged.
+They require a current inventory-matched assets.ini and a real web baseline
+from a recent successful full run.
+EOF
+}
+
+MONITOR_SCOPE="all"
+CLI_SKIP_OPTICAL=false
+only_seen=false
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)
+            show_usage
+            exit 0
+            ;;
+        -s|--skip-optical)
+            CLI_SKIP_OPTICAL=true
+            ;;
+        --only)
+            if [[ "$only_seen" == "true" ]]; then
+                echo "Error: --only may be specified only once" >&2
+                show_usage >&2
+                exit 2
+            fi
+            shift
+            if [[ $# -eq 0 ]]; then
+                echo "Error: --only requires a scope" >&2
+                show_usage >&2
+                exit 2
+            fi
+            MONITOR_SCOPE=$1
+            only_seen=true
+            ;;
+        --only=*)
+            if [[ "$only_seen" == "true" ]]; then
+                echo "Error: --only may be specified only once" >&2
+                show_usage >&2
+                exit 2
+            fi
+            MONITOR_SCOPE=${1#--only=}
+            only_seen=true
+            ;;
+        --)
+            shift
+            if [[ $# -gt 0 ]]; then
+                echo "Error: unexpected positional arguments: $*" >&2
+                show_usage >&2
+                exit 2
+            fi
+            break
+            ;;
+        *)
+            echo "Error: unknown option: $1" >&2
+            show_usage >&2
+            exit 2
+            ;;
+    esac
+    shift
+done
+
+case "$MONITOR_SCOPE" in
+    all|bgp|duplicate|flap|optical|ber|pfc-ecn|hardware|logs) ;;
+    "")
+        echo "Error: --only requires a non-empty scope" >&2
+        show_usage >&2
+        exit 2
+        ;;
+    *)
+        echo "Error: unsupported analysis scope: $MONITOR_SCOPE" >&2
+        show_usage >&2
+        exit 2
+        ;;
+esac
+
+if [[ "$MONITOR_SCOPE" == "optical" && "$CLI_SKIP_OPTICAL" == "true" ]]; then
+    echo "Error: --only optical cannot be combined with --skip-optical" >&2
+    exit 2
+fi
+
+scope_selected() {
+    [[ "$MONITOR_SCOPE" == "all" || "$MONITOR_SCOPE" == "$1" ]]
+}
+
+scoped_run=false
+[[ "$MONITOR_SCOPE" != "all" ]] && scoped_run=true
 
 # The wrapper holds this lock for the full collection pipeline. Direct callers
 # of monitor.sh acquire the same lock here. Trust the inherited marker only
@@ -30,7 +145,11 @@ fi
 
 # Start timing
 START_TIME=$(date +%s)
-echo "Starting monitoring at $(date)"
+if [[ "$scoped_run" == "true" ]]; then
+    echo "Starting monitoring scope '$MONITOR_SCOPE' at $(date)"
+else
+    echo "Starting monitoring at $(date)"
+fi
 
 DATE=$(date '+%Y-%m-%d %H-%M-%S')
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -45,15 +164,9 @@ normalize_bool() {
     esac
 }
 
-# Parse flags
+# Runtime flags
 SKIP_OPTICAL="${SKIP_OPTICAL:-false}"
 SKIP_L1="${SKIP_L1:-false}"
-CLI_SKIP_OPTICAL=false
-while getopts "s" opt; do
-    case $opt in
-        s) CLI_SKIP_OPTICAL=true ;;
-    esac
-done
 
 # Use copy-on-write clones when GNU cp and the backing filesystem support
 # them.  --reflink=auto transparently falls back to an ordinary copy on ext4;
@@ -102,6 +215,10 @@ apply_monitor_tuning() {
     esac
 }
 apply_monitor_tuning
+if [[ "$MONITOR_SCOPE" == "optical" && "$SKIP_OPTICAL" == "true" ]]; then
+    echo "Error: optical collection is disabled by SKIP_OPTICAL" >&2
+    exit 2
+fi
 
 mkdir -p \
     "$SCRIPT_DIR/monitor-results/flap-data" \
@@ -120,6 +237,7 @@ active_jobs_file=$(mktemp) || {
     exit 1
 }
 completed_file=""
+scope_expected_hosts_file=""
 analysis_log_dir=""
 bundle_parent="$SCRIPT_DIR/.monitor-bundles"
 bundle_root=""
@@ -419,6 +537,7 @@ cleanup_monitor_temp() {
     [[ -n "$unreachable_hosts_file" ]] && rm -f "$unreachable_hosts_file"
     [[ -n "$active_jobs_file" ]] && rm -f "$active_jobs_file"
     [[ -n "$completed_file" ]] && rm -f "$completed_file"
+    [[ -n "$scope_expected_hosts_file" ]] && rm -f "$scope_expected_hosts_file"
     [[ -n "$analysis_log_dir" ]] && rm -rf "$analysis_log_dir"
     if [[ -n "$bundle_root" ]] && \
        find "$bundle_root" -name '.retain-device-recovery' -print -quit \
@@ -452,29 +571,38 @@ trap 'terminate_monitor 129' HUP
 trap 'terminate_monitor 130' INT
 trap 'terminate_monitor 143' TERM
 
-stale_marker="$SCRIPT_DIR/monitor-results/.lldpq-stale"
+if [[ "$scoped_run" == "true" ]]; then
+    mkdir -p "$SCRIPT_DIR/monitor-results/.analysis-state" || exit 1
+    status_marker_relative=".analysis-state/${MONITOR_SCOPE}.status"
+else
+    status_marker_relative=".lldpq-stale"
+fi
+stale_marker="$SCRIPT_DIR/monitor-results/$status_marker_relative"
 
 publish_web_report_marker() {
     local source_marker=$1
     local web_dir="$WEB_ROOT/monitor-results"
-    local web_marker="$web_dir/.lldpq-stale"
-    local web_temporary=""
+    local web_marker="$web_dir/$status_marker_relative"
+    local web_parent web_temporary=""
 
     [[ -d "$web_dir" ]] || return 0
+    web_parent=$(dirname "$web_marker") || return 1
+    sudo mkdir -p "$web_parent" 2>/dev/null || return 1
 
-    if [[ -e "$web_marker" || -L "$web_marker" ]] && \
+    if [[ -e "$web_marker" || -L "$web_marker" ]] &&
        [[ "$source_marker" -ef "$web_marker" ]]; then
         sudo chown "${LLDPQ_USER:-$(id -un)}:www-data" "$source_marker" \
             2>/dev/null && sudo chmod 0640 "$source_marker" 2>/dev/null
         return $?
     fi
 
-    web_temporary=$(sudo mktemp "$web_dir/.lldpq-stale.tmp.XXXXXXXX" 2>/dev/null) || \
+    web_temporary=$(sudo mktemp \
+        "$web_parent/$(basename "$web_marker").tmp.XXXXXXXX" 2>/dev/null) || \
         return 1
-    if ! sudo cp -- "$source_marker" "$web_temporary" 2>/dev/null || \
+    if ! sudo cp -- "$source_marker" "$web_temporary" 2>/dev/null ||
        ! sudo chown "${LLDPQ_USER:-$(id -un)}:www-data" "$web_temporary" \
-            2>/dev/null || \
-       ! sudo chmod 0640 "$web_temporary" 2>/dev/null || \
+            2>/dev/null ||
+       ! sudo chmod 0640 "$web_temporary" 2>/dev/null ||
        ! sudo mv -fT -- "$web_temporary" "$web_marker" 2>/dev/null; then
         sudo rm -f -- "$web_temporary" 2>/dev/null || true
         return 1
@@ -483,15 +611,20 @@ publish_web_report_marker() {
 }
 
 write_report_state_marker() {
-    local marker_status=$1 marker_time=$2 marker_reason=$3 temporary
-    temporary=$(mktemp "$SCRIPT_DIR/monitor-results/.lldpq-stale.tmp.XXXXXXXX") || \
-        return 1
+    local marker_status=$1 marker_time=$2 marker_reason=$3
+    local marker_parent temporary
+    marker_parent=$(dirname "$stale_marker") || return 1
+    temporary=$(mktemp \
+        "$marker_parent/$(basename "$stale_marker").tmp.XXXXXXXX") || return 1
     if ! {
         printf 'status=%s\n' "$marker_status"
         printf 'timestamp=%s\n' "$marker_time"
         printf 'reason=%s\n' "$marker_reason"
+        if [[ "$scoped_run" == "true" ]]; then
+            printf 'scope=%s\n' "$MONITOR_SCOPE"
+        fi
         printf 'pipeline_id=%s\n' "${LLDPQ_PIPELINE_ID:-}"
-    } > "$temporary" || ! chmod 0644 "$temporary" || \
+    } > "$temporary" || ! chmod 0644 "$temporary" ||
        ! mv -f "$temporary" "$stale_marker"; then
         rm -f -- "$temporary"
         return 1
@@ -505,7 +638,11 @@ mark_reports_stale() {
     failure_time=$(date -Is) || return 1
     write_report_state_marker stale "$failure_time" "$reason" || return 1
     printf '%s %s\n' "$failure_time" "$reason" >> "$SCRIPT_DIR/monitor-failures.log"
-    echo "Monitoring failed; last-known-good web reports were preserved: $reason" >&2
+    if [[ "$scoped_run" == "true" ]]; then
+        echo "Monitoring scope '$MONITOR_SCOPE' failed; last-known-good web reports were preserved: $reason" >&2
+    else
+        echo "Monitoring failed; last-known-good web reports were preserved: $reason" >&2
+    fi
     publish_web_report_marker "$stale_marker" || true
     return 0
 }
@@ -518,9 +655,23 @@ mark_reports_in_progress() {
     publish_web_report_marker "$stale_marker"
 }
 
-clear_stale_marker() {
+complete_report_state() {
+    local completed_at
+    if [[ "$scoped_run" == "true" ]]; then
+        # Keep a durable completion token. A scoped run can begin and finish
+        # between two browser polls, and it intentionally does not rewrite the
+        # full-pipeline manifest. The requesting analysis page matches this
+        # marker's scope + pipeline_id before reloading its newly published HTML.
+        completed_at=$(date -Is) || return 1
+        write_report_state_marker current "$completed_at" analysis_complete || \
+            return 1
+        publish_web_report_marker "$stale_marker"
+        return $?
+    fi
+
     if [[ -d "$WEB_ROOT/monitor-results" ]]; then
-        sudo rm -f "$WEB_ROOT/monitor-results/.lldpq-stale" 2>/dev/null || return 1
+        sudo rm -f "$WEB_ROOT/monitor-results/$status_marker_relative" \
+            2>/dev/null || return 1
     fi
     # Source is the alert authority; clear it last so alerts remain fail-closed
     # until both the web activation and marker cleanup have succeeded.
@@ -708,11 +859,9 @@ if result != 0:
 PYTHON
 }
 
-publish_monitor_results() {
-    local source_dir="$SCRIPT_DIR/monitor-results"
-    local destination_dir="$WEB_ROOT/monitor-results"
-    local stage_dir backup_dir=""
-    local old_hup old_int old_term fallback_status exchange_status
+activate_monitor_results_stage() {
+    local stage_dir=$1 destination_dir=$2
+    local backup_dir="" old_hup="" old_int="" old_term="" exchange_status
 
     restore_publish_traps() {
         if [[ -n "$old_hup" ]]; then eval "$old_hup"; else trap - HUP; fi
@@ -720,55 +869,10 @@ publish_monitor_results() {
         if [[ -n "$old_term" ]]; then eval "$old_term"; else trap - TERM; fi
     }
 
-    # Copy into a complete sibling tree first. A failed/partial copy never
-    # touches the currently served directory. The final moves stay on the web
-    # filesystem and rollback the old directory if activation fails. This also
-    # self-heals the legacy Docker layout where destination_dir is a symlink to
-    # source_dir: the symlink itself is exchanged for the independent tree.
-    stage_dir=$(sudo mktemp -d "$WEB_ROOT/.monitor-results.new.XXXXXXXXXX") || return 1
-    if ! sudo cp -a "${CP_REFLINK_ARGS[@]}" -- "$source_dir/." "$stage_dir/"; then
-        sudo rm -rf "$stage_dir" 2>/dev/null || true
-        return 1
-    fi
-
-    if [[ "$SKIP_OPTICAL" == "true" ]]; then
-        # Keep the private history for a future enabled run, but never republish
-        # an old aggregate/history as though it belonged to this skipped run.
-        if ! sudo rm -f "$stage_dir/optical_history.json" \
-                "$stage_dir/optical-analysis.html" ||
-           ! sudo tee "$stage_dir/optical-analysis.html" >/dev/null <<'EOF'
-<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><title>Optical Analysis - Skipped</title>
-<link rel="stylesheet" type="text/css" href="/css/styles2.css"></head>
-<body data-analysis-status="skipped"><h1>Optical Diagnostics</h1>
-<p style="color:#ff9800;font-weight:bold">Optical collection was skipped for this monitoring run.</p>
-</body></html>
-EOF
-        then
-            sudo rm -rf "$stage_dir" 2>/dev/null || true
-            return 1
-        fi
-    fi
-
-    if ! sudo chown -R "${LLDPQ_USER:-$(whoami)}:www-data" "$stage_dir" ||
-       ! sudo find "$stage_dir" -type d -exec chmod 775 {} + ||
-       ! sudo find "$stage_dir" -type f -exec chmod 664 {} +; then
-        sudo rm -rf "$stage_dir" 2>/dev/null || true
-        return 1
-    fi
-    # The generic report mode is group-writable. The transient pipeline marker
-    # is status metadata only and follows the narrower web-reader contract used
-    # by the live marker publisher.
-    if [[ -f "$stage_dir/.lldpq-stale" ]] &&
-       ! sudo chmod 0640 "$stage_dir/.lldpq-stale"; then
-        sudo rm -rf "$stage_dir" 2>/dev/null || true
-        return 1
-    fi
-
     if [[ -e "$destination_dir" || -L "$destination_dir" ]]; then
-        # Linux renameat2(RENAME_EXCHANGE) swaps the complete trees without a
-        # moment where /monitor-results is absent.  Keep the portable fallback
-        # for older kernels/filesystems and roll it back on activation failure.
+        # Linux renameat2(RENAME_EXCHANGE) swaps complete trees without a
+        # moment where /monitor-results is absent. Older kernels use the
+        # rollback-capable compatibility path below.
         atomic_exchange_paths "$stage_dir" "$destination_dir" 2>/dev/null
         exchange_status=$?
         if [[ "$exchange_status" -eq 0 ]]; then
@@ -796,15 +900,14 @@ EOF
     fi
 
     if ! sudo mv -T "$stage_dir" "$destination_dir"; then
-        fallback_status=1
         if [[ -n "$backup_dir" ]]; then
             if ! sudo mv -T "$backup_dir" "$destination_dir" 2>/dev/null; then
                 echo "CRITICAL: monitor web rollback is retained at $backup_dir" >&2
             fi
+            restore_publish_traps
         fi
         sudo rm -rf "$stage_dir" 2>/dev/null || true
-        [[ -n "$backup_dir" ]] && restore_publish_traps
-        return "$fallback_status"
+        return 1
     fi
 
     if [[ -n "$backup_dir" ]]; then
@@ -814,6 +917,231 @@ EOF
         restore_publish_traps
     fi
     return 0
+}
+
+normalize_web_stage_permissions() {
+    local stage_dir=$1
+    if ! sudo chown -R "${LLDPQ_USER:-$(whoami)}:www-data" "$stage_dir" ||
+       ! sudo find "$stage_dir" -type d -exec chmod 775 {} + ||
+       ! sudo find "$stage_dir" -type f -exec chmod 664 {} +; then
+        return 1
+    fi
+    if [[ -f "$stage_dir/.lldpq-stale" ]] &&
+       ! sudo chmod 0640 "$stage_dir/.lldpq-stale"; then
+        return 1
+    fi
+    if [[ -d "$stage_dir/.analysis-state" ]] &&
+       ! sudo find "$stage_dir/.analysis-state" -type f -exec chmod 640 {} +; then
+        return 1
+    fi
+    return 0
+}
+
+publish_full_monitor_results() {
+    local source_dir="$SCRIPT_DIR/monitor-results"
+    local destination_dir="$WEB_ROOT/monitor-results"
+    local stage_dir
+
+    # Copy into a complete sibling tree first. A failed/partial copy never
+    # touches the currently served directory. This also self-heals the legacy
+    # Docker layout where destination_dir is a symlink to source_dir.
+    stage_dir=$(sudo mktemp -d "$WEB_ROOT/.monitor-results.new.XXXXXXXXXX") || return 1
+    if ! sudo cp -a "${CP_REFLINK_ARGS[@]}" -- "$source_dir/." "$stage_dir/"; then
+        sudo rm -rf "$stage_dir" 2>/dev/null || true
+        return 1
+    fi
+
+    if [[ "$SKIP_OPTICAL" == "true" ]]; then
+        # Keep the private history for a future enabled run, but never republish
+        # an old aggregate/history as though it belonged to this skipped run.
+        if ! sudo rm -f "$stage_dir/optical_history.json" \
+                "$stage_dir/optical-analysis.html" ||
+           ! sudo tee "$stage_dir/optical-analysis.html" >/dev/null <<'EOF'
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Optical Analysis - Skipped</title>
+<link rel="stylesheet" type="text/css" href="/css/styles2.css"></head>
+<body data-analysis-status="skipped"><h1>Optical Diagnostics</h1>
+<p style="color:#ff9800;font-weight:bold">Optical collection was skipped for this monitoring run.</p>
+</body></html>
+EOF
+        then
+            sudo rm -rf "$stage_dir" 2>/dev/null || true
+            return 1
+        fi
+    fi
+
+    if ! normalize_web_stage_permissions "$stage_dir"; then
+        sudo rm -rf "$stage_dir" 2>/dev/null || true
+        return 1
+    fi
+    activate_monitor_results_stage "$stage_dir" "$destination_dir"
+}
+
+select_scope_web_overlays() {
+    SCOPE_WEB_OVERLAYS=()
+    case "$MONITOR_SCOPE" in
+        bgp)
+            SCOPE_WEB_OVERLAYS=(
+                bgp-analysis.html bgp_history.json bgp-data evpn-data
+            )
+            ;;
+        duplicate)
+            SCOPE_WEB_OVERLAYS=(duplicate-analysis.html dup-data)
+            ;;
+        flap)
+            SCOPE_WEB_OVERLAYS=(
+                link-flap-analysis.html flap_history.json flap-data
+            )
+            ;;
+        optical)
+            SCOPE_WEB_OVERLAYS=(
+                optical-analysis.html optical_history.json optical-data
+            )
+            ;;
+        ber)
+            SCOPE_WEB_OVERLAYS=(
+                ber-analysis.html ber_history.json ber_baseline.json ber-data
+            )
+            ;;
+        pfc-ecn)
+            SCOPE_WEB_OVERLAYS=(
+                pfc-ecn-analysis.html pfc_ecn_baseline.json
+                pfc_ecn_history.json pfc-ecn-data
+            )
+            ;;
+        hardware)
+            SCOPE_WEB_OVERLAYS=(hardware-analysis.html hardware-data)
+            ;;
+        logs)
+            SCOPE_WEB_OVERLAYS=(log-analysis.html log_summary.json log-data)
+            ;;
+        *)
+            echo "No web overlay definition for scope: $MONITOR_SCOPE" >&2
+            return 2
+            ;;
+    esac
+}
+
+publish_scoped_monitor_results() {
+    local source_dir="$SCRIPT_DIR/monitor-results"
+    local destination_dir="$WEB_ROOT/monitor-results"
+    local stage_dir relative source_path stage_path protected
+    local -a protected_files=(
+        .lldpq-current.json
+        .pipeline-inputs/assets.ini
+        .pipeline-inputs/lldp_results.ini
+    )
+
+    # A scoped publication overlays a prior, independent full web generation.
+    # It never bases the stage on the local tree, where a failed full run may
+    # have left unrelated partial artifacts.
+    if [[ ! -d "$destination_dir" || -L "$destination_dir" ]]; then
+        echo "Scoped publication requires a real web baseline; run a full monitor first." >&2
+        return 1
+    fi
+    if [[ "$source_dir" -ef "$destination_dir" ]]; then
+        echo "Scoped publication refuses a web tree shared with local source." >&2
+        return 1
+    fi
+    if [[ ! -d "$destination_dir/.pipeline-inputs" ||
+          -L "$destination_dir/.pipeline-inputs" ]]; then
+        echo "Scoped publication baseline has unsafe pipeline inputs." >&2
+        return 1
+    fi
+    for protected in "${protected_files[@]}"; do
+        if [[ ! -f "$destination_dir/$protected" ||
+              -L "$destination_dir/$protected" ]]; then
+            echo "Scoped publication baseline is incomplete: $protected" >&2
+            return 1
+        fi
+    done
+    if ! python3 - "$destination_dir/.lldpq-current.json" <<'PYTHON'
+import json
+import math
+import sys
+from datetime import datetime, timezone
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    manifest = json.load(handle)
+if manifest.get("status") != "current" or manifest.get("pipeline_complete") is not True:
+    raise SystemExit("scoped publication baseline manifest is not a completed full run")
+try:
+    completed_at = datetime.fromisoformat(
+        str(manifest["completed_at"]).replace("Z", "+00:00")
+    )
+    if completed_at.tzinfo is None:
+        raise ValueError("completion timestamp has no timezone")
+    max_age = float(manifest["max_age_seconds"])
+except (KeyError, TypeError, ValueError) as exc:
+    raise SystemExit(f"scoped publication baseline manifest is invalid: {exc}")
+if not math.isfinite(max_age) or max_age < 0:
+    raise SystemExit("scoped publication baseline maximum age is invalid")
+age = (datetime.now(timezone.utc) - completed_at.astimezone(timezone.utc)).total_seconds()
+if age < -120 or age > max_age:
+    raise SystemExit("scoped publication baseline is stale; run a full monitor first")
+PYTHON
+    then
+        return 1
+    fi
+
+    select_scope_web_overlays || return 1
+    stage_dir=$(sudo mktemp -d "$WEB_ROOT/.monitor-results.new.XXXXXXXXXX") || return 1
+    if ! sudo cp -a "${CP_REFLINK_ARGS[@]}" -- \
+            "$destination_dir/." "$stage_dir/"; then
+        sudo rm -rf "$stage_dir" 2>/dev/null || true
+        return 1
+    fi
+
+    for relative in "${SCOPE_WEB_OVERLAYS[@]}"; do
+        source_path="$source_dir/$relative"
+        stage_path="$stage_dir/$relative"
+        if [[ -f "$source_path" && ! -L "$source_path" ]]; then
+            if [[ ! -s "$source_path" ]]; then
+                echo "Empty scoped artifact: $relative" >&2
+                sudo rm -rf "$stage_dir" 2>/dev/null || true
+                return 1
+            fi
+        elif [[ -d "$source_path" && ! -L "$source_path" ]]; then
+            if find "$source_path" -type l -print -quit | grep -q .; then
+                echo "Scoped artifact contains a symlink: $relative" >&2
+                sudo rm -rf "$stage_dir" 2>/dev/null || true
+                return 1
+            fi
+        else
+            echo "Missing or unsafe scoped artifact: $relative" >&2
+            sudo rm -rf "$stage_dir" 2>/dev/null || true
+            return 1
+        fi
+        if ! sudo rm -rf -- "$stage_path" ||
+           ! sudo cp -a "${CP_REFLINK_ARGS[@]}" -- \
+                "$source_path" "$stage_path"; then
+            sudo rm -rf "$stage_dir" 2>/dev/null || true
+            return 1
+        fi
+    done
+
+    # The full-run authority remains byte-for-byte unchanged in a scoped run.
+    for protected in "${protected_files[@]}"; do
+        if ! sudo cmp -s -- \
+                "$destination_dir/$protected" "$stage_dir/$protected"; then
+            echo "Scoped publication changed protected authority: $protected" >&2
+            sudo rm -rf "$stage_dir" 2>/dev/null || true
+            return 1
+        fi
+    done
+
+    if ! normalize_web_stage_permissions "$stage_dir"; then
+        sudo rm -rf "$stage_dir" 2>/dev/null || true
+        return 1
+    fi
+    activate_monitor_results_stage "$stage_dir" "$destination_dir"
+}
+
+publish_monitor_results() {
+    if [[ "$scoped_run" == "true" ]]; then
+        publish_scoped_monitor_results
+    else
+        publish_full_monitor_results
+    fi
 }
 
 # SSH options with multiplexing
@@ -956,10 +1284,17 @@ try:
     if len(marker_bytes) != marker_stat.st_size:
         fail("device recovery marker changed while it was read")
     payload = json.loads(marker_bytes.decode("utf-8"))
-    if set(payload) != {"version", "status", "hostname", "records"}:
+    base_keys = {"version", "status", "hostname", "records"}
+    version = payload.get("version")
+    if version in {1, 2}:
+        if set(payload) != base_keys:
+            fail("device recovery marker has an unexpected schema")
+    elif version == 3:
+        if set(payload) != base_keys | {"scope"}:
+            fail("scoped device recovery marker has an unexpected schema")
+    else:
         fail("device recovery marker has an unexpected schema")
-    version = payload["version"]
-    if version not in {1, 2} or payload["status"] != "rollback-required":
+    if payload["status"] != "rollback-required":
         fail("device recovery marker has an unsupported state")
     hostname = payload["hostname"]
     if not isinstance(hostname, str) or not re.fullmatch(
@@ -990,13 +1325,60 @@ try:
     if version == 1:
         source_names = legacy_source_names
         destinations = legacy_destinations
-    else:
+        expected_sources = [
+            os.path.join(stage_dir, name) for name in source_names
+        ] + [None]
+    elif version == 2:
         source_names = legacy_source_names[:10] + ["pfc-ecn.txt"] + legacy_source_names[10:]
         destinations = (
             legacy_destinations[:10]
             + [f"monitor-results/pfc-ecn-data/{hostname}_pfc_ecn.txt"]
             + legacy_destinations[10:]
         )
+        expected_sources = [
+            os.path.join(stage_dir, name) for name in source_names
+        ] + [None]
+    else:
+        scoped_layouts = {
+            "bgp": [
+                ("bgp.txt", f"monitor-results/bgp-data/{hostname}_bgp.txt"),
+                ("evpn.txt", f"monitor-results/evpn-data/{hostname}_evpn.txt"),
+            ],
+            "duplicate": [
+                ("dup.txt", f"monitor-results/dup-data/{hostname}_dup.txt"),
+                ("fdb.txt", f"monitor-results/dup-data/{hostname}_fdb.txt"),
+                ("neigh.txt", f"monitor-results/dup-data/{hostname}_neigh.txt"),
+            ],
+            "flap": [
+                ("carrier.txt", f"monitor-results/flap-data/{hostname}_carrier_transitions.txt"),
+            ],
+            "optical": [
+                ("optical.txt", f"monitor-results/optical-data/{hostname}_optical.txt"),
+            ],
+            "ber": [
+                ("ber.txt", f"monitor-results/ber-data/{hostname}_interface_errors.txt"),
+                ("l1.txt", f"monitor-results/ber-data/{hostname}_l1_show.txt"),
+                (None, f"monitor-results/ber-data/{hostname}_detailed_counters.txt"),
+            ],
+            "pfc-ecn": [
+                ("pfc-ecn.txt", f"monitor-results/pfc-ecn-data/{hostname}_pfc_ecn.txt"),
+            ],
+            "hardware": [
+                ("hardware.txt", f"monitor-results/hardware-data/{hostname}_hardware.txt"),
+            ],
+            "logs": [
+                ("logs.txt", f"monitor-results/log-data/{hostname}_logs.txt"),
+            ],
+        }
+        scope = payload.get("scope")
+        if scope not in scoped_layouts:
+            fail("device recovery scope is invalid")
+        layout = scoped_layouts[scope]
+        expected_sources = [
+            os.path.join(stage_dir, name) if name is not None else None
+            for name, _destination in layout
+        ]
+        destinations = [destination for _source, destination in layout]
     destinations = [os.path.join(script_dir, value) for value in destinations]
     records = payload["records"]
     if not isinstance(records, list) or len(records) != len(destinations):
@@ -1014,10 +1396,7 @@ try:
         if not isinstance(record, dict) or set(record) != required_keys:
             fail(f"invalid device recovery record {index}")
         expected_backup = os.path.join(backup_dir, str(index))
-        expected_source = (
-            os.path.join(stage_dir, source_names[index])
-            if index < len(source_names) else None
-        )
+        expected_source = expected_sources[index]
         if (record["index"] != index
                 or record["destination"] != expected_destination
                 or record["backup"] != expected_backup
@@ -1139,43 +1518,97 @@ commit_device_bundle() {
     # Do not allow an external signal to split the short activation/rollback
     # sequence. The caller's traps are restored before this function returns.
     trap '' HUP INT TERM
-    local -a sources=(
-        "$stage_dir/device.html"
-        "$stage_dir/bgp.txt"
-        "$stage_dir/evpn.txt"
-        "$stage_dir/dup.txt"
-        "$stage_dir/fdb.txt"
-        "$stage_dir/neigh.txt"
-        "$stage_dir/carrier.txt"
-        "$stage_dir/optical.txt"
-        "$stage_dir/ber.txt"
-        "$stage_dir/l1.txt"
-        "$stage_dir/pfc-ecn.txt"
-        "$stage_dir/hardware.txt"
-        "$stage_dir/logs.txt"
-    )
-    local -a destinations=(
-        "$SCRIPT_DIR/monitor-results/${hostname}.html"
-        "$SCRIPT_DIR/monitor-results/bgp-data/${hostname}_bgp.txt"
-        "$SCRIPT_DIR/monitor-results/evpn-data/${hostname}_evpn.txt"
-        "$SCRIPT_DIR/monitor-results/dup-data/${hostname}_dup.txt"
-        "$SCRIPT_DIR/monitor-results/dup-data/${hostname}_fdb.txt"
-        "$SCRIPT_DIR/monitor-results/dup-data/${hostname}_neigh.txt"
-        "$SCRIPT_DIR/monitor-results/flap-data/${hostname}_carrier_transitions.txt"
-        "$SCRIPT_DIR/monitor-results/optical-data/${hostname}_optical.txt"
-        "$SCRIPT_DIR/monitor-results/ber-data/${hostname}_interface_errors.txt"
-        "$SCRIPT_DIR/monitor-results/ber-data/${hostname}_l1_show.txt"
-        "$SCRIPT_DIR/monitor-results/pfc-ecn-data/${hostname}_pfc_ecn.txt"
-        "$SCRIPT_DIR/monitor-results/hardware-data/${hostname}_hardware.txt"
-        "$SCRIPT_DIR/monitor-results/log-data/${hostname}_logs.txt"
-        # Retired legacy extract: back it up for rollback, but do not replace it.
-        "$SCRIPT_DIR/monitor-results/ber-data/${hostname}_detailed_counters.txt"
-    )
+    local -a sources=()
+    local -a destinations=()
+    case "$MONITOR_SCOPE" in
+        all)
+            sources=(
+                "$stage_dir/device.html"
+                "$stage_dir/bgp.txt"
+                "$stage_dir/evpn.txt"
+                "$stage_dir/dup.txt"
+                "$stage_dir/fdb.txt"
+                "$stage_dir/neigh.txt"
+                "$stage_dir/carrier.txt"
+                "$stage_dir/optical.txt"
+                "$stage_dir/ber.txt"
+                "$stage_dir/l1.txt"
+                "$stage_dir/pfc-ecn.txt"
+                "$stage_dir/hardware.txt"
+                "$stage_dir/logs.txt"
+            )
+            destinations=(
+                "$SCRIPT_DIR/monitor-results/${hostname}.html"
+                "$SCRIPT_DIR/monitor-results/bgp-data/${hostname}_bgp.txt"
+                "$SCRIPT_DIR/monitor-results/evpn-data/${hostname}_evpn.txt"
+                "$SCRIPT_DIR/monitor-results/dup-data/${hostname}_dup.txt"
+                "$SCRIPT_DIR/monitor-results/dup-data/${hostname}_fdb.txt"
+                "$SCRIPT_DIR/monitor-results/dup-data/${hostname}_neigh.txt"
+                "$SCRIPT_DIR/monitor-results/flap-data/${hostname}_carrier_transitions.txt"
+                "$SCRIPT_DIR/monitor-results/optical-data/${hostname}_optical.txt"
+                "$SCRIPT_DIR/monitor-results/ber-data/${hostname}_interface_errors.txt"
+                "$SCRIPT_DIR/monitor-results/ber-data/${hostname}_l1_show.txt"
+                "$SCRIPT_DIR/monitor-results/pfc-ecn-data/${hostname}_pfc_ecn.txt"
+                "$SCRIPT_DIR/monitor-results/hardware-data/${hostname}_hardware.txt"
+                "$SCRIPT_DIR/monitor-results/log-data/${hostname}_logs.txt"
+                # Retired legacy extract: back it up for rollback, but do not replace it.
+                "$SCRIPT_DIR/monitor-results/ber-data/${hostname}_detailed_counters.txt"
+            )
+            ;;
+        bgp)
+            sources=("$stage_dir/bgp.txt" "$stage_dir/evpn.txt")
+            destinations=(
+                "$SCRIPT_DIR/monitor-results/bgp-data/${hostname}_bgp.txt"
+                "$SCRIPT_DIR/monitor-results/evpn-data/${hostname}_evpn.txt"
+            )
+            ;;
+        duplicate)
+            sources=("$stage_dir/dup.txt" "$stage_dir/fdb.txt" "$stage_dir/neigh.txt")
+            destinations=(
+                "$SCRIPT_DIR/monitor-results/dup-data/${hostname}_dup.txt"
+                "$SCRIPT_DIR/monitor-results/dup-data/${hostname}_fdb.txt"
+                "$SCRIPT_DIR/monitor-results/dup-data/${hostname}_neigh.txt"
+            )
+            ;;
+        flap)
+            sources=("$stage_dir/carrier.txt")
+            destinations=("$SCRIPT_DIR/monitor-results/flap-data/${hostname}_carrier_transitions.txt")
+            ;;
+        optical)
+            sources=("$stage_dir/optical.txt")
+            destinations=("$SCRIPT_DIR/monitor-results/optical-data/${hostname}_optical.txt")
+            ;;
+        ber)
+            sources=("$stage_dir/ber.txt" "$stage_dir/l1.txt")
+            destinations=(
+                "$SCRIPT_DIR/monitor-results/ber-data/${hostname}_interface_errors.txt"
+                "$SCRIPT_DIR/monitor-results/ber-data/${hostname}_l1_show.txt"
+                "$SCRIPT_DIR/monitor-results/ber-data/${hostname}_detailed_counters.txt"
+            )
+            ;;
+        pfc-ecn)
+            sources=("$stage_dir/pfc-ecn.txt")
+            destinations=("$SCRIPT_DIR/monitor-results/pfc-ecn-data/${hostname}_pfc_ecn.txt")
+            ;;
+        hardware)
+            sources=("$stage_dir/hardware.txt")
+            destinations=("$SCRIPT_DIR/monitor-results/hardware-data/${hostname}_hardware.txt")
+            ;;
+        logs)
+            sources=("$stage_dir/logs.txt")
+            destinations=("$SCRIPT_DIR/monitor-results/log-data/${hostname}_logs.txt")
+            ;;
+        *)
+            restore_bundle_commit_traps
+            return 2
+            ;;
+    esac
 
     mark_device_recovery() {
         local marker="$stage_dir/.retain-device-recovery"
         python3 - "$marker" "$stage_dir" "$backup_dir" "$hostname" \
-            "${#sources[@]}" "${sources[@]}" "${destinations[@]}" <<'PYTHON'
+            "$MONITOR_SCOPE" "${#sources[@]}" \
+            "${sources[@]}" "${destinations[@]}" <<'PYTHON'
 import hashlib
 import json
 import os
@@ -1185,10 +1618,18 @@ import tempfile
 
 marker, stage_dir, backup_dir = map(os.path.abspath, sys.argv[1:4])
 hostname = sys.argv[4]
-source_count = int(sys.argv[5])
-sources = [os.path.abspath(value) for value in sys.argv[6:6 + source_count]]
-destinations = [os.path.abspath(value) for value in sys.argv[6 + source_count:]]
-if len(destinations) != source_count + 1:
+scope = sys.argv[5]
+source_count = int(sys.argv[6])
+sources = [os.path.abspath(value) for value in sys.argv[7:7 + source_count]]
+destinations = [os.path.abspath(value) for value in sys.argv[7 + source_count:]]
+valid_scopes = {
+    "all", "bgp", "duplicate", "flap", "optical", "ber",
+    "pfc-ecn", "hardware", "logs",
+}
+if scope not in valid_scopes:
+    raise SystemExit("invalid device publication scope")
+retired_count = 1 if scope in {"all", "ber"} else 0
+if len(destinations) != source_count + retired_count:
     raise SystemExit("invalid device publication layout")
 
 def lexists(path):
@@ -1259,12 +1700,16 @@ descriptor, temporary = tempfile.mkstemp(
 )
 try:
     with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-        json.dump({
+        payload = {
             "version": 2,
             "status": "rollback-required",
             "hostname": hostname,
             "records": records,
-        }, handle, indent=2, sort_keys=True)
+        }
+        if scope != "all":
+            payload["version"] = 3
+            payload["scope"] = scope
+        json.dump(payload, handle, indent=2, sort_keys=True)
         handle.write("\n")
         handle.flush()
         os.fsync(handle.fileno())
@@ -1281,7 +1726,7 @@ PYTHON
 
     clear_device_recovery() {
         local marker="$stage_dir/.retain-device-recovery"
-        python3 - "$marker" "${destinations[@]}" <<'PYTHON'
+        python3 - "$marker" "$MONITOR_SCOPE" "${destinations[@]}" <<'PYTHON'
 import hashlib
 import json
 import os
@@ -1290,7 +1735,8 @@ import stat
 import sys
 
 marker = os.path.abspath(sys.argv[1])
-destinations = [os.path.abspath(path) for path in sys.argv[2:]]
+scope = sys.argv[2]
+destinations = [os.path.abspath(path) for path in sys.argv[3:]]
 
 def lexists(path):
     return os.path.lexists(path)
@@ -1315,7 +1761,17 @@ if len(marker_bytes) != marker_stat.st_size:
     raise SystemExit("device recovery authority changed while being read")
 payload = json.loads(marker_bytes.decode("utf-8"))
 records = payload.get("records")
-if (payload.get("version") != 2 or payload.get("status") != "rollback-required"
+base_keys = {"version", "status", "hostname", "records"}
+valid_v2 = (
+    scope == "all" and set(payload) == base_keys
+    and payload.get("version") == 2
+)
+valid_v3 = (
+    scope != "all" and set(payload) == base_keys | {"scope"}
+    and payload.get("version") == 3 and payload.get("scope") == scope
+)
+if (not (valid_v2 or valid_v3)
+        or payload.get("status") != "rollback-required"
         or not isinstance(records, list) or len(records) != len(destinations)):
     raise SystemExit("invalid device recovery authority")
 for index, (record, destination) in enumerate(zip(records, destinations)):
@@ -1323,13 +1779,13 @@ for index, (record, destination) in enumerate(zip(records, destinations)):
         raise SystemExit(f"device recovery destination mismatch: {index}")
     stage = record.get("source")
     staged_hash = record.get("staged_sha256")
-    if index < len(destinations) - 1:
+    if stage is not None:
         if (not isinstance(stage, str) or lexists(stage)
                 or not isinstance(staged_hash, str)
                 or not re.fullmatch(r"[0-9a-f]{64}", staged_hash)
                 or not regular(destination) or digest(destination) != staged_hash):
             raise SystemExit(f"device generation is incomplete: {index}")
-    elif stage is not None or staged_hash is not None or lexists(destination):
+    elif staged_hash is not None or lexists(destination):
         raise SystemExit("retired device artifact was not removed")
     backup = record.get("backup")
     if record.get("original") == "present":
@@ -1342,7 +1798,7 @@ for index, (record, destination) in enumerate(zip(records, destinations)):
             raise SystemExit(f"device rollback copy is invalid: {index}")
     elif record.get("original") != "missing" or lexists(backup):
         raise SystemExit(f"device rollback presence journal is invalid: {index}")
-    if index < len(destinations) - 1:
+    if stage is not None:
         with open(destination, "rb") as handle:
             os.fsync(handle.fileno())
 directories = {os.path.dirname(path) for path in destinations}
@@ -1383,7 +1839,8 @@ PYTHON
 
     sync_device_backup_phase() {
         local marker="$stage_dir/.retain-device-recovery"
-        python3 - "$marker" "$backup_dir" "${destinations[@]}" <<'PYTHON'
+        python3 - "$marker" "$backup_dir" "$MONITOR_SCOPE" \
+            "${destinations[@]}" <<'PYTHON'
 import hashlib
 import json
 import os
@@ -1392,7 +1849,8 @@ import sys
 
 marker = os.path.abspath(sys.argv[1])
 backup_dir = os.path.abspath(sys.argv[2])
-destinations = [os.path.abspath(value) for value in sys.argv[3:]]
+scope = sys.argv[3]
+destinations = [os.path.abspath(value) for value in sys.argv[4:]]
 
 def lexists(path):
     return os.path.lexists(path)
@@ -1422,8 +1880,16 @@ if not regular(marker):
 with open(marker, "r", encoding="utf-8") as handle:
     payload = json.load(handle)
 records = payload.get("records")
-if (set(payload) != {"version", "status", "hostname", "records"}
-        or payload.get("version") != 2
+base_keys = {"version", "status", "hostname", "records"}
+valid_v2 = (
+    scope == "all" and set(payload) == base_keys
+    and payload.get("version") == 2
+)
+valid_v3 = (
+    scope != "all" and set(payload) == base_keys | {"scope"}
+    and payload.get("version") == 3 and payload.get("scope") == scope
+)
+if (not (valid_v2 or valid_v3)
         or payload.get("status") != "rollback-required"
         or not isinstance(records, list) or len(records) != len(destinations)):
     raise SystemExit("invalid device recovery authority before backup sync")
@@ -1529,7 +1995,7 @@ PYTHON
 }
 
 # ============================================================================
-# OPTIMIZED: Single SSH session collects ALL data
+# OPTIMIZED: Single SSH session collects the selected data set
 # ============================================================================
 execute_commands_optimized() {
     local device=$1
@@ -1555,13 +2021,13 @@ execute_commands_optimized() {
     raw_file="$bundle_stage/raw.txt"
     carrier_body="$bundle_stage/carrier.body"
     optical_body="$bundle_stage/optical.body"
-    
+
     # Arrays to store timing data for summary
     declare -a section_names
     declare -a section_times
-    
+
     # Progress output removed for performance
-    
+
     # Create HTML header
     cat > "$html_temp" << EOF
 <!DOCTYPE html>
@@ -1613,11 +2079,11 @@ EOF
     fi
 
     # =========================================================================
-    # SINGLE SSH SESSION - Collect ALL data at once
+    # SINGLE SSH SESSION - Collect the selected data set at once
     # =========================================================================
     # Verbose output removed for performance
     local ssh_start=$(date +%s)
-    
+
     timeout 300 ssh $SSH_OPTS -q "$user@$device" '
         HOSTNAME_VAR="'"$hostname"'"
         SKIP_OPTICAL="'"$SKIP_OPTICAL"'"
@@ -1628,6 +2094,11 @@ EOF
         OPTICAL_COLLECTION_BUDGET_SECONDS="'"$OPTICAL_COLLECTION_BUDGET_SECONDS"'"
         OPTICAL_PORT_TIMEOUT_SECONDS="'"$OPTICAL_PORT_TIMEOUT_SECONDS"'"
         MONITOR_TIMING="'"$MONITOR_TIMING"'"
+        MONITOR_SCOPE="'"$MONITOR_SCOPE"'"
+
+        _lldpq_scope_selected() {
+            [ "$MONITOR_SCOPE" = "all" ] || [ "$MONITOR_SCOPE" = "$1" ]
+        }
 
         # Take shared snapshots once.  Several reports consume the same
         # underlying state; re-running these commands was both slower and
@@ -1659,18 +2130,42 @@ EOF
             _lldpq_timing_start=$_lldpq_timing_now
         }
 
-        ip link show > "$_lldpq_snapshot_dir/link" 2>/dev/null
-        _lldpq_link_status=$?
-        ip addr show > "$_lldpq_snapshot_dir/addr" 2>/dev/null
-        _lldpq_addr_status=$?
-        ip neighbour show > "$_lldpq_snapshot_dir/neigh" 2>/dev/null
-        _lldpq_neigh_status=$?
-        sudo /usr/sbin/bridge fdb show > "$_lldpq_snapshot_dir/fdb" 2>/dev/null
-        _lldpq_fdb_status=$?
-        sudo vtysh -c "show bgp vrf all sum" > "$_lldpq_snapshot_dir/bgp-summary" 2>/dev/null
-        _lldpq_bgp_status=$?
-        sudo vtysh -c "show evpn vni" > "$_lldpq_snapshot_dir/evpn-vni" 2>/dev/null
-        _lldpq_evpn_vni_status=$?
+        : > "$_lldpq_snapshot_dir/link"
+        : > "$_lldpq_snapshot_dir/addr"
+        : > "$_lldpq_snapshot_dir/neigh"
+        : > "$_lldpq_snapshot_dir/fdb"
+        : > "$_lldpq_snapshot_dir/bgp-summary"
+        : > "$_lldpq_snapshot_dir/evpn-vni"
+        _lldpq_link_status=1
+        _lldpq_addr_status=1
+        _lldpq_neigh_status=1
+        _lldpq_fdb_status=1
+        _lldpq_bgp_status=1
+        _lldpq_evpn_vni_status=1
+
+        if _lldpq_scope_selected flap || _lldpq_scope_selected optical ||
+           _lldpq_scope_selected pfc-ecn || _lldpq_scope_selected duplicate; then
+            ip link show > "$_lldpq_snapshot_dir/link" 2>/dev/null
+            _lldpq_link_status=$?
+        fi
+        if _lldpq_scope_selected all; then
+            ip addr show > "$_lldpq_snapshot_dir/addr" 2>/dev/null
+            _lldpq_addr_status=$?
+        fi
+        if _lldpq_scope_selected duplicate; then
+            ip neighbour show > "$_lldpq_snapshot_dir/neigh" 2>/dev/null
+            _lldpq_neigh_status=$?
+            sudo /usr/sbin/bridge fdb show > "$_lldpq_snapshot_dir/fdb" 2>/dev/null
+            _lldpq_fdb_status=$?
+        fi
+        if _lldpq_scope_selected bgp; then
+            sudo vtysh -c "show bgp vrf all sum" > "$_lldpq_snapshot_dir/bgp-summary" 2>/dev/null
+            _lldpq_bgp_status=$?
+        fi
+        if _lldpq_scope_selected bgp || _lldpq_scope_selected duplicate; then
+            sudo vtysh -c "show evpn vni" > "$_lldpq_snapshot_dir/evpn-vni" 2>/dev/null
+            _lldpq_evpn_vni_status=$?
+        fi
 
         if [ "$_lldpq_link_status" -eq 0 ]; then
             awk '\''
@@ -1697,6 +2192,9 @@ EOF
             : > "$_lldpq_snapshot_dir/pfc-interfaces"
         fi
         : > "$_lldpq_snapshot_dir/ifalias"
+        : > "$_lldpq_snapshot_dir/swp-ifalias"
+        : > "$_lldpq_snapshot_dir/swp-ifalias-html"
+        if _lldpq_scope_selected all; then
         for _lldpq_alias_path in /sys/class/net/*/ifalias; do
             [ -r "$_lldpq_alias_path" ] || continue
             IFS= read -r _lldpq_alias < "$_lldpq_alias_path" 2>/dev/null || _lldpq_alias=""
@@ -1706,7 +2204,6 @@ EOF
             printf "%s|%s\n" "$_lldpq_alias_name" "$_lldpq_alias" \
                 >> "$_lldpq_snapshot_dir/ifalias"
         done
-        : > "$_lldpq_snapshot_dir/swp-ifalias"
         while IFS= read -r _lldpq_alias_name; do
             [ -n "$_lldpq_alias_name" ] || continue
             _lldpq_alias=""
@@ -1725,16 +2222,18 @@ EOF
                 print name "|" $0
             }
         '\'' "$_lldpq_snapshot_dir/swp-ifalias" > "$_lldpq_snapshot_dir/swp-ifalias-html"
+        fi
         _lldpq_timing_end SNAPSHOTS
-        
+
         # =====================================================================
         # SECTION 1: Interface Overview (for HTML)
         # =====================================================================
         echo "===HTML_OUTPUT_START==="
-        
+        if _lldpq_scope_selected all; then
+
         echo "<h1></h1><h1><font color=\"#b57614\">Port Status '"$hostname"'</font></h1><h3></h3>"
         printf "<span style=\"color:green;\">%-14s %-12s %-12s %s</span>\n" "Interface" "State" "Link" "Description"
-        
+
         while IFS="|" read -r interface description; do
             [ -n "$interface" ] || continue
             if [ -e "/sys/class/net/$interface" ]; then
@@ -1753,7 +2252,7 @@ EOF
 
         echo "<h1></h1><h1><font color=\"#b57614\">Interface IP Addresses '"$hostname"'</font></h1><h3></h3>"
         printf "<span style=\"color:green;\">%-20s %-18s %s</span>\n" "Interface" "IPv4" "IPv6 Global"
-        
+
         if [ "$_lldpq_addr_status" -eq 0 ]; then
             awk '\''
                 function emit() {
@@ -1814,36 +2313,40 @@ EOF
         if [ "$_lldpq_neigh_status" -eq 0 ]; then
             grep -E -v "fe80" "$_lldpq_snapshot_dir/neigh" | sort -t "." -k1,1n -k2,2n -k3,3n -k4,4n | sed -E "s/^([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)/<span style=\"color:tomato;\">\1<\/span>/; s/dev ([^ ]+)/dev <span style=\"color:steelblue;\">\1<\/span>/; s/lladdr ([0-9a-f:]+)/lladdr <span style=\"color:tomato;\">\1<\/span>/"
         fi
-        
+
         echo "<h1></h1><h1><font color=\"#b57614\">MAC Table '"$hostname"'</font></h1><h3></h3>"
         if [ "$_lldpq_fdb_status" -eq 0 ]; then
             grep -E -v "00:00:00:00:00:00" "$_lldpq_snapshot_dir/fdb" | sort | sed -E "s/^([0-9a-f:]+)/<span style=\"color:tomato;\">\1<\/span>/; s/dev ([^ ]+)/dev <span style=\"color:steelblue;\">\1<\/span>/; s/vlan ([0-9]+)/vlan <span style=\"color:red;\">\1<\/span>/; s/dst ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)/dst <span style=\"color:lime;\">\1<\/span>/"
         fi
-        
+
         echo "<h1></h1><h1><font color=\"#b57614\">BGP Status '"$hostname"'</font></h1><h3></h3>"
         if [ "$_lldpq_bgp_status" -eq 0 ]; then
             sed -E "s/(VRF\s+)([a-zA-Z0-9_-]+)/\1<span style=\"color:tomato;\">\2<\/span>/g; s/Total number of neighbors ([0-9]+)/Total number of neighbors <span style=\"color:steelblue;\">\1<\/span>/g; s/(\S+)\s+(\S+)\s+Summary/<span style=\"color:lime;\">\1 \2<\/span> Summary/g; s/\b(Active|Idle)\b/<span style=\"color:red;\">\1<\/span>/g" "$_lldpq_snapshot_dir/bgp-summary"
         fi
-        
+
+        fi
         echo "===HTML_OUTPUT_END==="
         _lldpq_timing_end HTML_OUTPUT
-        
+
         # =====================================================================
         # SECTION 2: BGP Data (for analysis)
         # =====================================================================
         echo "===BGP_DATA_START==="
+        if _lldpq_scope_selected bgp; then
         if [ "$_lldpq_bgp_status" -eq 0 ]; then
             cat "$_lldpq_snapshot_dir/bgp-summary"
         else
             echo "__LLDPQ_COLLECTION_ERROR__:BGP_SUMMARY"
         fi
+        fi
         echo "===BGP_DATA_END==="
         _lldpq_timing_end BGP_DATA
-        
+
         # =====================================================================
         # SECTION 2b: EVPN Data (for EVPN route counts)
         # =====================================================================
         echo "===EVPN_DATA_START==="
+        if _lldpq_scope_selected bgp; then
         # VNI summary - full output
         echo "=== EVPN VNI SUMMARY ==="
         if [ "$_lldpq_evpn_vni_status" -eq 0 ]; then
@@ -1873,13 +2376,15 @@ EOF
             fi
             rm -f "$_evpn_tmp"
         fi
+        fi
         echo "===EVPN_DATA_END==="
         _lldpq_timing_end EVPN_DATA
-        
+
         # =====================================================================
         # SECTION 2c: Duplicate IP/MAC Data (EVPN dup-detection + FDB + neighbours)
         # =====================================================================
         echo "===DUP_DATA_START==="
+        if _lldpq_scope_selected duplicate; then
         _dup_collection_utc=$(date -u "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || true)
         if [ -n "$_dup_collection_utc" ]; then
             echo "__LLDPQ_DUP_COLLECTION_UTC__:${_dup_collection_utc}"
@@ -2023,32 +2528,38 @@ EOF
         cat "$_lldpq_snapshot_dir/ifalias"
         echo "__LLDPQ_DUP_COVERAGE__:IFALIAS:OK"
         unset -f _dup_run _dup_filter 2>/dev/null || true
+        fi
         echo "===DUP_DATA_END==="
         _lldpq_timing_end DUP_DATA
-        
+
         echo "===FDB_DATA_START==="
+        if _lldpq_scope_selected duplicate; then
         if [ "$_lldpq_fdb_status" -ne 0 ]; then
             echo "__LLDPQ_COLLECTION_ERROR__:FDB"
         else
             grep -E -v "00:00:00:00:00:00" "$_lldpq_snapshot_dir/fdb" || true
         fi
+        fi
         echo "===FDB_DATA_END==="
         _lldpq_timing_end FDB_DATA
-        
+
         echo "===NEIGH_DATA_START==="
+        if _lldpq_scope_selected duplicate; then
         if [ "$_lldpq_neigh_status" -ne 0 ]; then
             echo "__LLDPQ_COLLECTION_ERROR__:NEIGH"
         else
             awk '\''$1 ~ /^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+$/ { print }'\'' \
                 "$_lldpq_snapshot_dir/neigh"
         fi
+        fi
         echo "===NEIGH_DATA_END==="
         _lldpq_timing_end NEIGH_DATA
-        
+
         # =====================================================================
         # SECTION 3: Carrier Transitions (for flap analysis)
         # =====================================================================
         echo "===CARRIER_DATA_START==="
+        if _lldpq_scope_selected flap; then
         if [ "$_lldpq_link_status" -ne 0 ]; then
             echo "__LLDPQ_COLLECTION_ERROR__:LINK_INVENTORY"
         fi
@@ -2059,13 +2570,15 @@ EOF
                 echo "$interface:$carrier_count"
             fi
         done < "$_lldpq_snapshot_dir/interfaces"
+        fi
         echo "===CARRIER_DATA_END==="
         _lldpq_timing_end CARRIER_DATA
-        
+
         # =====================================================================
         # SECTION 4: Optical Transceiver Data (skippable with -s flag)
         # =====================================================================
         echo "===OPTICAL_DATA_START==="
+        if _lldpq_scope_selected optical; then
         if [ "$SKIP_OPTICAL" != "true" ]; then
             if [ "$_lldpq_link_status" -ne 0 ]; then
                 echo "__LLDPQ_COLLECTION_ERROR__:OPTICAL_LINK_INVENTORY"
@@ -2122,23 +2635,27 @@ EOF
                 done < "$_lldpq_snapshot_dir/interfaces"
             fi
         fi
+        fi
         echo "===OPTICAL_DATA_END==="
         _lldpq_timing_end OPTICAL_DATA
-        
+
         # =====================================================================
         # SECTION 5: BER/Interface Statistics
         # =====================================================================
         echo "===BER_DATA_START==="
+        if _lldpq_scope_selected ber; then
         if ! cat /proc/net/dev 2>/dev/null; then
             echo "__LLDPQ_COLLECTION_ERROR__:INTERFACE_COUNTERS"
         fi
+        fi
         echo "===BER_DATA_END==="
         _lldpq_timing_end BER_DATA
-        
+
         # =====================================================================
         # SECTION 6: L1-Show (if available)
         # =====================================================================
         echo "===L1_DATA_START==="
+        if _lldpq_scope_selected ber; then
         if [ "$SKIP_L1" = "true" ]; then
             echo "l1-show skipped"
         elif command -v l1-show >/dev/null 2>&1; then
@@ -2146,13 +2663,15 @@ EOF
         else
             echo "l1-show not available"
         fi
+        fi
         echo "===L1_DATA_END==="
         _lldpq_timing_end L1_DATA
-        
+
         # =====================================================================
         # SECTION 7: PFC/ECN QoS Counters
         # =====================================================================
         echo "===PFC_ECN_DATA_START==="
+        if _lldpq_scope_selected pfc-ecn; then
         _pfc_ecn_collection_utc=$(date -u "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || true)
         echo "__LLDPQ_PFC_ECN_COLLECTION_UTC__:${_pfc_ecn_collection_utc:-UNKNOWN}"
         _pfc_ecn_inventory=$(cat "$_lldpq_snapshot_dir/pfc-interfaces")
@@ -2238,6 +2757,7 @@ EOF
             _pfc_ecn_port_count _pfc_ecn_port _pfc_ecn_status \
             _pfc_ecn_deadline _pfc_ecn_has_nv _pfc_ecn_has_timeout
         unset _pfc_ecn_batch_pids _pfc_ecn_batch_count _pfc_ecn_pid
+        fi
         echo "===PFC_ECN_DATA_END==="
         _lldpq_timing_end PFC_ECN_DATA
 
@@ -2245,6 +2765,7 @@ EOF
         # SECTION 8: Hardware Health (with fallback)
         # =====================================================================
         echo "===HARDWARE_DATA_START==="
+        if _lldpq_scope_selected hardware; then
         echo "HARDWARE_HEALTH:"
         if command -v sensors >/dev/null 2>&1; then
             _hardware_output=$(sensors 2>/dev/null)
@@ -2342,18 +2863,20 @@ EOF
             echo "No CPU info"
         fi
         echo "CPU_CORES: $(nproc 2>/dev/null || grep -c ^processor /proc/cpuinfo 2>/dev/null || echo 0)"
+        fi
         echo "===HARDWARE_DATA_END==="
         _lldpq_timing_end HARDWARE_DATA
-        
+
         # =====================================================================
         # SECTION 9: System Logs (comprehensive)
         # =====================================================================
         echo "===LOG_DATA_START==="
+        if _lldpq_scope_selected logs; then
         echo "=== COMPREHENSIVE SYSTEM LOGS ==="
         _lldpq_log_status() {
             printf "__LLDPQ_LOG_SOURCE_STATUS__:%s:%s\n" "$1" "$2"
         }
-        
+
         # FRR Routing Logs
         echo "FRR_ROUTING_LOGS:"
         if systemctl is-active --quiet frr 2>/dev/null; then
@@ -2378,7 +2901,7 @@ EOF
             _lldpq_log_status FRR UNAVAILABLE
             echo "FRR service/log not available"
         fi
-        
+
         # Switch daemon logs
         echo "SWITCHD_LOGS:"
         if systemctl is-active --quiet switchd 2>/dev/null; then
@@ -2403,7 +2926,7 @@ EOF
             _lldpq_log_status SWITCHD UNAVAILABLE
             echo "Switchd service/log not available"
         fi
-        
+
         # NVUE configuration logs
         echo "NVUE_CONFIG_LOGS:"
         if systemctl is-active --quiet nvued 2>/dev/null; then
@@ -2428,7 +2951,7 @@ EOF
             _lldpq_log_status NVUE UNAVAILABLE
             echo "NVUE log not found"
         fi
-        
+
         # Spanning Tree Protocol logs
         echo "MSTPD_STP_LOGS:"
         if systemctl is-active --quiet mstpd 2>/dev/null; then
@@ -2453,7 +2976,7 @@ EOF
             _lldpq_log_status MSTPD UNAVAILABLE
             echo "MSTPD log not found"
         fi
-        
+
         # MLAG coordination logs
         echo "CLAGD_MLAG_LOGS:"
         if systemctl is-active --quiet clagd 2>/dev/null; then
@@ -2478,7 +3001,7 @@ EOF
             _lldpq_log_status CLAGD UNAVAILABLE
             echo "CLAG log not found"
         fi
-        
+
         # Authentication and security logs
         echo "AUTH_SECURITY_LOGS:"
         if systemctl is-active --quiet systemd-journald 2>/dev/null; then
@@ -2486,7 +3009,7 @@ EOF
             _source_status=$?
             if [ "$_source_status" -eq 0 ]; then
                 _lldpq_log_status AUTH OK
-                printf "%s\n" "$_source_output" | grep -v -E "(journalctl|monitor\.sh|monitor2\.sh|--since|--grep|swp\|bond\|vlan\|carrier\|link|vtysh|sudo.*authentication.*grantor=pam_permit|USER_AUTH.*res=success)" || echo "No recent auth issues"
+                printf "%s\n" "$_source_output" | grep -v -E "(journalctl|monitor\.sh|--since|--grep|swp\|bond\|vlan\|carrier\|link|vtysh|sudo.*authentication.*grantor=pam_permit|USER_AUTH.*res=success)" || echo "No recent auth issues"
             else
                 _lldpq_log_status AUTH ERROR
             fi
@@ -2495,7 +3018,7 @@ EOF
             _source_status=$?
             if [ "$_source_status" -eq 0 ]; then
                 _lldpq_log_status AUTH OK
-                printf "%s\n" "$_source_output" | grep "$(date '\''+%b %d'\'')" | tail -30 | grep -E "(FAIL|ERROR|INVALID|DENIED|ATTACK|authentication|unauthorized)" | grep -v -E "(journalctl|monitor\.sh|monitor2\.sh|--since|swp\|bond\|vlan\|carrier\|link|vtysh|sudo.*authentication.*grantor=pam_permit|USER_AUTH.*res=success)" || echo "No recent auth issues"
+                printf "%s\n" "$_source_output" | grep "$(date '\''+%b %d'\'')" | tail -30 | grep -E "(FAIL|ERROR|INVALID|DENIED|ATTACK|authentication|unauthorized)" | grep -v -E "(journalctl|monitor\.sh|--since|swp\|bond\|vlan\|carrier\|link|vtysh|sudo.*authentication.*grantor=pam_permit|USER_AUTH.*res=success)" || echo "No recent auth issues"
             else
                 _lldpq_log_status AUTH ERROR
             fi
@@ -2503,7 +3026,7 @@ EOF
             _lldpq_log_status AUTH UNAVAILABLE
             echo "Auth log not found"
         fi
-        
+
         # System critical logs
         echo "SYSTEM_CRITICAL_LOGS:"
         CRITICAL_LOGS=""
@@ -2531,7 +3054,7 @@ EOF
         else
             echo "No system critical logs"
         fi
-        
+
         # High priority journalctl logs
         echo "JOURNALCTL_PRIORITY_LOGS:"
         _source_output=$(sudo journalctl --since="3 hours ago" --priority=0..3 --no-pager --lines=75 2>/dev/null)
@@ -2542,7 +3065,7 @@ EOF
         else
             _lldpq_log_status JOURNAL_PRIORITY ERROR
         fi
-        
+
         # Hardware and kernel critical messages
         echo "DMESG_HARDWARE_LOGS:"
         _source_output=$(sudo dmesg --since="3 hours ago" --level=crit,alert,emerg 2>/dev/null)
@@ -2553,22 +3076,23 @@ EOF
         else
             _lldpq_log_status DMESG ERROR
         fi
-        
+
         # Network interface state changes
         echo "NETWORK_INTERFACE_LOGS:"
         _source_output=$(sudo journalctl --since="3 hours ago" --grep="swp|bond|vlan|carrier|link.*up|link.*down|port.*up|port.*down" --no-pager --lines=40 2>/dev/null)
         _source_status=$?
         if [ "$_source_status" -eq 0 ]; then
             _lldpq_log_status NETWORK_INTERFACE OK
-            printf "%s\n" "$_source_output" | grep -v -E "(journalctl|monitor\.sh|monitor2\.sh|sudo.*journalctl)" || echo "No interface state changes"
+            printf "%s\n" "$_source_output" | grep -v -E "(journalctl|monitor\.sh|sudo.*journalctl)" || echo "No interface state changes"
         else
             _lldpq_log_status NETWORK_INTERFACE ERROR
         fi
-        
+
+        fi
         echo "===LOG_DATA_END==="
         _lldpq_timing_end LOG_DATA
-        
-        
+
+
     ' > "$raw_file" 2>/dev/null
     local ssh_status=$?
 
@@ -2588,17 +3112,17 @@ EOF
             }
         ' "$raw_file"
     fi
-    
+
     local ssh_end=$(date +%s)
     local ssh_duration=$((ssh_end - ssh_start))
     section_names+=("SSH Data Collection")
     section_times+=("$ssh_duration")
-    
+
     # =========================================================================
     # Parse raw data into separate files
     # =========================================================================
     local parse_start=$(date +%s)
-    
+
     if ! split_collection_bundle "$raw_file" "$bundle_stage" \
             "$carrier_body" "$optical_body" ||
        ! cat "$bundle_stage/html.body" >> "$html_temp"; then
@@ -2623,15 +3147,15 @@ EOF
         return 1
     }
     rm -f "$raw_file" "$bundle_stage/html.body" "$carrier_body" "$optical_body"
-    
+
     local parse_end=$(date +%s)
     local parse_duration=$((parse_end - parse_start))
     section_names+=("Data Processing")
     section_times+=("$parse_duration")
-    
+
     # Add config section to HTML
     local config_start=$(date +%s)
-    
+
     cat >> "$html_temp" << EOF
 
 <h1></h1><h1><font color="#b57614">Device Configuration - ${hostname}</font></h1><h3></h3>
@@ -2651,7 +3175,7 @@ EOF
     else
         echo "<p><span style='color: orange;'>⚠️  Configuration not available for ${hostname}</span></p>" >> "$html_temp"
     fi
-    
+
     # Close HTML
     cat >> "$html_temp" << EOF
     </pre>
@@ -2708,6 +3232,10 @@ process_device() {
 
     if [[ "$ping_reachable" == "false" && \
           "${COLLECTION_FAILURE_KIND:-}" == "ssh" ]]; then
+        if [[ "$scoped_run" == "true" ]]; then
+            echo "Scoped collection could not reach ${hostname}; preserving its previous artifacts" >&2
+            return "$collection_status"
+        fi
         echo "$device $hostname" >> "$unreachable_hosts_file"
         # Do not let a previous raw snapshot or per-device page look current.
         # Both ICMP and the authoritative SSH attempt failed, so preserve the
@@ -2800,6 +3328,10 @@ if [[ -z "${WEB_ROOT:-}" ]]; then
     unset LLDPQ_CONFIG_ASSIGNMENTS
 fi
 apply_monitor_tuning
+if [[ "$MONITOR_SCOPE" == "optical" && "$SKIP_OPTICAL" == "true" ]]; then
+    echo "Error: optical collection is disabled by SKIP_OPTICAL" >&2
+    exit 2
+fi
 [[ -n "${WEB_ROOT:-}" ]] || { echo "Error: WEB_ROOT is not configured" >&2; exit 1; }
 LLDPQ_USER="${LLDPQ_USER:-$(whoami)}"
 load_devices "$SCRIPT_DIR/parse_devices.py" || exit 1
@@ -2810,6 +3342,35 @@ monitor_run_started=true
 if ! mark_reports_in_progress; then
     echo "Could not mark monitoring reports as in-progress" >&2
     exit 1
+fi
+
+if [[ "$scoped_run" == "true" ]]; then
+    scope_expected_hosts_file=$(mktemp) || exit 1
+    if ! python3 - "${LLDPQ_ASSETS_FILE:-$SCRIPT_DIR/assets.ini}" \
+            > "$scope_expected_hosts_file" <<'PY'
+import os
+import sys
+
+from collection_freshness import asset_snapshot_is_valid, read_asset_snapshot
+
+assets_path = sys.argv[1]
+os.environ["LLDPQ_ASSETS_FILE"] = assets_path
+snapshot = read_asset_snapshot(assets_path)
+if not asset_snapshot_is_valid(snapshot):
+    print(
+        "Scoped analysis requires a current, inventory-matched assets.ini; "
+        "run the full pipeline first.",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+statuses, _mtime, _available = snapshot
+for hostname, status in sorted(statuses.items()):
+    if status == "OK":
+        print(hostname)
+PY
+    then
+        exit 1
+    fi
 fi
 
 total_devices=${#devices[@]}
@@ -2840,13 +3401,17 @@ wait_for_collection_job() {
 
 for device in "${!devices[@]}"; do
     IFS=' ' read -r user hostname <<< "${devices[$device]}"
-    
+    if [[ "$scoped_run" == "true" ]] && \
+       ! grep -Fqx -- "$hostname" "$scope_expected_hosts_file"; then
+        continue
+    fi
+
     process_device "$device" "$user" "$hostname" 9>&- &
     collection_pids+=("$!")
     collection_labels+=("$hostname")
     ((active_collection_jobs++))
     ((device_count++))
-    
+
     # Wait if we hit the parallel limit
     if [ "$active_collection_jobs" -ge "$MAX_PARALLEL" ]; then
         wait_for_collection_job "$next_collection_wait"
@@ -2885,7 +3450,7 @@ fi
 snapshot_end=$(date +%s)
 snapshot_duration=$((snapshot_end - snapshot_start))
 
-# Run all analyses in parallel and retain each status/log independently.
+# Run the selected analyses in parallel and retain each status/log independently.
 analysis_log_dir=$(mktemp -d "${TMPDIR:-/tmp}/lldpq-analysis.XXXXXX") || exit 1
 declare -a analysis_pids=()
 declare -a analysis_labels=()
@@ -2904,24 +3469,70 @@ start_analysis() {
 
 validate_analysis_outputs() {
     local marker="$1" relative path
-    local -a required=(
-        bgp-analysis.html bgp_history.json
-        link-flap-analysis.html flap_history.json
-        ber-analysis.html ber_history.json ber_baseline.json
-        pfc-ecn-analysis.html pfc_ecn_baseline.json pfc_ecn_history.json
-        hardware-analysis.html
-        log-analysis.html log_summary.json
-        duplicate-analysis.html dup-data/dup_seq_state.json dup-data/dup_ip_state.json
-    )
-    local -a json_files=(
-        bgp_history.json flap_history.json ber_history.json ber_baseline.json
-        pfc_ecn_baseline.json pfc_ecn_history.json
-        log_summary.json dup-data/dup_seq_state.json dup-data/dup_ip_state.json
-    )
-    if [[ "$SKIP_OPTICAL" != "true" ]]; then
-        required+=(optical-analysis.html optical_history.json)
-        json_files+=(optical_history.json)
-    fi
+    local -a required=()
+    local -a json_files=()
+    case "$MONITOR_SCOPE" in
+        all)
+            required=(
+                bgp-analysis.html bgp_history.json
+                link-flap-analysis.html flap_history.json
+                ber-analysis.html ber_history.json ber_baseline.json
+                pfc-ecn-analysis.html pfc_ecn_baseline.json pfc_ecn_history.json
+                hardware-analysis.html
+                log-analysis.html log_summary.json
+                duplicate-analysis.html dup-data/dup_seq_state.json dup-data/dup_ip_state.json
+            )
+            json_files=(
+                bgp_history.json flap_history.json ber_history.json ber_baseline.json
+                pfc_ecn_baseline.json pfc_ecn_history.json
+                log_summary.json dup-data/dup_seq_state.json dup-data/dup_ip_state.json
+            )
+            if [[ "$SKIP_OPTICAL" != "true" ]]; then
+                required+=(optical-analysis.html optical_history.json)
+                json_files+=(optical_history.json)
+            fi
+            ;;
+        bgp)
+            required=(bgp-analysis.html bgp_history.json)
+            json_files=(bgp_history.json)
+            ;;
+        duplicate)
+            required=(
+                duplicate-analysis.html
+                dup-data/dup_seq_state.json dup-data/dup_ip_state.json
+            )
+            json_files=(dup-data/dup_seq_state.json dup-data/dup_ip_state.json)
+            ;;
+        flap)
+            required=(link-flap-analysis.html flap_history.json)
+            json_files=(flap_history.json)
+            ;;
+        optical)
+            required=(optical-analysis.html optical_history.json)
+            json_files=(optical_history.json)
+            ;;
+        ber)
+            required=(ber-analysis.html ber_history.json ber_baseline.json)
+            json_files=(ber_history.json ber_baseline.json)
+            ;;
+        pfc-ecn)
+            required=(
+                pfc-ecn-analysis.html pfc_ecn_baseline.json pfc_ecn_history.json
+            )
+            json_files=(pfc_ecn_baseline.json pfc_ecn_history.json)
+            ;;
+        hardware)
+            required=(hardware-analysis.html)
+            ;;
+        logs)
+            required=(log-analysis.html log_summary.json)
+            json_files=(log_summary.json)
+            ;;
+        *)
+            echo "No validation contract for scope: $MONITOR_SCOPE" >&2
+            return 2
+            ;;
+    esac
 
     for relative in "${required[@]}"; do
         path="$SCRIPT_DIR/monitor-results/$relative"
@@ -2951,16 +3562,30 @@ PYTHON
 analysis_output_marker="$analysis_log_dir/.analysis-start"
 : > "$analysis_output_marker" || exit 1
 analyzer_jobs_start=$(date +%s)
-start_analysis bgp python3 process_bgp_data.py
-start_analysis flap python3 process_flap_data.py
-if [[ "$SKIP_OPTICAL" != "true" ]]; then
+if scope_selected bgp; then
+    start_analysis bgp python3 process_bgp_data.py
+fi
+if scope_selected flap; then
+    start_analysis flap python3 process_flap_data.py
+fi
+if scope_selected optical && [[ "$SKIP_OPTICAL" != "true" ]]; then
     start_analysis optical python3 process_optical_data.py
 fi
-start_analysis ber python3 process_ber_data.py
-start_analysis pfc-ecn python3 process_pfc_ecn_data.py
-start_analysis hardware python3 process_hardware_data.py
-start_analysis log python3 process_log_data.py
-start_analysis duplicate python3 process_duplicate_data.py
+if scope_selected ber; then
+    start_analysis ber python3 process_ber_data.py
+fi
+if scope_selected pfc-ecn; then
+    start_analysis pfc-ecn python3 process_pfc_ecn_data.py
+fi
+if scope_selected hardware; then
+    start_analysis hardware python3 process_hardware_data.py
+fi
+if scope_selected logs; then
+    start_analysis log python3 process_log_data.py
+fi
+if scope_selected duplicate; then
+    start_analysis duplicate python3 process_duplicate_data.py
+fi
 
 for index in "${!analysis_pids[@]}"; do
     if wait "${analysis_pids[$index]}"; then
@@ -2995,10 +3620,12 @@ validation_end=$(date +%s)
 validation_duration=$((validation_end - validation_start))
 
 manifest_start=$(date +%s)
-if ! write_current_manifest; then
-    rollback_analysis_state || true
-    mark_reports_stale "could not write current-run manifest"
-    exit 1
+if [[ "$scoped_run" != "true" ]]; then
+    if ! write_current_manifest; then
+        rollback_analysis_state || true
+        mark_reports_stale "could not write current-run manifest"
+        exit 1
+    fi
 fi
 manifest_end=$(date +%s)
 manifest_duration=$((manifest_end - manifest_start))
@@ -3022,8 +3649,8 @@ if ! commit_analysis_state; then
     mark_reports_stale "published reports but could not remove analyzer rollback snapshot"
     exit 1
 fi
-if ! clear_stale_marker; then
-    mark_reports_stale "could not clear stale report marker"
+if ! complete_report_state; then
+    mark_reports_stale "could not publish completed report state"
     exit 1
 fi
 commit_end=$(date +%s)
@@ -3035,6 +3662,6 @@ DURATION=$((END_TIME - START_TIME))
 MINUTES=$((DURATION / 60))
 SECONDS=$((DURATION % 60))
 
-echo "Done: ${#devices[@]} devices, ${MINUTES}m${SECONDS}s (collect:${data_collection_duration}s, analyze:${analysis_duration}s)"
+echo "Done: ${device_count} devices, ${MINUTES}m${SECONDS}s (collect:${data_collection_duration}s, analyze:${analysis_duration}s)"
 echo "Phases: startup/recovery:${startup_recovery_duration}s collection:${collection_wall_duration}s snapshot:${snapshot_duration}s analyzers:${analyzer_jobs_duration}s validation:${validation_duration}s manifest:${manifest_duration}s publication:${publication_duration}s commit:${commit_duration}s"
 exit 0
