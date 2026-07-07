@@ -4864,6 +4864,11 @@ sudo cp -r etc/* /etc/
 echo "  - Copying html/* to $WEB_ROOT/"
 sudo cp -r html/* "$WEB_ROOT/"
 
+# The former Commissioning/Handed Over overview was replaced by the per-tab
+# Analysis Scope filter. In-place updates do not otherwise remove files that
+# disappeared from html/, so explicitly retire the obsolete deployed page.
+sudo rm -f -- "$WEB_ROOT/handover.html"
+
 # Ensure Monaco Editor exists (may have been deleted or never downloaded)
 MONACO_DIR="$WEB_ROOT/monaco"
 if [[ ! -d "$MONACO_DIR" ]]; then

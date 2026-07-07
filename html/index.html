@@ -468,7 +468,6 @@
             text-overflow: ellipsis;
             white-space: nowrap;
         }
-        .tracking-trigger-chevron { color: #777; font-size: 14px; }
 
         .tracking-modal-overlay {
             position: fixed;
@@ -539,8 +538,7 @@
             margin-right: auto;
             justify-content: center;
         }
-        #sidebar.collapsed .tracking-trigger-copy,
-        #sidebar.collapsed .tracking-trigger-chevron { display: none; }
+        #sidebar.collapsed .tracking-trigger-copy { display: none; }
         
     </style>
 </head>
@@ -757,6 +755,12 @@
 
         const TRACKING_VIEW_STORAGE_KEY = 'lldpq_tracking_view';
         const TRACKING_VIEWS = new Set(['all', 'commissioning', 'handed_over']);
+        const LIFECYCLE_SCOPED_REPORTS = new Set([
+            '/lldp.html', '/bgp-analysis.html', '/duplicate-analysis.html',
+            '/link-flap-analysis.html', '/optical-analysis.html', '/ber-analysis.html',
+            '/pfc-ecn-analysis.html', '/hardware-analysis.html', '/log-analysis.html',
+            '/assets.html', '/transceiver.html'
+        ]);
 
         function storedTrackingView() {
             try {
@@ -783,13 +787,6 @@
             return value;
         }
 
-        function trackingViewUrl(value) {
-            if (value === 'commissioning' || value === 'handed_over') {
-                return `handover.html?scope=${encodeURIComponent(value)}`;
-            }
-            return 'start.html';
-        }
-
         function installLifecycleScope() {
             const iframe = document.getElementById('content-iframe');
             try {
@@ -804,19 +801,39 @@
             }
         }
 
-        function activateFabricMenu() {
-            document.querySelectorAll('.menu-item').forEach(item => item.classList.remove('active'));
-            const fabric = document.querySelector('a[href="start.html"]');
-            if (fabric) fabric.classList.add('active');
+        function currentIframeUsesLifecycleScope() {
+            const iframe = document.getElementById('content-iframe');
+            let pathname = '';
+            try {
+                // Named-target navigation updates the frame's live Location but
+                // does not update its original src attribute.
+                pathname = iframe.contentWindow.location.pathname;
+            } catch (e) {
+                try {
+                    pathname = new URL(iframe.getAttribute('src') || '', window.location.href).pathname;
+                } catch (_) {
+                    return false;
+                }
+            }
+            pathname = pathname.toLowerCase();
+            return Array.from(LIFECYCLE_SCOPED_REPORTS).some(path => pathname.endsWith(path));
         }
 
-        function applyTrackingView(value, navigate = true) {
+        function applyTrackingView(value, refreshCurrentReport = true) {
+            const previous = storedTrackingView();
             value = rememberTrackingView(value);
-            if (navigate) {
+            // Fabric is always the global dashboard. Scope is a per-tab report
+            // filter, so changing it only refreshes an analysis page that can
+            // actually apply the lifecycle predicate.
+            if (refreshCurrentReport && previous !== value && currentIframeUsesLifecycleScope()) {
                 const iframe = document.getElementById('content-iframe');
-                const target = trackingViewUrl(value);
-                if (iframe.getAttribute('src') !== target) iframe.src = target;
-                activateFabricMenu();
+                let currentUrl = iframe.getAttribute('src');
+                try {
+                    currentUrl = iframe.contentWindow.location.href;
+                    iframe.contentWindow.location.reload();
+                } catch (e) {
+                    iframe.src = currentUrl;
+                }
             }
         }
 
@@ -845,8 +862,8 @@
             button.type = 'button';
             button.id = 'tracking-view-button';
             button.className = 'tracking-view-trigger';
-            button.title = 'Choose which switch lifecycle group LLDPq displays';
-            button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v4H4V5m0 5h16v4H4v-4m0 5h16v4H4v-4Z"/></svg><span class="tracking-trigger-copy"><span class="tracking-trigger-title">Tracking</span><span class="tracking-trigger-current" id="tracking-view-current"></span></span><span class="tracking-trigger-chevron" aria-hidden="true">›</span>';
+            button.title = 'Choose the switch lifecycle scope used by analysis reports';
+            button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v4H4V5m0 5h16v4H4v-4m0 5h16v4H4v-4Z"/></svg><span class="tracking-trigger-copy"><span class="tracking-trigger-title">Analysis Scope</span><span class="tracking-trigger-current" id="tracking-view-current"></span></span>';
             button.addEventListener('click', openTrackingViewModal);
             container.appendChild(button);
 
@@ -857,7 +874,7 @@
                 overlay.setAttribute('role', 'dialog');
                 overlay.setAttribute('aria-modal', 'true');
                 overlay.setAttribute('aria-labelledby', 'tracking-modal-title');
-                overlay.innerHTML = '<div class="tracking-modal"><div class="tracking-modal-header"><div><h2 id="tracking-modal-title">Tracking View</h2><p>Choose the switch group shown by Fabric and analysis pages in this browser tab.</p></div><button type="button" class="tracking-modal-close" aria-label="Close">×</button></div><div class="tracking-modal-options"><button type="button" class="tracking-modal-option" role="radio" data-tracking-view="all"><span class="tracking-option-dot"></span><span><span class="tracking-option-title">All Switches</span><span class="tracking-option-desc">Show the complete managed inventory.</span></span><span class="tracking-option-check">✓</span></button><button type="button" class="tracking-modal-option" role="radio" data-tracking-view="commissioning"><span class="tracking-option-dot"></span><span><span class="tracking-option-title">Commissioning</span><span class="tracking-option-desc">Show only switches still being commissioned.</span></span><span class="tracking-option-check">✓</span></button><button type="button" class="tracking-modal-option" role="radio" data-tracking-view="handed_over"><span class="tracking-option-dot"></span><span><span class="tracking-option-title">Handed Over</span><span class="tracking-option-desc">Show only switches already handed over to operations.</span></span><span class="tracking-option-check">✓</span></button></div></div>';
+                overlay.innerHTML = '<div class="tracking-modal"><div class="tracking-modal-header"><div><h2 id="tracking-modal-title">Analysis Scope</h2><p>Choose the switch group shown by analysis reports in this browser tab. Fabric always shows all switches.</p></div><button type="button" class="tracking-modal-close" aria-label="Close">×</button></div><div class="tracking-modal-options"><button type="button" class="tracking-modal-option" role="radio" data-tracking-view="all"><span class="tracking-option-dot"></span><span><span class="tracking-option-title">All Switches</span><span class="tracking-option-desc">Show the complete managed inventory in analysis reports.</span></span><span class="tracking-option-check">✓</span></button><button type="button" class="tracking-modal-option" role="radio" data-tracking-view="commissioning"><span class="tracking-option-dot"></span><span><span class="tracking-option-title">Commissioning</span><span class="tracking-option-desc">Show only switches still being commissioned.</span></span><span class="tracking-option-check">✓</span></button><button type="button" class="tracking-modal-option" role="radio" data-tracking-view="handed_over"><span class="tracking-option-dot"></span><span><span class="tracking-option-title">Handed Over</span><span class="tracking-option-desc">Show only switches already handed over to operations.</span></span><span class="tracking-option-check">✓</span></button></div></div>';
                 overlay.addEventListener('click', event => {
                     if (event.target === overlay) closeTrackingViewModal();
                 });
@@ -922,9 +939,9 @@
             // Check for updates after auth is ready (admin only)
             checkForUpdates();
 
-            // The selection is per browser tab. The outer shell injects the
-            // lifecycle predicate into each same-origin monitoring report.
-            applyTrackingView(storedTrackingView());
+            // The selection is per browser tab. It filters supported reports;
+            // the Fabric dashboard remains the full-fabric source of truth.
+            applyTrackingView(storedTrackingView(), false);
         }
         
         // Run auth check
@@ -933,12 +950,6 @@
         // Add active state management
         document.querySelectorAll('.menu-item').forEach(item => {
             item.addEventListener('click', function(event) {
-                const href = this.getAttribute('href');
-                const trackingView = storedTrackingView();
-                if (href === 'start.html' && trackingView !== 'all') {
-                    event.preventDefault();
-                    document.getElementById('content-iframe').src = trackingViewUrl(trackingView);
-                }
                 // Remove active class from all items
                 document.querySelectorAll('.menu-item').forEach(i => i.classList.remove('active'));
                 // Add active class to clicked item

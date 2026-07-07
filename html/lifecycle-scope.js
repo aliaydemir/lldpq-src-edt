@@ -1,5 +1,5 @@
 /*
- * lifecycle-scope.js -- apply the outer-shell Tracking View to report pages.
+ * lifecycle-scope.js -- apply the outer-shell Analysis Scope to report pages.
  *
  * Collection remains fabric-wide. This module partitions the already-generated,
  * same-origin report DOM by switch lifecycle. Scope lives in sessionStorage, so
@@ -522,7 +522,7 @@
             var warning = document.createElement('div');
             warning.id = 'lldpq-lifecycle-error';
             warning.setAttribute('role', 'alert');
-            warning.textContent = 'Tracking View could not be verified. Report data is hidden to prevent an unfiltered view. Refresh the page or choose All Switches.';
+            warning.textContent = 'Analysis Scope could not be verified. Report data is hidden to prevent an unfiltered view. Refresh the page or choose All Switches.';
             document.body.insertBefore(warning, document.body.firstChild);
         }
         console.warn('LLDPq lifecycle scope was not applied:', error);
