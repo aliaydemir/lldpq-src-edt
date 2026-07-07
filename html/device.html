@@ -507,6 +507,56 @@
             padding-bottom: 10px;
             border-bottom: 1px solid #333;
         }
+
+        /* NVT uses the same terminal palette as Command Runner, without an inner
+           height limit so the complete table participates in page scrolling. */
+        .nvt-summary {
+            display: flex;
+            align-items: center;
+            gap: 18px;
+            margin-bottom: 12px;
+            color: #aaa;
+            font-size: 13px;
+        }
+
+        .nvt-command {
+            color: #9cdcfe;
+            font-family: 'Cascadia Code', Consolas, monospace;
+        }
+
+        .nvt-status {
+            color: #888;
+        }
+
+        .nvt-status.running { color: #ffd54f; }
+        .nvt-status.success { color: #81c784; }
+        .nvt-status.error { color: #ef5350; }
+
+        .nvt-refresh {
+            margin-left: auto;
+        }
+
+        .nvt-output {
+            width: 100%;
+            margin: 0;
+            padding: 12px;
+            background: #111;
+            color: #d4d4d4;
+            border: 1px solid #333;
+            border-radius: 4px;
+            font-family: 'Cascadia Code', Consolas, monospace;
+            font-size: 12px;
+            line-height: 1.5;
+            white-space: pre;
+            overflow-x: auto;
+            overflow-y: visible;
+            max-height: none;
+        }
+
+        .nvt-output.error {
+            color: #ef5350;
+            white-space: pre-wrap;
+        }
         
         /* Summary cards */
         .summary-cards {
@@ -810,6 +860,7 @@
         <button class="tab-btn active" id="tab-button-overview" role="tab" aria-selected="true" aria-controls="tab-overview" tabindex="0" data-tab="overview">Overview</button>
         <button class="tab-btn" id="tab-button-ports" role="tab" aria-selected="false" aria-controls="tab-ports" tabindex="-1" data-tab="ports">Ports</button>
         <button class="tab-btn" id="tab-button-optical" role="tab" aria-selected="false" aria-controls="tab-optical" tabindex="-1" data-tab="optical">Optical</button>
+        <button class="tab-btn" id="tab-button-nvt" role="tab" aria-selected="false" aria-controls="tab-nvt" tabindex="-1" data-tab="nvt">NVT</button>
         <button class="tab-btn" id="tab-button-bgp" role="tab" aria-selected="false" aria-controls="tab-bgp" tabindex="-1" data-tab="bgp">BGP</button>
         <button class="tab-btn" id="tab-button-logs" role="tab" aria-selected="false" aria-controls="tab-logs" tabindex="-1" data-tab="logs">Logs</button>
         <button class="tab-btn" id="tab-button-config" role="tab" aria-selected="false" aria-controls="tab-config" tabindex="-1" data-tab="config">Config</button>
@@ -839,6 +890,16 @@
             <div class="loading">Loading optical data...</div>
         </div>
         <div class="optical-detail" id="opticalDetail" style="display: none;"></div>
+    </div>
+
+    <!-- NVT Tab -->
+    <div class="tab-content" id="tab-nvt" role="tabpanel" aria-labelledby="tab-button-nvt">
+        <div class="nvt-summary">
+            <span class="nvt-command">$ nvt</span>
+            <span class="nvt-status" id="nvtStatus" role="status" aria-live="polite">Open this tab to run NVT</span>
+            <button class="cmd-btn nvt-refresh" id="btnRefreshNvt" type="button" onclick="refreshNvtOutput()">Refresh</button>
+        </div>
+        <pre class="nvt-output" id="nvtOutput" aria-label="NVT command output">Open this tab to load the complete NVT output...</pre>
     </div>
     
     <!-- BGP Tab -->
@@ -1394,10 +1455,14 @@
         let deviceRequestGeneration = 0;
         let deviceDataAbortController = null;
         let refreshInProgress = false;
+        let refreshAllPromise = null;
         let configRawOutput = '';
         let configSourceDevice = null;
         let configRequestId = 0;
         let bgpRequestId = 0;
+        let nvtRequestId = 0;
+        let nvtAbortController = null;
+        let nvtOperationPromise = null;
         let clsupportRequestId = 0;
         let clsupportOperationId = 0;
         let opticalDetailRequestId = 0;
@@ -1405,7 +1470,7 @@
         let tailStopTimeout = null;
         
         // Track which tabs have been loaded (for lazy loading)
-        let tabsLoaded = { overview: false, ports: false, optical: false, bgp: false, logs: false, config: false, commands: false, capture: false, clsupport: false };
+        let tabsLoaded = { overview: false, ports: false, optical: false, nvt: false, bgp: false, logs: false, config: false, commands: false, capture: false, clsupport: false };
 
         function getDeviceRequestContext() {
             return { device: deviceName, generation: deviceRequestGeneration };
@@ -1438,6 +1503,82 @@
             pre.textContent = String(output ?? '');
             element.replaceChildren(pre);
             return pre;
+        }
+
+        // Same SGR palette/state handling used by Commands, rendered with DOM
+        // nodes so command output can never become executable markup.
+        const NVT_ANSI_COLORS = Object.freeze({
+            30: '#3b3b3b', 31: '#ef5350', 32: '#81c784', 33: '#ffd54f',
+            34: '#64b5f6', 35: '#ba68c8', 36: '#4dd0e1', 37: '#e0e0e0',
+            90: '#777', 91: '#ef9a9a', 92: '#a5d6a7', 93: '#fff59d',
+            94: '#90caf9', 95: '#ce93d8', 96: '#80deea', 97: '#ffffff'
+        });
+
+        function appendAnsiText(fragment, text, color, bold) {
+            if (!text) return;
+            const textNode = document.createTextNode(text);
+            if (!color && !bold) {
+                fragment.appendChild(textNode);
+                return;
+            }
+            const span = document.createElement('span');
+            if (color) span.style.color = color;
+            if (bold) span.style.fontWeight = 'bold';
+            span.appendChild(textNode);
+            fragment.appendChild(span);
+        }
+
+        function renderAnsiOutput(elementOrId, input) {
+            const element = typeof elementOrId === 'string'
+                ? document.getElementById(elementOrId)
+                : elementOrId;
+            if (!element) return null;
+
+            const value = String(input ?? '').replace(/\r/g, '');
+            const fragment = document.createDocumentFragment();
+            const sequence = /\x1b\[([0-9;]*)m/g;
+            let color = null;
+            let bold = false;
+            let cursor = 0;
+            let match;
+
+            while ((match = sequence.exec(value)) !== null) {
+                appendAnsiText(fragment, value.slice(cursor, match.index), color, bold);
+                const codes = match[1].split(';').map(code => code === '' ? 0 : Number.parseInt(code, 10));
+                for (let index = 0; index < codes.length; index += 1) {
+                    const code = codes[index];
+                    if (code === 0) { color = null; bold = false; }
+                    else if (code === 1) bold = true;
+                    else if (code === 22) bold = false;
+                    else if (code === 39) color = null;
+                    else if (code === 38 && codes[index + 1] === 2) {
+                        color = `rgb(${codes[index + 2] || 0},${codes[index + 3] || 0},${codes[index + 4] || 0})`;
+                        index += 4;
+                    } else if (code === 38 && codes[index + 1] === 5) {
+                        index += 2;
+                    } else if (NVT_ANSI_COLORS[code]) {
+                        color = NVT_ANSI_COLORS[code];
+                    }
+                }
+                cursor = sequence.lastIndex;
+            }
+            appendAnsiText(fragment, value.slice(cursor), color, bold);
+            element.replaceChildren(fragment);
+            return element;
+        }
+
+        function setNvtStatus(message, state = '') {
+            const status = document.getElementById('nvtStatus');
+            if (!status) return;
+            status.className = `nvt-status${state ? ` ${state}` : ''}`;
+            status.textContent = String(message ?? '');
+        }
+
+        function setNvtPlainOutput(message, { error = false } = {}) {
+            const output = document.getElementById('nvtOutput');
+            if (!output) return;
+            output.classList.toggle('error', error);
+            output.textContent = String(message ?? '');
         }
 
         function replaceSelectOptions(selectOrId, values, selectedValue = null) {
@@ -1711,6 +1852,7 @@
             deviceRequestGeneration += 1;
             configRequestId += 1;
             bgpRequestId += 1;
+            nvtRequestId += 1;
             clsupportRequestId += 1;
             clsupportOperationId += 1;
             opticalDetailRequestId += 1;
@@ -1720,6 +1862,12 @@
                 deviceDataAbortController.abort();
                 deviceDataAbortController = null;
             }
+            if (nvtAbortController) {
+                nvtAbortController.abort();
+                nvtAbortController = null;
+            }
+            nvtOperationPromise = null;
+            refreshAllPromise = null;
             deviceName = nextDevice;
             
             // Show device content, hide placeholder
@@ -1745,6 +1893,7 @@
             const portsEl = document.getElementById('portsContent');
             const opticalEl = document.getElementById('opticalContent');
             const opticalDetailEl = document.getElementById('opticalDetail');
+            const nvtOutputEl = document.getElementById('nvtOutput');
             const bgpEl = document.getElementById('bgpContent');
             const logCardsEl = document.getElementById('logCards');
             
@@ -1752,6 +1901,14 @@
             if (portsEl) setElementMessage(portsEl, 'Click to load port status...', 'loading');
             if (opticalEl) setElementMessage(opticalEl, 'Loading optical data...', 'loading');
             if (opticalDetailEl) { opticalDetailEl.textContent = ''; opticalDetailEl.style.display = 'none'; }
+            if (nvtOutputEl) {
+                nvtOutputEl.classList.remove('error');
+                nvtOutputEl.removeAttribute('aria-busy');
+                nvtOutputEl.textContent = 'Open this tab to load the complete NVT output...';
+            }
+            const nvtRefreshButton = document.getElementById('btnRefreshNvt');
+            if (nvtRefreshButton) nvtRefreshButton.disabled = false;
+            setNvtStatus('Open this tab to run NVT');
             if (bgpEl) setElementMessage(bgpEl, 'Click to load BGP data...', 'loading');
             if (logCardsEl) setElementMessage(logCardsEl, 'Loading logs...', 'loading');
 
@@ -1775,7 +1932,7 @@
             document.getElementById('bondList')?.replaceChildren();
             
             // Reset loaded flags for lazy loading
-            tabsLoaded = { overview: false, ports: false, optical: false, bgp: false, logs: false, config: false, commands: false, capture: false, clsupport: false };
+            tabsLoaded = { overview: false, ports: false, optical: false, nvt: false, bgp: false, logs: false, config: false, commands: false, capture: false, clsupport: false };
             
             // Stop device-scoped background work before resetting the UI.
             void cancelActiveCapture({ updateUi: false });
@@ -1927,6 +2084,99 @@
             });
         }
 
+        function loadNvtOutput(requestContext = getDeviceRequestContext(), options = {}) {
+            const operation = loadNvtOutputOperation(requestContext, options);
+            nvtOperationPromise = operation;
+            const clearOperation = () => {
+                if (nvtOperationPromise === operation) nvtOperationPromise = null;
+            };
+            operation.then(clearOperation, clearOperation);
+            return operation;
+        }
+
+        async function loadNvtOutputOperation(
+            requestContext,
+            { waitForGlobalRefresh = true } = {}
+        ) {
+            if (!requestContext.device) return false;
+            const pendingRefresh = waitForGlobalRefresh ? refreshAllPromise : null;
+            if (pendingRefresh) {
+                setNvtStatus('Waiting for device refresh...', 'running');
+                setNvtPlainOutput('Waiting for device refresh...');
+                await Promise.resolve(pendingRefresh).catch(() => false);
+                if (!isCurrentDeviceRequest(requestContext.device, requestContext.generation)) return false;
+            }
+
+            const requestId = ++nvtRequestId;
+            if (nvtAbortController) nvtAbortController.abort();
+            const controller = new AbortController();
+            nvtAbortController = controller;
+            const timeoutId = setTimeout(() => controller.abort(), 45000);
+            const output = document.getElementById('nvtOutput');
+            const refreshButton = document.getElementById('btnRefreshNvt');
+            const refreshAllButton = document.getElementById('btnRefreshAll');
+
+            if (output) {
+                output.classList.remove('error');
+                output.setAttribute('aria-busy', 'true');
+                output.textContent = 'Running nvt...';
+            }
+            if (refreshButton) refreshButton.disabled = true;
+            if (refreshAllButton) refreshAllButton.disabled = true;
+            setNvtStatus('Running...', 'running');
+
+            try {
+                const response = await fetch('/fabric-api.sh?action=run-device-command', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({device: requestContext.device, command: 'nvt'}),
+                    signal: controller.signal
+                });
+                if (!response.ok) throw new Error(`Request failed (${response.status})`);
+                const data = await response.json();
+                if (!isCurrentDeviceRequest(requestContext.device, requestContext.generation) ||
+                    requestId !== nvtRequestId) return false;
+
+                if (!data.success) {
+                    setNvtStatus('Failed', 'error');
+                    setNvtPlainOutput(`Error: ${data.error || 'Unknown error'}`, { error: true });
+                    return false;
+                }
+
+                if (output) {
+                    output.classList.remove('error');
+                    renderAnsiOutput(output, data.output || '(no output)');
+                }
+                setNvtStatus('OK', 'success');
+                return true;
+            } catch (error) {
+                if (!isCurrentDeviceRequest(requestContext.device, requestContext.generation) ||
+                    requestId !== nvtRequestId) return false;
+                const message = error.name === 'AbortError'
+                    ? 'Timed out after 45 seconds'
+                    : `Request failed: ${error.message}`;
+                setNvtStatus('Failed', 'error');
+                setNvtPlainOutput(message, { error: true });
+                return false;
+            } finally {
+                clearTimeout(timeoutId);
+                if (nvtAbortController === controller) nvtAbortController = null;
+                if (isCurrentDeviceRequest(requestContext.device, requestContext.generation) &&
+                    requestId === nvtRequestId) {
+                    output?.removeAttribute('aria-busy');
+                    if (!refreshInProgress) {
+                        if (refreshButton) refreshButton.disabled = false;
+                        if (refreshAllButton) refreshAllButton.disabled = false;
+                    }
+                }
+            }
+        }
+
+        function refreshNvtOutput() {
+            if (!deviceName) return;
+            trackTabLoad('nvt', loadNvtOutput());
+        }
+
         async function loadCommandRunnerData(requestContext = getDeviceRequestContext()) {
             const vrfsLoaded = await loadVRFList({ loadBgp: false, requestContext });
             if (!isCurrentDeviceRequest(requestContext.device, requestContext.generation)) return false;
@@ -1948,6 +2198,8 @@
             
             if (tabName === 'ports' && !tabsLoaded.ports) {
                 trackTabLoad('ports', loadPortStatus());
+            } else if (tabName === 'nvt' && !tabsLoaded.nvt) {
+                trackTabLoad('nvt', loadNvtOutput());
             } else if (tabName === 'bgp' && !tabsLoaded.bgp) {
                 trackTabLoad('bgp', loadVRFList({ loadBgp: true }));
             } else if (tabName === 'commands' && !tabsLoaded.commands) {
@@ -2040,6 +2292,7 @@
             deviceRequestGeneration += 1;
             configRequestId += 1;
             bgpRequestId += 1;
+            nvtRequestId += 1;
             clsupportRequestId += 1;
             clsupportOperationId += 1;
             opticalDetailRequestId += 1;
@@ -2049,6 +2302,12 @@
                 deviceDataAbortController.abort();
                 deviceDataAbortController = null;
             }
+            if (nvtAbortController) {
+                nvtAbortController.abort();
+                nvtAbortController = null;
+            }
+            nvtOperationPromise = null;
+            refreshAllPromise = null;
             void cancelActiveCapture({ updateUi: false });
             if (activeTailContext || tailPollingInterval || tailOutputFile) {
                 stopLogTail(activeTailContext || previousDevice, { updateUi: false });
@@ -4283,23 +4542,55 @@
             if (e.key === 'Enter') runCustomCommand();
         });
         
-        async function refreshAllData() {
+        function refreshAllData() {
+            if (refreshAllPromise) return refreshAllPromise;
+            if (!deviceName) return Promise.resolve(false);
+            const pendingNvt = nvtOperationPromise;
+            const operation = refreshAllDataOperation(pendingNvt);
+            refreshAllPromise = operation;
+            const clearOperation = () => {
+                if (refreshAllPromise === operation) refreshAllPromise = null;
+            };
+            operation.then(clearOperation, clearOperation);
+            return operation;
+        }
+
+        async function refreshAllDataOperation(pendingNvt) {
             if (refreshInProgress || !deviceName) return false;
             refreshInProgress = true;
             const requestContext = getDeviceRequestContext();
+            const refreshNvt = Boolean(tabsLoaded.nvt || document.getElementById('tab-nvt')?.classList.contains('active'));
             const refreshButton = document.getElementById('btnRefreshAll');
+            const nvtRefreshButton = document.getElementById('btnRefreshNvt');
             if (refreshButton) {
                 refreshButton.disabled = true;
                 refreshButton.textContent = 'Refreshing...';
             }
+            if (nvtRefreshButton) nvtRefreshButton.disabled = true;
 
             setElementMessage('overviewCards', 'Refreshing...', 'loading');
             setElementMessage('portsContent', 'Waiting for overview refresh...', 'loading');
             setElementMessage('opticalContent', 'Refreshing...', 'loading');
+            if (refreshNvt) {
+                if (pendingNvt) {
+                    setNvtStatus('Finishing current NVT run...', 'running');
+                } else {
+                    setNvtStatus('Waiting for port refresh...', 'running');
+                    setNvtPlainOutput('Waiting for port refresh...');
+                }
+            }
             setElementMessage('bgpContent', 'Waiting for port refresh...', 'loading');
             updateContentSubtitle(requestContext.device, null, 'loading');
 
             try {
+                // If NVT was already running when Refresh started, let that
+                // device command release the backend lock before continuing.
+                let pendingNvtLoaded = false;
+                if (pendingNvt) {
+                    pendingNvtLoaded = await Promise.resolve(pendingNvt).catch(() => false);
+                    if (!isCurrentDeviceRequest(requestContext.device, requestContext.generation)) return false;
+                }
+
                 // Keep remote commands serialized to avoid per-device command lock contention.
                 const overviewLoaded = await loadDeviceData(requestContext);
                 if (!isCurrentDeviceRequest(requestContext.device, requestContext.generation)) return false;
@@ -4307,13 +4598,20 @@
                 const portsLoaded = await loadPortStatus(requestContext);
                 if (!isCurrentDeviceRequest(requestContext.device, requestContext.generation)) return false;
 
+                let nvtLoaded = !refreshNvt || pendingNvtLoaded;
+                if (refreshNvt && !pendingNvtLoaded) {
+                    nvtLoaded = await loadNvtOutput(requestContext, { waitForGlobalRefresh: false });
+                    if (!isCurrentDeviceRequest(requestContext.device, requestContext.generation)) return false;
+                }
+
                 const bgpLoaded = await loadVRFList({ loadBgp: true, requestContext });
                 if (!isCurrentDeviceRequest(requestContext.device, requestContext.generation)) return false;
 
                 tabsLoaded.overview = overviewLoaded;
                 tabsLoaded.ports = portsLoaded;
+                if (refreshNvt) tabsLoaded.nvt = nvtLoaded;
                 tabsLoaded.bgp = bgpLoaded;
-                return overviewLoaded && portsLoaded && bgpLoaded;
+                return overviewLoaded && portsLoaded && nvtLoaded && bgpLoaded;
             } finally {
                 if (isCurrentDeviceRequest(requestContext.device, requestContext.generation)) {
                     refreshInProgress = false;
@@ -4321,6 +4619,7 @@
                         refreshButton.disabled = false;
                         refreshButton.textContent = 'Refresh';
                     }
+                    if (nvtRefreshButton) nvtRefreshButton.disabled = false;
                 }
             }
         }
