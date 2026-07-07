@@ -1295,7 +1295,7 @@ class LogAnalyzer:
         }
     </script>
     <script src="/p2p-alias.js"></script>
-    <script src="/css/analysis-guard.js"></script>
+    <script src="/css/analysis-guard.js?v=20260707-scoped-runner-2"></script>
 </body>
 </html>"""
         
