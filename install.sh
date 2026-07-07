@@ -249,7 +249,7 @@ normalize_installed_lldpq_config_access() {
         echo "[!] Installed LLDPq configuration is missing: $config_file" >&2
         return 1
     }
-    if [[ ! "${LLDPQ_USER:-}" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] || \
+    if [[ ! "${LLDPQ_USER:-}" =~ ^[a-zA-Z0-9_][a-zA-Z0-9._-]*[$]?$ ]] || \
        ! runtime_uid=$(id -u "$LLDPQ_USER" 2>/dev/null); then
         echo "[!] Invalid or unavailable LLDPq runtime user: '${LLDPQ_USER:-}'" >&2
         return 1
@@ -706,7 +706,7 @@ render_lldpq_cron_file() {
     local lldpq_schedule="$5" getconf_schedule="$6" include_fabric_cron="$7"
     local q_install q_web
 
-    [[ "$user" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] || {
+    [[ "$user" =~ ^[a-zA-Z0-9_][a-zA-Z0-9._-]*[$]?$ ]] || {
         echo "[!] Invalid LLDPq cron user: '$user'" >&2
         return 1
     }
@@ -746,7 +746,7 @@ validate_lldpq_cron_file() {
         read -r minute hour dom month dow user command <<< "$line"
         [[ -n "$command" ]] || return 1
         validate_cron_schedule "$minute $hour $dom $month $dow" || return 1
-        [[ "$user" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] || return 1
+        [[ "$user" =~ ^[a-zA-Z0-9_][a-zA-Z0-9._-]*[$]?$ ]] || return 1
         job_count=$((job_count + 1))
     done < "$cron_file"
     (( job_count >= 6 ))
@@ -4089,7 +4089,7 @@ fi
 # ============================================================================
 if [[ "$ENABLE_TELEMETRY" == "true" ]] || [[ "$DISABLE_TELEMETRY" == "true" ]]; then
     if [[ ! -f "$LLDPQ_CONFIG_FILE" ]] || \
-       [[ ! "${LLDPQ_USER:-}" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] || \
+       [[ ! "${LLDPQ_USER:-}" =~ ^[a-zA-Z0-9_][a-zA-Z0-9._-]*[$]?$ ]] || \
        ! id "$LLDPQ_USER" >/dev/null 2>&1; then
         echo "[!] Telemetry-only mode requires a valid existing LLDPq installation" >&2
         exit 1
@@ -4287,7 +4287,7 @@ if paths_overlap "$LLDPQ_INSTALL_DIR" "$WEB_ROOT"; then
     echo "[!] LLDPQ_DIR and WEB_ROOT must not overlap" >&2
     exit 1
 fi
-if [[ ! "$LLDPQ_USER" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]]; then
+if [[ ! "$LLDPQ_USER" =~ ^[a-zA-Z0-9_][a-zA-Z0-9._-]*[$]?$ ]]; then
     echo "[!] Invalid LLDPQ_USER in configuration: '$LLDPQ_USER'" >&2
     exit 1
 fi

@@ -2126,7 +2126,7 @@ if $REMOVE_SOURCE && $PARTIAL_INSTALL_TREE && ! $FORCE_PARTIAL; then
     echo "Repair the installation or explicitly verify it with --force-partial first." >&2
     exit 1
 fi
-if [[ ! "$LLDPQ_USER" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]]; then
+if [[ ! "$LLDPQ_USER" =~ ^[a-zA-Z0-9_][a-zA-Z0-9._-]*[$]?$ ]]; then
     echo "Refusing invalid LLDPQ_USER: '$LLDPQ_USER'" >&2
     exit 1
 fi
