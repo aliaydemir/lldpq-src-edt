@@ -588,14 +588,16 @@ def render_report(
         if ready == total and coverage_status == "complete"
         else "partial"
     )
-    coverage_current_attr = "" if current_hosts is None else str(current_hosts)
-    coverage_expected_attr = "" if expected_hosts is None else str(expected_hosts)
+    coverage_metadata_attrs = ""
+    if current_hosts is not None:
+        coverage_metadata_attrs += f' data-coverage-current="{current_hosts}"'
+    if expected_hosts is not None:
+        coverage_metadata_attrs += f' data-coverage-expected="{expected_hosts}"'
     summary_metadata = (
         '<div hidden data-analysis-summary="pfc-ecn"'
         f' data-collection-status="{collection_status}"'
         f' data-coverage-status="{coverage_status}"'
-        f' data-coverage-current="{coverage_current_attr}"'
-        f' data-coverage-expected="{coverage_expected_attr}"'
+        f'{coverage_metadata_attrs}'
         f' data-interval-status="{interval_status}"'
         f' data-total-ports="{total}" data-ready-ports="{ready}"'
         f' data-ecn-active-ports="{ecn_active}"'
@@ -646,13 +648,14 @@ def render_report(
         tx_rate_display = _fmt_rate(rates.get("tx_pause_frames"))
         sample_time = _fmt_sample_time(float(row["timestamp"]))
         sample_window = _fmt_duration(row.get("sample_duration_seconds"))
+        row_analyzed = row.get("sample_status") == "analyzed"
         row_flags = {
             "exact": bool(row.get("exact")),
-            "ecn_active": (deltas.get("ecn_marked_frames") or 0) > 0,
-            "rx_active": (deltas.get("rx_pause_frames") or 0) > 0,
-            "tx_active": (deltas.get("tx_pause_frames") or 0) > 0,
-            "loss_active": (row.get("loss_delta") or 0) > 0,
-            "attention": row.get("sample_status") != "analyzed",
+            "ecn_active": row_analyzed and (deltas.get("ecn_marked_frames") or 0) > 0,
+            "rx_active": row_analyzed and (deltas.get("rx_pause_frames") or 0) > 0,
+            "tx_active": row_analyzed and (deltas.get("tx_pause_frames") or 0) > 0,
+            "loss_active": row_analyzed and (row.get("loss_delta") or 0) > 0,
+            "attention": not row_analyzed,
         }
         flag_attrs = " ".join(
             f'data-{name.replace("_", "-")}="{int(value)}"'

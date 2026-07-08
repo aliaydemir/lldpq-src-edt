@@ -70,6 +70,7 @@ class PfcEcnDashboardContractTests(unittest.TestCase):
         self.assertEqual(summary["data-ecn-active-ports"], "1")
         self.assertEqual(summary["data-pfc-rx-active-ports"], "1")
         self.assertEqual(summary["data-pfc-tx-active-ports"], "1")
+        self.assertEqual(summary["data-discard-ready-ports"], "1")
         self.assertEqual(summary["data-discard-active-ports"], "1")
 
     def test_unready_rows_do_not_publish_interval_activity(self):
@@ -85,14 +86,54 @@ class PfcEcnDashboardContractTests(unittest.TestCase):
         )
         self.assertEqual(reset["sample_status"], "counter_reset")
 
-        summary = summary_metadata(analyzer.render_report(
+        report = analyzer.render_report(
             [reset], {}, expected_hosts=1, current_hosts=1
-        ))
+        )
+        summary = summary_metadata(report)
         self.assertEqual(summary["data-ready-ports"], "0")
         self.assertEqual(summary["data-interval-status"], "unavailable")
         self.assertEqual(summary["data-ecn-active-ports"], "0")
         self.assertEqual(summary["data-pfc-rx-active-ports"], "0")
         self.assertEqual(summary["data-pfc-tx-active-ports"], "0")
+        self.assertEqual(summary["data-discard-ready-ports"], "0")
+        self.assertEqual(summary["data-discard-active-ports"], "0")
+        self.assertIn('data-ecn-active="0"', report)
+        self.assertIn('data-rx-active="0"', report)
+        self.assertIn('data-tx-active="0"', report)
+        self.assertIn('data-loss-active="0"', report)
+
+    def test_partial_or_unknown_device_coverage_cannot_claim_complete_interval(self):
+        record = analyzer.build_port_record(
+            "leaf1", "swp1", BASE_COUNTERS,
+            {"timestamp": 1000, "counters": BASE_COUNTERS}, 1010,
+        )
+        partial = summary_metadata(analyzer.render_report(
+            [record], {}, expected_hosts=2, current_hosts=1
+        ))
+        self.assertEqual(partial["data-coverage-status"], "partial")
+        self.assertEqual(partial["data-interval-status"], "partial")
+
+        unknown = summary_metadata(analyzer.render_report([record], {}))
+        self.assertEqual(unknown["data-collection-status"], "partial")
+        self.assertEqual(unknown["data-coverage-status"], "partial")
+        self.assertEqual(unknown["data-interval-status"], "partial")
+        self.assertNotIn("data-coverage-current", unknown)
+        self.assertNotIn("data-coverage-expected", unknown)
+
+    def test_missing_discard_counter_never_becomes_authoritative_zero(self):
+        current = dict(BASE_COUNTERS)
+        current["wred_discards"] = None
+        record = analyzer.build_port_record(
+            "leaf1", "swp1", current,
+            {"timestamp": 1000, "counters": BASE_COUNTERS}, 1010,
+        )
+        self.assertEqual(record["sample_status"], "analyzed")
+        self.assertIsNone(record["loss_delta"])
+        summary = summary_metadata(analyzer.render_report(
+            [record], {}, expected_hosts=1, current_hosts=1
+        ))
+        self.assertEqual(summary["data-ready-ports"], "1")
+        self.assertEqual(summary["data-discard-ready-ports"], "0")
         self.assertEqual(summary["data-discard-active-ports"], "0")
 
     def test_unavailable_collection_preserves_coverage_diagnostics(self):
@@ -106,6 +147,7 @@ class PfcEcnDashboardContractTests(unittest.TestCase):
         self.assertEqual(summary["data-coverage-current"], "0")
         self.assertEqual(summary["data-coverage-expected"], "2")
         self.assertEqual(summary["data-interval-status"], "unavailable")
+        self.assertEqual(summary["data-discard-ready-ports"], "0")
         self.assertIn('data-collection-status="unavailable"', report)
 
     def test_detail_report_accepts_dashboard_filter_links(self):

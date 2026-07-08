@@ -1626,19 +1626,35 @@
                                 ecnActivePorts: metadataNumber('ecnActivePorts'),
                                 pfcRxActivePorts: metadataNumber('pfcRxActivePorts'),
                                 pfcTxActivePorts: metadataNumber('pfcTxActivePorts'),
+                                discardReadyPorts: metadataNumber('discardReadyPorts'),
                                 discardActivePorts: metadataNumber('discardActivePorts')
                             };
                             const intervalStatus = String(
                                 reportMeta?.dataset?.intervalStatus || ''
                             ).toLowerCase();
+                            const coverageStatus = String(
+                                reportMeta?.dataset?.coverageStatus || ''
+                            ).toLowerCase();
                             const metricValues = Object.values(requiredMetrics);
+                            const intervalConsistent =
+                                (intervalStatus === 'complete' &&
+                                 requiredMetrics.readyPorts === requiredMetrics.totalPorts &&
+                                 requiredMetrics.totalPorts > 0 && coverageStatus === 'complete') ||
+                                (intervalStatus === 'partial' && requiredMetrics.readyPorts > 0 &&
+                                 (requiredMetrics.readyPorts < requiredMetrics.totalPorts ||
+                                  coverageStatus === 'partial')) ||
+                                (intervalStatus === 'unavailable' &&
+                                 requiredMetrics.readyPorts === 0);
                             const metricsValid = reportMeta?.dataset?.analysisSummary === 'pfc-ecn' &&
                                 metricValues.every(value => Number.isInteger(value) && value >= 0) &&
                                 requiredMetrics.readyPorts <= requiredMetrics.totalPorts &&
+                                requiredMetrics.discardReadyPorts <= requiredMetrics.readyPorts &&
+                                requiredMetrics.discardActivePorts <=
+                                    requiredMetrics.discardReadyPorts &&
                                 [requiredMetrics.ecnActivePorts, requiredMetrics.pfcRxActivePorts,
-                                 requiredMetrics.pfcTxActivePorts, requiredMetrics.discardActivePorts]
+                                 requiredMetrics.pfcTxActivePorts]
                                     .every(value => value <= requiredMetrics.readyPorts) &&
-                                ['complete', 'partial', 'unavailable'].includes(intervalStatus);
+                                intervalConsistent;
                             if (!metricsValid) {
                                 summaryData.unavailable = true;
                                 summaryData.coveragePartial = true;
@@ -1647,8 +1663,12 @@
                                 summaryData.notReady = summaryData.totalPorts - summaryData.readyPorts;
                                 summaryData.intervalStatus = intervalStatus;
                                 summaryData.intervalUnavailable = intervalStatus === 'unavailable';
-                                summaryData.coveragePartial = summaryData.coveragePartial ||
+                                summaryData.signalPartial = summaryData.coveragePartial ||
                                     intervalStatus !== 'complete';
+                                summaryData.discardPartial =
+                                    summaryData.discardReadyPorts < summaryData.readyPorts;
+                                summaryData.coveragePartial = summaryData.signalPartial ||
+                                    summaryData.discardPartial;
                             }
                         } else if (dataType === 'flap') {
                             summaryData.totalDevices = metric('#total-devices');
@@ -1779,47 +1799,80 @@
                     : `${pfcData.readyPorts}/${pfcData.totalPorts}`;
                 const pfcSignalMetric = value =>
                     pfcData.unavailable || pfcData.intervalUnavailable ? 'N/A' : value;
+                const pfcDiscardComplete = !pfcData.unavailable &&
+                    !pfcData.intervalUnavailable &&
+                    pfcData.discardReadyPorts === pfcData.readyPorts;
+                const pfcDiscardMetric = pfcDiscardComplete
+                    ? pfcData.discardActivePorts
+                    : !pfcData.unavailable && !pfcData.intervalUnavailable &&
+                        pfcData.discardActivePorts > 0
+                        ? `≥${pfcData.discardActivePorts}`
+                        : 'N/A';
                 updateDashboardCard('pfc-total', dashboardMetric(pfcData, pfcData.totalPorts));
                 updateDashboardCard('pfc-ready', pfcReadyText);
                 updateDashboardCard('pfc-ecn', pfcSignalMetric(pfcData.ecnActivePorts));
                 updateDashboardCard('pfc-rx', pfcSignalMetric(pfcData.pfcRxActivePorts));
                 updateDashboardCard('pfc-tx', pfcSignalMetric(pfcData.pfcTxActivePorts));
-                updateDashboardCard('pfc-discards', pfcSignalMetric(pfcData.discardActivePorts));
+                updateDashboardCard('pfc-discards', pfcDiscardMetric);
                 document.getElementById('pfc-coverage-caption').textContent =
                     `${pfcCoverageText} devices reporting`;
                 document.getElementById('pfc-ready-caption').textContent = pfcData.unavailable
                     ? 'Analysis unavailable'
                     : pfcData.notReady > 0
                         ? `${pfcData.notReady} ports need another usable sample`
-                        : 'All ports have a usable interval';
+                        : pfcData.signalPartial
+                            ? 'All collected ports have a usable interval'
+                            : 'All ports have a usable interval';
+
+                const pfcCaptionState = pfcData.unavailable
+                    ? 'Analysis unavailable'
+                    : pfcData.intervalUnavailable
+                        ? 'No usable comparison window'
+                        : pfcData.signalPartial
+                            ? 'Observed ports · partial coverage'
+                            : null;
+                document.querySelectorAll('.pfc-signal-caption').forEach(caption => {
+                    caption.textContent = pfcCaptionState || caption.dataset.defaultCaption;
+                });
+                const discardCaption = document.getElementById('pfc-discards-caption');
+                if (!pfcData.unavailable && !pfcData.intervalUnavailable && !pfcDiscardComplete) {
+                    discardCaption.textContent = pfcData.discardActivePorts > 0
+                        ? `At least ${pfcData.discardActivePorts} ports · partial discard data`
+                        : 'Discard counters incomplete';
+                }
 
                 const pfcCoverageMissing = pfcCoverageAvailable
                     ? Math.max(0, Number(pfcData.coverageExpected) - Number(pfcData.coverageCurrent))
                     : null;
+                const pfcScopeWarning = pfcCoverageMissing === null
+                    ? (pfcData.coveragePartial ? 1 : null)
+                    : pfcCoverageMissing;
                 const pfcSignalState = pfcData.unavailable || pfcData.intervalUnavailable
                     ? { unavailable: true }
                     : pfcData;
                 setDashboardProblemSeverity(
-                    'pfc-total', pfcData, 0, pfcCoverageMissing, 'info'
+                    'pfc-total', pfcData, 0, pfcScopeWarning, 'info'
                 );
                 setDashboardProblemSeverity(
-                    'pfc-ready', pfcData, 0, pfcData.notReady
+                    'pfc-ready', pfcData, 0,
+                    pfcData.signalPartial ? 1 : pfcData.notReady
                 );
                 setDashboardProblemSeverity(
                     'pfc-ecn', pfcSignalState, 0,
-                    pfcData.coveragePartial ? 1 : pfcData.ecnActivePorts
+                    pfcData.signalPartial ? 1 : 0, 'info'
                 );
                 setDashboardProblemSeverity(
                     'pfc-rx', pfcSignalState, 0,
-                    pfcData.coveragePartial ? 1 : pfcData.pfcRxActivePorts
+                    pfcData.signalPartial ? 1 : pfcData.pfcRxActivePorts
                 );
                 setDashboardProblemSeverity(
                     'pfc-tx', pfcSignalState, 0,
-                    pfcData.coveragePartial ? 1 : pfcData.pfcTxActivePorts
+                    pfcData.signalPartial ? 1 : pfcData.pfcTxActivePorts
                 );
                 setDashboardProblemSeverity(
-                    'pfc-discards', pfcSignalState, pfcData.discardActivePorts,
-                    pfcData.coveragePartial ? 1 : 0
+                    'pfc-discards', pfcSignalState,
+                    pfcData.discardActivePorts,
+                    pfcData.coveragePartial || !pfcDiscardComplete ? 1 : 0
                 );
 
                 updateDashboardCard('flap-devices', dashboardMetric(flapData, flapData.totalDevices));

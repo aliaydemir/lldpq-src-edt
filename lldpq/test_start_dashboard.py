@@ -47,9 +47,16 @@ class StartDashboardPfcEcnTests(unittest.TestCase):
             self.assertIn(f"updateDashboardCard('{element_id}'", self.source)
         for metric in (
             "totalPorts", "readyPorts", "ecnActivePorts", "pfcRxActivePorts",
-            "pfcTxActivePorts", "discardActivePorts",
+            "pfcTxActivePorts", "discardReadyPorts", "discardActivePorts",
         ):
             self.assertIn(f"metadataNumber('{metric}')", self.source)
+        self.assertIn("pfcData.discardReadyPorts === pfcData.readyPorts", self.source)
+        self.assertIn("const pfcScopeWarning = pfcCoverageMissing === null", self.source)
+        self.assertIn("Observed ports · partial coverage", self.source)
+        self.assertIn("All collected ports have a usable interval", self.source)
+        self.assertIn("pfcData.signalPartial ? 1 : pfcData.notReady", self.source)
+        self.assertIn("'pfc-ecn', pfcSignalState, 0,", self.source)
+        self.assertIn("pfcData.signalPartial ? 1 : 0, 'info'", self.source)
 
     def test_issue_semantics_do_not_grade_ecn_or_pfc_activity(self):
         breakdown = self.source.split("const criticalBreakdown = {", 1)[1].split("};", 1)[0]
