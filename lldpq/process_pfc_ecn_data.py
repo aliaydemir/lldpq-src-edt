@@ -537,25 +537,67 @@ def render_report(
     records = sorted(records, key=lambda row: (row["hostname"], row["interface"]))
     total = len(records)
     exact = sum(bool(row.get("exact")) for row in records)
-    ecn_active = sum((row["deltas"].get("ecn_marked_frames") or 0) > 0 for row in records)
-    rx_active = sum((row["deltas"].get("rx_pause_frames") or 0) > 0 for row in records)
-    tx_active = sum((row["deltas"].get("tx_pause_frames") or 0) > 0 for row in records)
-    loss_active = sum((row.get("loss_delta") or 0) > 0 for row in records)
-    incomplete = sum(row.get("sample_status") != "analyzed" for row in records)
+    analyzed_records = [
+        row for row in records if row.get("sample_status") == "analyzed"
+    ]
+    ready = len(analyzed_records)
+    ecn_active = sum(
+        (row["deltas"].get("ecn_marked_frames") or 0) > 0
+        for row in analyzed_records
+    )
+    rx_active = sum(
+        (row["deltas"].get("rx_pause_frames") or 0) > 0
+        for row in analyzed_records
+    )
+    tx_active = sum(
+        (row["deltas"].get("tx_pause_frames") or 0) > 0
+        for row in analyzed_records
+    )
+    loss_active = sum(
+        (row.get("loss_delta") or 0) > 0 for row in analyzed_records
+    )
+    incomplete = total - ready
     device_coverage = (
         f"{current_hosts}/{expected_hosts}"
         if expected_hosts is not None and current_hosts is not None
         else "&mdash;"
     )
     coverage_attrs = ""
+    collection_status = "current"
+    coverage_status = "complete"
     if collection_unavailable:
         coverage_attrs = ' data-collection-status="unavailable" data-coverage-status="unavailable"'
+        collection_status = "unavailable"
+        coverage_status = "unavailable"
     elif expected_hosts is not None and current_hosts is not None:
         coverage = "complete" if current_hosts >= expected_hosts else "partial"
         coverage_attrs = (
             f' data-coverage-status="{coverage}" data-coverage-expected="{expected_hosts}"'
             f' data-coverage-current="{current_hosts}"'
         )
+        coverage_status = coverage
+        collection_status = "current" if coverage == "complete" else "partial"
+
+    interval_status = (
+        "unavailable"
+        if collection_unavailable or total == 0 or ready == 0
+        else "complete" if ready == total else "partial"
+    )
+    coverage_current_attr = "" if current_hosts is None else str(current_hosts)
+    coverage_expected_attr = "" if expected_hosts is None else str(expected_hosts)
+    summary_metadata = (
+        '<div hidden data-analysis-summary="pfc-ecn"'
+        f' data-collection-status="{collection_status}"'
+        f' data-coverage-status="{coverage_status}"'
+        f' data-coverage-current="{coverage_current_attr}"'
+        f' data-coverage-expected="{coverage_expected_attr}"'
+        f' data-interval-status="{interval_status}"'
+        f' data-total-ports="{total}" data-ready-ports="{ready}"'
+        f' data-ecn-active-ports="{ecn_active}"'
+        f' data-pfc-rx-active-ports="{rx_active}"'
+        f' data-pfc-tx-active-ports="{tx_active}"'
+        f' data-discard-active-ports="{loss_active}"></div>'
+    )
 
     rows = []
     for row in records:
@@ -672,6 +714,7 @@ body{{font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;background:#1e1e1e
 .guide-section{{margin-top:18px}}.guide-section ul{{margin:7px 0 0 20px}}.guide-section li{{margin:6px 0}}.guide-table{{width:100%;min-width:0;margin-top:8px;font-size:12px}}.guide-table th,.guide-table td{{white-space:normal;text-align:left}}.guide-table th{{position:static;color:#d4d4d4;background:#333}}.guide-note{{margin-top:18px;padding:10px 12px;background:#332b20;border-left:3px solid #ff9800;color:#ffcc80}}
 @media(max-width:1100px){{.page-header{{align-items:flex-start}}.action-buttons{{max-width:62%}}}}@media(max-width:760px){{body{{padding:12px}}.page-header{{display:block}}.action-buttons{{max-width:none;justify-content:flex-start;margin-top:12px}}.device-search-container .select2-container{{min-width:180px}}.guide-grid{{grid-template-columns:1fr}}}}
 </style></head><body{coverage_attrs}>
+{summary_metadata}
 <div class="page-header">
   <div><div class="page-title">PFC/ECN Analysis</div><div class="last-updated">Last Updated: {html.escape(last_updated)}</div></div>
   <div class="action-buttons">
@@ -846,6 +889,13 @@ body{{font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;background:#1e1e1e
     jq(deviceSearch).on('change', applyFilters);
   }}
 
+  function applyRequestedCardFilter() {{
+    const requested = new URLSearchParams(window.location.search).get('filter');
+    if (!requested) return;
+    const card = summaryCards.find(item => item.dataset.cardFilter === requested);
+    if (card) toggleCardFilter(card);
+  }}
+
   function resetSortIndicators() {{
     headers.forEach(header => {{
       header.classList.remove('asc', 'desc');
@@ -915,6 +965,7 @@ body{{font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;background:#1e1e1e
 
   populateDevices();
   initDeviceSearch();
+  applyRequestedCardFilter();
 }})();
 
 let metricGuideReturnFocus = null;
