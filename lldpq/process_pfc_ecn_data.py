@@ -553,6 +553,9 @@ def render_report(
         (row["deltas"].get("tx_pause_frames") or 0) > 0
         for row in analyzed_records
     )
+    discard_ready = sum(
+        row.get("loss_delta") is not None for row in analyzed_records
+    )
     loss_active = sum(
         (row.get("loss_delta") or 0) > 0 for row in analyzed_records
     )
@@ -563,8 +566,8 @@ def render_report(
         else "&mdash;"
     )
     coverage_attrs = ""
-    collection_status = "current"
-    coverage_status = "complete"
+    collection_status = "partial"
+    coverage_status = "partial"
     if collection_unavailable:
         coverage_attrs = ' data-collection-status="unavailable" data-coverage-status="unavailable"'
         collection_status = "unavailable"
@@ -581,7 +584,9 @@ def render_report(
     interval_status = (
         "unavailable"
         if collection_unavailable or total == 0 or ready == 0
-        else "complete" if ready == total else "partial"
+        else "complete"
+        if ready == total and coverage_status == "complete"
+        else "partial"
     )
     coverage_current_attr = "" if current_hosts is None else str(current_hosts)
     coverage_expected_attr = "" if expected_hosts is None else str(expected_hosts)
@@ -596,6 +601,7 @@ def render_report(
         f' data-ecn-active-ports="{ecn_active}"'
         f' data-pfc-rx-active-ports="{rx_active}"'
         f' data-pfc-tx-active-ports="{tx_active}"'
+        f' data-discard-ready-ports="{discard_ready}"'
         f' data-discard-active-ports="{loss_active}"></div>'
     )
 
