@@ -798,6 +798,12 @@ The following optional values tune bounded collection:
 - `OPTICAL_PORT_TIMEOUT_SECONDS=10` — timeout for one DOM read
 - `MONITOR_TIMING=true` — emit per-device section timings
 
+Verbose `lldpq -` runs also print one lightweight **Analyzer timings
+(parallel)** block with the elapsed time of every analyzer. This is always
+measured and does not require `MONITOR_TIMING`; normal `lldpq` runs remain
+quiet. `MONITOR_TIMING=true` is the deeper diagnostic mode for per-device SSH,
+bundle parsing, and individual collection-section timings.
+
 The separate transceiver firmware scan uses
 `TRANSCEIVER_FW_MIN_INTERVAL=1800`, `TRANSCEIVER_FW_MAX_PARALLEL=10`,
 `TRANSCEIVER_FW_SSH_TIMEOUT=300`, and
