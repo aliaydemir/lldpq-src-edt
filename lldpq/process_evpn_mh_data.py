@@ -569,6 +569,9 @@ select {{ width:210px; padding:7px 28px 7px 10px; background:#333; border:1px so
 .table-wrap {{ overflow:auto; }}
 table {{ border-collapse:collapse; width:100%; min-width:1320px; table-layout:auto; }}
 th {{ background:#242424; color:#bbb; font-size:10px; text-transform:uppercase; padding:9px 8px; text-align:left; border-bottom:1px solid #444; white-space:nowrap; }}
+.sortable {{ cursor:pointer; user-select:none; }} .sortable:hover {{ color:#fff; background:#303030; }}
+.sort-arrow {{ display:inline-block; min-width:10px; margin-left:5px; color:#777; font-size:9px; }}
+.sortable[aria-sort="ascending"] .sort-arrow,.sortable[aria-sort="descending"] .sort-arrow {{ color:#76b900; }}
 td {{ padding:8px; border-bottom:1px solid #383838; color:#ccc; white-space:nowrap; max-width:220px; overflow:hidden; text-overflow:ellipsis; }}
 tr.mh-row {{ cursor:pointer; border-left:3px solid #76b900; }} tr.mh-row:hover {{ background:#303030; }}
 tr.status-bypass {{ border-left-color:#ff9800; }} tr.status-warning {{ border-left-color:#ffc107; }}
@@ -620,7 +623,18 @@ tr.status-inactive {{ border-left-color:#777; }} tr.status-critical {{ border-le
   <div class="section-header">Device &amp; Peer Health</div>
   <div class="table-wrap">
   <table id="evpn-mh-table">
-    <thead><tr><th>Device</th><th>Peer Device</th><th>Local Bond</th><th>Peer Bond</th><th>ESI</th><th>Endpoint</th><th>DF Local / Peer</th><th>LACP Local / Peer</th><th>VNI</th><th>Status</th></tr></thead>
+    <thead><tr>
+      <th class="sortable" aria-sort="none" onclick="sortTable(0,this)">Device<span class="sort-arrow">↕</span></th>
+      <th class="sortable" aria-sort="none" onclick="sortTable(1,this)">Peer Device<span class="sort-arrow">↕</span></th>
+      <th class="sortable" aria-sort="none" onclick="sortTable(2,this)">Local Bond<span class="sort-arrow">↕</span></th>
+      <th class="sortable" aria-sort="none" onclick="sortTable(3,this)">Peer Bond<span class="sort-arrow">↕</span></th>
+      <th class="sortable" aria-sort="none" onclick="sortTable(4,this)">ESI<span class="sort-arrow">↕</span></th>
+      <th class="sortable" aria-sort="none" onclick="sortTable(5,this)">Endpoint<span class="sort-arrow">↕</span></th>
+      <th class="sortable" aria-sort="none" onclick="sortTable(6,this)">DF Local / Peer<span class="sort-arrow">↕</span></th>
+      <th class="sortable" aria-sort="none" onclick="sortTable(7,this)">LACP Local / Peer<span class="sort-arrow">↕</span></th>
+      <th class="sortable" aria-sort="none" onclick="sortTable(8,this)">VNI<span class="sort-arrow">↕</span></th>
+      <th class="sortable" aria-sort="none" onclick="sortTable(9,this)">Status<span class="sort-arrow">↕</span></th>
+    </tr></thead>
     <tbody id="evpn-mh-body">{table_rows}</tbody>
   </table>
   </div>
@@ -639,6 +653,7 @@ tr.status-inactive {{ border-left-color:#777; }} tr.status-critical {{ border-le
 const MH_DETAILS={details_json};
 let statusFilter='';
 let orphanOnly=false;
+let sortState={{column:-1,ascending:true}};
 function esc(v){{return String(v??'').replace(/[&<>"']/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]));}}
 function side(item,role){{
   item=item||{{}};
@@ -687,6 +702,26 @@ function filterRows(){{
 }}
 function setStatus(value){{statusFilter=value;orphanOnly=false;filterRows();}}
 function setOrphan(){{statusFilter='';orphanOnly=true;filterRows();}}
+function sortTable(column,header){{
+  document.querySelectorAll('tr.detail-row').forEach(r=>r.remove());
+  const body=document.getElementById('evpn-mh-body');
+  const rows=Array.from(body.querySelectorAll('tr.mh-row'));
+  const ascending=sortState.column===column?!sortState.ascending:true;
+  sortState={{column,ascending}};
+  rows.sort((a,b)=>{{
+    const av=(a.cells[column]?.textContent||'').trim();
+    const bv=(b.cells[column]?.textContent||'').trim();
+    const result=av.localeCompare(bv,undefined,{{numeric:true,sensitivity:'base'}});
+    return ascending?result:-result;
+  }});
+  rows.forEach(row=>body.appendChild(row));
+  document.querySelectorAll('th.sortable').forEach(th=>{{
+    th.setAttribute('aria-sort','none');
+    const arrow=th.querySelector('.sort-arrow');if(arrow)arrow.textContent='↕';
+  }});
+  header.setAttribute('aria-sort',ascending?'ascending':'descending');
+  header.querySelector('.sort-arrow').textContent=ascending?'▲':'▼';
+}}
 function toggleDetails(row){{
   const next=row.nextElementSibling;
   if(next&&next.classList.contains('detail-row')){{next.remove();return;}}
