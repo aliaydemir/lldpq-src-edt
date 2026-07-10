@@ -7,8 +7,6 @@ import contextlib
 import io
 from pathlib import Path
 import tempfile
-import threading
-import time
 import unittest
 from unittest import mock
 
@@ -48,26 +46,58 @@ class AnalyzerValidationTests(unittest.TestCase):
         self.assertIn("Invalid analysis JSON first.json", stderr.getvalue())
 
     def test_worker_limit_is_bounded(self):
-        active = 0
-        peak = 0
-        lock = threading.Lock()
+        worker_counts = []
 
-        def slow(_root, relative):
-            nonlocal active, peak
-            with lock:
-                active += 1
-                peak = max(peak, active)
-            time.sleep(0.03)
-            with lock:
-                active -= 1
-            return relative, 30, None
+        class ImmediateFuture:
+            def __init__(self, value):
+                self.value = value
 
-        with mock.patch.object(validate_analysis_json, "_validate_one", side_effect=slow):
+            def result(self):
+                return self.value
+
+        class FakeExecutor:
+            def __init__(self, max_workers):
+                worker_counts.append(max_workers)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def submit(self, function, *args):
+                return ImmediateFuture(function(*args))
+
+        with mock.patch.object(
+            validate_analysis_json, "ProcessPoolExecutor", FakeExecutor
+        ):
             results = validate_analysis_json.validate_json_files(
-                Path("/tmp"), [f"{index}.json" for index in range(6)], max_workers=2
+                Path("/tmp"), [], max_workers=8
             )
-        self.assertEqual(len(results), 6)
-        self.assertEqual(peak, 2)
+            self.assertEqual(results, [])
+            results = validate_analysis_json.validate_json_files(
+                Path("/tmp"), ["a.json", "b.json", "c.json"], max_workers=8
+            )
+        self.assertEqual(worker_counts, [2])
+        self.assertEqual([item[0] for item in results], [
+            "a.json", "b.json", "c.json"
+        ])
+
+    def test_process_pool_failure_falls_back_to_full_sequential_validation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "one.json").write_text('{"ok":1}', encoding="utf-8")
+            (root / "two.json").write_text('{"ok":2}', encoding="utf-8")
+            with mock.patch.object(
+                validate_analysis_json,
+                "ProcessPoolExecutor",
+                side_effect=PermissionError("simulated constrained runtime"),
+            ):
+                results = validate_analysis_json.validate_json_files(
+                    root, ["one.json", "two.json"], max_workers=2
+                )
+        self.assertEqual([item[0] for item in results], ["one.json", "two.json"])
+        self.assertTrue(all(item[2] is None for item in results))
 
     def test_monitor_preserves_precheck_and_rollback_contract(self):
         self.assertIn('[[ ! -f "$path" || ! -s "$path" || "$path" -ot "$marker" ]]', MONITOR)

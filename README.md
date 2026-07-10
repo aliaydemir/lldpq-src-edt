@@ -806,7 +806,7 @@ bundle parsing, and individual collection-section timings.
 
 The PFC/ECN analyzer additionally reports its load, record parsing, history
 pruning, HTML rendering, and atomic-write subphases. Analyzer JSON artifacts
-are fully parsed with a bounded parallel validator (four workers by default);
+are fully parsed with a bounded parallel validator (two processes by default);
 verbose output lists deterministic per-file validation timings. Any malformed,
 missing, empty, or stale artifact remains fail-closed and rolls the analyzer
 transaction back exactly as before.
