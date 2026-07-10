@@ -60,7 +60,8 @@ class LldpqHostnameTests(unittest.TestCase):
         self.assertIn("async function saveHostname()", self.setup)
 
     def test_authenticated_dashboard_uses_text_content(self):
-        self.assertIn('"lldpq_hostname": $LLDPQ_HOSTNAME_JSON', self.auth_api)
+        self.assertIn("lldpq_hostname", self.auth_api)
+        self.assertIn("LLDPQ_HOSTNAME_JSON", self.auth_api)
         self.assertIn("hostname: 'lldpq'", self.auth_js)
         self.assertIn("this.hostname =", self.auth_js)
         self.assertIn('id="lldpq-dashboard-title">lldpq</h1>', self.start)

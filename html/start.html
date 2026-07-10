@@ -866,8 +866,8 @@
                 return null;
             }
             const requiredAnalyses = [
-                'bgp', 'evpn-mh', 'flap', 'ber', 'pfc-ecn',
-                'hardware', 'log', 'duplicate'
+                'bgp', 'evpn-mh', 'flap', 'ber', 'pfc-ecn', 'hardware',
+                'log', 'duplicate'
             ];
             if (requiredAnalyses.some(name => !manifest.analyses.includes(name)) ||
                 (!manifest.skipped.includes('optical') && !manifest.analyses.includes('optical'))) {
