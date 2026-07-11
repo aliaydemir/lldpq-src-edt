@@ -1690,10 +1690,10 @@ Active: {duplicate_stats['active']}     Quiesced: {duplicate_stats['quiesced']} 
                 persisted = self.record_alert_delivery(
                     "network_summary", "last_summary", summary_signature
                 )
-                if include_schedule and self.is_summary_time():
-                    current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+                due_slot = self.due_summary_slot() if include_schedule else None
+                if due_slot is not None:
                     persisted = self.set_alert_state(
-                        "network_summary", "last_summary_time", current_time
+                        "network_summary", "last_summary_time", due_slot
                     ) and persisted
                 return delivered and persisted
             return False
