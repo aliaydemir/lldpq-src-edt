@@ -1520,6 +1520,7 @@ class DuplicateAnalyzer:
             ' data-collection-status="%s"'
             ' data-confirmed-ip-active="%d"'
             ' data-ip-quiesced="%d"'
+            ' data-ip-arp-observed="%d"'
             ' data-confirmed-mac-total="%d"'
             ' data-mac-dad-total="%d"'
             ' data-mac-mobility-active="%d"'
@@ -1535,6 +1536,7 @@ class DuplicateAnalyzer:
         ) % (
             collection_status,
             s["confirmed_ip_active"], s["ip_quiesced"],
+            s["ip_arp_observed"],
             s["confirmed_mac_total"], s["mac_dad_total"],
             s["mac_mobility_active"], s["mac_mobility_total"],
             s["coverage_expected"], s["coverage_current"],

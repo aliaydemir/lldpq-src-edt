@@ -625,6 +625,21 @@ host_file = os.path.join(ansible_dir, 'inventory', 'host_vars', f'{device}.yaml'
 if not os.path.exists(host_file):
     host_file = os.path.join(ansible_dir, 'inventory', 'host_vars', f'{device}.yml')
 
+# Load existing host_vars and check for duplicates BEFORE touching bgp_profiles.yaml
+host_data = {}
+if os.path.exists(host_file):
+    with open(host_file, 'r') as f:
+        host_data = yaml.load(f) or {}
+
+# Initialize vrfs if not exists
+if 'vrfs' not in host_data:
+    host_data['vrfs'] = {}
+
+# Check if VRF already exists
+if vrf_name in host_data['vrfs']:
+    print(json.dumps({'success': False, 'error': f'VRF {vrf_name} already exists on this device'}))
+    sys.exit(0)
+
 # If leaking is enabled, find the appropriate profiles
 tenant_profile = None
 shared_profile = None
@@ -680,21 +695,6 @@ if leaking_enabled and leak_from_vrf:
     except Exception as e:
         print(json.dumps({'success': False, 'error': f'Failed to configure leaking: {str(e)}'}))
         sys.exit(0)
-
-# Load existing host_vars
-host_data = {}
-if os.path.exists(host_file):
-    with open(host_file, 'r') as f:
-        host_data = yaml.load(f) or {}
-
-# Initialize vrfs if not exists
-if 'vrfs' not in host_data:
-    host_data['vrfs'] = {}
-
-# Check if VRF already exists
-if vrf_name in host_data['vrfs']:
-    print(json.dumps({'success': False, 'error': f'VRF {vrf_name} already exists on this device'}))
-    sys.exit(0)
 
 # Create VRF entry
 vrf_entry = {
@@ -3688,6 +3688,11 @@ try:
     if '.' in interface:
         parent_if, sub_id = interface.split('.', 1)
     else:
+        print(json.dumps({'success': False, 'error': 'Invalid interface format, expected swpX.VLAN'}))
+        exit(0)
+
+    # Validate VLAN part up front - int(sub_id) is used after files are written
+    if not sub_id.isdigit():
         print(json.dumps({'success': False, 'error': 'Invalid interface format, expected swpX.VLAN'}))
         exit(0)
     
