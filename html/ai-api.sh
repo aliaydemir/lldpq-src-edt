@@ -440,6 +440,39 @@ def _context_safety_for_model(model, window_override=None):
     return min(8192, max(512, int(window) // 8))
 
 
+def _tool_output_caps():
+    """Per-tool output caps sized to the primary model's context window.
+    Small windows keep the historical 6000/1200 limits; large-window models
+    (e.g. 1M-token Claude routes) get room for full 'nv show' listings."""
+    try:
+        override = _context_override_for_model(AI_MODEL)
+        if _context_model_window is not None:
+            window = _context_model_window(
+                AI_MODEL, provider=AI_PROVIDER, override=override, environ={}
+            )
+        else:
+            window = override or (32000 if AI_PROVIDER == 'ollama' else 128000)
+        window = int(window)
+    except Exception:
+        window = 32000
+    if window >= 400_000:
+        return 30000, 5000
+    if window >= 120_000:
+        return 15000, 3000
+    if window >= 60_000:
+        return 10000, 2000
+    return 6000, 1200
+
+
+def _clip_tool_output(text, cap):
+    """Slice tool output to cap chars with an explicit truncation marker so the
+    model knows the listing is incomplete (instead of inferring it)."""
+    text = text or ''
+    if len(text) <= cap:
+        return text
+    return text[:cap] + f"\n... [output truncated at {cap} of {len(text)} chars]"
+
+
 def _fallback_estimated_tokens(messages):
     total = 0
     for message in (messages or []):
@@ -3357,7 +3390,7 @@ def run_dispatch(target, command, devices, cookie, max_devices=60, pool=8, per_o
 
     def _one(h):
         ok, out = run_device_tool(h, command, cookie, deadline=deadline)
-        return h, ok, (out or '')[:per_out]
+        return h, ok, _clip_tool_output(out, per_out)
 
     try:
         with ThreadPoolExecutor(max_workers=min(pool, len(targets))) as ex:
@@ -3993,6 +4026,7 @@ def action_chat():
     except ValueError as error:
         error_json(str(error))
     deadline = time.monotonic() + 210  # leave room below nginx's 300s read timeout
+    _tool_run_cap, _tool_dispatch_cap = _tool_output_caps()
     context_state = _new_context_state()
 
     # Operator teaches a persistent fact: "remember: <fact>" (also hatırla:/unutma:).
@@ -4180,7 +4214,7 @@ def action_chat():
             dev_name = canonical_name
             ok, out = run_device_tool(dev_name, cmd, cookie, deadline=deadline)
             tools_used.append({'device': dev_name, 'command': cmd, 'ok': ok})
-            results.append(f"[RUN {dev_name}: {cmd}]\n{(out or '')[:6000]}")
+            results.append(f"[RUN {dev_name}: {cmd}]\n{_clip_tool_output(out, _tool_run_cap)}")
         # Parallel multi-device fan-out (Phase 3): at most one dispatch per round
         for tgt, cmd in runalls[:1]:
             if (round_tools >= MAX_TOOLS_PER_ROUND or total_tools >= MAX_TOTAL_TOOLS
@@ -4194,6 +4228,7 @@ def action_chat():
             round_tools += 1
             hosts, dres = run_dispatch(tgt, cmd, devices, cookie,
                                        max_devices=min(60, DISPATCH_DEVICE_CAP - dispatch_dev_total),
+                                       per_out=_tool_dispatch_cap,
                                        deadline=deadline)
             dispatches_used += 1
             dispatch_dev_total += len(hosts)
