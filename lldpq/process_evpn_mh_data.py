@@ -628,8 +628,8 @@ tr.status-inactive {{ border-left-color:#777; }} tr.status-critical {{ border-le
 .peer-title {{ color:#76b900; font-size:15px; font-weight:700; border-bottom:1px solid #444; padding-bottom:7px; margin-bottom:7px; }}
 .kv {{ display:grid; grid-template-columns:145px 1fr; gap:8px; padding:4px 0; border-bottom:1px solid #333; }}
 .kv span:first-child {{ color:#999; }} .good {{ color:#76b900; }} .warn {{ color:#ff9800; }} .bad {{ color:#f44336; }}
-.member-table {{ width:100%; border-collapse:collapse; margin-top:10px; font-size:11px; }}
-.member-table th,.member-table td {{ border:1px solid #3a3a3a; padding:3px 7px; text-align:left; white-space:nowrap; }}
+.member-table {{ width:100%; border-collapse:collapse; margin-top:10px; font-size:11px; table-layout:fixed; }}
+.member-table th,.member-table td {{ border:1px solid #3a3a3a; padding:3px 7px; text-align:left; word-break:break-word; overflow-wrap:anywhere; }}
 .member-table th {{ background:#2f2f2f; color:#9ccc3f; font-weight:600; }}
 .member-table code {{ color:#6fc7df; }}
 .detail-note {{ margin-top:12px; padding:10px 12px; background:#362b10; border:1px solid #8b6700; color:#ffc107; }}

@@ -281,6 +281,10 @@
                 <input type="text" id="cfgModelCloud" placeholder="gpt-5 / claude-sonnet-5">
             </div>
             <div style="margin-top: 10px;">
+                <label>Fallback Model</label>
+                <input type="text" id="cfgFallbackModel" placeholder="optional — scan/fallback model" autocomplete="off">
+            </div>
+            <div style="margin-top: 10px;">
                 <label>Search model (optional) — enables [SEARCH:] web research</label>
                 <input type="text" id="cfgSearchModel" placeholder="e.g. perplexity/sonar-pro (same endpoint)" autocomplete="off">
             </div>
@@ -701,6 +705,7 @@ async function loadConfig() {
         document.getElementById('cfgApiUrl').value = data.api_url || '';
         document.getElementById('cfgModel').value = data.model || 'llama3.2';
         document.getElementById('cfgModelCloud').value = data.model || '';
+        document.getElementById('cfgFallbackModel').value = data.fallback_model || '';
         document.getElementById('cfgSearchModel').value = data.search_model || '';
         document.getElementById('cfgProxyUrl').value = data.proxy_url || '';
         const keyInput = document.getElementById('cfgApiKey');
@@ -753,7 +758,9 @@ function onProviderChange(userInitiated) {
         // Sensible Nvidia-inference defaults: fill on an explicit switch, or when empty.
         const _m = cloudModel;
         const _s = document.getElementById('cfgSearchModel');
+        const _f = document.getElementById('cfgFallbackModel');
         if (userInitiated || !_m.value) _m.value = 'aws/anthropic/bedrock-claude-opus-4-8';
+        if (userInitiated || !_f.value) _f.value = 'aws/anthropic/bedrock-claude-opus-4-8';
         if (userInitiated || !_s.value) _s.value = 'perplexity/perplexity/sonar-pro';
     }
 }
@@ -771,6 +778,7 @@ async function saveSettings() {
         config.model = document.getElementById('cfgModelCloud').value.trim();
     }
     config.proxy_url = document.getElementById('cfgProxyUrl').value.trim();
+    config.fallback_model = document.getElementById('cfgFallbackModel').value.trim();
     config.search_model = document.getElementById('cfgSearchModel').value.trim();
     const data = await apiCall('save-config', config);
     if (data.success) {
