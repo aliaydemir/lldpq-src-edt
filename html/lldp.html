@@ -389,7 +389,7 @@
         .lldp-detail-row:hover { background: #252526; }
         .detail-panel { padding: 14px 20px 18px; background: #202020; border-left: 3px solid #4fc3f7; }
         .detail-title { color: #76b900; font-weight: 700; margin-bottom: 12px; font-size: 14px; }
-        .compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+        .compare-grid { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 18px; }
         .peer-card { background: #292929; border: 1px solid #444; border-radius: 4px; padding: 12px; }
         .peer-title { color: #76b900; font-size: 13px; font-weight: 700; letter-spacing: 0.5px; border-bottom: 1px solid #444; padding-bottom: 7px; margin-bottom: 7px; }
         .kv { display: grid; grid-template-columns: 165px 1fr; gap: 8px; padding: 4px 0; border-bottom: 1px solid #333; font-size: 12px; }
@@ -599,6 +599,7 @@
         let deviceAliasMap = {};
         let portAliasLc = {};       // lower(realName) -> alias (case-insensitive lookup)
         let deviceAliasLc = {};
+        let deviceAliasRevLc = {};  // lower(alias) -> lower(realName), for the design join
         let aliasDisplayLoadSeq = 0;
         let aliasEditorLoadSeq = 0;
         let aliasEditorOpSeq = 0;
@@ -613,9 +614,13 @@
         // topology.dot spelling): an alias matches whether the cell shows MEL01-... or
         // mel01-... The original maps are kept intact for the admin modal.
         function rebuildAliasLc() {
-            portAliasLc = {}; deviceAliasLc = {};
+            portAliasLc = {}; deviceAliasLc = {}; deviceAliasRevLc = {};
             Object.keys(portAliasMap).forEach(k => { if (k) portAliasLc[k.toLowerCase()] = portAliasMap[k]; });
             Object.keys(deviceAliasMap).forEach(k => { if (k) deviceAliasLc[k.toLowerCase()] = deviceAliasMap[k]; });
+            Object.keys(deviceAliasMap).forEach(k => {
+                const label = deviceAliasMap[k];
+                if (k && label) deviceAliasRevLc[String(label).toLowerCase()] = k.toLowerCase();
+            });
         }
         function aliasForValue(value, mapLc) {
             const canonical = displayValue(value);
@@ -1093,9 +1098,9 @@
         // per-row API call — and every panel degrades gracefully when the design
         // file (or the transceiver inventory) is absent.
         let p2pDesignStatus = 'loading';   // 'loading' | 'ready' | 'absent'
-        let p2pIndex = new Map();          // deviceKey \0 portAlias -> design side entry
+        let p2pIndex = new Map();          // deviceKey | portAlias -> design side entry
         let xcvrInvStatus = 'loading';     // 'loading' | 'ready' | 'absent'
-        let xcvrIndex = new Map();         // deviceKey \0 portAlias -> transceiver module
+        let xcvrIndex = new Map();         // deviceKey | portAlias -> transceiver module
 
         function escHtml(v) {
             return String(v == null ? '' : v).replace(/[&<>"']/g, c => (
@@ -1110,6 +1115,19 @@
             if (!low) return new Set();
             const keys = new Set([low]);
             if (low.indexOf('.') > -1) keys.add(low.split('.')[0]);
+            // The P2P workbook often labels devices differently from the live
+            // hostnames (e.g. oob-leaf-01 vs OOB-01). Display aliases record that
+            // mapping, so accept either spelling in both directions.
+            Array.from(keys).forEach(k => {
+                const fwd = deviceAliasLc[k];
+                const mappedList = [fwd ? String(fwd).trim().toLowerCase() : '', deviceAliasRevLc[k] || ''];
+                mappedList.forEach(mapped => {
+                    if (mapped && !keys.has(mapped)) {
+                        keys.add(mapped);
+                        if (mapped.indexOf('.') > -1) keys.add(mapped.split('.')[0]);
+                    }
+                });
+            });
             return keys;
         }
         function cleanPortValue(port) {
@@ -1149,7 +1167,7 @@
         function indexByDevicePort(map, device, port, value) {
             const pks = portAliasesJs(port);
             deviceKeysJs(device).forEach(dk => pks.forEach(pk => {
-                const key = dk + ' ' + pk;
+                const key = dk + '|' + pk;
                 if (!map.has(key)) map.set(key, value);
             }));
         }
@@ -1157,7 +1175,7 @@
             const pks = portAliasesJs(port);
             for (const dk of deviceKeysJs(device)) {
                 for (const pk of pks) {
-                    const found = map.get(dk + ' ' + pk);
+                    const found = map.get(dk + '|' + pk);
                     if (found) return found;
                 }
             }
@@ -1303,6 +1321,16 @@
         function closeAllLldpDetails() {
             document.querySelectorAll('tr.lldp-detail-row').forEach(r => r.remove());
         }
+        function lldpDetailHtml(conn) {
+            const status = designStatusFor(conn);
+            return `<td colspan="9"><div class="detail-panel">` +
+                `<div class="detail-title">${escHtml(joinDevPort(conn.localDevice, conn.localPort))} — Design vs Actual</div>` +
+                `<div class="compare-grid">${designCardHtml(status)}${actualCardHtml(conn)}</div>` +
+                `<div class="detail-status detail-status-${status.code}">` +
+                `<span class="badge ${status.badge}">${escHtml(status.label)}</span>` +
+                `<span class="detail-status-reason">${escHtml(status.reason)}</span></div>` +
+                `</div></td>`;
+        }
         function toggleLldpDetails(row) {
             const conn = rowConnectionMap.get(row);
             if (!conn) return;
@@ -1310,17 +1338,18 @@
             const alreadyOpen = next && next.classList.contains('lldp-detail-row');
             closeAllLldpDetails();
             if (alreadyOpen) return;
-            const status = designStatusFor(conn);
             const detail = document.createElement('tr');
             detail.className = 'lldp-detail-row';
-            detail.innerHTML = `<td colspan="9"><div class="detail-panel">` +
-                `<div class="detail-title">${escHtml(joinDevPort(conn.localDevice, conn.localPort))} — Design vs Actual</div>` +
-                `<div class="compare-grid">${designCardHtml(status)}${actualCardHtml(conn)}</div>` +
-                `<div class="detail-status detail-status-${status.code}">` +
-                `<span class="badge ${status.badge}">${escHtml(status.label)}</span>` +
-                `<span class="detail-status-reason">${escHtml(status.reason)}</span></div>` +
-                `</div></td>`;
+            detail.innerHTML = lldpDetailHtml(conn);
             row.after(detail);
+            // A tab opened before the design was activated cached the 404: retry
+            // once per expand and refresh the still-open panel when it lands.
+            if (p2pDesignStatus === 'absent') {
+                p2pDesignStatus = 'loading';
+                loadP2pDesign().then(() => {
+                    if (detail.isConnected) detail.innerHTML = lldpDetailHtml(conn);
+                });
+            }
         }
 
         function renderConnectionsTable(connections) {
@@ -2186,12 +2215,15 @@
         // Load data when page loads
         window.addEventListener('load', function() {
             updateP2pToggleUI();
-            loadDisplayAliases().then(loadLLDPData);
-            initTableSorting();
-            // Fetch the active design + transceiver inventory once; both only
+            // Fetch the active design + transceiver inventory after the aliases,
+            // so the design join is alias-aware from the first render; both only
             // enrich the expandable detail panel and degrade gracefully if absent.
-            loadP2pDesign();
-            loadTransceiverInventory();
+            loadDisplayAliases().then(() => {
+                loadLLDPData();
+                loadP2pDesign();
+                loadTransceiverInventory();
+            });
+            initTableSorting();
         });
 
         // ===== Topology Editor Functions =====
