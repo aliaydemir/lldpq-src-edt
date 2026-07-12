@@ -327,6 +327,23 @@ try:
 except Exception:
     _ipam_module = None
 
+# Cross-domain correlation for Analysis v2 (the cron/full analyze path). Optional
+# like the other co-deployed helpers: when ai_correlate.py is absent the analyze
+# path falls back to the raw per-domain observation dumps and never crashes.
+_correlate_module = None
+try:
+    _correlate_path = os.path.join(WEB_ROOT, 'ai_correlate.py')
+    if os.path.isfile(_correlate_path):
+        _correlate_spec = importlib.util.spec_from_file_location(
+            'lldpq_ai_correlate', _correlate_path
+        )
+        if _correlate_spec is not None and _correlate_spec.loader is not None:
+            _correlate_mod = importlib.util.module_from_spec(_correlate_spec)
+            _correlate_spec.loader.exec_module(_correlate_mod)
+            _correlate_module = _correlate_mod
+except Exception:
+    _correlate_module = None
+
 # Set HTTP proxy if configured (allows airgapped servers to reach cloud APIs via SSH tunnel)
 if AI_PROXY_URL:
     os.environ['http_proxy'] = AI_PROXY_URL
@@ -7169,6 +7186,237 @@ def action_list_models():
         result_json({"success": False, "models": [], "error": redact_secrets(str(e))})
 
 
+# ---- Analysis v2: cross-domain correlation + design/audit enrichment ----
+# The cron/full analyze path feeds the synthesis prompt with pre-correlated
+# incident candidates from ai_correlate instead of leaving the model to join
+# parallel per-domain dumps. Every step is guarded: a missing module, an absent
+# active design, or a failed audit yields less enrichment, never an exception,
+# and the caller keeps the raw per-domain observations as the fallback.
+_V2_DOMAIN_PACK = {
+    'bgp': 'bgp',
+    'optical': 'optical',
+    'ber': 'optical',
+    'flap': 'optical',
+    'pfc_ecn': 'pfc',
+    'hardware': 'hardware',
+}
+
+
+def _v2_norm_xcvr(text):
+    """Loose transceiver identity for the design-vs-installed comparison."""
+    return re.sub(r'[^a-z0-9]', '', str(text or '').lower())
+
+
+def _v2_active_design():
+    """(p2p_conns, ipam_data, source_line): all guarded; absent -> (None, None, '')."""
+    p2p_conns = ipam_data = None
+    parts = []
+    try:
+        p2p_conns, _p2p_err = _load_active_p2p()
+    except Exception:
+        p2p_conns = None
+    if isinstance(p2p_conns, dict):
+        parts.append("P2P '%s' (%d links)" % (
+            p2p_conns.get('source_file', '?'),
+            p2p_conns.get('total_connections', 0)))
+    try:
+        ipam_data, _ipam_err = _load_active_ipam()
+    except Exception:
+        ipam_data = None
+    if isinstance(ipam_data, dict):
+        parts.append("IPAM '%s' (%d records)" % (
+            ipam_data.get('source_file', '?'),
+            ipam_data.get('total_records', 0)))
+    return p2p_conns, ipam_data, '; '.join(parts)
+
+
+def _v2_installed_transceivers():
+    """Map (device_lower, port_lower) -> installed transceiver label from the
+    collected transceiver_inventory.json; {} when absent."""
+    inv = _load_json_file(_mr_path('transceiver_inventory.json'))
+    out = {}
+    modules = (inv or {}).get('modules', []) if isinstance(inv, dict) else []
+    for module in modules if isinstance(modules, list) else []:
+        if not isinstance(module, dict):
+            continue
+        dev = str(module.get('device') or '').strip().lower()
+        port = str(module.get('port') or '').strip().lower()
+        if not dev or not port:
+            continue
+        label = (str(module.get('part_number') or '').strip()
+                 or str(module.get('vendor') or '').strip())
+        if label:
+            out[(dev, port)] = label
+    return out
+
+
+def _v2_design_endpoint(p2p_conns, device, port):
+    """(rack, ru, cable_meta, transceiver) for device:port from the active P2P
+    design; empty strings when there is no design or no match. Port matching is
+    the tolerant alias match ai_p2p.lookup already implements."""
+    if not p2p_conns or _p2p_module is None:
+        return '', '', '', ''
+    try:
+        entries = _p2p_module.lookup(p2p_conns, device, port)
+    except Exception:
+        return '', '', '', ''
+    for entry in entries:
+        rack = str(entry.get('rack') or '').strip()
+        ru = str(entry.get('ru') or '').strip()
+        transceiver = str(entry.get('transceiver') or '').strip()
+        cable = _fmt_design_kv([
+            ('cable_type', entry.get('cable_type')),
+            ('cable_length', entry.get('cable_length')),
+            ('cable_part', entry.get('cable_part')),
+            ('bundle_id', entry.get('bundle_id')),
+            ('seq', entry.get('seq'))])
+        if rack or ru or transceiver or cable:
+            return rack, ru, cable, transceiver
+    return '', '', '', ''
+
+
+def _v2_incident_audit_target(incident):
+    """(pack, device) to deterministically verify a CRITICAL incident, or None
+    when no evidence domain maps to an installed audit pack."""
+    devices = incident.get('devices') or []
+    if not devices:
+        return None
+    for item in incident.get('evidence') or []:
+        pack = _V2_DOMAIN_PACK.get(str(item.get('domain') or ''))
+        if pack and _audit_analyze is not None and pack in _audit_pack_names:
+            return pack, devices[0]
+    return None
+
+
+def _build_analysis_v2(mr_dir, devices, cookie, deadline):
+    """Analysis v2 augmentation for the cron/full analyze path.
+
+    Returns {'incident_block', 'design_source', 'audit_records'}:
+      incident_block -- pre-correlated candidates (render_candidates) plus
+                        deterministic design enrichment and CRITICAL audit
+                        verdicts, ready to prepend to the untrusted observations;
+                        '' when correlation produced nothing / the module is absent.
+      design_source  -- one-line active-design provenance ('' when absent).
+      audit_records  -- [{device, pack, verdict, confidence}] folded into evidence.
+    Never raises; any shortfall yields an empty/partial result so the caller
+    keeps the raw per-domain observations as the fallback."""
+    result = {'incident_block': '', 'design_source': '', 'audit_records': []}
+    if _correlate_module is None:
+        return result
+    try:
+        anomalies = _correlate_module.collect_anomalies(mr_dir)
+    except Exception:
+        return result
+    p2p_conns, _ipam_data, design_source = _v2_active_design()
+    result['design_source'] = design_source
+    # Expected links: topology.dot (the check-lldp / load_expected_links
+    # contract) enriched with the active P2P design so link incidents also form
+    # from the design and carry cable/bundle metadata.
+    try:
+        links = list(_correlate_module.load_expected_links(mr_dir=mr_dir) or [])
+    except Exception:
+        links = []
+    if p2p_conns and _p2p_module is not None:
+        try:
+            links.extend(_p2p_module.expected_links(p2p_conns) or [])
+        except Exception:
+            pass
+    try:
+        incidents = _correlate_module.correlate(anomalies, links, devices)
+    except Exception:
+        incidents = []
+    if not incidents:
+        return result
+    try:
+        base = _correlate_module.render_candidates(incidents)
+    except Exception:
+        base = ''
+    if not base:
+        return result
+
+    installed = _v2_installed_transceivers()
+    enrich_lines = []
+    for incident in incidents[:12]:
+        lines = []
+        for label in (incident.get('ports') or [])[:6]:
+            if ':' not in label:
+                continue
+            dev, port = label.split(':', 1)
+            rack, ru, cable, design_x = _v2_design_endpoint(p2p_conns, dev, port)
+            loc = _fmt_design_kv([('rack', rack), ('ru', ru)])
+            if loc:
+                lines.append('  location %s: %s' % (label, loc))
+            if cable:
+                lines.append('  cable %s: %s' % (label, cable))
+            inst_x = installed.get((dev.strip().lower(), port.strip().lower()), '')
+            if design_x or inst_x:
+                if design_x and inst_x:
+                    nd, ni = _v2_norm_xcvr(design_x), _v2_norm_xcvr(inst_x)
+                    verdict = 'match' if (nd and ni and (nd in ni or ni in nd)) \
+                        else 'MISMATCH'
+                elif inst_x:
+                    verdict = 'no-design-record'
+                else:
+                    verdict = 'not-installed-or-uncollected'
+                lines.append('  transceiver %s: design=%s installed=%s -> %s'
+                             % (label, design_x or '-', inst_x or '-', verdict))
+        if lines:
+            enrich_lines.append('%s [%s] %s' % (
+                incident.get('id', ''), incident.get('severity', ''),
+                incident.get('summary', '')))
+            enrich_lines.extend(lines)
+
+    # Deterministic live verification of CRITICAL incidents via audit packs.
+    audit_lines = []
+    audited = set()
+    audit_budget = (min(deadline, time.monotonic() + 90)
+                    if deadline is not None else None)
+    audits_done = 0
+    for incident in incidents:
+        if audits_done >= 3:
+            break
+        if str(incident.get('severity')) != 'CRITICAL':
+            continue
+        target = _v2_incident_audit_target(incident)
+        if not target:
+            continue
+        pack, device = target
+        if (device, pack) in audited:
+            continue
+        if audit_budget is not None and audit_budget - time.monotonic() <= 2:
+            break
+        audited.add((device, pack))
+        try:
+            _ok, output = run_audit_pack(device, pack, cookie, deadline=audit_budget)
+            verdict, _block = _audit_verdict_block(pack, output)
+        except Exception:
+            verdict = {'verdict': 'UNKNOWN', 'confidence': 'low', 'signals': []}
+        audits_done += 1
+        vname = str(verdict.get('verdict') or 'UNKNOWN')
+        conf = str(verdict.get('confidence') or 'low')
+        signals = '; '.join(
+            _bounded_prompt_line(s, 160) for s in (verdict.get('signals') or [])[:3]
+        )
+        audit_lines.append(
+            '  audit(%s %s) for %s: verdict=%s (confidence %s)%s'
+            % (pack, device, incident.get('id', ''), vname, conf,
+               (' — ' + signals) if signals else ''))
+        result['audit_records'].append(
+            {'device': device, 'pack': pack, 'verdict': vname, 'confidence': conf})
+
+    blocks = [base]
+    if enrich_lines:
+        blocks.append(
+            'DESIGN ENRICHMENT (deterministic; from the active design and the '
+            'collected transceiver inventory):\n' + '\n'.join(enrich_lines))
+    if audit_lines:
+        blocks.append(
+            'CRITICAL VERIFICATION (deterministic audit-pack verdicts; live '
+            'read-only):\n' + '\n'.join(audit_lines))
+    result['incident_block'] = '\n\n'.join(blocks)
+    return result
+
+
 def action_analyze():
     """Run autonomous fabric health analysis (with change detection vs the previous run)."""
     fabric_summary, devices, device_health = build_fabric_summary()
@@ -7482,6 +7730,35 @@ Correlations show temporal coincidence only and do not prove causation.""")
             analysis_observations += (
                 "\n\n" + neutralize_untrusted_observation_text(scan_block)
             )
+
+    # Analysis v2 (cron/full path only): prepend deterministic cross-domain
+    # incident candidates from ai_correlate, enriched with the active P2P/IPAM
+    # design (physical location, cable/bundle, transceiver design-vs-installed)
+    # and live audit-pack verification of CRITICAL cases. Interactive analyze
+    # keeps its lighter single-call behavior. Guarded end to end: on any
+    # shortfall the raw per-domain observations above stay as the fallback.
+    v2_design_source = ''
+    v2_audit_records = []
+    if is_cron:
+        try:
+            v2 = _build_analysis_v2(
+                _mr_path(), devices, os.environ.get('HTTP_COOKIE', ''), deadline,
+            )
+        except Exception:
+            v2 = {'incident_block': '', 'design_source': '', 'audit_records': []}
+        v2_design_source = v2.get('design_source') or ''
+        v2_audit_records = v2.get('audit_records') or []
+        if v2.get('incident_block'):
+            analysis_observations = (
+                neutralize_untrusted_observation_text(v2['incident_block'])
+                + "\n\n" + analysis_observations
+            )
+        if v2_design_source:
+            analysis_observations = (
+                "ACTIVE DESIGN SOURCE: "
+                + neutralize_untrusted_observation_text(v2_design_source)
+                + "\n\n" + analysis_observations
+            )
     stages.append('synthesis')
 
     system_message = {
@@ -7524,6 +7801,26 @@ Correlations show temporal coincidence only and do not prove causation.""")
         + "\nAfter the fenced findings block, continue with the concise prose "
         "analysis."
     )
+    # Analysis v2 report skeleton (cron/full path only). The interactive path
+    # keeps its free-form concise analysis. Pre-correlated INCIDENT CANDIDATES
+    # and their design/audit enrichment appear at the top of the observations.
+    if is_cron:
+        system_message['content'] += (
+            "\n\nStructure the prose analysis with these sections in order: "
+            "(1) Executive summary. (2) Fabric scorecard: a per-domain status "
+            "table covering BGP/EVPN, Optical, BER, Flaps, PFC/ECN, Hardware and "
+            "Logs, each marked OK, WARN, CRITICAL or UNKNOWN. (3) Cases: for each "
+            "INCIDENT CANDIDATE a short story with its evidence chain written as "
+            "device:port items, the trend, and the read-only command chips that "
+            "confirm it; fold in any CRITICAL VERIFICATION audit verdict. "
+            "(4) Recent changes: correlate with the git/config changes provided. "
+            "(5) Watchlist: pre-failure signals to keep monitoring. "
+            "(6) Suppressed: the count of operator-acknowledged findings. "
+            "If an ACTIVE DESIGN SOURCE line is present, name it on the report "
+            "header. Honesty layer: surface an incomplete-evidence ledger of "
+            "sources that failed or are stale, and never mark a domain healthy "
+            "when its collection failed or is unresolved — use UNKNOWN there."
+        )
     analysis_objective = (
         "Analyze the untrusted fabric observations above now. Begin with the "
         "fenced JSON findings array required by the system instructions, then "
@@ -7601,6 +7898,12 @@ Correlations show temporal coincidence only and do not prove causation.""")
             findings_fields = {'findings': parsed_findings}
     if is_cron:
         findings_fields['stages'] = stages
+    # Additive v2 fields ride along only when the cron path produced them; the
+    # response/persist shape is otherwise unchanged.
+    if v2_design_source:
+        findings_fields['design_source'] = v2_design_source
+    if v2_audit_records:
+        findings_fields['audit_verifications'] = v2_audit_records
 
     analysis = {
         "timestamp": time.time(),

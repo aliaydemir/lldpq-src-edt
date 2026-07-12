@@ -621,9 +621,9 @@ tr.status-inactive {{ border-left-color:#777; }} tr.status-critical {{ border-le
 .badge-healthy {{ color:#76b900; }} .badge-bypass {{ color:#ff9800; }} .badge-warning {{ color:#ffc107; }}
 .badge-inactive {{ color:#999; }} .badge-critical {{ color:#f44336; }}
 .detail-row td {{ padding:0; white-space:normal; max-width:none; }}
-.detail-panel {{ padding:14px 20px 18px; background:#202020; border:1px solid #ff9800; position:sticky; left:0; width:1000px; max-width:94vw; box-sizing:border-box; }}
+.detail-panel {{ padding:14px 20px 18px; background:#202020; border:1px solid #ff9800; position:sticky; left:0; width:990px; max-width:96vw; box-sizing:border-box; }}
 .detail-title {{ color:#ffb300; font-weight:700; margin-bottom:12px; }}
-.compare-grid {{ display:grid; grid-template-columns:1fr 1fr; gap:16px; }}
+.compare-grid {{ display:grid; grid-template-columns:minmax(0,475px) minmax(0,475px); gap:16px; justify-content:start; }}
 .peer-card {{ background:#292929; border:1px solid #444; border-radius:4px; padding:12px; }}
 .peer-title {{ color:#76b900; font-size:15px; font-weight:700; border-bottom:1px solid #444; padding-bottom:7px; margin-bottom:7px; }}
 .kv {{ display:grid; grid-template-columns:145px 1fr; gap:8px; padding:4px 0; border-bottom:1px solid #333; }}

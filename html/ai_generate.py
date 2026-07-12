@@ -549,7 +549,6 @@ def _load_ipam(path):
 
 def main(argv):
     if len(argv) < 3:
-        print(__doc__.strip().splitlines()[-4], file=sys.stderr)
         print("usage: python3 ai_generate.py <topology-dot|devices|topology-config|"
               "validate-p2p> <input> [extra]", file=sys.stderr)
         return 2
