@@ -1203,7 +1203,7 @@
         }
 
         function loadP2pDesign() {
-            return fetch('active-p2p.json', { cache: 'no-store' })
+            return fetch('/monitor-results/active-p2p.json', { cache: 'no-store' })
                 .then(r => r.ok ? r.json() : Promise.reject(new Error('status ' + r.status)))
                 .then(d => { buildP2pIndex(d); p2pDesignStatus = 'ready'; })
                 .catch(() => { p2pDesignStatus = 'absent'; p2pIndex = new Map(); });
