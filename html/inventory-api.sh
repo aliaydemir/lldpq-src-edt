@@ -647,10 +647,32 @@ def _apply_request():
     return payload if isinstance(payload, dict) else {}
 
 
+def _reverse_display_aliases():
+    """{lower(designLabel): liveName} maps from display-aliases.json (both
+    namespaces), so generated files carry the names LLDP actually reports.
+    Missing/empty alias file means no translation."""
+    try:
+        with open(os.path.join(WEB_ROOT, 'display-aliases.json'), 'r') as fh:
+            data = json.load(fh) or {}
+    except (OSError, ValueError):
+        return {}, {}
+
+    def reverse(mapping):
+        out = {}
+        for real, label in (mapping or {}).items():
+            if real and label:
+                out[str(label).strip().lower()] = str(real).strip()
+        return out
+
+    return reverse(data.get('devices')), reverse(data.get('interfaces'))
+
+
 def action_generate_topology():
     mode = QS_MODE or 'preview'
     data, version = _load_active('p2p')
-    content = ai_generate.p2p_to_topology_dot(data)
+    device_aliases, port_aliases = _reverse_display_aliases()
+    content = ai_generate.p2p_to_topology_dot(
+        data, device_aliases=device_aliases, port_aliases=port_aliases)
     token = content_token(content)
     stats = {'edges': content.count(' -- '), 'source_version': version}
     if mode == 'preview':

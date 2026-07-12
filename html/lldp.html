@@ -600,6 +600,7 @@
         let portAliasLc = {};       // lower(realName) -> alias (case-insensitive lookup)
         let deviceAliasLc = {};
         let deviceAliasRevLc = {};  // lower(alias) -> lower(realName), for the design join
+        let portAliasRevLc = {};    // lower(alias) -> lower(realName), for the design join
         let aliasDisplayLoadSeq = 0;
         let aliasEditorLoadSeq = 0;
         let aliasEditorOpSeq = 0;
@@ -614,12 +615,16 @@
         // topology.dot spelling): an alias matches whether the cell shows MEL01-... or
         // mel01-... The original maps are kept intact for the admin modal.
         function rebuildAliasLc() {
-            portAliasLc = {}; deviceAliasLc = {}; deviceAliasRevLc = {};
+            portAliasLc = {}; deviceAliasLc = {}; deviceAliasRevLc = {}; portAliasRevLc = {};
             Object.keys(portAliasMap).forEach(k => { if (k) portAliasLc[k.toLowerCase()] = portAliasMap[k]; });
             Object.keys(deviceAliasMap).forEach(k => { if (k) deviceAliasLc[k.toLowerCase()] = deviceAliasMap[k]; });
             Object.keys(deviceAliasMap).forEach(k => {
                 const label = deviceAliasMap[k];
                 if (k && label) deviceAliasRevLc[String(label).toLowerCase()] = k.toLowerCase();
+            });
+            Object.keys(portAliasMap).forEach(k => {
+                const label = portAliasMap[k];
+                if (k && label) portAliasRevLc[String(label).toLowerCase()] = k.toLowerCase();
             });
         }
         function aliasForValue(value, mapLc) {
@@ -1143,12 +1148,43 @@
             if (!p) return aliases;
             aliases.add(p);
             let m = p.match(/^swp(\d+)s(\d+)$/);
-            if (m) aliases.add(m[1] + '/' + (parseInt(m[2], 10) + 1));
+            if (m) {
+                aliases.add(m[1] + '/' + (parseInt(m[2], 10) + 1));
+                aliases.add(m[1] + '/1/' + (parseInt(m[2], 10) + 1));
+            }
             m = p.match(/^swp(\d+)$/);
-            if (m) aliases.add(m[1]);
+            if (m) {
+                aliases.add(m[1]);
+                aliases.add(m[1] + '/1');
+                aliases.add(m[1] + '/1/1');
+            }
             m = p.match(/^(\d+)\/(\d+)$/);
-            if (m) aliases.add('swp' + m[1] + 's' + (parseInt(m[2], 10) - 1));
+            if (m) {
+                aliases.add('swp' + m[1] + 's' + (parseInt(m[2], 10) - 1));
+                if (m[2] === '1') aliases.add('swp' + m[1]);
+            }
+            // Three-part port/group/sub notation used by some P2P workbooks:
+            // '3/1/2' <-> swp3s1. Without group context the breakout mode
+            // (2x/4x/8x) is ambiguous, so accept every candidate lane; the
+            // design index also carries the group-fitted spelling (see
+            // resolvePortMapJs) as the precise key.
+            m = p.match(/^(\d+)\/(\d+)\/(\d+)$/);
+            if (m) {
+                const y = parseInt(m[2], 10), z = parseInt(m[3], 10);
+                [y - 1, z - 1, (y - 1) * 2 + (z - 1), (y - 1) * 4 + (z - 1)]
+                    .forEach(lane => aliases.add('swp' + m[1] + 's' + lane));
+                aliases.add(m[1] + '/' + m[3]);
+                if (y === 1 && z === 1) aliases.add('swp' + m[1]);
+            }
             if (/^\d+$/.test(p)) aliases.add('swp' + p);
+            // Display aliases can rename ports too (e.g. enP22p3s0f0np0 -> M1);
+            // accept either spelling in both directions, like device names.
+            Array.from(aliases).forEach(a => {
+                const fwd = portAliasLc[a];
+                [fwd ? String(fwd).trim().toLowerCase().replace(/\s+/g, '') : '',
+                 (portAliasRevLc[a] || '').replace(/\s+/g, '')]
+                    .forEach(mapped => { if (mapped) aliases.add(mapped); });
+            });
             return aliases;
         }
         function devicesMatch(a, b) {
@@ -1182,14 +1218,56 @@
             return null;
         }
 
-        function addP2pSide(rec, loc, peer) {
+        // Group-fitted OS spelling for three-part 'X/Y/Z' design ports (mirrors
+        // ai_p2p.resolve_port_map): lane = (Y-1)*maxZ + (Z-1), with maxZ (subs
+        // per group) inferred from all design rows sharing the same device+port.
+        // '1/1/1'..'1/2/4' therefore resolve to swp1s0..swp1s7 (8x split).
+        function resolvePortMapJs(records) {
+            const groups = new Map();
+            records.forEach(rec => {
+                if (!rec || typeof rec !== 'object') return;
+                ['source', 'dest'].forEach(loc => {
+                    const dev = String(rec[loc + '_name'] == null ? '' : rec[loc + '_name']).trim().toLowerCase();
+                    const p = cleanPortValue(rec[loc + '_port']).toLowerCase().replace(/\s+/g, '');
+                    const m = p.match(/^(\d+)\/(\d+)\/(\d+)$/);
+                    if (!dev || !m) return;
+                    const key = dev + '|' + m[1];
+                    if (!groups.has(key)) groups.set(key, []);
+                    groups.get(key).push({ x: m[1], y: parseInt(m[2], 10), z: parseInt(m[3], 10), dev: dev, port: p });
+                });
+            });
+            // Subs-per-group comes from the device, not the single port: a port
+            // may leave trailing lanes uncabled while the breakout type stays
+            // uniform per switch (mirrors ai_p2p.resolve_port_map).
+            const deviceMaxZ = new Map();
+            groups.forEach(list => list.forEach(e => {
+                deviceMaxZ.set(e.dev, Math.max(deviceMaxZ.get(e.dev) || 1, e.z));
+            }));
+            const resolved = new Map();
+            groups.forEach(list => {
+                list.forEach(e => {
+                    const maxZ = deviceMaxZ.get(e.dev) || 1;
+                    resolved.set(e.dev + '|' + e.port,
+                        'swp' + e.x + 's' + ((e.y - 1) * maxZ + (e.z - 1)));
+                });
+            });
+            return resolved;
+        }
+        function resolvedOsPortJs(map, dev, port) {
+            const d = String(dev == null ? '' : dev).trim().toLowerCase();
+            const p = cleanPortValue(port).toLowerCase().replace(/\s+/g, '');
+            return (d && p && map.get(d + '|' + p)) || '';
+        }
+        function makeP2pEntry(rec, loc, peer, resolvedMap) {
             const dev = rec[loc + '_name'], port = rec[loc + '_port'];
-            if (isMissingValue(dev) || isMissingValue(port)) return;
-            const entry = {
+            if (isMissingValue(dev) || isMissingValue(port)) return null;
+            return {
                 local_device: dev, local_port: port,
+                local_port_os: resolvedOsPortJs(resolvedMap, dev, port),
                 local_rack: rec[loc + '_rack'] || '', local_ru: rec[loc + '_ru'] || '',
                 local_transceiver: rec[loc + '_transceiver'] || '',
                 peer_device: rec[peer + '_name'] || '', peer_port: rec[peer + '_port'] || '',
+                peer_port_os: resolvedOsPortJs(resolvedMap, rec[peer + '_name'], rec[peer + '_port']),
                 peer_rack: rec[peer + '_rack'] || '', peer_ru: rec[peer + '_ru'] || '',
                 peer_transceiver: rec[peer + '_transceiver'] || '',
                 seq: rec.seq || '', bundle_id: rec.bundle_id || '',
@@ -1198,18 +1276,27 @@
                 connection_type: rec.connection_type || '', network_type: rec.network_type || '',
                 unresolved: !!rec.unresolved
             };
-            indexByDevicePort(p2pIndex, dev, port, entry);
         }
         function buildP2pIndex(design) {
             p2pIndex = new Map();
             const records = design && Array.isArray(design.connections) ? design.connections
                 : (Array.isArray(design) ? design : []);
+            const resolvedMap = resolvePortMapJs(records);
+            const entries = [];
             records.forEach(rec => {
                 if (rec && typeof rec === 'object') {
-                    addP2pSide(rec, 'source', 'dest');
-                    addP2pSide(rec, 'dest', 'source');
+                    const a = makeP2pEntry(rec, 'source', 'dest', resolvedMap);
+                    const b = makeP2pEntry(rec, 'dest', 'source', resolvedMap);
+                    if (a) entries.push(a);
+                    if (b) entries.push(b);
                 }
             });
+            // Precise keys first: the group-fitted OS spelling must win over the
+            // ambiguous per-port candidate aliases of other lanes on the same port.
+            entries.forEach(e => {
+                if (e.local_port_os) indexByDevicePort(p2pIndex, e.local_device, e.local_port_os, e);
+            });
+            entries.forEach(e => indexByDevicePort(p2pIndex, e.local_device, e.local_port, e));
         }
         function buildXcvrIndex(modules) {
             xcvrIndex = new Map();
@@ -1264,12 +1351,19 @@
                 return { code: 'design-unresolved', label: 'Design Unresolved', badge: 'badge-orange',
                     reason: 'Design peer is unresolved (TBD / customer-provided / blank).', design: d };
             }
-            const expected = `${displayValue(d.peer_device)}:${displayValue(d.peer_port)}`;
+            const expectedPort = d.peer_port_os && d.peer_port_os !== displayValue(d.peer_port)
+                ? `${displayValue(d.peer_port)} (${d.peer_port_os})` : displayValue(d.peer_port);
+            const expected = `${displayValue(d.peer_device)}:${expectedPort}`;
             if (isMissingValue(conn.actualDevice) && isMissingValue(conn.actualPort)) {
                 return { code: 'mismatch', label: 'Mismatch', badge: 'badge-red',
                     reason: `No live neighbor discovered; design expects ${expected}.`, design: d };
             }
-            if (devicesMatch(d.peer_device, conn.actualDevice) && portsMatch(d.peer_port, conn.actualPort)) {
+            // Prefer the group-fitted OS spelling (exact breakout lane), but keep
+            // the tolerant raw-notation match as a fallback so an unusual split
+            // scheme degrades to tolerance instead of a false mismatch.
+            const peerPortOk = (d.peer_port_os && portsMatch(d.peer_port_os, conn.actualPort))
+                || portsMatch(d.peer_port, conn.actualPort);
+            if (devicesMatch(d.peer_device, conn.actualDevice) && peerPortOk) {
                 return { code: 'match', label: 'Match', badge: 'badge-green',
                     reason: 'Live neighbor matches the active design.', design: d };
             }

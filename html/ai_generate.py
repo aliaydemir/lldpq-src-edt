@@ -62,6 +62,11 @@ def _os_port(port):
     match = re.match(r"^(\d+)/(\d+)$", low)  # breakout N/M -> swpNs(M-1) (0-based sub-port)
     if match:
         return "swp%ss%d" % (match.group(1), int(match.group(2)) - 1)
+    # Three-part port/cage/split notation: '3/1/2' = port 3, cage 1, split 2
+    # (1-based) -> swp3s1.
+    match = re.match(r"^(\d+)/(\d+)/(\d+)$", low)
+    if match:
+        return "swp%ss%d" % (match.group(1), int(match.group(3)) - 1)
     if re.match(r"^\d+$", low):  # bare number -> swpN
         return "swp" + low
     return raw
@@ -94,7 +99,8 @@ _CTYPE_LABELS = (
 _EXCLUDED_CTYPES = {"power"}
 
 
-def p2p_to_topology_dot(connections, graph_name="FABRIC"):
+def p2p_to_topology_dot(connections, graph_name="FABRIC", device_aliases=None,
+                        port_aliases=None):
     """Render resolved physical P2P links as a topology.dot GraphViz graph.
 
     Only resolved links are emitted (ai_p2p already drops tbd/blank/customer
@@ -103,18 +109,39 @@ def p2p_to_topology_dot(connections, graph_name="FABRIC"):
     output satisfies LLDPq's point-to-point semantics (topology_edges rejects a
     reused endpoint or a duplicate edge). The result parses cleanly through both
     ai_correlate.load_expected_links and lldpq/topology_edges.parse_topology_file.
+
+    device_aliases / port_aliases translate design labels to the live spelling
+    ({lower(designLabel): liveName}, from display-aliases.json reversed) —
+    topology.dot must name what LLDP actually reports, and P2P workbooks often
+    label devices/ports differently. Absent or empty maps are a no-op.
     """
     name = re.sub(r'["\\\x00-\x1f]', "", str(graph_name or "FABRIC")).strip() or "FABRIC"
+    device_aliases = device_aliases or {}
+    port_aliases = port_aliases or {}
+
+    def live_device(dev):
+        return device_aliases.get(dev.lower(), dev)
+
+    def live_port(port):
+        return port_aliases.get(port.lower(), port)
 
     grouped = {}
     used_endpoints = set()
     seen_edges = set()
+    # Group-fitted breakout resolution for three-part 'X/Y/Z' ports (needs the
+    # whole design for context); _os_port stays as the per-port fallback.
+    resolved = ai_p2p.resolve_port_map(connections)
     for link in ai_p2p.expected_links(connections):
         ctype = str((link.get("meta") or {}).get("connection_type") or "general").lower()
         if ctype in _EXCLUDED_CTYPES:
             continue
-        a_dev, a_port = _clean(link.get("a_dev")), _os_port(link.get("a_port"))
-        b_dev, b_port = _clean(link.get("b_dev")), _os_port(link.get("b_port"))
+        a_dev, b_dev = _clean(link.get("a_dev")), _clean(link.get("b_dev"))
+        a_port = (ai_p2p.resolved_os_port(resolved, a_dev, link.get("a_port"))
+                  or _os_port(link.get("a_port")))
+        b_port = (ai_p2p.resolved_os_port(resolved, b_dev, link.get("b_port"))
+                  or _os_port(link.get("b_port")))
+        a_dev, b_dev = live_device(a_dev), live_device(b_dev)
+        a_port, b_port = live_port(a_port), live_port(b_port)
         if _bad_token(a_dev) or _bad_token(a_port) or _bad_token(b_dev) or _bad_token(b_port):
             continue
         left = (a_dev.casefold(), a_port)

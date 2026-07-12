@@ -656,7 +656,11 @@ def _device_keys(name):
 
 
 def _port_aliases(port):
-    """Tolerant port aliases: '41/1' <-> 'swp41s0', '41' <-> 'swp41', float artifacts."""
+    """Tolerant port aliases: '41/1' <-> 'swp41s0', '41' <-> 'swp41', float artifacts.
+
+    Includes the three-part port/cage/split notation some P2P workbooks use:
+    '3/1/2' = port 3, cage 1, split 2 (1-based) <-> 'swp3s1'.
+    """
     p = _clean_value(port).lower().replace(" ", "")
     if not p:
         return set()
@@ -664,12 +668,28 @@ def _port_aliases(port):
     m = re.match(r"^swp(\d+)s(\d+)$", p)
     if m:
         aliases.add("%s/%d" % (m.group(1), int(m.group(2)) + 1))
+        aliases.add("%s/1/%d" % (m.group(1), int(m.group(2)) + 1))
     m = re.match(r"^swp(\d+)$", p)
     if m:
         aliases.add(m.group(1))
+        aliases.add(m.group(1) + "/1")
+        aliases.add(m.group(1) + "/1/1")
     m = re.match(r"^(\d+)/(\d+)$", p)
     if m:
         aliases.add("swp%ss%d" % (m.group(1), int(m.group(2)) - 1))
+        if m.group(2) == "1":
+            aliases.add("swp" + m.group(1))
+    m = re.match(r"^(\d+)/(\d+)/(\d+)$", p)
+    if m:
+        # Without group context the breakout mode (2x/4x/8x, p2p-parser's
+        # formula family) is ambiguous: accept every candidate lane. Use
+        # resolve_port_map() when the whole design is available.
+        x, y, z = m.group(1), int(m.group(2)), int(m.group(3))
+        for lane in {y - 1, z - 1, (y - 1) * 2 + (z - 1), (y - 1) * 4 + (z - 1)}:
+            aliases.add("swp%ss%d" % (x, lane))
+        aliases.add("%s/%d" % (x, z))
+        if y == 1 and z == 1:
+            aliases.add("swp" + x)
     if re.match(r"^\d+$", p):
         aliases.add("swp" + p)
     return aliases
@@ -682,6 +702,54 @@ def _port_key(port):
         if re.match(r"^\d+(?:/\d+)*$", alias):
             return alias
     return min(aliases) if aliases else ""
+
+
+def resolve_port_map(conns):
+    """Group-fitted OS spelling for three-part 'X/Y/Z' design ports.
+
+    'X/Y/Z' = port X, group Y, sub Z (all 1-based). The OS lane is
+    s = (Y-1)*maxZ + (Z-1), where maxZ (subs per group) is inferred from every
+    design row sharing the same device+port — e.g. rows 1/1/1..1/2/4 mean an
+    8x split, so 1/2/1 -> swp1s4. This is p2p-parser's breakout formula family
+    (2x_group/2x_sub/4x/8x) collapsed to the one consistent general form.
+
+    Returns {(device_key, port_text): 'swpXsN'} with device_key =
+    min(_device_keys(name)) and port_text the cleaned lowercase design port.
+    """
+    groups = {}
+    device_max_z = {}
+    for record in _records_of(conns):
+        for side in ("source", "dest"):
+            name = record.get(side + "_name", "")
+            port = _clean_value(record.get(side + "_port", "")).lower().replace(" ", "")
+            m = re.match(r"^(\d+)/(\d+)/(\d+)$", port)
+            if not name or not m:
+                continue
+            keys = _device_keys(name)
+            if not keys:
+                continue
+            dev = min(keys)
+            group = groups.setdefault((dev, int(m.group(1))), set())
+            group.add((int(m.group(2)), int(m.group(3)), port))
+            device_max_z[dev] = max(device_max_z.get(dev, 1), int(m.group(3)))
+    resolved = {}
+    for (dev, x), entries in groups.items():
+        # Subs-per-group comes from the device, not the single port: a port may
+        # leave trailing lanes uncabled (3/2/1..3/2/3 on a 4x-split switch still
+        # means lanes s4..s6), while the breakout type is uniform per switch.
+        max_z = device_max_z.get(dev, 1)
+        for y, z, port in entries:
+            resolved[(dev, port)] = "swp%ds%d" % (x, (y - 1) * max_z + (z - 1))
+    return resolved
+
+
+def resolved_os_port(resolved, name, port):
+    """Look up a resolve_port_map() entry by any device spelling; '' if absent."""
+    p = _clean_value(port).lower().replace(" ", "")
+    keys = _device_keys(name)
+    if not p or not keys:
+        return ""
+    return resolved.get((min(keys), p), "")
 
 
 def _meta_of(record):

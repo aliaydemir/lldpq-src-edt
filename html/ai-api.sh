@@ -5538,6 +5538,35 @@ def _fmt_design_kv(pairs):
     return ', '.join('%s=%s' % (k, v) for k, v in pairs if v not in (None, '', []))
 
 
+def _display_alias_variants(device, port):
+    """Alternate (device, port) spellings from display-aliases.json, both ways.
+
+    The P2P workbook labels devices AND ports differently from the live names
+    (oob-leaf-01 vs OOB-01, enP22p3s0f0np0 vs M1); operators ask with either.
+    """
+    try:
+        with open(os.path.join(WEB_ROOT, 'display-aliases.json'), 'r') as fh:
+            data = json.load(fh) or {}
+    except Exception:
+        return []
+    def two_way(mapping, value):
+        if not value:
+            return []
+        low = str(value).strip().lower()
+        fwd = {str(k).strip().lower(): str(v).strip()
+               for k, v in (mapping or {}).items() if k and v}
+        rev = {v.lower(): k for k, v in fwd.items()}
+        return [alt for alt in (fwd.get(low), rev.get(low)) if alt]
+    dev_alts = two_way(data.get('devices'), device)
+    port_alts = two_way(data.get('interfaces'), port)
+    variants = []
+    for dev in [device] + dev_alts:
+        for prt in ([port] + port_alts if port else [port]):
+            if (dev, prt) != (device, port) and (dev, prt) not in variants:
+                variants.append((dev, prt))
+    return variants[:6]
+
+
 def run_p2p_lookup(target):
     """Design peer + cable/bundle/rack/transceiver for 'device[:port]' from the
     active P2P design. Read-only; never touches a device."""
@@ -5558,6 +5587,18 @@ def run_p2p_lookup(target):
         return 'P2P lookup failed: ' + redact_secrets(str(exc))
     src = conns.get('source_file', '') if isinstance(conns, dict) else ''
     label = device + ((':' + port) if port else '')
+    if not entries:
+        # The design may use the P2P label for a device/port the operator named
+        # by its live spelling (or vice versa) — retry via display aliases.
+        for alt_dev, alt_port in _display_alias_variants(device, port):
+            try:
+                entries = _p2p_module.lookup(conns, alt_dev, alt_port or None)
+            except Exception:
+                entries = []
+            if entries:
+                label = '%s (alias of %s)' % (
+                    alt_dev + ((':' + alt_port) if alt_port else ''), label)
+                break
     if not entries:
         return ("no design link found for '%s' in active P2P design%s"
                 % (label, (' (%s)' % src) if src else ''))
@@ -7318,7 +7359,20 @@ def _build_analysis_v2(mr_dir, devices, cookie, deadline):
         links = []
     if p2p_conns and _p2p_module is not None:
         try:
-            links.extend(_p2p_module.expected_links(p2p_conns) or [])
+            design_links = _p2p_module.expected_links(p2p_conns) or []
+            # Rewrite three-part 'X/Y/Z' design ports to their group-fitted OS
+            # spelling so they key against live LLDP anomalies (swpXsN).
+            resolver = getattr(_p2p_module, 'resolve_port_map', None)
+            resolved_port = getattr(_p2p_module, 'resolved_os_port', None)
+            if callable(resolver) and callable(resolved_port):
+                resolved = resolver(p2p_conns)
+                for link in design_links:
+                    for dev_key, port_key in (('a_dev', 'a_port'), ('b_dev', 'b_port')):
+                        os_spelling = resolved_port(resolved, link.get(dev_key, ''),
+                                                    link.get(port_key, ''))
+                        if os_spelling:
+                            link[port_key] = os_spelling
+            links.extend(design_links)
         except Exception:
             pass
     try:
