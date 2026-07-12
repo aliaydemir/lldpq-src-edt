@@ -1224,7 +1224,20 @@
             return fetch('/monitor-results/active-p2p.json', { cache: 'no-store' })
                 .then(r => r.ok ? r.json() : Promise.reject(new Error('status ' + r.status)))
                 .then(d => { buildP2pIndex(d); p2pDesignStatus = 'ready'; })
-                .catch(() => { p2pDesignStatus = 'absent'; p2pIndex = new Map(); });
+                .catch(() =>
+                    // The static copy is missing when the publish step failed at
+                    // activation time; the API serves the same active design from
+                    // the version store and self-heals the copy for next time.
+                    fetch('/inventory-api.sh?action=active-design&kind=p2p', { cache: 'no-store' })
+                        .then(r => r.ok ? r.json() : Promise.reject(new Error('status ' + r.status)))
+                        .then(j => {
+                            if (j && j.success && j.design) {
+                                buildP2pIndex(j.design); p2pDesignStatus = 'ready';
+                            } else {
+                                p2pDesignStatus = 'absent'; p2pIndex = new Map();
+                            }
+                        })
+                        .catch(() => { p2pDesignStatus = 'absent'; p2pIndex = new Map(); }));
         }
         function loadTransceiverInventory() {
             return fetch('/monitor-results/transceiver_inventory.json', { cache: 'no-store' })

@@ -532,8 +532,40 @@ def action_upload():
 
 def action_list():
     ensure_dir(INVENTORY_DIR)
+    # Self-heal: an activation whose publish step failed (or a wiped
+    # monitor-results) leaves the active pointer without its web-served copy.
+    # Every Inventory page load repairs that quietly.
+    republished = {}
+    for kind in ('p2p', 'ipam'):
+        target = os.path.join(MR_DIR, 'active-%s.json' % kind)
+        if os.path.exists(target):
+            continue
+        wrapper, version = load_version(kind, '')
+        if not wrapper:
+            continue
+        wrapper['version'] = version
+        okp, perr = publish_active(kind, wrapper)
+        republished[kind] = True if okp else (perr or 'publish failed')
     ok(versions={'p2p': list_versions('p2p'), 'ipam': list_versions('ipam')},
-       keep=INVENTORY_KEEP)
+       keep=INVENTORY_KEEP, republished=republished)
+
+
+def action_active_design():
+    kind = KIND or 'p2p'
+    if kind not in ('p2p', 'ipam'):
+        fail("kind must be 'p2p' or 'ipam'")
+    wrapper, version = load_version(kind, '')
+    if not wrapper:
+        fail('no active %s design' % kind)
+    wrapper['version'] = version
+    # Serve the design straight from the version store so consumers never
+    # depend on the published static copy; republish it while we are here.
+    published, perr = publish_active(kind, wrapper)
+    payload = dict(wrapper.get('data') or {})
+    payload['_active_version'] = version
+    payload['_source_file'] = wrapper.get('filename', '')
+    ok(kind=kind, version=version, published=published, publish_error=perr,
+       design=payload)
 
 
 def action_activate():
@@ -701,6 +733,7 @@ _ACTIONS = {
     'upload': action_upload,
     'list': action_list,
     'activate': action_activate,
+    'active-design': action_active_design,
     'validate': action_validate,
     'generate-topology': action_generate_topology,
     'generate-devices': action_generate_devices,
