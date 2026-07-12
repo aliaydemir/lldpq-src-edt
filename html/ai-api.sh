@@ -103,6 +103,7 @@ import tempfile
 import importlib.util
 import hashlib
 import difflib
+import ipaddress
 
 # The CGI web root may be read-only. Imports must never try to leave bytecode
 # artifacts there.
@@ -297,6 +298,35 @@ except Exception:
     _audit_pack_names = ()
     _audit_analyze = None
 
+# Active design lookup helpers (P2P/IPAM). Optional like the other co-deployed
+# modules: when ai_p2p.py / ai_ipam.py or the published active-design JSON are
+# absent the [P2P:]/[IPAM:] tags degrade to a "no active design uploaded" tool
+# error, never a crash. The Inventory backend (another track) publishes the
+# active design under the web-served monitor-results dir so both the browser
+# and this API can read it: 'active-p2p.json' and 'active-ipam.json'.
+_p2p_module = None
+_ipam_module = None
+try:
+    _p2p_path = os.path.join(WEB_ROOT, 'ai_p2p.py')
+    if os.path.isfile(_p2p_path):
+        _p2p_spec = importlib.util.spec_from_file_location('lldpq_ai_p2p', _p2p_path)
+        if _p2p_spec is not None and _p2p_spec.loader is not None:
+            _p2p_mod = importlib.util.module_from_spec(_p2p_spec)
+            _p2p_spec.loader.exec_module(_p2p_mod)
+            _p2p_module = _p2p_mod
+except Exception:
+    _p2p_module = None
+try:
+    _ipam_path = os.path.join(WEB_ROOT, 'ai_ipam.py')
+    if os.path.isfile(_ipam_path):
+        _ipam_spec = importlib.util.spec_from_file_location('lldpq_ai_ipam', _ipam_path)
+        if _ipam_spec is not None and _ipam_spec.loader is not None:
+            _ipam_mod = importlib.util.module_from_spec(_ipam_spec)
+            _ipam_spec.loader.exec_module(_ipam_mod)
+            _ipam_module = _ipam_mod
+except Exception:
+    _ipam_module = None
+
 # Set HTTP proxy if configured (allows airgapped servers to reach cloud APIs via SSH tunnel)
 if AI_PROXY_URL:
     os.environ['http_proxy'] = AI_PROXY_URL
@@ -357,7 +387,7 @@ _BEARER_RE = re.compile(r'(?i)\b(authorization\s*:\s*(?:bearer|basic)\s+)(\S+)')
 _URI_CREDENTIAL_RE = re.compile(r'(?i)(https?://[^\s/@:]+:)([^\s/@]+)(@)')
 _URL_KEY_RE = re.compile(r'(?i)([?&](?:key|api[-_]?key|token)=)[^&\s]+')
 _TOOL_TAG_RE = re.compile(
-    r'\[(DRYRUN|RUNALL|RUN|AUDIT|PROMQLRANGE|PROMQL|PATH|SEARCH|FIX|NEXT|CONSOLE)\s*:',
+    r'\[(DRYRUN|RUNALL|RUN|AUDIT|PROMQLRANGE|PROMQL|PATH|SEARCH|P2P|IPAM|FIX|NEXT|CONSOLE)\s*:',
     re.IGNORECASE,
 )
 _OBSERVATION_BOUNDARY_RE = re.compile(
@@ -4557,6 +4587,29 @@ if _audit_pack_names and _audit_analyze is not None:
         packs=', '.join(_audit_pack_names)
     )
 
+# Advertised only when an active P2P/IPAM design is published (Inventory page).
+# A leftover [P2P:]/[IPAM:] tag without a design degrades to a tool hint.
+DESIGN_INSTRUCTIONS = """
+=== DESIGN LOOKUP (active P2P cabling + IPAM allocation) ===
+When the operator uploaded an intended-design workbook, look up what a link or
+address is SUPPOSED to be (design truth), to compare against live observations:
+[P2P: <device>[:<port>]]
+  - Returns the design peer for that device (optionally one port): peer
+    device/port, rack/RU at both ends, expected transceiver, and cable
+    metadata (type/length/part, bundle_id, seq). Use it to answer "what should
+    swpX on <dev> connect to", or to explain a miscabling / wrong-neighbor
+    finding against the plan.
+[IPAM: <ip>|<host>]
+  - Returns the design record(s) for an IP (host assignment, fabric role,
+    containing subnet) or a hostname (all assignments, fabric mgmt/loopback,
+    expected BGP loopback/ASN). Use it to check whether a live address/ASN
+    matches the plan.
+  - Both read the published design only; they never touch a device and cost one
+    tool slot each. If no design is uploaded you get a short notice — say so.
+"""
+if _p2p_module is not None or _ipam_module is not None:
+    TOOL_INSTRUCTIONS += DESIGN_INSTRUCTIONS
+
 
 def _policy_block_hint(command, error):
     """Nearest policy-allowed alternative for a blocked command so the model's
@@ -5334,18 +5387,28 @@ def _tool_execution_ledger(tools, max_chars=5000):
 
 SEARCH_INSTRUCTIONS = """
 [SEARCH: <query>]
-  - Look up CURRENT external info (known Cumulus/SONiC bugs, release notes, CVEs,
-    advisories, vendor docs) when the fabric observations are not enough to answer.
+  - Look up CURRENT external info when the fabric observations cannot answer.
+    EMIT this tag when the question turns on any of: a known bug or advisory,
+    a CVE / security advisory, release notes / errata, end-of-life or
+    end-of-support dates, firmware or optic compatibility, or version-specific
+    behavior ("is X a known issue in Cumulus 5.x", "fixed in which release",
+    "EOL date for ...").
+  - Write a focused product/version/symptom query. The backend scrubs it of
+    secrets and fabric identifiers (hostnames/IPs/serials) before sending, so
+    do not rely on any device-specific name reaching the web.
   - Use sparingly (max 2 per question). Cite the source URLs returned.
 """
 
 
 def _user_requested_web_search(question):
-    """Allow external research only when the operator explicitly requests it."""
+    """Allow external research when the operator asks for it OR when the
+    question itself implies current external knowledge is required (known
+    bugs/advisories/CVEs/release notes/EOL/firmware compatibility/version-
+    specific behavior). The fabric observations cannot answer those."""
     # Turkish capital dotted-I casefolds to ``i`` + combining dot. Removing the
     # mark keeps explicit intent matching stable without broad fuzzy matching.
     text = str(question or '').casefold().replace('\u0307', '')
-    return bool(re.search(
+    explicit = re.search(
         r"\b(?:search|browse|research|look\s+up|check)\s+"
         r"(?:the\s+)?(?:web|internet|online)|"
         r"\b(?:web|internet|online)\s+(?:search|lookup|research)|"
@@ -5353,18 +5416,29 @@ def _user_requested_web_search(question):
         r"[cç]evrimi[cç]i)\b[^\r\n]{0,120}\b(?:ara|arama|ara[sş]t[ıi]r|bak)|"
         r"\bgoogle(?:'da|da)?\s+(?:ara|bak)",
         text,
-    ))
+    )
+    if explicit:
+        return True
+    # External-research topics that static fabric data cannot answer. English
+    # and Turkish ('bilinen sorun', 'advisory', 'surum notu') phrasing.
+    implied = re.search(
+        r"\b(?:cve|advisor(?:y|ies)|security\s+advisor|release\s+notes?|"
+        r"errata|known\s+(?:bug|issue|problem)s?|"
+        r"end[\s-]?of[\s-]?(?:life|support)|\beol\b|\beos\b|"
+        r"firmware\s+compat|firmware\s+version|version[\s-]?specific|"
+        r"regression\s+in|fixed\s+in\s+(?:version|release)|"
+        r"bilinen\s+(?:sorun|hata|problem)|s[uü]r[uü]m\s+notu|"
+        r"advisory|g[uü]venlik\s+a[cç][ıi]k)",
+        text,
+    )
+    return bool(implied)
 
 
-def _public_search_query(question, devices):
-    """Build external-search text only from operator input, without fabric IDs.
-
-    Model-authored search terms are intentionally not forwarded: they may have
-    been influenced by untrusted configs/logs. Product symptoms in the user's
-    explicit request remain useful while hostnames, addresses and credentials
-    stay inside the fabric boundary.
-    """
-    text = redact_secrets(str(question or ''))[:1200]
+def _scrub_public_query_text(text, devices):
+    """Strip fabric identifiers (secrets/hostnames/IPs/MACs) from text bound for
+    the public search tool, then squash whitespace. Shared by operator input
+    and model-authored search terms so nothing behind the fabric boundary leaks."""
+    text = redact_secrets(str(text or ''))
     for ip, device in (devices or {}).items():
         identifiers = [ip]
         if isinstance(device, dict):
@@ -5378,8 +5452,183 @@ def _public_search_query(question, devices):
                   '[ip]', text)
     text = re.sub(r'(?i)(?<![0-9a-f])(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}(?![0-9a-f])',
                   '[mac]', text)
-    text = re.sub(r'\s+', ' ', text).strip()
-    return text or 'NVIDIA Cumulus Linux networking issue public documentation'
+    return re.sub(r'\s+', ' ', text).strip()
+
+
+def _public_search_query(question, devices, model_query=''):
+    """Build the exact text sent to the public search tool.
+
+    Operator input is the trusted base. A model-authored [SEARCH:] query term is
+    now ALSO forwarded (it may name a product/version/symptom the operator did
+    not spell out), but only after the SAME secret + fabric-identifier scrubber
+    and a hard length cap — the model may have been influenced by untrusted
+    configs/logs, so hostnames, addresses and credentials never leave the
+    boundary. The returned string is what the evidence panel shows.
+    """
+    base = _scrub_public_query_text(question, devices)[:1000]
+    extra = _scrub_public_query_text(model_query, devices)[:400] if model_query else ''
+    # Only append model terms that add signal beyond the operator's own words.
+    if extra and extra.lower() not in base.lower():
+        combined = (base + ' ' + extra).strip() if base else extra
+    else:
+        combined = base
+    combined = combined[:1200].strip()
+    return combined or 'NVIDIA Cumulus Linux networking issue public documentation'
+
+
+# ---- Active P2P/IPAM design lookup ([P2P:] / [IPAM:] tools) ----
+# The Inventory backend (another track) publishes the active design under the
+# web-served monitor-results dir so both the browser and this API can read it:
+# 'active-p2p.json' (ai_p2p canonical) and 'active-ipam.json' (ai_ipam canonical).
+def _active_design_path(kind):
+    """Published active design JSON path for kind in {'p2p', 'ipam'}."""
+    return _mr_path('active-%s.json' % kind)
+
+
+def _load_active_p2p():
+    """(connections, error): error is '' on success, else a user-facing message."""
+    if _p2p_module is None:
+        return None, 'P2P lookup is unavailable (ai_p2p.py not installed)'
+    path = _active_design_path('p2p')
+    if not os.path.isfile(path):
+        return None, 'no active P2P design uploaded'
+    try:
+        return _p2p_module.load_connections(path), ''
+    except Exception as exc:
+        return None, 'active P2P design could not be read: ' + redact_secrets(str(exc))
+
+
+def _load_active_ipam():
+    """(ipam_data, error): error is '' on success, else a user-facing message."""
+    if _ipam_module is None:
+        return None, 'IPAM lookup is unavailable (ai_ipam.py not installed)'
+    path = _active_design_path('ipam')
+    if not os.path.isfile(path):
+        return None, 'no active IPAM design uploaded'
+    try:
+        with open(path, 'r', encoding='utf-8') as handle:
+            return json.load(handle), ''
+    except Exception as exc:
+        return None, 'active IPAM design could not be read: ' + redact_secrets(str(exc))
+
+
+def _fmt_design_kv(pairs):
+    """Compact 'k=v' join, dropping empty values."""
+    return ', '.join('%s=%s' % (k, v) for k, v in pairs if v not in (None, '', []))
+
+
+def run_p2p_lookup(target):
+    """Design peer + cable/bundle/rack/transceiver for 'device[:port]' from the
+    active P2P design. Read-only; never touches a device."""
+    conns, error = _load_active_p2p()
+    if error:
+        return error
+    raw = str(target or '').strip()
+    if not raw:
+        return 'usage: [P2P: <device>[:<port>]]'
+    if ':' in raw:
+        device, port = raw.split(':', 1)
+        device, port = device.strip(), port.strip()
+    else:
+        device, port = raw, None
+    try:
+        entries = _p2p_module.lookup(conns, device, port or None)
+    except Exception as exc:
+        return 'P2P lookup failed: ' + redact_secrets(str(exc))
+    src = conns.get('source_file', '') if isinstance(conns, dict) else ''
+    label = device + ((':' + port) if port else '')
+    if not entries:
+        return ("no design link found for '%s' in active P2P design%s"
+                % (label, (' (%s)' % src) if src else ''))
+    lines = ['ACTIVE P2P DESIGN%s — %d link(s) for %s:'
+             % ((' (%s)' % src) if src else '', len(entries), label)]
+    for entry in entries[:20]:
+        near = _fmt_design_kv([
+            ('port', entry.get('port')), ('rack', entry.get('rack')),
+            ('ru', entry.get('ru')), ('transceiver', entry.get('transceiver'))])
+        far = _fmt_design_kv([
+            ('peer', entry.get('peer_device')), ('peer_port', entry.get('peer_port')),
+            ('peer_rack', entry.get('peer_rack')), ('peer_ru', entry.get('peer_ru')),
+            ('peer_transceiver', entry.get('peer_transceiver'))])
+        cable = _fmt_design_kv([
+            ('cable_type', entry.get('cable_type')),
+            ('cable_length', entry.get('cable_length')),
+            ('cable_part', entry.get('cable_part')),
+            ('bundle_id', entry.get('bundle_id')), ('seq', entry.get('seq')),
+            ('network', entry.get('network_type'))])
+        flag = ' [UNRESOLVED design endpoint]' if entry.get('unresolved') else ''
+        lines.append('- %s -> %s%s' % (near, far, flag))
+        if cable:
+            lines.append('    cable: ' + cable)
+    if len(entries) > 20:
+        lines.append('... and %d more link(s)' % (len(entries) - 20))
+    return '\n'.join(lines)
+
+
+def run_ipam_lookup(target):
+    """Design IP/host records + expected BGP from the active IPAM design.
+    Read-only; never touches a device."""
+    data, error = _load_active_ipam()
+    if error:
+        return error
+    term = str(target or '').strip()
+    if not term:
+        return 'usage: [IPAM: <ip>|<host>]'
+    src = data.get('source_file', '') if isinstance(data, dict) else ''
+    header = 'ACTIVE IPAM DESIGN%s' % ((' (%s)' % src) if src else '')
+    # Treat the term as an address when it parses, otherwise as a hostname.
+    try:
+        ipaddress.ip_address(term)
+        is_ip = True
+    except ValueError:
+        is_ip = False
+    lines = []
+    if is_ip:
+        try:
+            res = _ipam_module.lookup_ip(data, term)
+        except Exception as exc:
+            return 'IPAM lookup failed: ' + redact_secrets(str(exc))
+        lines.append('%s — IP %s:' % (header, res.get('ip', term)))
+        for host in res.get('hosts', [])[:20]:
+            assignment = host.get('assignment', {})
+            lines.append('- host %s (%s): %s'
+                         % (host.get('hostname', ''), host.get('sheet', ''),
+                            _fmt_design_kv(sorted(assignment.items()))))
+        for fab in res.get('fabric', [])[:20]:
+            rec = fab.get('record', {})
+            lines.append('- fabric %s [%s]: %s'
+                         % (rec.get('hostname', ''), fab.get('match_field', ''),
+                            _fmt_design_kv(sorted(rec.items()))))
+        for subnet in res.get('subnets', [])[:10]:
+            lines.append('- subnet %s' % _fmt_design_kv(sorted(subnet.items())))
+        if len(lines) == 1:
+            lines.append('  (no design record matches this IP)')
+    else:
+        try:
+            res = _ipam_module.lookup_host(data, term)
+        except Exception as exc:
+            return 'IPAM lookup failed: ' + redact_secrets(str(exc))
+        lines.append('%s — host %s:' % (header, term))
+        for host in res.get('hosts', [])[:20]:
+            for assignment in host.get('assignments', [])[:20]:
+                lines.append('- %s' % _fmt_design_kv(sorted(assignment.items())))
+        for fab in res.get('fabric', [])[:20]:
+            lines.append('- fabric: %s' % _fmt_design_kv(sorted(fab.items())))
+        if len(lines) == 1:
+            lines.append('  (no design record matches this host)')
+        # Design BGP truth for design-vs-live comparison, when present.
+        try:
+            bgp = _ipam_module.expected_bgp(data)
+        except Exception:
+            bgp = {}
+        match = bgp.get(term) or next(
+            (v for k, v in bgp.items() if k.split('.', 1)[0].lower()
+             == term.split('.', 1)[0].lower()), None)
+        if match:
+            lines.append('- expected BGP (design): loopback=%s asn=%s'
+                         % (match.get('loopback', ''), match.get('asn', '')))
+    return '\n'.join(lines)
+
 
 def action_chat():
     """Handle chat message — synchronous response (fcgiwrap doesn't support SSE streaming)."""
@@ -5746,7 +5995,15 @@ def action_chat():
         dryruns = re.findall(
             r'(?m)^\s*\[DRYRUN:\s*(\S+)\s+([^\]\r\n]+)\]\s*$', response or ''
         )
-        round_requested = sum(map(len, (runs, runalls, audits, promqls, promranges, paths, searches, dryruns)))
+        # Active-design lookups (read-only, no device access). Parsed only when
+        # the corresponding module is deployed; otherwise a stray tag is ignored.
+        p2ps = re.findall(
+            r'(?m)^\s*\[P2P:\s*([^\]\r\n]+)\]\s*$', response or ''
+        ) if _p2p_module is not None else []
+        ipams = re.findall(
+            r'(?m)^\s*\[IPAM:\s*([^\]\r\n]+)\]\s*$', response or ''
+        ) if _ipam_module is not None else []
+        round_requested = sum(map(len, (runs, runalls, audits, promqls, promranges, paths, searches, dryruns, p2ps, ipams)))
         if round_requested == 0 or time.monotonic() > deadline:
             if (round_requested == 0 and not phantom_nudged
                     and deadline - time.monotonic() > FINALIZE_RESERVE_SECONDS
@@ -6053,13 +6310,17 @@ def action_chat():
             q = q.strip()
             total_tools += 1
             round_tools += 1
-            out = run_search(public_search_query)
+            # Forward the operator intent PLUS the model-authored query terms,
+            # both scrubbed of secrets/fabric identifiers. The exact sent query
+            # is what the evidence panel shows below.
+            sent_query = _public_search_query(question, devices, q)
+            out = run_search(sent_query)
             searches_used += 1
             search_ok = not str(out).startswith(
                 ('Search error:', 'Web search is not configured', 'Empty search query')
             )
-            tools_used.append({'search': public_search_query, 'ok': search_ok})
-            results.append(f"[SEARCH: {public_search_query}]\n{out}")
+            tools_used.append({'search': sent_query, 'ok': search_ok})
+            results.append(f"[SEARCH: {sent_query}]\n{out}")
         # Policy dry runs: report the read-only verdict without touching any
         # device. Uses the exact validate function of the executing path, so
         # the preview cannot drift from reality.

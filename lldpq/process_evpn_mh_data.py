@@ -621,7 +621,7 @@ tr.status-inactive {{ border-left-color:#777; }} tr.status-critical {{ border-le
 .badge-healthy {{ color:#76b900; }} .badge-bypass {{ color:#ff9800; }} .badge-warning {{ color:#ffc107; }}
 .badge-inactive {{ color:#999; }} .badge-critical {{ color:#f44336; }}
 .detail-row td {{ padding:0; white-space:normal; max-width:none; }}
-.detail-panel {{ padding:14px 20px 18px; background:#202020; border:1px solid #ff9800; }}
+.detail-panel {{ padding:14px 20px 18px; background:#202020; border:1px solid #ff9800; position:sticky; left:0; max-width:1060px; box-sizing:border-box; }}
 .detail-title {{ color:#ffb300; font-weight:700; margin-bottom:12px; }}
 .compare-grid {{ display:grid; grid-template-columns:1fr 1fr; gap:18px; }}
 .peer-card {{ background:#292929; border:1px solid #444; border-radius:4px; padding:12px; }}

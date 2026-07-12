@@ -151,6 +151,63 @@ Cross-check `cat /proc/net/bonding/<bond>`: the LACP partner system id must be i
 - PAM4 vs NRZ: 100G may be CR4/NRZ (4x25G) or CR2/CR1/PAM4; both ends must use the same PHY mode — a 100G link that refuses to come up between older and newer ASICs is usually this.
 - After any change verify with `l1-show swpX`: speed, lane count, FEC mode, and the down reason if still down.""",
     ),
+    (
+        "mtu-fabric",
+        "fabric MTU 9216 / jumbo end-to-end expectations",
+        (
+            "mtu", "9216", "jumbo", "jumbo frame", "jumbo frames", "mru",
+            "l3 mtu", "fragment", "fragmentation", "black hole", "blackhole",
+            "spectrumx", "spectrum x", "gb300",
+        ),
+        (),
+        """### KB mtu-fabric — fabric MTU / jumbo expectations (SpectrumX / GB300)
+Design norm: L2 MTU 9216 on every fabric-facing interface (leaf<->spine uplinks, peerlink, host bonds). VXLAN adds ~50B overhead, so the underlay must carry 9216+ or overlay frames silently fragment/drop.
+Read: `nv show interface swpX link mtu`, `ip -d link show swpX`, or `cat /sys/class/net/swpX/mtu`.
+Checkable rules:
+- Every uplink and peerlink at 9216. A single hop left at 1500/9000 is the classic silent black-hole: small pings succeed while large RoCE/RDMA writes stall or drop.
+- MTU must be symmetric on both ends of a link. A mismatch surfaces as clagd/LACP 'conflict' or as jumbo-only loss (small packets pass, iperf/RDMA stalls).
+- L3/SVI (IRB) MTU must cover the VXLAN payload; a router MTU under 9216 breaks only the large EVPN type-5 flows.
+- Host NIC MTU (GB300 ConnectX/BlueField) must match the leaf access port: a 9000 host into a 9216 fabric is fine, a 9216 host into a 1500 port is not.
+Fast isolation: `ping -M do -s 8972 <peer>` across each hop — the first hop that fails names the offender.""",
+    ),
+    (
+        "rail-topology",
+        "rail symmetry, uplink ratios, subscription (SpectrumX/GB300)",
+        (
+            "rail", "rails", "rail optimized", "symmetry", "symmetric",
+            "asymmetry", "asymmetric", "uplink", "uplinks", "oversubscription",
+            "oversubscribed", "subscription", "clos", "fat tree",
+            "fabric symmetry", "spectrumx", "spectrum x", "gb300", "gpu fabric",
+        ),
+        (),
+        """### KB rail-topology — rail-optimized symmetry & uplink ratios (SpectrumX / GB300)
+Rail-optimized GPU fabric: every GPU rail (NIC index) attaches to the SAME leaf position across all compute nodes; rails must stay symmetric. lldpq LLDP + speed data makes this checkable.
+Checkable rules:
+- Rail symmetry: for a given rail/NIC index, every node's link should land on the matching leaf. An outlier node cabled to the wrong leaf breaks rail locality (extra spine hops, congestion). Compare neighbor leaf per rail across nodes.
+- Uplink-count symmetry: every leaf should have the SAME number of spine uplinks, each at the same speed. A leaf short an uplink (or slower) is oversubscribed vs its peers.
+- Subscription ratio: sum(access bw) : sum(uplink bw). Non-blocking = 1:1; flag any leaf whose downlink:uplink deviates from the fabric norm.
+- Spine fan-out symmetry: every spine reaches every leaf exactly once (per plane); a missing spine<->leaf link shows up as one leaf short an uplink.
+- Speed uniformity: all uplinks at the design speed (400G/800G); a lone lower-speed uplink caps that leaf's fabric bandwidth.
+Signal: asymmetry between otherwise-identical leaves. Read from the LLDP neighbor table plus interface speeds.""",
+    ),
+    (
+        "roce-design",
+        "measurable RoCE PFC/ECN/TC3 design norms & watermarks",
+        (
+            "roce", "rocev2", "pfc", "ecn", "wred", "tc3", "tc 3",
+            "watermark", "watermarks", "headroom", "lossless", "dcqcn",
+            "spectrumx", "spectrum x", "gb300",
+        ),
+        (),
+        """### KB roce-design — RoCE/PFC/ECN design norms (SpectrumX / GB300)
+Measurable lossless config expectations (`nv show qos roce`, `nv show qos`):
+- RoCE data on switch-priority/TC 3 (dot1p 3); CNP on priority 6. The dot1p->TC mapping must be identical on EVERY hop, inter-switch links included.
+- PFC enabled on TC3 only (the lossless class); other TCs stay drop/lossless-off. PFC on the wrong TC = no backpressure where it is actually needed.
+- ECN/WRED (RED) active on TC3. Spectrum norm: min-threshold on the order of ~150KB, max-threshold in the ~1.5MB range, low max-drop-probability, so marks begin well before buffer exhaustion and DCQCN reacts early.
+- Headroom/xoff sized to cable length + MTU; 100G+ long DACs need more. Too little headroom = drops under pause; too much = wasted buffer.
+- Trust dot1p (or DSCP) end-to-end; a hop trusting L2 while the host marks DSCP loses the class.
+Healthy telemetry: ECN marks climb under load, PFC pause stays small and local, zero drops on TC3. Fabric-wide rising pause or ANY TC3 drop = misconfig or a peer not honoring PFC.""",
+    ),
 )
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
