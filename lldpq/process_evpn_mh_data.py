@@ -621,8 +621,7 @@ tr.status-inactive {{ border-left-color:#777; }} tr.status-critical {{ border-le
 .badge-healthy {{ color:#76b900; }} .badge-bypass {{ color:#ff9800; }} .badge-warning {{ color:#ffc107; }}
 .badge-inactive {{ color:#999; }} .badge-critical {{ color:#f44336; }}
 .detail-row td {{ padding:0; white-space:normal; max-width:none; }}
-.detail-row {{ position:relative; }}
-.detail-panel {{ padding:14px 20px 18px; background:#202020; border:1px solid #ff9800; position:sticky; left:0; width:100vw; max-width:100vw; box-sizing:border-box; }}
+.detail-panel {{ padding:14px 20px 18px; background:#202020; border:1px solid #ff9800; position:sticky; left:0; box-sizing:border-box; }}
 .detail-title {{ color:#ffb300; font-weight:700; margin-bottom:12px; }}
 .compare-grid {{ display:grid; grid-template-columns:1fr 1fr; gap:18px; }}
 .peer-card {{ background:#292929; border:1px solid #444; border-radius:4px; padding:12px; }}
@@ -827,7 +826,15 @@ function toggleDetails(row){{
     <div class="compare-grid">${{side(a,'DEVICE')}}${{side(b,'PEER')}}</div>
     <div class="detail-note">${{bypass?'LACP bypass is active. Type-1/Type-4 advertisements and DF filtering are intentionally withdrawn — dual DF is expected, not a conflict.':esc(row.dataset.reason||row.dataset.status)}}</div></div></td>`;
   row.after(detail);
+  sizeDetailPanel();
 }}
+function sizeDetailPanel(){{
+  const panel=document.querySelector('tr.detail-row .detail-panel');
+  if(!panel)return;
+  const wrap=panel.closest('.table-wrap');
+  if(wrap)panel.style.width=wrap.clientWidth+'px';
+}}
+window.addEventListener('resize',sizeDetailPanel);
 function openThresholdsModal(){{document.getElementById('thresholdModal').classList.add('show');}}
 function closeThresholdsModal(){{document.getElementById('thresholdModal').classList.remove('show');}}
 document.getElementById('thresholdModal').addEventListener('click',e=>{{if(e.target.id==='thresholdModal')closeThresholdsModal();}});
