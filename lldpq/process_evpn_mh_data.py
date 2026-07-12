@@ -621,14 +621,14 @@ tr.status-inactive {{ border-left-color:#777; }} tr.status-critical {{ border-le
 .badge-healthy {{ color:#76b900; }} .badge-bypass {{ color:#ff9800; }} .badge-warning {{ color:#ffc107; }}
 .badge-inactive {{ color:#999; }} .badge-critical {{ color:#f44336; }}
 .detail-row td {{ padding:0; white-space:normal; max-width:none; }}
-.detail-panel {{ padding:14px 20px 18px; background:#202020; border:1px solid #ff9800; position:sticky; left:0; box-sizing:border-box; }}
+.detail-panel {{ padding:14px 20px 18px; background:#202020; border:1px solid #ff9800; box-sizing:border-box; }}
 .detail-title {{ color:#ffb300; font-weight:700; margin-bottom:12px; }}
 .compare-grid {{ display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:18px; }}
 .peer-card {{ background:#292929; border:1px solid #444; border-radius:4px; padding:12px; }}
 .peer-title {{ color:#76b900; font-size:15px; font-weight:700; border-bottom:1px solid #444; padding-bottom:7px; margin-bottom:7px; }}
 .kv {{ display:grid; grid-template-columns:145px 1fr; gap:8px; padding:4px 0; border-bottom:1px solid #333; }}
 .kv span:first-child {{ color:#999; }} .good {{ color:#76b900; }} .warn {{ color:#ff9800; }} .bad {{ color:#f44336; }}
-.member-table {{ width:100%; border-collapse:collapse; margin-top:10px; font-size:11px; table-layout:fixed; }}
+.member-table {{ width:100%; min-width:0; border-collapse:collapse; margin-top:10px; font-size:11px; table-layout:fixed; }}
 .member-table th,.member-table td {{ border:1px solid #3a3a3a; padding:3px 7px; text-align:left; word-break:break-word; overflow-wrap:anywhere; }}
 .member-table th {{ background:#2f2f2f; color:#9ccc3f; font-weight:600; }}
 .member-table code {{ color:#6fc7df; }}
@@ -832,7 +832,13 @@ function sizeDetailPanel(){{
   const panel=document.querySelector('tr.detail-row .detail-panel');
   if(!panel)return;
   const wrap=panel.closest('.table-wrap');
-  if(wrap)panel.style.width=wrap.clientWidth+'px';
+  if(!wrap)return;
+  panel.style.width=wrap.clientWidth+'px';
+  panel.style.transform='translateX('+wrap.scrollLeft+'px)';
+  if(!wrap.dataset.detailSync){{
+    wrap.dataset.detailSync='1';
+    wrap.addEventListener('scroll',sizeDetailPanel,{{passive:true}});
+  }}
 }}
 window.addEventListener('resize',sizeDetailPanel);
 function openThresholdsModal(){{document.getElementById('thresholdModal').classList.add('show');}}
