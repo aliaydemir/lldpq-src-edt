@@ -6048,6 +6048,8 @@ def action_chat():
                 + [f"[PATH: {s} {d}]" for s, d in paths]
                 + [f"[SEARCH: {q}]" for q in searches]
                 + [f"[DRYRUN: {d} {c}]" for d, c in dryruns]
+                + [f"[P2P: {t}]" for t in p2ps]
+                + [f"[IPAM: {t}]" for t in ipams]
             )
             tools_used.append({
                 'dispatch': 'not-executed',

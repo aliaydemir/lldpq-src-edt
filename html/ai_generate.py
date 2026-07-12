@@ -407,6 +407,8 @@ def ipam_to_devices_yaml(ipam, existing_yaml=None):
 
     entries.sort(key=lambda e: (_ROLE_SORT.get(e["role"], 8), _ip_sort_key(e["ip"])))
 
+    while defaults_lines and not defaults_lines[-1].strip():
+        defaults_lines.pop()
     if not defaults_lines:
         defaults_lines = ["  username: cumulus"]
 
