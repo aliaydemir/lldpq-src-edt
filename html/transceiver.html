@@ -663,9 +663,50 @@
 
     function downloadCSV() {
         const filtered = getFilteredModules();
+
+        // Describe any active filter so a filtered export is never mistaken
+        // for the full fabric (the summary counts below are always full-fabric).
+        const filterBits = [];
+        const dev = document.getElementById('filter-device').value;
+        const pn = document.getElementById('filter-pn').value;
+        const idType = document.getElementById('filter-id').value;
+        const fw = document.getElementById('filter-fw').value;
+        const search = document.getElementById('filter-search').value.trim();
+        if (dev) filterBits.push('device=' + dev);
+        if (pn) filterBits.push('part_number=' + pn);
+        if (idType) filterBits.push('identifier=' + idType);
+        if (fw) filterBits.push('fw_version=' + fw);
+        if (search) filterBits.push('search=' + search);
+
+        const now = new Date();
+        const counts = summary.status_counts || {};
+        const skipped = (counts.skipped_model || 0) + (counts.skipped_unknown || 0);
         const headers = ['Device','Port','Identifier','Vendor','Part Number','Serial Number','Rev','FW Version','Cable-Byte130'];
-        const rows = filtered.map(m => [m.device, m.port, m.identifier, m.vendor, m.part_number, m.serial, m.vendor_rev, m.fw_version, m.cable_byte130].map(v => `"${(v||'').replace(/"/g,'""')}"`).join(','));
-        const csv = [headers.join(','), ...rows].join('\n');
+        const csvField = v => `"${String(v == null ? '' : v).replace(/"/g,'""')}"`;
+        const rows = filtered.map(m => [m.device, m.port, m.identifier, m.vendor, m.part_number, m.serial, m.vendor_rev, m.fw_version, m.cable_byte130].map(csvField).join(','));
+
+        // Summary comments go BEFORE the header row (leading '#' lines) so a
+        // spreadsheet or parser that skips them still reads a clean header.
+        const meta = [
+            '# Transceiver Inventory Report',
+            '# Generated: ' + now.toLocaleString(),
+            '# Total Modules: ' + (summary.total_modules != null ? summary.total_modules : allModules.length),
+            '# Unique Models: ' + (summary.unique_models || 0),
+            '# Devices: ' + (summary.devices_with_modules || 0),
+            '# Mixed FW Models: ' + mixedFwModels.length,
+            '# Status ok: ' + (counts.ok || 0),
+            '# Status failed: ' + (counts.failed || 0),
+            '# Status unreachable: ' + (counts.unreachable || 0),
+            '# Status skipped: ' + skipped,
+            '# Status no-data: ' + (counts.no_data || 0)
+        ];
+        if (filterBits.length) {
+            meta.push('# NOTE: Rows below reflect the active filter ('
+                + filterBits.join('; ') + '); summary counts above are for the full fabric.');
+        }
+        meta.push('#');
+
+        const csv = [...meta, headers.join(','), ...rows].join('\n');
         const blob = new Blob([csv], {type: 'text/csv'});
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);

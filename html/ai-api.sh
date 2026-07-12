@@ -6619,6 +6619,7 @@ def action_get_config():
         "has_key": bool(AI_API_KEY),
         "proxy_url": AI_PROXY_URL,
         "search_model": AI_SEARCH_MODEL,
+        "fallback_model": AI_FALLBACK_MODEL,
         "search_enabled": SEARCH_ENABLED,
     })
 
@@ -6642,6 +6643,7 @@ def action_save_config():
         'ollama_url': 'OLLAMA_URL',
         'proxy_url': 'AI_PROXY_URL',
         'search_model': 'AI_SEARCH_MODEL',
+        'fallback_model': 'AI_FALLBACK_MODEL',
     }
     for request_key, config_key in config_fields.items():
         if request_key in data:
