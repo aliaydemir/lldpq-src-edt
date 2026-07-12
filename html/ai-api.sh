@@ -5370,6 +5370,10 @@ def _tool_execution_ledger(tools, max_chars=5000):
             target, action = 'public-search', item.get('search')
         elif 'dryrun' in item:
             target, action = 'policy-dryrun (not executed)', item.get('dryrun')
+        elif 'p2p' in item:
+            target, action = 'active-p2p-design', item.get('p2p')
+        elif 'ipam' in item:
+            target, action = 'active-ipam-design', item.get('ipam')
         else:
             target, action = 'unknown', 'unclassified check'
         status = 'OK' if item.get('ok') is True else (
@@ -5427,7 +5431,7 @@ def _user_requested_web_search(question):
         r"end[\s-]?of[\s-]?(?:life|support)|\beol\b|\beos\b|"
         r"firmware\s+compat|firmware\s+version|version[\s-]?specific|"
         r"regression\s+in|fixed\s+in\s+(?:version|release)|"
-        r"bilinen\s+(?:sorun|hata|problem)|s[uü]r[uü]m\s+notu|"
+        r"bilinen\b[^\r\n]{0,12}\b(?:sorun|hata|problem)|s[uü]r[uü]m\s+notu|"
         r"advisory|g[uü]venlik\s+a[cç][ıi]k)",
         text,
     )
@@ -5807,7 +5811,8 @@ def action_chat():
             )
     system_prompt = system_prompt_core + "\n" + TOOL_INSTRUCTIONS
     search_allowed = SEARCH_ENABLED and _user_requested_web_search(question)
-    public_search_query = _public_search_query(question, devices) if search_allowed else ''
+    # The exact outgoing query is built per [SEARCH:] tag from the operator
+    # intent plus the model-authored terms (both scrubbed) inside the tool loop.
     if search_allowed:
         system_prompt += "\n" + SEARCH_INSTRUCTIONS
 
@@ -6360,6 +6365,44 @@ def action_chat():
                 verdict += f" (note: '{dev_name}' is not a fabric hostname)"
             tools_used.append({'dryrun': f'{dev_name} {cmd}', 'ok': ok})
             results.append(f"[DRYRUN {dev_name}: {cmd}]\n{verdict}")
+        # Active-design lookups (read-only; consult the published P2P/IPAM JSON,
+        # never a device). Each tag costs one tool slot like [RUN:].
+        for target in p2ps[:MAX_TOOLS_PER_ROUND]:
+            if (round_tools >= MAX_TOOLS_PER_ROUND or total_tools >= MAX_TOTAL_TOOLS
+                    or time.monotonic() > deadline or _job_cancelled()):
+                break
+            target = target.strip()
+            dedup_key = ('p2p', target.lower())
+            if dedup_key in seen_this_round:
+                round_requested -= 1
+                continue
+            seen_this_round.add(dedup_key)
+            total_tools += 1
+            round_tools += 1
+            out = run_p2p_lookup(target)
+            lookup_ok = not str(out).startswith((
+                'no active P2P design', 'no design link', 'P2P lookup',
+                'usage:', 'active P2P design could not'))
+            tools_used.append({'p2p': target, 'ok': lookup_ok})
+            results.append(f"[P2P: {target}]\n{out}")
+        for target in ipams[:MAX_TOOLS_PER_ROUND]:
+            if (round_tools >= MAX_TOOLS_PER_ROUND or total_tools >= MAX_TOTAL_TOOLS
+                    or time.monotonic() > deadline or _job_cancelled()):
+                break
+            target = target.strip()
+            dedup_key = ('ipam', target.lower())
+            if dedup_key in seen_this_round:
+                round_requested -= 1
+                continue
+            seen_this_round.add(dedup_key)
+            total_tools += 1
+            round_tools += 1
+            out = run_ipam_lookup(target)
+            lookup_ok = not str(out).startswith((
+                'no active IPAM design', 'IPAM lookup', 'usage:',
+                'active IPAM design could not'))
+            tools_used.append({'ipam': target, 'ok': lookup_ok})
+            results.append(f"[IPAM: {target}]\n{out}")
         if round_tools < round_requested:
             tools_used.append({
                 'dispatch': 'not-executed',
@@ -6411,7 +6454,8 @@ def action_chat():
                 + "\n\nContinue answering the original pinned operator question. "
                 "Request more data only if needed; otherwise give the final answer "
                 "with no [RUN: ...] / [RUNALL: ...] / [AUDIT: ...] / [PROMQL: ...] / "
-                "[PROMQLRANGE: ...] / [PATH: ...] / [SEARCH: ...] / [DRYRUN: ...] lines."
+                "[PROMQLRANGE: ...] / [PATH: ...] / [SEARCH: ...] / [P2P: ...] / "
+                "[IPAM: ...] / [DRYRUN: ...] lines."
             ),
             "context_group": tool_group,
             "context_pin": True,
@@ -6440,7 +6484,7 @@ def action_chat():
     # Stop request), force one final answer. Meta/capability answers are
     # exempt: their tags are illustrative examples, not pending requests.
     if (not meta_question and time.monotonic() < deadline
-            and re.search(r'\[(?:DRYRUN|RUN(?:ALL)?|AUDIT|PROMQLRANGE|PROMQL|PATH|SEARCH):', response or '')):
+            and re.search(r'\[(?:DRYRUN|RUN(?:ALL)?|AUDIT|PROMQLRANGE|PROMQL|PATH|SEARCH|P2P|IPAM):', response or '')):
         # Rebuild the system message WITHOUT the tool catalog for this last
         # call; an instruction alone does not reliably stop tag emission.
         system_message['content'] = system_prompt_core
@@ -6462,7 +6506,8 @@ def action_chat():
             "content": (
                 "Stop using tools. Give your final answer now from the retained "
                 "results above; do not emit any data-tool lines "
-                "([RUN:]/[RUNALL:]/[AUDIT:]/[PROMQL:]/[PROMQLRANGE:]/[PATH:]/[SEARCH:]/[DRYRUN:]). "
+                "([RUN:]/[RUNALL:]/[AUDIT:]/[PROMQL:]/[PROMQLRANGE:]/[PATH:]/[SEARCH:]/"
+                "[P2P:]/[IPAM:]/[DRYRUN:]). "
                 "You MAY include [FIX: ...], [NEXT: ...] and [CONSOLE: ...] suggestions."
                 + skipped_note
             ),
