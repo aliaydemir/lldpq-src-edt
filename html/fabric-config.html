@@ -2629,7 +2629,7 @@
             // Show confirmation modal
             showConfirm(
                 'Git Reset',
-                `Are you sure you want to reset <strong>${host}.yaml</strong> to the last commit?<br><br>All uncommitted changes will be lost!`,
+                `Are you sure you want to reset <strong>${escapeHtml(host)}.yaml</strong> to the last commit?<br><br>This only reverts this device's host_vars file. Uncommitted changes to shared group_vars files (VLAN / VRF / port &amp; BGP profile definitions) are NOT affected.`,
                 async () => {
                     showLoading(true, `Resetting ${host}.yaml...`);
                     setStatus('Resetting...');
@@ -2640,7 +2640,7 @@
                         const data = await result.json();
                         
                         if (data.success) {
-                            showOutputModal('Success', `<div style="color: #76b900; font-size: 16px;">✓ ${host}.yaml has been reset to last commit</div>`, 'success', true);
+                            showOutputModal('Success', `<div style="color: #76b900; font-size: 16px;">✓ ${escapeHtml(host)}.yaml has been reset to last commit</div>`, 'success', true);
                             // Reload device config to reflect changes
                             if (selectedDevice === host) {
                                 selectDevice(host);
@@ -3261,38 +3261,45 @@
             }
         }
         
-        function confirmDeleteVlan(profileName) {
+        async function confirmDeleteVlan(profileName) {
             const modal = document.getElementById('delete-confirm-modal');
             document.getElementById('delete-vlan-name').textContent = profileName;
             modal.dataset.profileName = profileName;
-            
-            // Find all devices using this VLAN
-            const affectedDevices = [];
-            for (const [deviceName, deviceData] of Object.entries(devices)) {
-                if (deviceData.config && deviceData.config.vlan_templates) {
-                    if (deviceData.config.vlan_templates.includes(profileName)) {
-                        affectedDevices.push(deviceName);
-                    }
-                }
-            }
-            
-            // Update affected devices list
+
             const affectedList = document.getElementById('affected-devices-list');
+            affectedList.innerHTML = `<div style="color: #888;">Checking device usage...</div>`;
+            modal.classList.add('visible');
+
+            // Find all devices using this VLAN via the per-host vlan report
+            let affectedDevices = [];
+            try {
+                const response = await fetch('/fabric-api.sh?action=get-vlan-report');
+                const data = await response.json();
+                if (data.success && data.vlan_device_map) {
+                    affectedDevices = data.vlan_device_map[profileName] || [];
+                }
+            } catch (e) {
+                affectedList.innerHTML = `<div style="color: #888;">Unable to determine device usage.</div>`;
+                return;
+            }
+
+            // Ignore stale response if a different profile was opened meanwhile
+            if (modal.dataset.profileName !== profileName) return;
+
+            // Update affected devices list
             if (affectedDevices.length > 0) {
                 affectedList.innerHTML = `
                     <div style="color: #ff6b6b; font-weight: bold; margin-bottom: 8px;">
                         ⚠️ This VLAN is used by ${affectedDevices.length} device(s):
                     </div>
                     <div style="display: flex; flex-wrap: wrap; gap: 5px; justify-content: center;">
-                        ${affectedDevices.slice(0, 10).map(d => `<span class="badge badge-orange">${d}</span>`).join('')}
+                        ${affectedDevices.slice(0, 10).map(d => `<span class="badge badge-orange">${escapeHtml(d)}</span>`).join('')}
                         ${affectedDevices.length > 10 ? `<span class="badge badge-gray">+${affectedDevices.length - 10} more</span>` : ''}
                     </div>
                 `;
             } else {
                 affectedList.innerHTML = `<div style="color: #888;">No devices are currently using this VLAN.</div>`;
             }
-            
-            modal.classList.add('visible');
         }
         
         function closeDeleteModal() {
@@ -3309,9 +3316,8 @@
             const listContainer = document.getElementById('assign-vlan-list');
             
             // Get current device's assigned VLANs
-            const deviceData = devices[selectedDevice];
-            const assignedVlans = deviceData?.config?.vlan_templates || [];
-            
+            const assignedVlans = currentDeviceConfig?.vlan_templates || [];
+
             // Get all available VLANs from vlan_profiles
             const allVlans = Object.keys(vlanProfiles);
             
@@ -3327,7 +3333,7 @@
                 `;
             } else {
                 listContainer.innerHTML = `
-                    <div style="margin-bottom: 10px; color: #ccc;">Select VLANs to assign to <strong style="color: #76b900;">${selectedDevice}</strong>:</div>
+                    <div style="margin-bottom: 10px; color: #ccc;">Select VLANs to assign to <strong style="color: #76b900;">${escapeHtml(selectedDevice)}</strong>:</div>
                     <div class="vlan-checkbox-list">
                         ${availableVlans.map(v => {
                             const vp = vlanProfiles[v];
@@ -3335,10 +3341,10 @@
                             const desc = vp?.description || '';
                             return `
                                 <label class="vlan-checkbox-item">
-                                    <input type="checkbox" name="assign-vlan" value="${v}">
+                                    <input type="checkbox" name="assign-vlan" value="${escapeHtml(v)}">
                                     <span class="vlan-checkbox-label">
-                                        <span class="vlan-name">${v}</span>
-                                        <span class="vlan-info">VLAN ${vlanId}${desc ? ' - ' + desc : ''}</span>
+                                        <span class="vlan-name">${escapeHtml(v)}</span>
+                                        <span class="vlan-info">VLAN ${escapeHtml(vlanId)}${desc ? ' - ' + escapeHtml(desc) : ''}</span>
                                     </span>
                                 </label>
                             `;
@@ -4319,13 +4325,15 @@
                 if (result.success) {
                     closeCreateBondModal();
                     await selectDevice(selectedDevice);
-                    showOutputModal('Bond Created', 
-                        `<div style="color: #76b900; margin-bottom: 15px;">✓ Bond ${bondName} created successfully</div>` +
+                    showOutputModal('Bond Created',
+                        `<div style="color: #76b900; margin-bottom: 15px;">✓ Bond ${escapeHtml(bondName)} created successfully</div>` +
                         `<div style="color: #888;">Run <strong>Deploy</strong> to apply changes. Then assign interfaces as bond members.</div>`,
                         'success', true);
                 } else {
-                    showAlert('Error: ' + (result.error || 'Failed to create bond'));
+                    showAlert('Error: ' + escapeHtml(result.error || 'Failed to create bond'));
                 }
+            } catch (e) {
+                showAlert('Error: ' + escapeHtml(e.message));
             } finally {
                 saveBtn.disabled = false;
                 saveBtn.textContent = 'Create Bond';
@@ -4713,7 +4721,29 @@
                 data.previous_bond = currentInterfaceBond;
             } else if (ifType === 'bond') {
                 data.profile = document.getElementById('interface-edit-profile').value;
-                data.bond_members = document.getElementById('interface-edit-members').value.split(',').map(s => s.trim()).filter(Boolean);
+                // Dedup members and validate names + cross-bond enslavement (aligns with backend)
+                const rawMembers = document.getElementById('interface-edit-members').value.split(',').map(s => s.trim()).filter(Boolean);
+                const members = [...new Set(rawMembers)];
+                const namePattern = /^[A-Za-z0-9_.-]+$/;
+                for (const m of members) {
+                    if (!namePattern.test(m)) {
+                        showAlert('Invalid bond member name: ' + escapeHtml(m));
+                        return;
+                    }
+                }
+                if (currentDeviceConfig && currentDeviceConfig.bonds) {
+                    for (const [otherBond, otherCfg] of Object.entries(currentDeviceConfig.bonds)) {
+                        if (otherBond === ifName) continue;
+                        const otherMembers = (otherCfg && otherCfg.bond_members) || [];
+                        for (const m of members) {
+                            if (otherMembers.includes(m)) {
+                                showAlert(`Interface ${escapeHtml(m)} is already a member of bond ${escapeHtml(otherBond)}`);
+                                return;
+                            }
+                        }
+                    }
+                }
+                data.bond_members = members;
                 data.evpn_mh_id = document.getElementById('interface-edit-mh-id').value;
                 data.bond_mode = document.getElementById('interface-edit-bond-mode').checked ? 'active' : '';
                 data.lacp_bypass = document.getElementById('interface-edit-lacp-bypass').checked;
@@ -4735,15 +4765,15 @@
                 if (result.success) {
                     closeInterfaceEditModal();
                     await selectDevice(selectedDevice);
-                    showOutputModal('Interface Updated', 
-                        `<div style="color: #76b900; margin-bottom: 15px;">✓ ${ifType === 'bond' ? 'Bond' : 'Interface'} ${ifName} updated successfully</div>` +
+                    showOutputModal('Interface Updated',
+                        `<div style="color: #76b900; margin-bottom: 15px;">✓ ${ifType === 'bond' ? 'Bond' : 'Interface'} ${escapeHtml(ifName)} updated successfully</div>` +
                         `<div style="color: #888;">Run <strong>Deploy</strong> to apply changes.</div>`,
                         'success', true);
                 } else {
-                    showAlert('Error: ' + (result.error || 'Unknown error'));
+                    showAlert('Error: ' + escapeHtml(result.error || 'Unknown error'));
                 }
             } catch (e) {
-                showAlert('Error: ' + e.message);
+                showAlert('Error: ' + escapeHtml(e.message));
             }
             
             saveBtn.disabled = false;
