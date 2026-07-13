@@ -1826,6 +1826,7 @@
                     const profileName = data.profile_name;
                     
                     let assignedCount = 0;
+                    const failedDevices = [];
                     if (selectedDevices.length > 0) {
                         for (const device of selectedDevices) {
                             try {
@@ -1836,7 +1837,8 @@
                                 });
                                 const assignResult = await assignResp.json();
                                 if (assignResult.success) assignedCount++;
-                            } catch (e) {}
+                                else failedDevices.push(device + (assignResult.error ? ' (' + assignResult.error + ')' : ''));
+                            } catch (e) { failedDevices.push(device); }
                         }
                     }
                     
@@ -1894,11 +1896,13 @@
                     }
                     
                     closeCreateModal();
-                    if (assignedCount > 0) {
-                        alert(`VLAN created and assigned to ${assignedCount} device(s)!${leakingMsg} Run Deploy to apply changes.`);
-                    } else {
-                        alert(`VLAN created successfully!${leakingMsg} Run Deploy to apply changes.`);
-                    }
+                    let msg = assignedCount > 0
+                        ? `VLAN created and assigned to ${assignedCount} device(s)!${leakingMsg}`
+                        : `VLAN created successfully!${leakingMsg}`;
+                    if (result.warning) msg += `\nWarning: ${result.warning}`;
+                    if (failedDevices.length > 0) msg += `\nFailed to assign on: ${failedDevices.join(', ')}`;
+                    msg += ' Run Deploy to apply changes.';
+                    alert(msg);
                     await loadData();
                 } else {
                     alert('Error: ' + (result.error || 'Unknown error'));

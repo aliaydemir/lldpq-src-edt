@@ -1218,9 +1218,12 @@
                 return;
             }
             
+            // Delegated handler for identifier-carrying dashboard actions
+            document.getElementById('content-area').addEventListener('click', onDashboardClick);
+
             // Load devices
             await loadDevices();
-            
+
             // Check URL for device parameter (e.g., ?device=lsw-3na-01-28)
             const urlParams = new URLSearchParams(window.location.search);
             const deviceParam = urlParams.get('device');
@@ -1328,11 +1331,14 @@
         
         // Select device
         async function selectDevice(hostname) {
+            // Capture target locally to guard against stale async responses
+            const target = hostname;
+
             // Update selection UI
             document.querySelectorAll('.device-item').forEach(item => {
                 item.classList.toggle('selected', item.dataset.hostname === hostname);
             });
-            
+
             selectedDevice = hostname;
             
             // Show refresh button when device is selected

@@ -1768,7 +1768,7 @@ html += `
                 
                 entry.innerHTML = `
                     <div style="display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; margin-bottom: 10px;">
-                        <input type="text" class="pg-name" value="${pgName}" style="padding: 8px; background: #2d2d2d; border: 1px solid #404040; border-radius: 4px; color: #fff;">
+                        <input type="text" class="pg-name" value="${escapeHtml(pgName)}" style="padding: 8px; background: #2d2d2d; border: 1px solid #404040; border-radius: 4px; color: #fff;">
                         <select class="pg-type" style="padding: 8px; background: #2d2d2d; border: 1px solid #404040; border-radius: 4px; color: #fff;">
                             <option value="external" ${pg.peer_type === 'external' ? 'selected' : ''}>External</option>
                             <option value="internal" ${pg.peer_type === 'internal' ? 'selected' : ''}>Internal</option>
@@ -1785,8 +1785,8 @@ html += `
                             Enable EVPN
                         </label>
                     </div>
-                    <input type="text" class="pg-description" value="${pg.description || ''}" placeholder="Description (optional)" style="width: 100%; padding: 8px; background: #2d2d2d; border: 1px solid #404040; border-radius: 4px; color: #fff; margin-bottom: 10px;">
-                    <textarea class="pg-peers" placeholder="Peers (one per line)" style="width: 100%; padding: 8px; background: #2d2d2d; border: 1px solid #404040; border-radius: 4px; color: #fff; min-height: 60px; font-family: monospace;">${peersText}</textarea>
+                    <input type="text" class="pg-description" value="${escapeHtml(pg.description || '')}" placeholder="Description (optional)" style="width: 100%; padding: 8px; background: #2d2d2d; border: 1px solid #404040; border-radius: 4px; color: #fff; margin-bottom: 10px;">
+                    <textarea class="pg-peers" placeholder="Peers (one per line)" style="width: 100%; padding: 8px; background: #2d2d2d; border: 1px solid #404040; border-radius: 4px; color: #fff; min-height: 60px; font-family: monospace;">${escapeHtml(peersText)}</textarea>
                 `;
                 container.appendChild(entry);
             }
