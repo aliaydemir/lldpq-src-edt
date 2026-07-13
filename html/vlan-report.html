@@ -1742,7 +1742,7 @@
                                     const assignResp = await fetch('/fabric-api.sh?action=assign-vlans', {
                                         method: 'POST',
                                         headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ device: device, vlans: createdVlans })
+                                        body: JSON.stringify({ device: device, vlans: [profileName] })
                                     });
                                     const assignResult = await assignResp.json();
                                     if (assignResult.success) assignedCount++;

@@ -2526,16 +2526,16 @@
                     
                     filesWithIssues.forEach(file => {
                         html += `<div style="background: #2a2a2a; border-radius: 6px; padding: 12px; margin-bottom: 10px;">`;
-                        html += `<div style="color: #4fc3f7; margin-bottom: 8px; font-weight: bold;">${file.filename}</div>`;
-                        
+                        html += `<div style="color: #4fc3f7; margin-bottom: 8px; font-weight: bold;">${escapeHtml(file.filename)}</div>`;
+
                         file.issues.forEach(issue => {
                             const sevColor = issue.severity === 'ERROR' ? '#f44336' : issue.severity === 'WARNING' ? '#ff9800' : '#4fc3f7';
                             html += `<div style="margin-left: 10px; margin-bottom: 6px; border-left: 2px solid ${sevColor}; padding-left: 10px;">`;
-                            html += `<span style="color: ${sevColor}; font-weight: bold;">[${issue.severity}]</span> `;
-                            html += `<span style="color: #888;">${issue.path}:</span> `;
-                            html += `<span style="color: #ddd;">${issue.message}</span>`;
+                            html += `<span style="color: ${sevColor}; font-weight: bold;">[${escapeHtml(issue.severity)}]</span> `;
+                            html += `<span style="color: #888;">${escapeHtml(issue.path)}:</span> `;
+                            html += `<span style="color: #ddd;">${escapeHtml(issue.message)}</span>`;
                             if (issue.suggestion) {
-                                html += `<div style="color: #999; margin-top: 3px; font-style: italic;">→ ${issue.suggestion}</div>`;
+                                html += `<div style="color: #999; margin-top: 3px; font-style: italic;">→ ${escapeHtml(issue.suggestion)}</div>`;
                             }
                             html += '</div>';
                         });
@@ -2551,16 +2551,16 @@
                     result.topology.issues.forEach(issue => {
                         const sevColor = issue.severity === 'ERROR' ? '#f44336' : issue.severity === 'WARNING' ? '#ff9800' : '#4fc3f7';
                         html += `<div style="background: #2a2a2a; border-radius: 6px; padding: 12px; margin-bottom: 10px; border-left: 3px solid ${sevColor};">`;
-                        html += `<div style="margin-bottom: 5px;"><span style="color: ${sevColor}; font-weight: bold;">[${issue.severity}]</span> <span style="color: #888;">${issue.category}</span></div>`;
-                        html += `<div style="color: #ddd; margin-bottom: 5px;">${issue.message}</div>`;
+                        html += `<div style="margin-bottom: 5px;"><span style="color: ${sevColor}; font-weight: bold;">[${escapeHtml(issue.severity)}]</span> <span style="color: #888;">${escapeHtml(issue.category)}</span></div>`;
+                        html += `<div style="color: #ddd; margin-bottom: 5px;">${escapeHtml(issue.message)}</div>`;
                         if (issue.devices && issue.devices.length > 0) {
-                            html += `<div style="color: #4fc3f7; font-size: 12px;">Devices: ${issue.devices.join(', ')}</div>`;
+                            html += `<div style="color: #4fc3f7; font-size: 12px;">Devices: ${escapeHtml(issue.devices.join(', '))}</div>`;
                         }
                         if (issue.suggestion) {
-                            html += `<div style="color: #999; margin-top: 5px; font-style: italic;">→ ${issue.suggestion}</div>`;
+                            html += `<div style="color: #999; margin-top: 5px; font-style: italic;">→ ${escapeHtml(issue.suggestion)}</div>`;
                         }
                         if (issue.details && issue.details.length > 0) {
-                            html += `<div style="color: #888; margin-top: 5px; font-size: 12px;">${issue.details.join('<br>')}</div>`;
+                            html += `<div style="color: #888; margin-top: 5px; font-size: 12px;">${issue.details.map(escapeHtml).join('<br>')}</div>`;
                         }
                         html += '</div>';
                     });
@@ -2988,8 +2988,8 @@
                             return `
                                 <div class="vlan-edit-item">
                                     <div class="vlan-edit-info">
-                                        <span class="vlan-name">${v}</span>
-                                        <span class="vlan-info">VLAN ${vlanId}${desc ? ' - ' + desc : ''}</span>
+                                        <span class="vlan-name">${escapeHtml(v)}</span>
+                                        <span class="vlan-info">VLAN ${escapeHtml(vlanId)}${desc ? ' - ' + escapeHtml(desc) : ''}</span>
                                     </div>
                                     <div class="vlan-edit-actions">
                                         <button class="btn-icon btn-icon-edit" onclick="editVlan('${v}')" title="Edit">
@@ -4008,15 +4008,15 @@
                     <div class="vlan-checkbox-list">
                         ${availableVrfs.map(v => `
                             <label class="vlan-checkbox-item">
-                                <input type="checkbox" value="${v.name}" data-l3vni="${v.l3vni || ''}" data-vxlan-int="${v.vxlan_int || ''}">
-                                <span class="vlan-name">${v.name}</span>
-                                <span class="vlan-info">${v.l3vni ? 'L3VNI: ' + v.l3vni : ''}</span>
+                                <input type="checkbox" value="${escapeHtml(v.name)}" data-l3vni="${escapeHtml(v.l3vni || '')}" data-vxlan-int="${escapeHtml(v.vxlan_int || '')}">
+                                <span class="vlan-name">${escapeHtml(v.name)}</span>
+                                <span class="vlan-info">${v.l3vni ? 'L3VNI: ' + escapeHtml(v.l3vni) : ''}</span>
                             </label>
                         `).join('')}
                     </div>
                 `;
             } catch (e) {
-                listDiv.innerHTML = `<div style="color: #ff6b6b;">Error: ${e.message}</div>`;
+                listDiv.innerHTML = `<div style="color: #ff6b6b;">Error: ${escapeHtml(e.message)}</div>`;
             }
         }
         
@@ -4160,8 +4160,8 @@
                     ${deviceVrfs.map(v => `
                         <div class="vlan-edit-item">
                             <div class="vlan-edit-info">
-                                <span class="vlan-name">${v.name}</span>
-                                <span class="vlan-info">L3VNI: ${v.l3vni}</span>
+                                <span class="vlan-name">${escapeHtml(v.name)}</span>
+                                <span class="vlan-info">L3VNI: ${escapeHtml(v.l3vni)}</span>
                             </div>
                             <div class="vlan-edit-actions">
                                 <button class="btn-icon btn-icon-delete" onclick="closeEditVrfModal(); confirmUnassignVrf('${v.name}')" title="Remove from device">
@@ -4205,7 +4205,7 @@
                     if (vrfInfo && vrfInfo.devices && vrfInfo.devices.length > 0) {
                         devicesHtml = `<div style="color: #888; font-size: 13px; margin-bottom: 8px;">Affected devices (${vrfInfo.devices.length}):</div>`;
                         devicesHtml += `<div style="background: #1a1a1a; padding: 10px; border-radius: 4px; font-size: 12px; color: #4fc3f7;">`;
-                        devicesHtml += vrfInfo.devices.join(', ');
+                        devicesHtml += escapeHtml(vrfInfo.devices.join(', '));
                         devicesHtml += `</div>`;
                     } else {
                         devicesHtml = '<div style="color: #888; font-size: 13px;">No devices are currently using this VRF.</div>';
