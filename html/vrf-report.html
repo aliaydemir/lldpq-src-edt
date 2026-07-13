@@ -1849,8 +1849,12 @@ html += `
         }
         
         async function confirmDeleteBgpProfile() {
-            if (!deletingBgpProfile) return;
-            
+            if (!deletingBgpProfile || bgpDeleting) return;
+
+            const btn = document.querySelector('#delete-bgp-modal .modal-footer .btn:last-child');
+            bgpDeleting = true;
+            if (btn) btn.disabled = true;
+
             try {
                 const response = await fetch('/fabric-api.sh?action=delete-bgp-profile', {
                     method: 'POST',
@@ -1858,16 +1862,26 @@ html += `
                     body: JSON.stringify({ profile_name: deletingBgpProfile })
                 });
                 const result = await response.json();
-                
+
                 if (result.success) {
                     closeDeleteBgpProfileModal();
                     loadData();
                     alert('BGP profile deleted successfully!');
                 } else {
-                    alert('Error: ' + (result.error || 'Unknown error'));
+                    let msg = 'Error: ' + (result.error || 'Unknown error');
+                    if (result.in_use && result.in_use.length) {
+                        msg += '\n\nStill referenced by:';
+                        result.in_use.forEach(ref => {
+                            msg += `\n- ${ref.device} (vrf: ${ref.vrf})`;
+                        });
+                    }
+                    alert(msg);
                 }
             } catch (e) {
                 alert('Error: ' + e.message);
+            } finally {
+                bgpDeleting = false;
+                if (btn) btn.disabled = false;
             }
         }
         
@@ -1908,19 +1922,19 @@ html += `
                     let peersHtml = '';
                     if (pg.peers) {
                         if (Array.isArray(pg.peers)) {
-                            peersHtml = pg.peers.map(p => `<span class="badge badge-gray" style="margin: 2px;">${p}</span>`).join('');
+                            peersHtml = pg.peers.map(p => `<span class="badge badge-gray" style="margin: 2px;">${escapeHtml(p)}</span>`).join('');
                         } else {
-                            peersHtml = Object.keys(pg.peers).map(p => `<span class="badge badge-blue" style="margin: 2px;">${p}</span>`).join('');
+                            peersHtml = Object.keys(pg.peers).map(p => `<span class="badge badge-blue" style="margin: 2px;">${escapeHtml(p)}</span>`).join('');
                         }
                     }
-                    
+
                     html += `
                         <div style="background: #1e1e1e; padding: 15px; border-radius: 4px; margin-bottom: 10px;">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                                <strong style="color: #76b900;">${pgName}</strong>
-                                <span class="badge ${pg.peer_type === 'external' ? 'badge-orange' : 'badge-purple'}">${pg.peer_type || 'external'}</span>
+                                <strong style="color: #76b900;">${escapeHtml(pgName)}</strong>
+                                <span class="badge ${pg.peer_type === 'external' ? 'badge-orange' : 'badge-purple'}">${escapeHtml(pg.peer_type || 'external')}</span>
                             </div>
-                            ${pg.description ? `<div style="color: #888; font-size: 12px; margin-bottom: 10px;">${pg.description}</div>` : ''}
+                            ${pg.description ? `<div style="color: #888; font-size: 12px; margin-bottom: 10px;">${escapeHtml(pg.description)}</div>` : ''}
                             <div style="font-size: 12px; margin-bottom: 8px;">
                                 BFD: <strong>${pg.enable_bfd ? 'Yes' : 'No'}</strong> | 
                                 EVPN: <strong>${pg.enable_evpn ? 'Yes' : 'No'}</strong>

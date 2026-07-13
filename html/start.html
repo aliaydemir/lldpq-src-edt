@@ -1652,8 +1652,12 @@
                 summaryData.warning = number(payload.warning) || 0;
                 summaryData.critical = number(payload.critical) || 0;
                 summaryData.unknown = number(payload.unknown) || 0;
-                summaryData.coveragePartial = summaryData.coveragePartial ||
-                    summaryData.unknown > 0;
+                // UNKNOWN ports (admin-down / link-down / still awaiting their
+                // first full sample) are an expected steady state, not a
+                // coverage gap. BER partiality is driven only by host-coverage
+                // completeness (payload.coverage_partial / coverage_current,
+                // already applied above), so per-port UNKNOWN counts must not
+                // mark the domain partial.
                 if (summaryData.totalPorts === null) {
                     summaryData.unavailable = true;
                     summaryData.coveragePartial = true;
@@ -2484,12 +2488,22 @@
                 'Hardware Critical', 'Log Critical', 'Active IP Duplicates',
                 'Confirmed MAC Conflicts'
             ]);
+            // Name which domains drive the aggregate partial/unavailable rows so
+            // the operator does not have to guess which analysis is affected.
+            const breakdownDomains = {
+                'Partial Analyses': partialDomainNames,
+                'Unavailable Analyses': unavailableDomainNames
+            };
             let tooltipHtml = '<div class="tooltip-title">Open Issues Breakdown</div>';
             for (const [source, count] of Object.entries(criticalBreakdown)) {
                 const severityClass = count > 0
                     ? (CRITICAL_SOURCES.has(source) ? 'has-issues' : 'is-warning')
                     : '';
-                tooltipHtml += `<div class="tooltip-row ${severityClass}"><span class="source">${source}</span><span class="count">${count}</span></div>`;
+                const domains = breakdownDomains[source];
+                const domainSuffix = (count > 0 && domains && domains.length)
+                    ? ` <span class="domains">(${domains.join(', ')})</span>`
+                    : '';
+                tooltipHtml += `<div class="tooltip-row ${severityClass}"><span class="source">${source}${domainSuffix}</span><span class="count">${count}</span></div>`;
             }
             document.getElementById('critical-tooltip').innerHTML = tooltipHtml;
                 

@@ -2366,7 +2366,7 @@
             for (const [name, profile] of profiles) {
                 const mode = profile.sw_port_mode || 'access';
                 const modeColor = mode === 'trunk' ? '#4fc3f7' : '#76b900';
-                const modeLabel = mode.toUpperCase();
+                const modeLabel = escapeHtml(mode.toUpperCase());
                 
                 let vlanInfo = '-';
                 if (mode === 'access' && profile.access_vlan) {
