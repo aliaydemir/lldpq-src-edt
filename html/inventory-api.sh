@@ -80,6 +80,7 @@ export ACTION KIND QS_VERSION QS_MODE QS_SCOPE QS_MGMT POST_DATA_FILE CONTENT_TY
 python3 << 'PYTHON_END'
 import base64
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -452,6 +453,7 @@ def publish_active(kind, wrapper):
     target = os.path.join(MR_DIR, 'active-%s.json' % kind)
     # Prefer a direct atomic write (monitor-results is normally www-data
     # writable); fall back to setup_safety save-text as the lldpq user.
+    tmp = None
     try:
         os.makedirs(MR_DIR, exist_ok=True)
         directory = MR_DIR
@@ -462,8 +464,15 @@ def publish_active(kind, wrapper):
             fh.flush()
             os.fsync(fh.fileno())
         os.replace(tmp, target)
+        tmp = None
         return True, None
     except (OSError, PermissionError):
+        # Never leak the temp file into the web-served directory.
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
         result, err = run_setup_safety(
             ['save-text', '--request-json', '--target', target,
              '--managed-root', WEB_ROOT,
@@ -599,6 +608,37 @@ def action_activate():
        publish_error=perr, summary=wrapper.get('summary', {}))
 
 
+def action_delete():
+    body = read_body_bytes()
+    payload = parse_json_body(body) if body else {}
+    if not isinstance(payload, dict):
+        payload = {}
+    kind = payload.get('kind') or KIND
+    version = payload.get('version') or QS_VERSION
+    if kind not in ('p2p', 'ipam'):
+        fail("kind must be 'p2p' or 'ipam'")
+    if not version or not _VERSION_RE.match(str(version)):
+        fail('invalid version id')
+    directory = kind_dir(kind)
+    active = (load_json(active_pointer_path(kind)) or {}).get('active', '')
+    if version == active:
+        fail('cannot delete the active version; activate another version first')
+    path = os.path.join(directory, version)
+    if not os.path.exists(path):
+        fail('version not found')
+    try:
+        os.unlink(path)
+    except OSError as exc:
+        fail('delete failed: %s' % exc)
+    ok(kind=kind, version=version, versions=list_versions(kind))
+
+
+def action_bootstrap_status():
+    # Feature probe for the optional Bootstrap Advisor. No advisor backend
+    # ships yet; a future backend flips available to reveal the panel.
+    ok(available=False)
+
+
 def action_validate():
     kind = KIND or 'p2p'
     if kind not in ('p2p', 'ipam'):
@@ -617,6 +657,7 @@ def action_validate():
 def validate_ipam(data):
     issues = []
     seen = {}
+    ip_owner = {}
     for record in data.get('fabric', []):
         host = str(record.get('hostname') or record.get('device') or '').strip()
         if not host:
@@ -627,6 +668,23 @@ def validate_ipam(data):
                            'message': 'duplicate fabric record for %s' % host})
         else:
             seen[key] = True
+        mgmt_ip = str(record.get('mgmt_ip') or '').strip()
+        if not mgmt_ip:
+            issues.append({'severity': 'warning', 'kind': 'missing-mgmt-ip',
+                           'message': '%s has no mgmt_ip (record is skipped by the devices.yaml generator)' % host})
+            continue
+        try:
+            ipaddress.ip_address(mgmt_ip)
+        except ValueError:
+            issues.append({'severity': 'error', 'kind': 'invalid-mgmt-ip',
+                           'message': '%s has an invalid mgmt_ip: %s' % (host, mgmt_ip)})
+            continue
+        owner = ip_owner.get(mgmt_ip)
+        if owner and owner.casefold() != key:
+            issues.append({'severity': 'error', 'kind': 'duplicate-mgmt-ip',
+                           'message': 'mgmt_ip %s is assigned to both %s and %s' % (mgmt_ip, owner, host)})
+        else:
+            ip_owner[mgmt_ip] = host
     counts = {
         'subnets': len(data.get('subnets', [])),
         'hosts': len(data.get('hosts', [])),
@@ -688,7 +746,8 @@ def action_generate_topology():
     stats = {'edges': content.count(' -- '), 'source_version': version,
              'scope': scope, 'include_mgmt': include_mgmt}
     if mode == 'preview':
-        ok(preview=content, token=token, target='topology.dot', stats=stats)
+        ok(preview=content, token=token, target='topology.dot', stats=stats,
+           source_version=version)
     if mode != 'apply':
         fail('mode must be preview or apply')
     payload = _apply_request()
@@ -768,6 +827,8 @@ _ACTIONS = {
     'list': action_list,
     'activate': action_activate,
     'active-design': action_active_design,
+    'delete': action_delete,
+    'bootstrap-status': action_bootstrap_status,
     'validate': action_validate,
     'generate-topology': action_generate_topology,
     'generate-devices': action_generate_devices,

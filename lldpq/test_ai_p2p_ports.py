@@ -177,6 +177,92 @@ class TopologyScopeTests(unittest.TestCase):
             ai_generate.p2p_to_topology_dot(self.conns, scope="bogus")
 
 
+class SwitchAuthorityTests(unittest.TestCase):
+    """sw-to-sw must not be fooled by storage appliances with swp-named NICs."""
+
+    def setUp(self):
+        self.conns = [
+            _conn("oob-leaf-01", "49", "oob-spine-01", "3/1/1", ctype="oob"),
+            # VAST storage box whose NICs are named swp1/swp2 in the workbook.
+            _conn("vast-cbox-01", "swp1", "tan-leaf-09", "1/1/1", ctype="vast"),
+        ]
+        self.ipam = {"format": "ipam", "subnets": [], "hosts": [], "fabric": [
+            {"hostname": "oob-leaf-01", "device": "OOB-01", "role": "oob_leaf",
+             "mgmt_ip": "10.0.0.1"},
+            {"hostname": "oob-spine-01", "device": "OOB SP-01", "role": "oob_spine",
+             "mgmt_ip": "10.0.0.2"},
+            {"hostname": "tan-leaf-09", "device": "SLEAF-01", "role": "tan_leaf",
+             "mgmt_ip": "10.0.0.3"},
+        ]}
+
+    def test_ipam_switch_list_includes_both_spellings(self):
+        names = ai_generate.switch_names_from_ipam(self.ipam)
+        self.assertIn("oob-leaf-01", names)
+        self.assertIn("oob-01", names)      # design label spelling
+        self.assertIn("oob sp-01", names)
+
+    def test_sw_to_sw_with_ipam_authority_drops_storage_appliances(self):
+        names = ai_generate.switch_names_from_ipam(self.ipam)
+        dot = ai_generate.p2p_to_topology_dot(
+            self.conns, scope="sw-to-sw", switch_names=names)
+        self.assertIn('"oob-leaf-01"', dot)
+        self.assertNotIn("vast-cbox-01", dot)
+
+    def test_fallback_name_filter_drops_storage_appliances(self):
+        dot = ai_generate.p2p_to_topology_dot(self.conns, scope="sw-to-sw")
+        self.assertIn('"oob-leaf-01"', dot)
+        self.assertNotIn("vast-cbox-01", dot)
+
+
+class TopologyConfigTests(unittest.TestCase):
+    def setUp(self):
+        self.ipam = {"format": "ipam", "subnets": [], "hosts": [], "fabric": [
+            {"hostname": "tan-spine-%02d" % i, "role": "tan_spine",
+             "mgmt_ip": "10.0.1.%d" % i} for i in (1, 2)
+        ] + [
+            {"hostname": "oob-tor-1-%d-01" % i, "role": "oob_tor",
+             "mgmt_ip": "10.0.2.%d" % i} for i in (1, 2)
+        ] + [
+            {"hostname": "tan-border-01", "role": "tan_border",
+             "mgmt_ip": "10.0.3.1"},
+        ]}
+        self.p2p = [
+            _conn("gb300-1-%d-dgx-c01" % i, "BMC", "oob-tor-1-1-01", "%d" % i,
+                  ctype="oob")
+            for i in (1, 2, 3, 4)
+        ] + [
+            # Whitespace design names can never appear in topology.dot.
+            _conn("Ctrl Node-0%d" % i, "M1", "oob-tor-1-2-01", "1%d" % i,
+                  ctype="oob")
+            for i in (1, 2, 3, 4)
+        ]
+
+    def test_patterns_are_anchored_hostname_families(self):
+        cfg = ai_generate.ipam_to_topology_config_yaml(self.ipam)
+        self.assertIn('pattern: "^tan-spine"', cfg)
+        self.assertIn('pattern: "^oob-tor"', cfg)
+        self.assertNotIn("\\-", cfg)  # invalid escape inside YAML double quotes
+
+    def test_oob_plane_sorts_above_inband_and_border_gets_router(self):
+        cfg = ai_generate.ipam_to_topology_config_yaml(self.ipam)
+        self.assertLess(cfg.index("^oob-tor"), cfg.index("^tan-border"))
+        self.assertLess(cfg.index("^tan-border"), cfg.index("^tan-spine"))
+        border_block = cfg[cfg.index("^tan-border"):cfg.index("^tan-spine")]
+        self.assertIn('icon: "router"', border_block)
+
+    def test_host_family_becomes_stagger_rule_and_spaced_names_skipped(self):
+        cfg = ai_generate.ipam_to_topology_config_yaml(self.ipam, p2p=self.p2p)
+        self.assertIn("special_rules:", cfg)
+        self.assertIn('pattern: "gb300"', cfg)
+        self.assertIn("gb300-\\\\d+-(\\\\d+)", cfg.replace("\n", " "))
+        self.assertNotIn("Ctrl", cfg)
+
+    def test_empty_design_still_emits_valid_skeleton(self):
+        cfg = ai_generate.ipam_to_topology_config_yaml({"format": "ipam", "fabric": []})
+        self.assertIn('pattern: "spine"', cfg)
+        self.assertIn("default:", cfg)
+
+
 class DevicesYamlRoleTests(unittest.TestCase):
     def _yaml(self, records):
         ipam = {"format": "ipam", "fabric": records, "subnets": [], "hosts": []}
