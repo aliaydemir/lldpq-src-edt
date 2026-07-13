@@ -57,6 +57,8 @@ ACTION=$(echo "$QUERY_STRING" | grep -oP 'action=\K[^&]*' | head -1)
 KIND=$(echo "$QUERY_STRING"   | grep -oP 'kind=\K[^&]*'   | head -1)
 QS_VERSION=$(echo "$QUERY_STRING" | grep -oP 'version=\K[^&]*' | head -1)
 QS_MODE=$(echo "$QUERY_STRING"    | grep -oP 'mode=\K[^&]*'    | head -1)
+QS_SCOPE=$(echo "$QUERY_STRING"   | grep -oP 'scope=\K[^&]*'   | head -1)
+QS_MGMT=$(echo "$QUERY_STRING"    | grep -oP 'mgmt=\K[^&]*'    | head -1)
 
 # Read the raw request body binary-safe (uploads are xlsx). Large/binary bodies
 # overflow the kernel per-string env limit on exec, so always spool to a file.
@@ -73,7 +75,7 @@ fi
 export LLDPQ_DIR LLDPQ_USER WEB_ROOT AI_STATE_DIR INVENTORY_KEEP
 export DIRECT_WRITE_STATE_DIR SETUP_SAFETY AI_GENERATE PARSE_DEVICES TOPOLOGY_EDGES
 export TOPOLOGY_FILE TOPOLOGY_CONFIG_FILE DEVICES_FILE INVENTORY_LOCK
-export ACTION KIND QS_VERSION QS_MODE POST_DATA_FILE CONTENT_TYPE
+export ACTION KIND QS_VERSION QS_MODE QS_SCOPE QS_MGMT POST_DATA_FILE CONTENT_TYPE
 
 python3 << 'PYTHON_END'
 import base64
@@ -104,6 +106,8 @@ ACTION = os.environ.get('ACTION', '')
 KIND = os.environ.get('KIND', '')
 QS_VERSION = os.environ.get('QS_VERSION', '')
 QS_MODE = os.environ.get('QS_MODE', '')
+QS_SCOPE = os.environ.get('QS_SCOPE', '')
+QS_MGMT = os.environ.get('QS_MGMT', '')
 POST_DATA_FILE = os.environ.get('POST_DATA_FILE', '')
 
 try:
@@ -669,12 +673,20 @@ def _reverse_display_aliases():
 
 def action_generate_topology():
     mode = QS_MODE or 'preview'
+    # Default mirrors the UI default: the expected topology LLDPq validates is
+    # the Ethernet switch fabric; hosts/IB come in via an explicit scope.
+    scope = QS_SCOPE or 'sw-to-sw'
+    if scope not in ai_generate.TOPOLOGY_SCOPES:
+        fail("scope must be one of: %s" % ", ".join(ai_generate.TOPOLOGY_SCOPES))
+    include_mgmt = QS_MGMT in ('1', 'true', 'yes', 'on')
     data, version = _load_active('p2p')
     device_aliases, port_aliases = _reverse_display_aliases()
     content = ai_generate.p2p_to_topology_dot(
-        data, device_aliases=device_aliases, port_aliases=port_aliases)
+        data, device_aliases=device_aliases, port_aliases=port_aliases,
+        scope=scope, include_mgmt=include_mgmt)
     token = content_token(content)
-    stats = {'edges': content.count(' -- '), 'source_version': version}
+    stats = {'edges': content.count(' -- '), 'source_version': version,
+             'scope': scope, 'include_mgmt': include_mgmt}
     if mode == 'preview':
         ok(preview=content, token=token, target='topology.dot', stats=stats)
     if mode != 'apply':

@@ -161,8 +161,17 @@
         <!-- 3. topology.dot -->
         <div class="inv-panel">
             <h2>3. Generate <span class="p-file">topology.dot</span></h2>
-            <p class="p-desc">Render the resolved P2P links as the expected topology. Preview first, then <strong>Set as expected topology</strong> writes <code>topology.dot</code> (the previous file is backed up to <code>.bak</code>).</p>
+            <p class="p-desc">Render the resolved P2P links as the expected topology. Pick the link scope (p2p-parser semantics), preview, then <strong>Set as expected topology</strong> writes <code>topology.dot</code> (the previous file is backed up to <code>.bak</code>).</p>
             <div class="p-toolbar">
+                <select class="kind-sel" id="topo-scope" onchange="onTopoScopeChange()" title="Which planes of the design go into topology.dot">
+                    <option value="sw-to-sw" selected>Switch-to-switch</option>
+                    <option value="full">Full fabric</option>
+                    <option value="eth-only">ETH only</option>
+                    <option value="ib-only">IB only</option>
+                </select>
+                <label style="display:flex;align-items:center;gap:6px;color:#bbb;font-size:12.5px;cursor:pointer" title="Also include the OOB / MGMT / CTRL plane in a scoped topology">
+                    <input type="checkbox" id="topo-mgmt"> add mgmt
+                </label>
                 <button class="btn secondary" onclick="preview('topology')"><svg viewBox="0 0 24 24"><path d="M12,9A3,3 0 0,0 9,12A3,3 0 0,0 12,15A3,3 0 0,0 15,12A3,3 0 0,0 12,9M12,17A5,5 0 0,1 7,12A5,5 0 0,1 12,7A5,5 0 0,1 17,12A5,5 0 0,1 12,17M12,4.5C7,4.5 2.73,7.61 1,12C2.73,16.39 7,19.5 12,19.5C17,19.5 21.27,16.39 23,12C21.27,7.61 17,4.5 12,4.5Z"/></svg>Preview</button>
                 <span class="status info" id="stat-topology" style="margin:0"></span>
             </div>
@@ -407,14 +416,37 @@ function renderDevicesDiff(diff, skipped) {
     return html;
 }
 
+function topologyScopeParams() {
+    const scope = document.getElementById('topo-scope');
+    const mgmt = document.getElementById('topo-mgmt');
+    return {
+        scope: scope ? scope.value : 'sw-to-sw',
+        mgmt: (mgmt && mgmt.checked) ? '1' : '0',
+    };
+}
+function onTopoScopeChange() {
+    // 'full' already contains the management plane; the modifier only makes
+    // sense for a narrowed scope.
+    const scope = document.getElementById('topo-scope').value;
+    const mgmt = document.getElementById('topo-mgmt');
+    mgmt.disabled = (scope === 'full');
+    if (scope === 'full') mgmt.checked = false;
+    // A different scope invalidates the previewed content/token.
+    TOKENS['topology'] = null;
+    document.getElementById(ART['topology'].pw).classList.remove('show');
+    setStatus(ART['topology'].st, '', 'info');
+}
+
 async function preview(artifact) {
     const ui = ART[artifact];
     setStatus(ui.st, 'Generating preview…', 'info');
     document.getElementById(ui.stat).textContent = '';
     document.getElementById(ui.pw).classList.remove('show');
+    const params = { mode: 'preview' };
+    if (artifact === 'topology') Object.assign(params, topologyScopeParams());
     let data;
     try {
-        data = await apiGet('generate-' + artifact, { mode: 'preview' });
+        data = await apiGet('generate-' + artifact, params);
     } catch (e) { setStatus(ui.st, 'Preview failed: ' + e.message, 'err'); return; }
     if (!data.success) { setStatus(ui.st, data.error || 'Preview failed', 'err'); TOKENS[artifact] = null; return; }
     TOKENS[artifact] = data.token || null;
@@ -424,6 +456,9 @@ async function preview(artifact) {
     }
     let stat = '';
     if (data.stats && typeof data.stats.edges === 'number') stat = data.stats.edges + ' edge(s)';
+    if (data.stats && data.stats.scope) {
+        stat += (stat ? ' · ' : '') + data.stats.scope + (data.stats.include_mgmt ? ' +mgmt' : '');
+    }
     if (data.source_version) stat += (stat ? ' · ' : '') + 'from ' + data.source_version;
     document.getElementById(ui.stat).textContent = stat;
     document.getElementById(ui.pw).classList.add('show');
@@ -439,9 +474,11 @@ async function applyArtifact(artifact) {
         : 'Write ' + ui.file + '?\n\nThe current file is backed up to .bak.';
     if (!window.confirm(msg)) return;
     setStatus(ui.st, 'Applying…', 'info');
+    const params = { mode: 'apply' };
+    if (artifact === 'topology') Object.assign(params, topologyScopeParams());
     let data;
     try {
-        data = await apiPost('generate-' + artifact, { confirm: token }, { mode: 'apply' });
+        data = await apiPost('generate-' + artifact, { confirm: token }, params);
     } catch (e) { setStatus(ui.st, 'Apply failed: ' + e.message, 'err'); return; }
     if (data.success) {
         setStatus(ui.st, data.message || (ui.file + ' saved.'), 'ok');

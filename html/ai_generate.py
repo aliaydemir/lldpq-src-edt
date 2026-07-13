@@ -97,10 +97,37 @@ _CTYPE_LABELS = (
 )
 # Connection planes that are not LLDP-validated network links.
 _EXCLUDED_CTYPES = {"power"}
+# The management plane a scoped topology can opt back in (include_mgmt).
+_MGMT_CTYPES = {"oob", "mgmt", "ctrl"}
+# OS spelling of a switch front-panel port — the sw-to-sw scope keeps a link
+# only when BOTH normalized endpoints look like this (host ends are HCA/BMC/
+# mgmt/enP* names and never normalize to swpN[sM]).
+_SWITCH_PORT_RE = re.compile(r"^swp\d+(?:s\d+)?$")
+TOPOLOGY_SCOPES = ("full", "sw-to-sw", "eth-only", "ib-only")
+
+
+def _link_in_scope(ctype, ntype, a_port, b_port, scope, include_mgmt):
+    """Scope filter mirroring p2p-parser's output modes (--full/--switch-only/
+    --eth/--ib-only) plus the include-mgmt modifier. Power never passes."""
+    if ctype in _EXCLUDED_CTYPES:
+        return False
+    if scope == "full":
+        return True
+    if include_mgmt and ctype in _MGMT_CTYPES:
+        return True
+    if scope == "eth-only":
+        return ntype == "eth"
+    if scope == "ib-only":
+        return ntype == "ib"
+    if scope == "sw-to-sw":
+        return (ntype == "eth"
+                and bool(_SWITCH_PORT_RE.match(a_port))
+                and bool(_SWITCH_PORT_RE.match(b_port)))
+    return True
 
 
 def p2p_to_topology_dot(connections, graph_name="FABRIC", device_aliases=None,
-                        port_aliases=None):
+                        port_aliases=None, scope="full", include_mgmt=False):
     """Render resolved physical P2P links as a topology.dot GraphViz graph.
 
     Only resolved links are emitted (ai_p2p already drops tbd/blank/customer
@@ -114,10 +141,17 @@ def p2p_to_topology_dot(connections, graph_name="FABRIC", device_aliases=None,
     ({lower(designLabel): liveName}, from display-aliases.json reversed) —
     topology.dot must name what LLDP actually reports, and P2P workbooks often
     label devices/ports differently. Absent or empty maps are a no-op.
+
+    scope selects the emitted planes (p2p-parser semantics): 'full' = every
+    non-power link, 'sw-to-sw' = ETH links where both endpoints are switch ports,
+    'eth-only' / 'ib-only' = by network type. include_mgmt additionally keeps
+    the OOB/MGMT/CTRL plane inside a non-full scope.
     """
     name = re.sub(r'["\\\x00-\x1f]', "", str(graph_name or "FABRIC")).strip() or "FABRIC"
     device_aliases = device_aliases or {}
     port_aliases = port_aliases or {}
+    if scope not in TOPOLOGY_SCOPES:
+        raise ValueError("unknown topology scope: %r" % (scope,))
 
     def live_device(dev):
         return device_aliases.get(dev.lower(), dev)
@@ -132,14 +166,19 @@ def p2p_to_topology_dot(connections, graph_name="FABRIC", device_aliases=None,
     # whole design for context); _os_port stays as the per-port fallback.
     resolved = ai_p2p.resolve_port_map(connections)
     for link in ai_p2p.expected_links(connections):
-        ctype = str((link.get("meta") or {}).get("connection_type") or "general").lower()
-        if ctype in _EXCLUDED_CTYPES:
-            continue
+        meta = link.get("meta") or {}
+        ctype = str(meta.get("connection_type") or "general").lower()
+        ntype = str(meta.get("network_type") or "").lower()
         a_dev, b_dev = _clean(link.get("a_dev")), _clean(link.get("b_dev"))
         a_port = (ai_p2p.resolved_os_port(resolved, a_dev, link.get("a_port"))
                   or _os_port(link.get("a_port")))
         b_port = (ai_p2p.resolved_os_port(resolved, b_dev, link.get("b_port"))
                   or _os_port(link.get("b_port")))
+        # Scope is judged on the design-side OS spelling, before display-alias
+        # translation (which only renames, never changes what a port is).
+        if not _link_in_scope(ctype, ntype, a_port.lower(), b_port.lower(),
+                              scope, include_mgmt):
+            continue
         a_dev, b_dev = live_device(a_dev), live_device(b_dev)
         a_port, b_port = live_port(a_port), live_port(b_port)
         if _bad_token(a_dev) or _bad_token(a_port) or _bad_token(b_dev) or _bad_token(b_port):
@@ -296,6 +335,23 @@ _NONSWITCH_RE = re.compile(
 )
 
 
+def _switch_role(role, hostname):
+    """Role tag for devices.yaml: the design's own Role column wins verbatim.
+
+    _map_switch_role still makes the switch-vs-host decision (None filters the
+    record out), but its canonical vocabulary is only the fallback for designs
+    without a Role column. Operators key their dashboards and analysis scopes
+    to their own role names (tan_leaf, oob_tor, ...) — collapsing those to
+    generic 'leaf' would rewrite a working devices.yaml on apply.
+    """
+    canon = _map_switch_role(role, hostname)
+    if canon is None:
+        return None
+    verbatim = re.sub(r"\s+", "_", str(role or "").strip())
+    verbatim = re.sub(r"[^A-Za-z0-9_-]", "", verbatim)
+    return verbatim or canon
+
+
 def _map_switch_role(role, hostname):
     """Map an IPAM role/hostname onto the LLDPq role vocabulary, or None.
 
@@ -419,7 +475,7 @@ def ipam_to_devices_yaml(ipam, existing_yaml=None):
         if not hostname:
             continue
         mgmt_ip = str(record.get("mgmt_ip") or "").strip()
-        role = _map_switch_role(record.get("role"), hostname)
+        role = _switch_role(record.get("role"), hostname)
         if role is None:
             skipped.append(hostname)
             continue
