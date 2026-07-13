@@ -2831,6 +2831,247 @@ except Exception as e:
 PYTHON
 }
 
+# Bulk re-assignment of sw_port_profile across devices (Fabric Migration page).
+# POST JSON: {plan_name, dry_run, changes: {device: {interfaces: {port: {old, new}},
+# bonds: {bond: {old, new}}}}}. Every 'new' profile must exist in
+# sw_port_profiles.yaml; a port whose current profile differs from 'old' is
+# skipped (drift protection), never overwritten blindly. Applied changes are
+# recorded as a plan JSON under $ANSIBLE_DIR/.migrations for audit/rollback.
+migrate_port_profiles() {
+    acquire_lock
+    read -r POST_DATA
+    export POST_DATA
+
+    python3 << 'PYTHON'
+import json
+import os
+import re
+import sys
+import tempfile
+import shutil
+from datetime import datetime
+from ruamel.yaml import YAML
+
+yaml = YAML()
+yaml.preserve_quotes = True
+# Match the inventory house style (2-space indented "- item" sequences) so a
+# one-line profile change does not reflow every list in the file.
+yaml.indent(mapping=2, sequence=4, offset=2)
+
+NAME_RE = re.compile(r'^[A-Za-z0-9_.-]+$')
+
+
+def fail(msg):
+    print(json.dumps({'success': False, 'error': msg}))
+    sys.exit(0)
+
+
+try:
+    data = json.loads(os.environ.get('POST_DATA') or '{}')
+except Exception:
+    fail('Invalid JSON payload')
+
+changes = data.get('changes')
+dry_run = bool(data.get('dry_run'))
+plan_name = re.sub(r'[^A-Za-z0-9_-]', '-', str(data.get('plan_name') or 'migration'))[:64] or 'migration'
+
+if not isinstance(changes, dict) or not changes:
+    fail('No changes provided')
+
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+inventory_base = os.path.join(ansible_dir, 'inventory')
+
+# Validate names and collect target profiles before touching any file
+targets = set()
+for device, sections in changes.items():
+    if not NAME_RE.match(str(device)):
+        fail(f'Invalid device name: {device}')
+    if not isinstance(sections, dict):
+        fail(f'Invalid changes for device {device}')
+    for section in ('interfaces', 'bonds'):
+        ports = sections.get(section) or {}
+        if not isinstance(ports, dict):
+            fail(f'Invalid {section} for device {device}')
+        for port, mv in ports.items():
+            if not NAME_RE.match(str(port)):
+                fail(f'Invalid port name: {port}')
+            if not isinstance(mv, dict):
+                fail(f'Invalid change entry for {device}/{port}')
+            new = mv.get('new')
+            old = mv.get('old')
+            if not isinstance(new, str) or not NAME_RE.match(new):
+                fail(f'Invalid target profile for {device}/{port}')
+            if old is not None and (not isinstance(old, str) or not NAME_RE.match(old)):
+                fail(f'Invalid source profile for {device}/{port}')
+            targets.add(new)
+
+# Every target profile must exist (prevents dangling sw_port_profile refs)
+spp_file = os.path.join(inventory_base, 'group_vars', 'all', 'sw_port_profiles.yaml')
+try:
+    with open(spp_file, 'r') as f:
+        spp = yaml.load(f) or {}
+except Exception as e:
+    fail(f'Cannot read sw_port_profiles.yaml: {e}')
+profiles = spp.get('sw_port_profiles') or {}
+missing = sorted(t for t in targets if t not in profiles)
+if missing:
+    fail('Target profiles not found in sw_port_profiles.yaml: ' + ', '.join(missing))
+
+results = {}
+plan_changes = {}
+total_applied = 0
+total_skipped = 0
+
+for device, sections in changes.items():
+    hv_file = os.path.join(inventory_base, 'host_vars', device + '.yaml')
+    if not os.path.exists(hv_file):
+        alt = os.path.join(inventory_base, 'host_vars', device + '.yml')
+        if os.path.exists(alt):
+            hv_file = alt
+    if not os.path.exists(hv_file):
+        skipped = []
+        for section in ('interfaces', 'bonds'):
+            for port in (sections.get(section) or {}):
+                skipped.append({'section': section, 'name': port, 'reason': 'host_vars file not found'})
+        total_skipped += len(skipped)
+        results[device] = {'applied': 0, 'skipped': skipped, 'error': 'host_vars file not found'}
+        continue
+
+    try:
+        with open(hv_file, 'r') as f:
+            cfg = yaml.load(f) or {}
+    except Exception as e:
+        results[device] = {'applied': 0, 'skipped': [], 'error': f'Cannot parse host_vars: {e}'}
+        continue
+
+    applied = []
+    skipped = []
+    for section in ('interfaces', 'bonds'):
+        wanted = sections.get(section) or {}
+        node = cfg.get(section) or {}
+        for port, mv in wanted.items():
+            new = mv['new']
+            old = mv.get('old')
+            entry = node.get(port) if hasattr(node, 'get') else None
+            if not hasattr(entry, 'get'):
+                skipped.append({'section': section, 'name': port, 'reason': 'not found in host_vars'})
+                continue
+            current = entry.get('sw_port_profile')
+            if old is not None and current != old:
+                skipped.append({'section': section, 'name': port,
+                                'reason': f'current profile is {current or "(none)"}, expected {old}'})
+                continue
+            if current == new:
+                skipped.append({'section': section, 'name': port, 'reason': 'already on target profile'})
+                continue
+            if not dry_run:
+                entry['sw_port_profile'] = new
+            applied.append({'section': section, 'name': port, 'old': current, 'new': new})
+
+    if applied and not dry_run:
+        _fd, _path = tempfile.mkstemp(dir=os.path.dirname(hv_file), suffix='.tmp')
+        try:
+            with os.fdopen(_fd, 'w') as _f:
+                yaml.dump(cfg, _f)
+            shutil.move(_path, hv_file)
+        except Exception as e:
+            if os.path.exists(_path):
+                os.unlink(_path)
+            results[device] = {'applied': 0, 'skipped': skipped, 'error': f'Write failed: {e}'}
+            continue
+
+    total_applied += len(applied)
+    total_skipped += len(skipped)
+    results[device] = {'applied': len(applied), 'skipped': skipped}
+    plan_changes[device] = {'applied': applied, 'skipped': skipped}
+
+plan_id = None
+if total_applied and not dry_run:
+    plans_dir = os.path.join(ansible_dir, '.migrations')
+    try:
+        os.makedirs(plans_dir, exist_ok=True)
+        plan_id = datetime.now().strftime('%Y%m%d-%H%M%S') + '_' + plan_name
+        plan_record = {
+            'id': plan_id,
+            'name': plan_name,
+            'created': datetime.now().astimezone().isoformat(timespec='seconds'),
+            'total_applied': total_applied,
+            'total_skipped': total_skipped,
+            'changes': plan_changes,
+        }
+        _fd, _path = tempfile.mkstemp(dir=plans_dir, suffix='.tmp')
+        with os.fdopen(_fd, 'w') as _f:
+            json.dump(plan_record, _f, indent=2)
+        shutil.move(_path, os.path.join(plans_dir, plan_id + '.json'))
+    except Exception:
+        plan_id = None  # plan record is best-effort; the host_vars edits stand
+
+print(json.dumps({
+    'success': True,
+    'dry_run': dry_run,
+    'plan_id': plan_id,
+    'results': results,
+    'total_applied': total_applied,
+    'total_skipped': total_skipped,
+}))
+PYTHON
+}
+
+list_migration_plans() {
+    python3 << 'PYTHON'
+import json
+import os
+
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+plans_dir = os.path.join(ansible_dir, '.migrations')
+plans = []
+if os.path.isdir(plans_dir):
+    for fn in sorted(os.listdir(plans_dir), reverse=True):
+        if not fn.endswith('.json'):
+            continue
+        try:
+            with open(os.path.join(plans_dir, fn), 'r') as f:
+                p = json.load(f)
+            plans.append({
+                'id': p.get('id') or fn[:-5],
+                'name': p.get('name'),
+                'created': p.get('created'),
+                'devices': sorted((p.get('changes') or {}).keys()),
+                'total_applied': p.get('total_applied', 0),
+            })
+        except Exception:
+            continue
+print(json.dumps({'success': True, 'plans': plans}))
+PYTHON
+}
+
+get_migration_plan() {
+    local plan_id
+    plan_id=$(echo "$QUERY_STRING" | grep -oP 'plan=\K[^&]*' | head -1)
+    export PLAN_ID="$plan_id"
+    python3 << 'PYTHON'
+import json
+import os
+import re
+
+plan_id = os.environ.get('PLAN_ID', '')
+if not re.match(r'^[A-Za-z0-9_-]+$', plan_id):
+    print(json.dumps({'success': False, 'error': 'Invalid plan id'}))
+    raise SystemExit(0)
+ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
+plan_file = os.path.join(ansible_dir, '.migrations', plan_id + '.json')
+if not os.path.exists(plan_file):
+    print(json.dumps({'success': False, 'error': 'Plan not found'}))
+    raise SystemExit(0)
+try:
+    with open(plan_file, 'r') as f:
+        plan = json.load(f)
+    print(json.dumps({'success': True, 'plan': plan}))
+except Exception as e:
+    print(json.dumps({'success': False, 'error': str(e)}))
+PYTHON
+}
+
 # Main handler
 parse_query
 
@@ -2858,6 +3099,15 @@ case "$ACTION" in
         ;;
     "delete-port-profile")
         delete_port_profile
+        ;;
+    "migrate-port-profiles")
+        migrate_port_profiles
+        ;;
+    "list-migration-plans")
+        list_migration_plans
+        ;;
+    "get-migration-plan")
+        get_migration_plan
         ;;
     "get-bgp-profiles")
         get_bgp_profiles
