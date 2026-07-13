@@ -545,7 +545,10 @@ def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
         os.fchmod(descriptor, mode | 0o644)
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             descriptor = -1
-            json.dump(value, handle, separators=(",", ":"))
+            # Serialize once and write one string: streaming json.dump makes
+            # many small handle.write calls, which is several times slower on
+            # the multi-hundred-MB history document.
+            handle.write(json.dumps(value, separators=(",", ":")))
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
