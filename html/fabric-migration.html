@@ -636,10 +636,10 @@
         for (const group of Object.keys(devices)) {
             const members = devices[group].filter(d => !q || d.hostname.toLowerCase().includes(q));
             if (!members.length) continue;
-            html += `<div class="device-group-title"><input type="checkbox" onchange="toggleGroup('${escapeHtml(group)}', this.checked)"> ${escapeHtml(group)}</div>`;
+            html += `<div class="device-group-title"><input type="checkbox" data-group="${escapeHtml(group)}"> ${escapeHtml(group)}</div>`;
             for (const d of members) {
                 const checked = selectedDevices.has(d.hostname) ? 'checked' : '';
-                html += `<div class="device-item"><input type="checkbox" ${checked} onchange="toggleDevice('${escapeHtml(d.hostname)}', this.checked)"> ${escapeHtml(d.hostname)} <span class="ip">${escapeHtml(d.ip || '')}</span></div>`;
+                html += `<div class="device-item"><input type="checkbox" ${checked} data-host="${escapeHtml(d.hostname)}"> ${escapeHtml(d.hostname)} <span class="ip">${escapeHtml(d.ip || '')}</span></div>`;
             }
         }
         $('device-list').innerHTML = html || '<div class="muted" style="padding:10px;">No devices found.</div>';
@@ -658,17 +658,31 @@
         renderDeviceList();
     }
 
+    // Bounded-concurrency fetch pool: 58 parallel CGI hits would hammer fcgiwrap.
+    async function fetchPool(items, limit, fn) {
+        const results = [];
+        let next = 0;
+        async function worker() {
+            while (next < items.length) {
+                const idx = next++;
+                results[idx] = await fn(items[idx]);
+            }
+        }
+        await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+        return results;
+    }
+
     async function loadPorts() {
         const hosts = [...selectedDevices];
         if (!hosts.length) { showAlert('Select at least one device.', 'No Selection'); return; }
         showLoading(true, `Loading host_vars for ${hosts.length} device(s)...`);
         try {
-            const results = await Promise.all(hosts.map(async h => {
+            const results = await fetchPool(hosts, 8, async h => {
                 try {
                     const r = await fetch(`/fabric-api.sh?action=get-device&hostname=${encodeURIComponent(h)}`);
                     return [h, await r.json()];
                 } catch (e) { return [h, { success: false, error: e.message }]; }
-            }));
+            });
             portRows = [];
             unmanagedCount = 0;
             const failed = [];
@@ -712,7 +726,7 @@
         let html = '<label>Current profile:</label>';
         for (const [p, n] of [...counts.entries()].sort()) {
             const on = !activeProfiles || activeProfiles.has(p);
-            html += `<span class="chip ${on ? 'on' : ''}" onclick="toggleProfileChip('${escapeHtml(p)}')">${escapeHtml(p)} (${n})</span>`;
+            html += `<span class="chip ${on ? 'on' : ''}" data-profile="${escapeHtml(p)}">${escapeHtml(p)} (${n})</span>`;
         }
         $('profile-chips').innerHTML = counts.size ? html : '';
     }
@@ -750,9 +764,18 @@
         return DEFAULT_RACK_PATTERNS.slice();
     }
 
-    function applyRackFilter() {
+    async function applyRackFilter() {
         const rack = parseInt($('rack-input').value, 10);
         if (!rack && rack !== 0) { showAlert('Enter a rack number first.', 'Rack Filter'); return; }
+        // Convenience: auto-load ports if the user jumped straight to the rack filter
+        if (!portRows.length) {
+            if (!selectedDevices.size) {
+                showAlert('Select devices on the left first (the rack filter runs on their loaded ports).', 'Rack Filter');
+                return;
+            }
+            await loadPorts();
+            if (!portRows.length) return;
+        }
         const pats = getRackPatterns().map(p => p
             .replaceAll('{rack2}', String(rack).padStart(2, '0'))
             .replaceAll('{rack}', String(rack)));
@@ -857,7 +880,7 @@
                 <span class="pbadge p-old">${escapeHtml(src)}</span>
                 <span class="muted" style="font-size:11px;">${si.vlan != null ? 'vlan ' + si.vlan + ' &middot; ' + escapeHtml(si.vrf || '') : escapeHtml(si.mode)}</span>
                 <span class="arrow">&rarr;</span>
-                <select onchange="setMapping('${escapeHtml(src)}', this.value)">${opts}</select>
+                <select data-src="${escapeHtml(src)}">${opts}</select>
                 <span class="map-info" id="mapinfo-${escapeHtml(src)}">${tgt ? targetInfoHtml(tgt) : ''}</span>
                 <span class="map-count">${n} port(s) &middot; ${devs.size} device(s)</span>
             </div>`;
@@ -956,7 +979,7 @@
         let html = '';
         for (const [k, names] of groups) {
             const [dev, oldP, newP] = k.split('|');
-            const shown = names.slice(0, 8).join(', ') + (names.length > 8 ? ` &hellip; +${names.length - 8} more` : '');
+            const shown = names.slice(0, 8).map(escapeHtml).join(', ') + (names.length > 8 ? ` &hellip; +${names.length - 8} more` : '');
             html += `<tr>
                 <td>${escapeHtml(dev)}</td>
                 <td class="mono" title="${escapeHtml(names.join(', '))}">${shown} <span class="muted">(${names.length})</span></td>
@@ -995,21 +1018,23 @@
                     name: $('plan-name').value,
                     changes: {},
                 };
-                // keep only actually-applied entries for verify/rollback
+                // keep only actually-applied entries for verify/rollback;
+                // a device that errored server-side wrote nothing at all
                 for (const [dev, res] of Object.entries(data.results || {})) {
                     appliedPlan.changes[dev] = { applied: [] };
-                }
-                // reconstruct applied entries from currentPlan minus skipped
-                for (const [dev, res] of Object.entries(data.results || {})) {
-                    const skippedNames = new Set((res.skipped || []).map(s => s.name));
+                    if (res.error) continue;
+                    const skippedKeys = new Set((res.skipped || []).map(s => `${s.section}|${s.name}`));
                     appliedPlan.changes[dev].applied = currentPlan.entries
-                        .filter(e => e.device === dev && !skippedNames.has(e.name))
+                        .filter(e => e.device === dev && !skippedKeys.has(`${e.section}|${e.name}`))
                         .map(e => ({ section: e.section, name: e.name, old: e.old, new: e.new }));
                 }
-                // sync local rows so a re-apply won't double-fire
-                for (const e of currentPlan.entries) {
-                    const row = portRows.find(r => r.device === e.device && r.name === e.name && r.section === e.section);
-                    if (row) row.profile = e.new;
+                // sync local rows for server-applied entries only, and uncheck
+                // them so a stale mapping cannot re-fire a chained migration
+                for (const [dev, res] of Object.entries(appliedPlan.changes)) {
+                    for (const a of res.applied) {
+                        const row = portRows.find(r => r.device === dev && r.name === a.name && r.section === a.section);
+                        if (row) { row.profile = a.new; row.checked = false; }
+                    }
                 }
                 $('to-step4-btn').disabled = false;
                 $('rollback-btn').disabled = false;
@@ -1194,6 +1219,9 @@
             }
             if (result.started && result.job_id) {
                 localStorage.setItem(DEPLOY_JOB_KEY, JSON.stringify({ job_id: result.job_id, plan: appliedPlan }));
+                // Job runs in the background: drop the blocking overlay so the
+                // user can read the streamed log while it polls.
+                showLoading(false);
                 termAppend('deploy-term', `Deploy started (job ${result.job_id}). Streaming log...`, 'hdr');
                 await pollDeployStatus(result.job_id);
                 return;
@@ -1305,9 +1333,10 @@
         const notes = [];
         for (const dev of devs) {
             try {
-                const resp = await fetch(`/monitor-results/fabric-tables/${encodeURIComponent(dev)}.json?t=${Date.now()}`);
-                if (!resp.ok) { notes.push(`${dev}: fabric-tables not available`); continue; }
-                const data = await resp.json();
+                const resp = await fetch(`/fabric-api.sh?action=get-fabric-table&hostname=${encodeURIComponent(dev)}&t=${Date.now()}`);
+                const payload = await resp.json();
+                if (!payload.success) { notes.push(`${dev}: fabric-tables not available`); continue; }
+                const data = payload.table || {};
                 const n = (data.arp || []).filter(a => vrfs.has(a.vrf)).length;
                 total += n;
                 const at = (data._collection || {}).checked_at || '';
@@ -1351,11 +1380,13 @@
             // The rollback becomes the new applied plan (so it can be diffed/deployed/verified)
             const newPlan = { id: data.plan_id, name: (appliedPlan.name || 'migration') + '-rollback', changes: {} };
             for (const [dev, sections] of Object.entries(inverse)) {
-                const skipped = new Set(((data.results || {})[dev] || {}).skipped ? data.results[dev].skipped.map(s => s.name) : []);
+                const res = (data.results || {})[dev] || {};
                 newPlan.changes[dev] = { applied: [] };
+                if (res.error) continue;
+                const skipped = new Set((res.skipped || []).map(s => `${s.section}|${s.name}`));
                 for (const section of ['interfaces', 'bonds']) {
                     for (const [name, mv] of Object.entries(sections[section] || {})) {
-                        if (!skipped.has(name)) newPlan.changes[dev].applied.push({ section, name, old: mv.old, new: mv.new });
+                        if (!skipped.has(`${section}|${name}`)) newPlan.changes[dev].applied.push({ section, name, old: mv.old, new: mv.new });
                     }
                 }
             }
@@ -1385,7 +1416,7 @@
                     <td class="muted">${escapeHtml(p.created || '')}</td>
                     <td class="muted">${escapeHtml((p.devices || []).join(', '))}</td>
                     <td>${p.total_applied}</td>
-                    <td><a style="color:#4fc3f7; cursor:pointer;" onclick="loadPlan('${escapeHtml(p.id)}')">Load</a></td>
+                    <td><a style="color:#4fc3f7; cursor:pointer;" data-plan="${escapeHtml(p.id)}">Load</a></td>
                 </tr>`;
             }
             html += '</tbody></table>';
@@ -1458,6 +1489,26 @@
             document.body.innerHTML = '<div style="display:flex; align-items:center; justify-content:center; height:100vh; color:#888;">Access denied. Admin only.</div>';
             return;
         }
+        // Delegated listeners: rendered rows carry data-* attributes instead of
+        // inline handlers, so names never pass through HTML->JS re-parsing.
+        $('device-list').addEventListener('change', e => {
+            const cb = e.target;
+            if (!(cb instanceof HTMLInputElement)) return;
+            if (cb.dataset.group !== undefined) toggleGroup(cb.dataset.group, cb.checked);
+            else if (cb.dataset.host !== undefined) toggleDevice(cb.dataset.host, cb.checked);
+        });
+        $('profile-chips').addEventListener('click', e => {
+            const el = e.target.closest('.chip');
+            if (el) toggleProfileChip(el.dataset.profile);
+        });
+        $('mapping-rows').addEventListener('change', e => {
+            const sel = e.target;
+            if (sel.tagName === 'SELECT' && sel.dataset.src !== undefined) setMapping(sel.dataset.src, sel.value);
+        });
+        $('plans-body').addEventListener('click', e => {
+            const a = e.target.closest('a[data-plan]');
+            if (a) loadPlan(a.dataset.plan);
+        });
         await loadDevices();
         goStep(1);
         resumeDeployJob();

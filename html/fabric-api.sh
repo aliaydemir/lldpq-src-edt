@@ -2840,7 +2840,15 @@ PYTHON
 migrate_port_profiles() {
     acquire_lock
     read -r POST_DATA
-    export POST_DATA
+    # Bulk plans can exceed execve's per-env-string limit (~128 KB, E2BIG);
+    # hand the body to python via a temp file instead of the environment.
+    POST_DATA_FILE=$(mktemp /tmp/fabric-migrate.XXXXXX) || {
+        echo '{"success": false, "error": "Cannot create temp file"}'
+        return
+    }
+    printf '%s' "$POST_DATA" > "$POST_DATA_FILE"
+    unset POST_DATA
+    export POST_DATA_FILE
 
     python3 << 'PYTHON'
 import json
@@ -2854,8 +2862,10 @@ from ruamel.yaml import YAML
 
 yaml = YAML()
 yaml.preserve_quotes = True
-# Match the inventory house style (2-space indented "- item" sequences) so a
-# one-line profile change does not reflow every list in the file.
+# Emit sequences in the hand-maintained inventory house style ("  - item").
+# NOTE: the other host_vars writers in this file still use ruamel defaults
+# (dash at parent column); files edited by both endpoints will alternate
+# list-indent styles until those writers adopt the same setting.
 yaml.indent(mapping=2, sequence=4, offset=2)
 
 NAME_RE = re.compile(r'^[A-Za-z0-9_.-]+$')
@@ -2867,7 +2877,8 @@ def fail(msg):
 
 
 try:
-    data = json.loads(os.environ.get('POST_DATA') or '{}')
+    with open(os.environ.get('POST_DATA_FILE') or '/dev/null') as _pf:
+        data = json.loads(_pf.read() or '{}')
 except Exception:
     fail('Invalid JSON payload')
 
@@ -2912,6 +2923,8 @@ try:
         spp = yaml.load(f) or {}
 except Exception as e:
     fail(f'Cannot read sw_port_profiles.yaml: {e}')
+if not hasattr(spp, 'get'):
+    fail('sw_port_profiles.yaml top level is not a mapping')
 profiles = spp.get('sw_port_profiles') or {}
 missing = sorted(t for t in targets if t not in profiles)
 if missing:
@@ -2942,6 +2955,9 @@ for device, sections in changes.items():
             cfg = yaml.load(f) or {}
     except Exception as e:
         results[device] = {'applied': 0, 'skipped': [], 'error': f'Cannot parse host_vars: {e}'}
+        continue
+    if not hasattr(cfg, 'get'):
+        results[device] = {'applied': 0, 'skipped': [], 'error': 'host_vars top level is not a mapping'}
         continue
 
     applied = []
@@ -2990,7 +3006,7 @@ if total_applied and not dry_run:
     plans_dir = os.path.join(ansible_dir, '.migrations')
     try:
         os.makedirs(plans_dir, exist_ok=True)
-        plan_id = datetime.now().strftime('%Y%m%d-%H%M%S') + '_' + plan_name
+        plan_id = datetime.now().strftime('%Y%m%d-%H%M%S-%f') + '_' + plan_name
         plan_record = {
             'id': plan_id,
             'name': plan_name,
@@ -3000,6 +3016,7 @@ if total_applied and not dry_run:
             'changes': plan_changes,
         }
         _fd, _path = tempfile.mkstemp(dir=plans_dir, suffix='.tmp')
+        os.fchmod(_fd, 0o644)  # mkstemp defaults to 0600; keep plans readable for git/backup sweeps
         with os.fdopen(_fd, 'w') as _f:
             json.dump(plan_record, _f, indent=2)
         shutil.move(_path, os.path.join(plans_dir, plan_id + '.json'))
@@ -3015,6 +3032,7 @@ print(json.dumps({
     'total_skipped': total_skipped,
 }))
 PYTHON
+    rm -f "$POST_DATA_FILE"
 }
 
 list_migration_plans() {
@@ -3072,6 +3090,42 @@ except Exception as e:
 PYTHON
 }
 
+# Per-device live-state table (ARP/MAC/routes per VRF) collected by
+# fabric-scan.sh into $LLDPQ_DIR/monitor-results/fabric-tables — that tree is
+# not under WEB_ROOT, so the Fabric Migration verify step reads it through
+# this action instead of a static fetch.
+get_fabric_table() {
+    export DEVICE_HOSTNAME="$HOSTNAME"
+    python3 << 'PYTHON'
+import json
+import os
+import re
+
+hostname = os.environ.get('DEVICE_HOSTNAME', '')
+if not re.match(r'^[A-Za-z0-9_.-]+$', hostname or ''):
+    print(json.dumps({'success': False, 'error': 'Invalid hostname'}))
+    raise SystemExit(0)
+
+lldpq_dir = ''
+try:
+    with open('/etc/lldpq.conf') as f:
+        for line in f:
+            if line.startswith('LLDPQ_DIR='):
+                lldpq_dir = line.strip().split('=', 1)[1]
+                break
+except OSError:
+    pass
+lldpq_dir = lldpq_dir or '/home/lldpq/lldpq'
+
+path = os.path.join(lldpq_dir, 'monitor-results', 'fabric-tables', hostname + '.json')
+try:
+    with open(path) as f:
+        print(json.dumps({'success': True, 'table': json.load(f)}))
+except (OSError, ValueError):
+    print(json.dumps({'success': False, 'error': 'fabric-tables not available'}))
+PYTHON
+}
+
 # Main handler
 parse_query
 
@@ -3108,6 +3162,9 @@ case "$ACTION" in
         ;;
     "get-migration-plan")
         get_migration_plan
+        ;;
+    "get-fabric-table")
+        get_fabric_table
         ;;
     "get-bgp-profiles")
         get_bgp_profiles
