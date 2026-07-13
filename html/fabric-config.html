@@ -1132,7 +1132,39 @@
         let vlanProfiles = {};  // Global VLAN profiles
         let portProfiles = {};  // Global SW Port profiles
         let leakedSubnets = {};  // Subnet -> {target_vrf, route_map}
-        
+
+        // Helper: Escape a value for safe insertion into innerHTML / HTML attributes
+        function escapeHtml(value) {
+            if (value === null || value === undefined) return '';
+            return String(value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        // Delegated click handler for identifier-carrying dashboard actions
+        // (avoids inline onclick string interpolation of user/server data)
+        function onDashboardClick(e) {
+            const el = e.target.closest('[data-action]');
+            if (!el) return;
+            const action = el.dataset.action;
+            if (action === 'unassign-vrf') {
+                e.stopPropagation();
+                confirmUnassignVrf(el.dataset.vrf);
+            } else if (action === 'unassign-vlan') {
+                e.stopPropagation();
+                confirmUnassignVlan(el.dataset.vlan);
+            } else if (action === 'edit-breakout') {
+                openBreakoutEditModal(el.dataset.ifname, el.dataset.breakout, el.dataset.desc);
+            } else if (action === 'edit-interface') {
+                openInterfaceEditModal(el.dataset.ifname, el.dataset.profile, el.dataset.desc, el.dataset.bond, el.dataset.cfg);
+            } else if (action === 'edit-bond') {
+                openBondEditModal(el.dataset.bondname, el.dataset.profile, el.dataset.desc, el.dataset.cfg);
+            }
+        }
+
         // Helper: Get VRF badge class
         // Dynamic VRF badge colors - uses hash for consistent colors
         function getVrfBadgeClass(vrfName) {
