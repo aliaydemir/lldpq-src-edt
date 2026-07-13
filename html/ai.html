@@ -101,7 +101,6 @@
         .settings-footer { padding: 15px 20px; border-top: 1px solid #3c3c3c; display: flex; gap: 10px; justify-content: flex-end; }
 
         /* Analysis badge */
-        .analysis-badge { background: #e65100; color: white; font-size: 10px; padding: 1px 6px; border-radius: 8px; font-weight: bold; display: none; }
 
         /* Provider indicator */
         .provider-badge { font-size: 11px; padding: 3px 8px; border-radius: 4px; background: #2d2d2d; color: #888; font-family: 'Cascadia Code', Consolas, monospace; }
@@ -197,10 +196,14 @@
     </div>
     <div class="header-right">
         <span class="provider-badge" id="providerBadge">--</span>
-        <button class="btn btn-secondary btn-sm" onclick="runAnalysis()" title="Run fabric health analysis" id="btnAnalyze">
+        <button class="btn btn-secondary btn-sm" onclick="runAnalysis()" title="Run a fresh fabric health analysis" id="btnAnalyze">
             <svg viewBox="0 0 24 24"><path d="M19.35 10.04A7.49 7.49 0 0012 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 000 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/></svg>
             Analyze
-            <span class="analysis-badge" id="analysisBadge" onclick="showPersistedAnalysis(event)">!</span>
+        </button>
+        <button class="btn btn-secondary btn-sm" onclick="showPersistedAnalysis()" style="display:none;"
+                title="Show the last saved hourly analysis (no new run, no cost)" id="btnLastAnalysis">
+            <svg viewBox="0 0 24 24" style="width:14px;height:14px;"><path d="M13 3a9 9 0 00-9 9H1l3.89 3.89.07.14L9 12H6a7 7 0 117 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0013 21a9 9 0 000-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
+            <span id="lastAnalysisLabel">Last Analysis</span>
         </button>
         <button class="btn btn-secondary btn-sm" onclick="exportChat()" title="Export chat as markdown" aria-label="Export chat as markdown">
             <svg viewBox="0 0 24 24" style="width:14px;height:14px;"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
@@ -2020,15 +2023,27 @@ function autoResize(el) {
 
 // ===================== ANALYSIS =====================
 async function loadAnalysisBadge() {
+    // Own "Last Analysis" button (hidden via its inline style until a fresh
+    // persisted analysis exists) — a separate control, so a click can never
+    // fall through to the Analyze button and start a costly new run.
+    const btn = document.getElementById('btnLastAnalysis');
+    if (!btn) return;
     const data = await apiCall('get-analysis');
     if (data.success && data.analysis && !data.stale) {
-        // 'inline-block' explicitly: the stylesheet default is display:none, so
-        // clearing the inline style ('') would leave the badge hidden forever.
-        document.getElementById('analysisBadge').style.display = 'inline-block';
+        const label = document.getElementById('lastAnalysisLabel');
+        if (label) {
+            const stamp = data.timestamp ? new Date(data.timestamp * 1000) : null;
+            label.textContent = stamp
+                ? 'Last ' + stamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                : 'Last Analysis';
+        }
+        btn.style.display = '';
+    } else {
+        btn.style.display = 'none';
     }
 }
 
-// Badge click: show the cron-persisted analysis (get-analysis) in the chat
+// Button click: show the cron-persisted analysis (get-analysis) in the chat
 // panel with zero LLM cost. The Analyze button itself still runs a fresh one.
 async function showPersistedAnalysis(event) {
     if (event) event.stopPropagation();
@@ -2087,7 +2102,9 @@ async function runAnalysis() {
             addMessage('assistant', data.analysis, _info);
             chatHistory.push(Object.assign({ role: 'assistant', content: data.analysis, analysis: true }, _info));
             saveChatToStorage();
-            document.getElementById('analysisBadge').style.display = 'none';
+            // The fresh run replaced the persisted analysis: refresh the
+            // "Last Analysis" button timestamp instead of hiding anything.
+            loadAnalysisBadge();
             showToast('Analysis complete', 'success');
         } else {
             showToast('Analysis failed: ' + (data.error || ''), 'error');

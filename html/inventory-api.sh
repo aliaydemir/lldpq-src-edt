@@ -739,12 +739,30 @@ def action_generate_topology():
     include_mgmt = QS_MGMT in ('1', 'true', 'yes', 'on')
     data, version = _load_active('p2p')
     device_aliases, port_aliases = _reverse_display_aliases()
+    # The IPAM fabric sheet is the authoritative switch list for the sw-to-sw
+    # scope (storage appliances may name their NICs swp-style and would fool
+    # the port-form fallback heuristic). Optional: absent IPAM design degrades
+    # to the heuristic.
+    switch_names = set()
+    if scope == 'sw-to-sw':
+        try:
+            ipam_wrapper, _ipam_ver = load_version('ipam', '')
+            if ipam_wrapper:
+                switch_names = ai_generate.switch_names_from_ipam(
+                    ipam_wrapper.get('data') or {})
+        except SystemExit:
+            raise
+        except Exception:
+            switch_names = set()
     content = ai_generate.p2p_to_topology_dot(
         data, device_aliases=device_aliases, port_aliases=port_aliases,
-        scope=scope, include_mgmt=include_mgmt)
+        scope=scope, include_mgmt=include_mgmt,
+        switch_names=switch_names or None)
     token = content_token(content)
     stats = {'edges': content.count(' -- '), 'source_version': version,
-             'scope': scope, 'include_mgmt': include_mgmt}
+             'scope': scope, 'include_mgmt': include_mgmt,
+             'switch_source': ('ipam (%d switches)' % (len(switch_names) // 2)
+                               if switch_names else 'heuristic')}
     if mode == 'preview':
         ok(preview=content, token=token, target='topology.dot', stats=stats,
            source_version=version)

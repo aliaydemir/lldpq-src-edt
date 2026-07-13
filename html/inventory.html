@@ -511,6 +511,9 @@ async function preview(artifact) {
     if (data.stats && data.stats.scope) {
         stat += (stat ? ' · ' : '') + data.stats.scope + (data.stats.include_mgmt ? ' +mgmt' : '');
     }
+    if (data.stats && data.stats.switch_source) {
+        stat += ' · switches: ' + data.stats.switch_source;
+    }
     if (data.source_version) stat += (stat ? ' · ' : '') + 'from ' + data.source_version;
     document.getElementById(ui.stat).textContent = stat;
     document.getElementById(ui.pw).classList.add('show');
