@@ -1063,18 +1063,75 @@ function showNotification(message) {
 /**
  * Export the current topology as a PNG using Cytoscape's built-in renderer.
  */
-function exportTopologyPng() {
+async function exportTopologyPng() {
     if (!cy) return;
-    const blob = cy.png({ output: 'blob', full: true, bg: '#212121', scale: 2 });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'topology.png';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    showNotification('Exported topology.png');
+    const SCALE = 2;
+    const ICON_FONT_PX = 24; // matches .node-icon-overlay base font-size
+    const BG = '#212121';
+    try {
+        // cy.png() renders only the cytoscape canvas; the device glyphs are
+        // separate HTML overlays (.node-icon-overlay), so they are missing from
+        // the raw export. Composite them back on: cy.png(full) maps model point
+        // (x,y) to image pixel ((x - bb.x1)*SCALE, (y - bb.y1)*SCALE) where bb is
+        // the same element bounding box cytoscape uses, so we can redraw each
+        // node's icon glyph at the correct spot with the same 'next-font'.
+        const dataUrl = cy.png({ output: 'base64uri', full: true, bg: BG, scale: SCALE });
+        const baseImg = await new Promise((resolve, reject) => {
+            const im = new Image();
+            im.onload = () => resolve(im);
+            im.onerror = reject;
+            im.src = dataUrl;
+        });
+        const canvas = document.createElement('canvas');
+        canvas.width = baseImg.width;
+        canvas.height = baseImg.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(baseImg, 0, 0);
+
+        // Make sure the icon webfont is ready before measuring/drawing glyphs.
+        try {
+            if (document.fonts && document.fonts.load) {
+                await document.fonts.load(`${ICON_FONT_PX}px 'next-font'`);
+                await document.fonts.ready;
+            }
+        } catch (e) { /* fall through — glyphs may render with fallback */ }
+
+        const bb = cy.elements().boundingBox();
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const fontPx = ICON_FONT_PX * SCALE;
+        cy.nodes().forEach(node => {
+            if (!node.visible()) return;
+            const pos = node.position();
+            const x = (pos.x - bb.x1) * SCALE;
+            const y = (pos.y - bb.y1) * SCALE;
+            ctx.font = `${fontPx}px 'next-font'`;
+            const bgChar = node.data('iconBgChar');
+            if (bgChar) {
+                ctx.fillStyle = '#333'; // matches .icon-bg
+                ctx.fillText(bgChar, x, y);
+            }
+            const fgChar = node.data('iconChar');
+            if (fgChar) {
+                ctx.fillStyle = node.data('color') || '#ffffff';
+                ctx.fillText(fgChar, x, y);
+            }
+        });
+
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'topology.png';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showNotification('Exported topology.png');
+    } catch (err) {
+        console.error('PNG export failed:', err);
+        showNotification('PNG export failed');
+    }
 }
 
 /**
