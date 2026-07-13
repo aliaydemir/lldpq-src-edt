@@ -30,6 +30,16 @@ fi
 # Export for Python scripts
 export ANSIBLE_DIR
 
+# Serialize concurrent YAML read-modify-write across admin edits.
+# A single process-wide advisory lock (held on fd 9 until this CGI process
+# exits) protects bgp_profiles.yaml / vlan_profiles.yaml / sw_port_profiles.yaml
+# and host_vars/*.yaml from lost-update races between concurrent admins.
+FABRIC_LOCK_FILE="${FABRIC_LOCK_FILE:-/tmp/fabric-api.lock}"
+acquire_lock() {
+    exec 9>>"$FABRIC_LOCK_FILE" 2>/dev/null || return 0
+    flock 9 2>/dev/null || true
+}
+
 # Output JSON header
 echo "Content-Type: application/json"
 echo ""
@@ -179,17 +189,23 @@ get_device() {
     fi
     
     local host_vars_file="$ANSIBLE_DIR/inventory/host_vars/${hostname}.yaml"
-    
+
+    export DEVICE_HOSTNAME="$hostname"
+
     # Python script to parse host_vars and find device info
     # Host vars file is optional - some devices (like spines) may not have it
-    python3 << PYTHON
+    python3 << 'PYTHON'
 import sys
 import json
 import yaml  # PyYAML - faster for read-only operations
 import os
+import re
 
 ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
-hostname = "$hostname"
+hostname = os.environ.get('DEVICE_HOSTNAME', '')
+if not re.match(r'^[A-Za-z0-9_.-]+$', hostname):
+    print(json.dumps({'success': False, 'error': 'Invalid hostname'}))
+    sys.exit(0)
 host_vars_file = f"{ansible_dir}/inventory/host_vars/{hostname}.yaml"
 # Fallback: try inventory.ini first, then hosts
 hosts_file = None
@@ -387,6 +403,11 @@ profile_name = data.get('profile_name', f'VLAN_{start_id}_{end_id}_L2')
 description = data.get('description', f'L2 VLANs {start_id}-{end_id}')
 l2vni_offset = data.get('l2vni_offset', 100000)
 
+import re
+if not re.match(r'^[A-Za-z0-9_.-]+$', str(profile_name)):
+    print(json.dumps({'success': False, 'error': 'Invalid profile name (allowed: letters, digits, _ . -)'}))
+    exit(0)
+
 # Validate
 if start_id < 1 or end_id > 4094 or start_id > end_id:
     print(json.dumps({'success': False, 'error': 'Invalid VLAN ID range'}))
@@ -443,7 +464,7 @@ except:
     if os.path.exists(_tmp_path): os.unlink(_tmp_path)
     raise
 
-print(json.dumps({'success': True, 'message': f'Created {count} VLANs in profile {profile_name}'}))
+print(json.dumps({'success': True, 'message': f'Created {count} VLANs in profile {profile_name}', 'created_vlans': list(range(start_id, end_id + 1))}))
 PYTHON
 }
 
@@ -1658,10 +1679,12 @@ PYTHON
 
 # Create Port Profile
 create_port_profile() {
+    acquire_lock
     read -r POST_DATA
     export POST_DATA
     python3 << PYTHON
 import json
+import re
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
@@ -1688,6 +1711,10 @@ stp_portautoedgedisable = data.get('stp_portautoedgedisable', True)
 
 if not profile_name:
     print(json.dumps({'success': False, 'error': 'Profile name is required'}))
+    sys.exit(0)
+
+if not re.match(r'^[A-Za-z0-9_.-]+$', profile_name):
+    print(json.dumps({'success': False, 'error': 'Invalid profile name (allowed: letters, digits, _ . -)'}))
     sys.exit(0)
 
 ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
@@ -1745,10 +1772,13 @@ PYTHON
 
 # Update Port Profile
 update_port_profile() {
+    acquire_lock
     read -r POST_DATA
     export POST_DATA
     python3 << PYTHON
 import json
+import re
+import glob
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True
@@ -1778,6 +1808,14 @@ if not original_name:
     print(json.dumps({'success': False, 'error': 'Original profile name is required'}))
     sys.exit(0)
 
+if not profile_name:
+    print(json.dumps({'success': False, 'error': 'Profile name is required'}))
+    sys.exit(0)
+
+if not re.match(r'^[A-Za-z0-9_.-]+$', profile_name):
+    print(json.dumps({'success': False, 'error': 'Invalid profile name (allowed: letters, digits, _ . -)'}))
+    sys.exit(0)
+
 ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
 port_file = f"{ansible_dir}/inventory/group_vars/all/sw_port_profiles.yaml"
 
@@ -1790,10 +1828,18 @@ if 'sw_port_profiles' not in config or original_name not in config['sw_port_prof
     print(json.dumps({'success': False, 'error': f'Profile {original_name} not found'}))
     sys.exit(0)
 
-# Build updated entry
-profile_entry = {
-    'sw_port_mode': sw_port_mode
-}
+# Reject rename onto an already-existing profile name
+if original_name != profile_name and profile_name in config['sw_port_profiles']:
+    print(json.dumps({'success': False, 'error': f'Profile {profile_name} already exists'}))
+    sys.exit(0)
+
+# Merge on top of the existing entry so keys not covered by the modal
+# (e.g. stp_* on trunk profiles) survive the edit.
+existing_entry = config['sw_port_profiles'].get(original_name)
+if not hasattr(existing_entry, 'get'):
+    existing_entry = {}
+profile_entry = existing_entry
+profile_entry['sw_port_mode'] = sw_port_mode
 
 if description:
     profile_entry['description'] = description
@@ -1801,16 +1847,31 @@ if description:
 if sw_port_mode == 'access':
     if access_vlan:
         profile_entry['access_vlan'] = int(access_vlan)
+    else:
+        profile_entry.pop('access_vlan', None)
     profile_entry['stp_bpduguard'] = stp_bpduguard
     profile_entry['stp_portadminedge'] = stp_portadminedge
     profile_entry['stp_portautoedgedisable'] = stp_portautoedgedisable
+    # Access profiles carry no trunk keys
+    for k in ('trunk_untagged', 'trunk_allowed_vlan_all', 'trunk_allowed_vlan_list'):
+        profile_entry.pop(k, None)
 elif sw_port_mode == 'trunk':
     if native_vlan:
         profile_entry['trunk_untagged'] = int(native_vlan)
+    else:
+        profile_entry.pop('trunk_untagged', None)
     if trunk_allowed_vlan_all:
         profile_entry['trunk_allowed_vlan_all'] = True
+        profile_entry.pop('trunk_allowed_vlan_list', None)
     elif trunk_allowed_vlans:
         profile_entry['trunk_allowed_vlan_list'] = trunk_allowed_vlans
+        profile_entry.pop('trunk_allowed_vlan_all', None)
+    # Trunk profiles legitimately carry stp_* options: preserve/set them
+    profile_entry['stp_bpduguard'] = stp_bpduguard
+    profile_entry['stp_portadminedge'] = stp_portadminedge
+    profile_entry['stp_portautoedgedisable'] = stp_portautoedgedisable
+    # Access-only key does not belong on a trunk profile
+    profile_entry.pop('access_vlan', None)
 
 # Remove old if renaming
 if original_name != profile_name:
@@ -1827,12 +1888,44 @@ except:
     if os.path.exists(_tmp_path): os.unlink(_tmp_path)
     raise
 
-print(json.dumps({'success': True, 'profile_name': profile_name}))
+# On rename, rewrite sw_port_profile references in host_vars interfaces{}/bonds{}
+updated_hosts = []
+if original_name != profile_name:
+    host_vars_dir = f"{ansible_dir}/inventory/host_vars"
+    for hv in glob.glob(f"{host_vars_dir}/*.yaml"):
+        try:
+            with open(hv, 'r') as f:
+                hv_cfg = yaml.load(f) or {}
+        except Exception:
+            continue
+        if not hasattr(hv_cfg, 'get'):
+            continue
+        changed = False
+        for section in ('interfaces', 'bonds'):
+            sect = hv_cfg.get(section)
+            if not hasattr(sect, 'items'):
+                continue
+            for _pname, pcfg in sect.items():
+                if hasattr(pcfg, 'get') and pcfg.get('sw_port_profile') == original_name:
+                    pcfg['sw_port_profile'] = profile_name
+                    changed = True
+        if changed:
+            _hfd, _hpath = tempfile.mkstemp(dir=os.path.dirname(hv), suffix='.tmp')
+            try:
+                with os.fdopen(_hfd, 'w') as _hf:
+                    yaml.dump(hv_cfg, _hf)
+                shutil.move(_hpath, hv)
+                updated_hosts.append(os.path.basename(hv).replace('.yaml', ''))
+            except Exception:
+                if os.path.exists(_hpath): os.unlink(_hpath)
+
+print(json.dumps({'success': True, 'profile_name': profile_name, 'updated_hosts': updated_hosts}))
 PYTHON
 }
 
 # Delete Port Profile
 delete_port_profile() {
+    acquire_lock
     read -r POST_DATA
     export POST_DATA
     python3 << PYTHON
@@ -1885,12 +1978,14 @@ PYTHON
 
 # Create VLAN - adds to vlan_profiles.yaml and sw_port_profiles.yaml
 create_vlan() {
+    acquire_lock
     # Read POST data
     read -r POST_DATA
     export POST_DATA
-    
+
     python3 << PYTHON
 import json
+import re
 from ruamel.yaml import YAML
 yaml = YAML()
 yaml.preserve_quotes = True

@@ -340,9 +340,9 @@
                     <div class="stat-value" id="overall-health">--</div>
                     <div class="stat-label">Overall Health</div>
                 </div>
-                <div class="stat-item" id="critical-issues-container" onclick="window.location.href='lldp-problem.html'" style="position: relative; cursor: pointer;">
+                <div class="stat-item" id="critical-issues-container" onclick="const section = document.querySelector('h2.section-title'); if (section) section.closest('.analysis-section').scrollIntoView({ behavior: 'smooth' });" style="position: relative; cursor: pointer;">
                     <div class="stat-value" id="critical-issues">--</div>
-                    <div class="stat-label">Open Issues</div>
+                    <div class="stat-label">Open Issues (all domains)</div>
                     <div class="critical-tooltip" id="critical-tooltip"></div>
                 </div>
             </div>
