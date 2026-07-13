@@ -1096,15 +1096,23 @@ async function exportTopologyPng() {
             }
         } catch (e) { /* fall through — glyphs may render with fallback */ }
 
+        // Derive the true model->pixel transform from the EXPORTED image size
+        // rather than assuming width == bb.w*SCALE. cy.png(full) sizes the image
+        // to the element bounding box; rounding/DPR can make the effective scale
+        // differ slightly from the requested SCALE, which otherwise shifts and
+        // compresses the overlaid glyphs. bb.x1/y1 is the image origin (full mode
+        // adds no padding), so scaleX/Y read straight off the rendered pixels.
         const bb = cy.elements().boundingBox();
+        const scaleX = baseImg.width / bb.w;
+        const scaleY = baseImg.height / bb.h;
+        const fontPx = ICON_FONT_PX * scaleY;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        const fontPx = ICON_FONT_PX * SCALE;
         cy.nodes().forEach(node => {
             if (!node.visible()) return;
-            const pos = node.position();
-            const x = (pos.x - bb.x1) * SCALE;
-            const y = (pos.y - bb.y1) * SCALE;
+            const pos = node.position(); // node centre in model coordinates
+            const x = (pos.x - bb.x1) * scaleX;
+            const y = (pos.y - bb.y1) * scaleY;
             ctx.font = `${fontPx}px 'next-font'`;
             const bgChar = node.data('iconBgChar');
             if (bgChar) {
