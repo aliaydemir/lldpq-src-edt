@@ -80,7 +80,7 @@
         .image-preview-bar img { height: 56px; border-radius: 4px; border: 1px solid #555; object-fit: cover; }
         .image-preview-bar button { background: none; border: none; color: #888; cursor: pointer; font-size: 16px; line-height: 1; padding: 2px 4px; }
         .image-preview-bar button:hover { color: #d4d4d4; }
-        .msg-user img.chat-image { max-width: 280px; max-height: 200px; border-radius: 4px; display: block; margin-top: 6px; border: 1px solid #444; }
+        .msg-user img.chat-image { max-width: 280px; max-height: 200px; border-radius: 4px; display: block; margin-bottom: 6px; border: 1px solid #444; }
 
         /* Buttons */
         .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; transition: all 0.2s; display: inline-flex; align-items: center; gap: 6px; }
@@ -1939,14 +1939,14 @@ async function sendMessage() {
     const sentImage = pendingImage;
     clearPendingImage();
 
-    // Add user message (show original, send with logs; show image thumbnail if attached)
+    // Add user message (show original, send with logs; show image above text if attached)
     const userBubble = addMessage('user', message);
     if (sentImage && userBubble) {
         const img = document.createElement('img');
         img.src = sentImage.dataUrl;
         img.className = 'chat-image';
         img.alt = 'Attached image';
-        userBubble.appendChild(img);
+        userBubble.insertBefore(img, userBubble.firstChild);
     }
     chatHistory.push({ role: 'user', content: message, ts: Date.now() });
     saveChatToStorage();
@@ -2057,11 +2057,27 @@ function clearPendingImage() {
 }
 
 function _setPendingImage(b64, type, dataUrl) {
-    pendingImage = { b64, type, dataUrl };
-    const thumb = document.getElementById('imagePreviewThumb');
-    if (thumb) thumb.src = dataUrl;
-    const bar = document.getElementById('imagePreviewBar');
-    if (bar) bar.classList.add('visible');
+    // Compress via canvas: max 1024px wide/tall, JPEG 75% — keeps POST under nginx limits
+    const tmpImg = new Image();
+    tmpImg.onload = () => {
+        const MAX = 1024;
+        let w = tmpImg.naturalWidth, h = tmpImg.naturalHeight;
+        if (w > MAX || h > MAX) {
+            if (w >= h) { h = Math.round(h * MAX / w); w = MAX; }
+            else        { w = Math.round(w * MAX / h); h = MAX; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(tmpImg, 0, 0, w, h);
+        const compressed = canvas.toDataURL('image/jpeg', 0.75);
+        const comma = compressed.indexOf(',');
+        pendingImage = { b64: compressed.slice(comma + 1), type: 'image/jpeg', dataUrl: compressed };
+        const thumb = document.getElementById('imagePreviewThumb');
+        if (thumb) thumb.src = compressed;
+        const bar = document.getElementById('imagePreviewBar');
+        if (bar) bar.classList.add('visible');
+    };
+    tmpImg.src = dataUrl;
 }
 
 // Paste handler: capture images pasted into the chat input
