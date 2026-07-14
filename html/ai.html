@@ -1946,7 +1946,7 @@ async function sendMessage() {
         img.src = sentImage.dataUrl;
         img.className = 'chat-image';
         img.alt = 'Attached image';
-        userBubble.querySelector('.msg') ? userBubble.querySelector('.msg').appendChild(img) : userBubble.appendChild(img);
+        userBubble.appendChild(img);
     }
     chatHistory.push({ role: 'user', content: message, ts: Date.now() });
     saveChatToStorage();
