@@ -1612,7 +1612,31 @@ def build_fabric_summary():
     except Exception:
         pass
 
-    # 7. Discovery status
+    # 7. Active design (P2P / IPAM) status
+    try:
+        _p2p_data, _p2p_err = _load_active_p2p()
+        if _p2p_data is not None and isinstance(_p2p_data, dict):
+            _p2p_count = _p2p_data.get('total_connections', len(_p2p_data.get('connections') or []))
+            _p2p_src = _p2p_data.get('source_file') or ''
+            _p2p_src_part = (' from %s' % _p2p_src) if _p2p_src else ''
+            summary.append("P2P DESIGN: active%s — %s connections; use [P2P: <device> <port>] to query" % (_p2p_src_part, _p2p_count))
+        else:
+            summary.append("P2P DESIGN: unavailable (%s)" % (_p2p_err or 'not uploaded'))
+    except Exception:
+        pass
+    try:
+        _ipam_data, _ipam_err = _load_active_ipam()
+        if _ipam_data is not None and isinstance(_ipam_data, dict):
+            _src = _ipam_data.get('source_file') or _ipam_data.get('_source_file') or ''
+            _recs = _ipam_data.get('total_records') or '?'
+            _src_part = (' from %s' % _src) if _src else ''
+            summary.append("IP EXCEL/IPAM DESIGN: active%s — %s total records; use [IPAM: <hostname-or-ip>] to query" % (_src_part, _recs))
+        else:
+            summary.append("IP EXCEL/IPAM DESIGN: unavailable (%s)" % (_ipam_err or 'not uploaded'))
+    except Exception:
+        pass
+
+    # 8. Discovery status
     try:
         disc_file = os.path.join(WEB_ROOT, 'discovery-cache.json')
         if os.path.exists(disc_file):
@@ -1632,7 +1656,7 @@ def build_fabric_summary():
     except Exception:
         pass
     
-    # 7. Fabric tables summary
+    # 9. Fabric tables summary
     try:
         summary_file = _mr_path('fabric-tables', 'summary.json')
         if os.path.exists(summary_file):
