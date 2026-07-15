@@ -10477,12 +10477,14 @@ def open_owned_lock(path):
     flags = os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW
     if hasattr(os, 'O_CLOEXEC'):
         flags |= os.O_CLOEXEC
-    descriptor = os.open(path, flags, 0o600)
+    mode = 0o660 if _using_secure_lock_dir else 0o600
+    descriptor = os.open(path, flags, mode)
     metadata = os.fstat(descriptor)
     if not stat.S_ISREG(metadata.st_mode) or (not _using_secure_lock_dir and metadata.st_uid != os.geteuid()):
         os.close(descriptor)
         raise PermissionError('Unsafe command lock file')
-    os.fchmod(descriptor, 0o600)
+    if metadata.st_uid == os.geteuid():
+        os.fchmod(descriptor, mode)
     return os.fdopen(descriptor, 'w')
 
 
