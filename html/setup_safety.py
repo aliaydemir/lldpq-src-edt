@@ -29,6 +29,12 @@ from typing import Optional
 
 
 MAX_CONFIG_BYTES = 2 * 1024 * 1024
+# Managed files nginx serves to the browser as static assets. They must stay
+# world-readable across a Setup save; devices.yaml/notifications.yaml are NOT
+# here because they may legitimately be group-only (0640) to protect secrets.
+WEB_SERVED_BASENAMES = frozenset(
+    {"topology.dot", "topology_config.yaml", "display-aliases.json"}
+)
 MAX_DIRECT_MOUNT_JOURNAL_BYTES = 4 * 1024 * 1024
 DIRECT_MOUNT_JOURNAL_VERSION = 1
 DIRECT_MOUNT_JOURNAL_ROOT = os.environ.get(
@@ -678,7 +684,13 @@ def _require_managed_target(path: str, managed_roots) -> None:
         raise SetupSafetyError("Configuration link points outside managed LLDPq directories")
 
 
-def _write_staged(path: str, content: bytes, metadata: Optional[os.stat_result]) -> str:
+def _write_staged(
+    path: str,
+    content: bytes,
+    metadata: Optional[os.stat_result],
+    *,
+    world_readable: bool = False,
+) -> str:
     directory = os.path.dirname(path)
     fd, staged = tempfile.mkstemp(prefix="." + os.path.basename(path) + ".tmp.", dir=directory)
     try:
@@ -687,7 +699,13 @@ def _write_staged(path: str, content: bytes, metadata: Optional[os.stat_result])
             target.flush()
             os.fsync(target.fileno())
         if metadata is not None:
-            os.chmod(staged, stat.S_IMODE(metadata.st_mode))
+            mode = stat.S_IMODE(metadata.st_mode)
+            if world_readable:
+                # Floor the group/other read bits so preserving a target that
+                # drifted to a restrictive mode cannot re-infect a web-served
+                # file and leave nginx returning 403 after a successful save.
+                mode |= 0o644
+            os.chmod(staged, mode)
             try:
                 os.chown(staged, metadata.st_uid, metadata.st_gid)
             except PermissionError:
@@ -1347,13 +1365,19 @@ def atomic_write_text(
         raise SetupSafetyError("Configuration must be between 1 byte and 2 MiB")
     path = _resolved_regular_target(logical_path, managed_roots)
     directory = os.path.dirname(path)
+    world_readable = os.path.basename(path) in WEB_SERVED_BASENAMES
     lock_path = path + ".lock"
     lock_fd = _open_configuration_lock(lock_path)
     try:
         _recover_direct_mount_journal_locked(path)
         try:
-            current = Path(path).read_bytes()
             metadata = os.stat(path, follow_symlinks=False)
+            # Cap before reading so the write path is not weaker than the read
+            # path (_read_descriptor enforces the same limit); this also avoids
+            # loading a runaway file plus a full .bak copy into memory.
+            if stat.S_ISREG(metadata.st_mode) and metadata.st_size > MAX_CONFIG_BYTES:
+                raise SetupSafetyError("Configuration exceeds the safe size limit")
+            current = Path(path).read_bytes()
         except FileNotFoundError:
             current = b""
             metadata = None
@@ -1373,11 +1397,15 @@ def atomic_write_text(
                         raise SetupSafetyError("Configuration backup target is not a regular file")
                 except FileNotFoundError:
                     backup_metadata = metadata
-                backup_stage = _write_staged(backup_path, current, backup_metadata)
+                backup_stage = _write_staged(
+                    backup_path, current, backup_metadata, world_readable=world_readable
+                )
                 os.replace(backup_stage, backup_path)
                 backup_stage = None
                 _fsync_directory(directory)
-            target_stage = _write_staged(path, encoded, metadata)
+            target_stage = _write_staged(
+                path, encoded, metadata, world_readable=world_readable
+            )
             try:
                 os.replace(target_stage, path)
                 target_stage = None
@@ -1423,7 +1451,9 @@ def atomic_write_text(
                     if metadata is None:
                         os.unlink(path)
                     else:
-                        rollback = _write_staged(path, current, metadata)
+                        rollback = _write_staged(
+                            path, current, metadata, world_readable=world_readable
+                        )
                         os.replace(rollback, path)
                     _fsync_directory(directory)
             except Exception as rollback_error:
