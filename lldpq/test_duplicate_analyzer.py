@@ -35,7 +35,7 @@ class DuplicateIpSeverityTests(unittest.TestCase):
         rec["macs"].add("00:11:22:33:44:55")
         rec["authoritative_hosts"].update(hosts)
         rec["severity"] = self.analyzer._ip_sev(rec)
-        self.analyzer.ip_dups[("8", ip)] = rec
+        self.analyzer.ip_dups[("100008", ip)] = rec
         if hosts:
             self.analyzer.authoritative_ip_pairs[("100008", ip)] = set(hosts)
         return rec
@@ -62,7 +62,7 @@ class DuplicateIpSeverityTests(unittest.TestCase):
 
         self.analyzer._finalize()
 
-        rec = self.analyzer.ip_dups[("8", "10.2.240.88")]
+        rec = self.analyzer.ip_dups[("100008", "10.2.240.88")]
         self.assertEqual(0, rec["delta"])
         self.assertEqual("WARNING", rec["severity"])
         self.assertEqual(0, self.analyzer.summary()["ip_active"])
@@ -203,7 +203,7 @@ class DuplicateMacClassificationTests(unittest.TestCase):
             "seq": prev_seq,
             "ts": time.time() - quiet_age,
         }
-        self.analyzer.mac_mob[(self.VLAN, mac)] = {
+        self.analyzer.mac_mob[(self.VNI, mac)] = {
             "seq": seq,
             "hosts": {host},
             "vteps": set(),
@@ -239,7 +239,7 @@ class DuplicateMacClassificationTests(unittest.TestCase):
 
         self.analyzer._finalize()
 
-        rec = self.analyzer.mac_dups[(self.VLAN, mac)]
+        rec = self.analyzer.mac_dups[(self.VNI, mac)]
         self.assertEqual(2, rec["delta"])
         self.assertFalse(rec["confirmed_conflict"])
         self.assertFalse(rec["dad_flagged"])
@@ -257,7 +257,7 @@ class DuplicateMacClassificationTests(unittest.TestCase):
 
         self.analyzer._finalize()
 
-        rec = self.analyzer.mac_dups[(self.VLAN, mac)]
+        rec = self.analyzer.mac_dups[(self.VNI, mac)]
         self.assertFalse(rec["confirmed_conflict"])
         self.assertTrue(rec["dad_flagged"])
         self.assertFalse(rec["mobility_only"])
@@ -274,7 +274,7 @@ class DuplicateMacClassificationTests(unittest.TestCase):
 
         self.analyzer._finalize()
 
-        rec = self.analyzer.mac_dups[(self.VLAN, mac)]
+        rec = self.analyzer.mac_dups[(self.VNI, mac)]
         self.assertTrue(rec["confirmed_conflict"])
         self.assertFalse(rec["dad_flagged"])
         self.assertFalse(rec["mobility_only"])
@@ -296,7 +296,7 @@ class DuplicateMacClassificationTests(unittest.TestCase):
 
         self.analyzer._finalize()
 
-        rec = self.analyzer.mac_dups[(self.VLAN, mac)]
+        rec = self.analyzer.mac_dups[(self.VNI, mac)]
         self.assertTrue(rec["confirmed_conflict"])
         self.assertEqual("CRITICAL", rec["severity"])
 
@@ -333,7 +333,7 @@ class DuplicateMacClassificationTests(unittest.TestCase):
 
         self.analyzer._finalize()
 
-        rec = self.analyzer.mac_dups[(self.VLAN, mac)]
+        rec = self.analyzer.mac_dups[(self.VNI, mac)]
         self.assertTrue(rec["dad_flagged"])
         self.assertEqual("dad_flagged_mac", rec["incident_type"])
         self.assertEqual("WARNING", rec["severity"])
@@ -346,7 +346,7 @@ class DuplicateMacClassificationTests(unittest.TestCase):
             "seq": 1295,
             "ts": time.time() - (ACTIVE_WINDOW_SEC + 1),
         }
-        self.analyzer.ip_mob[(self.VLAN, ip)] = {
+        self.analyzer.ip_mob[(self.VNI, ip)] = {
             "seq": 1297,
             "macs": {mac},
             "vteps": set(),
@@ -355,8 +355,8 @@ class DuplicateMacClassificationTests(unittest.TestCase):
 
         self.analyzer._finalize()
 
-        ip_rec = self.analyzer.ip_dups[(self.VLAN, ip)]
-        mac_rec = self.analyzer.mac_dups[(self.VLAN, mac)]
+        ip_rec = self.analyzer.ip_dups[(self.VNI, ip)]
+        mac_rec = self.analyzer.mac_dups[(self.VNI, mac)]
         self.assertFalse(self.analyzer._is_confirmed_ip(ip_rec))
         self.assertNotEqual("ip_conflict_participant", mac_rec["incident_type"])
         self.assertNotEqual("duplicate", mac_rec["classification"])
@@ -404,7 +404,7 @@ class DuplicateMacClassificationTests(unittest.TestCase):
 
         self.analyzer._finalize()
 
-        rec = self.analyzer.mac_dups[(self.VLAN, mac)]
+        rec = self.analyzer.mac_dups[(self.VNI, mac)]
         self.assertEqual(0, rec["delta"])
         self.assertFalse(rec["confirmed_conflict"])
         self.assertFalse(rec["dad_flagged"])
@@ -428,7 +428,7 @@ class DuplicateMacClassificationTests(unittest.TestCase):
             "observed_at": observed_at - 120,
             "ts": observed_at - 120,
         }
-        self.analyzer.mac_mob[(self.VLAN, mac)] = {
+        self.analyzer.mac_mob[(self.VNI, mac)] = {
             "seq": 1006,
             "seq_by_host": {"tor-a": 1006},
             "hosts": {"tor-a"},
@@ -439,7 +439,7 @@ class DuplicateMacClassificationTests(unittest.TestCase):
 
         self.analyzer._finalize()
 
-        rec = self.analyzer.mac_dups[(self.VLAN, mac)]
+        rec = self.analyzer.mac_dups[(self.VNI, mac)]
         self.assertEqual(6, rec["delta"])
         self.assertTrue(rec["sequence_active"])
         self.assertEqual("mac_mobility_active", rec["incident_type"])
@@ -461,7 +461,7 @@ class DuplicateMacClassificationTests(unittest.TestCase):
             "seq": 20000,
             "ts": observed_at - 120,
         }
-        self.analyzer.mac_mob[(self.VLAN, mac)] = {
+        self.analyzer.mac_mob[(self.VNI, mac)] = {
             "seq": 20002,
             "seq_by_host": {"tor-b": 20002},
             "hosts": {"tor-b"},
@@ -472,7 +472,7 @@ class DuplicateMacClassificationTests(unittest.TestCase):
 
         self.analyzer._finalize()
 
-        rec = self.analyzer.mac_dups[(self.VLAN, mac)]
+        rec = self.analyzer.mac_dups[(self.VNI, mac)]
         self.assertIsNone(rec["delta"])
         self.assertFalse(rec["sequence_active"])
         self.assertEqual("WARNING", rec["severity"])
@@ -502,6 +502,7 @@ class DuplicateMacClassificationTests(unittest.TestCase):
 
         self.analyzer._finalize()
 
+        self.assertNotIn((self.VNI, mac), self.analyzer.mac_dups)
         self.assertNotIn((self.VLAN, mac), self.analyzer.mac_dups)
         self.assertEqual(0, self.analyzer.summary()["confirmed_mac_total"])
 
@@ -513,11 +514,11 @@ class DuplicateMacClassificationTests(unittest.TestCase):
         ip_rec["macs"].add(mac)
         ip_rec["authoritative_macs"].add(mac)
         ip_rec["authoritative_hosts"].add("tor-a")
-        self.analyzer.ip_dups[(self.VLAN, ip)] = ip_rec
+        self.analyzer.ip_dups[(self.VNI, ip)] = ip_rec
 
         self.analyzer._finalize()
 
-        rec = self.analyzer.mac_dups[(self.VLAN, mac)]
+        rec = self.analyzer.mac_dups[(self.VNI, mac)]
         self.assertTrue(rec["participates_in_ip_conflict"])
         self.assertEqual("ip-conflict-participant", rec["classification"])
         self.assertIn("Participant in current authoritative IP DAD finding", self.mac_table_html())
@@ -566,6 +567,99 @@ class DuplicateMacClassificationTests(unittest.TestCase):
         })
 
         self.assertEqual(0, self.analyzer.summary()["coverage_current"])
+
+
+class VniVlanResolutionTests(unittest.TestCase):
+    """One EVPN finding = one row: a per-observer VLAN (or an L3 leaf's
+    VLAN 0) must never split or mislabel a VNI-scoped duplicate."""
+
+    VNI_LINE_LEAF = ("100008     L2   vxlan48               235      356      "
+                     "17              vpn60030        0          br_default")
+    VNI_LINE_TOR = ("100008     L2   vxlan48               270      0        "
+                    "17              default         8          br_default")
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.analyzer = DuplicateAnalyzer(self.tmp.name)
+        self.analyzer.coverage = {
+            "expected": {"a-leaf-01", "z-tor-01"},
+            "current": {"a-leaf-01", "z-tor-01"},
+            "failures": [],
+            "partial": False,
+        }
+
+    def test_vlan_zero_never_masks_the_real_vlan(self):
+        self.analyzer._parse_vni_map([self.VNI_LINE_TOR])
+        self.analyzer._parse_vni_map([self.VNI_LINE_LEAF])
+
+        self.assertEqual("8", self.analyzer._vlan_of("100008"))
+
+    def test_observers_with_and_without_vlan_mapping_share_one_record(self):
+        mac = "3c:6d:66:15:b7:95"
+        self.analyzer._parse_vni_map([self.VNI_LINE_LEAF])
+        self.analyzer._parse_vni_map([self.VNI_LINE_TOR])
+        # L3-gateway leaf only sees the MAC remote (no local VLAN mapping)
+        self.analyzer._parse_mac_dup("a-leaf-01", [
+            "VNI 100008 #MACs (local and remote) 1",
+            "%s remote 10.0.0.13 972396/972395" % mac,
+        ])
+        self.analyzer._parse_mac_dup("z-tor-01", [
+            "VNI 100008 #MACs (local and remote) 1",
+            "%s local active swp31 972395/972394" % mac,
+        ])
+
+        self.analyzer._finalize()
+
+        self.assertEqual([("100008", mac)], list(self.analyzer.mac_dups))
+        rec = self.analyzer.mac_dups[("100008", mac)]
+        self.assertEqual("8", rec["vlan"])
+        self.assertEqual({"a-leaf-01", "z-tor-01"}, rec["flagged_hosts"])
+        self.assertEqual({"z-tor-01": "swp31"}, rec["local"])
+        self.assertIn("10.0.0.13", rec["vteps"])
+
+    def test_parse_all_resolves_vlan_regardless_of_host_order(self):
+        # The leaf file sorts (and parses) before the tor file; the VNI map
+        # pre-pass must still label the finding with the tor's real VLAN.
+        mac = "3c:6d:66:15:b7:95"
+        dup_dir = Path(self.tmp.name) / "dup-data"
+        (dup_dir / "a-leaf-01_dup.txt").write_text(
+            "=== DUP VNI MAP ===\n%s\n"
+            "__LLDPQ_DUP_COVERAGE__:VNI_MAP:OK\n"
+            "=== DUP MAC ===\n"
+            "VNI 100008 #MACs (local and remote) 1\n"
+            "%s remote 10.0.0.13 972396/972395\n"
+            "__LLDPQ_DUP_COVERAGE__:MAC_DUPLICATES:OK\n"
+            % (self.VNI_LINE_LEAF, mac), encoding="utf-8")
+        (dup_dir / "z-tor-01_dup.txt").write_text(
+            "=== DUP VNI MAP ===\n%s\n"
+            "__LLDPQ_DUP_COVERAGE__:VNI_MAP:OK\n"
+            "=== DUP MAC ===\n"
+            "VNI 100008 #MACs (local and remote) 1\n"
+            "%s local active swp31 972395/972394\n"
+            "__LLDPQ_DUP_COVERAGE__:MAC_DUPLICATES:OK\n"
+            % (self.VNI_LINE_TOR, mac), encoding="utf-8")
+
+        self.analyzer.parse_all()
+
+        self.assertEqual([("100008", mac)], list(self.analyzer.mac_dups))
+        self.assertEqual("8", self.analyzer.mac_dups[("100008", mac)]["vlan"])
+
+    def test_kernel_evidence_folds_into_the_vni_record(self):
+        # FDB/ARP evidence only knows VLAN 8; it must join the VNI 100008
+        # record instead of opening a parallel VLAN-keyed row.
+        mac = "3c:6d:66:15:b7:95"
+        self.analyzer.coverage["fdb_current"] = {"a-leaf-01", "z-tor-01"}
+        self.analyzer._parse_vni_map([self.VNI_LINE_TOR])
+        self.analyzer._parse_mac_dup("z-tor-01", [
+            "VNI 100008 #MACs (local and remote) 1",
+            "%s local active swp31 972395/972394" % mac,
+        ])
+        self.analyzer.fdb_local[("8", mac)] = {"z-tor-01": "swp31"}
+
+        self.analyzer._finalize()
+
+        self.assertEqual([("100008", mac)], list(self.analyzer.mac_dups))
 
 
 if __name__ == "__main__":
