@@ -138,7 +138,10 @@ class DuplicateAnalyzer:
         self.ip_dups = {}              # (vni, ip) -> record
         self.authoritative_ip_pairs = {}  # (vni, ip) -> hosts reporting current FRR duplicate
         self.mac_dups = {}             # (vni, mac) -> record
-        self.apipa = {}                # host -> {'total': int, 'per_vlan': {vlan: count}}
+        self.apipa = {}                # host -> {'total': int, 'per_vlan': {vlan: count}}  (per-observer sightings)
+        self.apipa_ips = set()         # (vlan-or-dev, ip): unique DHCP-failed endpoints fabric-wide
+                                       # (EVPN syncs each neighbour to ~every VTEP, so raw sightings
+                                       #  overcount devices by the observer count)
         self.fdb_local = {}            # (vlan, mac) -> {host -> port}   (kernel view: VLAN only)
         self.if_desc = {}              # (host, port) -> interface description (ifalias)
         self.arp_pairs = {}            # (vlan, ip) -> {mac -> set(hosts)}   (kernel view: VLAN only)
@@ -479,8 +482,9 @@ class DuplicateAnalyzer:
             if len(p) >= 8 and p[0].isdigit() and p[1] in ("L2", "L3"):
                 # VLAN 0 = this switch has no resolvable access VLAN for the
                 # VNI (e.g. an L3-gateway leaf); it must never mask the real
-                # VLAN that the access switches report.
-                if p[7] != "0":
+                # VLAN that the access switches report.  Older FRR prints no
+                # VLAN column at all (7 fields) -> nothing usable to store.
+                if p[7].isdigit() and p[7] != "0":
                     self.vni_to_vlan[p[0]] = p[7]
 
     def _build_vlan_to_vni(self):
@@ -603,7 +607,7 @@ class DuplicateAnalyzer:
     def _blank_mac(self, vlan, vni, mac):
         return {"vlan": vlan, "vni": str(vni), "mac": mac, "seq": 0,
                 "seq_by_host": {}, "flagged": False, "flagged_hosts": set(),
-                "dad_flagged": False, "dad_event": False,
+                "dad_flagged": False, "dad_event": False, "dad_event_active": False,
                 "local": {}, "vteps": set(),
                 "delta": None, "fdb_multi": False, "physical_local_count": 0,
                 "confirmed_conflict": False, "mobility": False,
@@ -734,6 +738,7 @@ class DuplicateAnalyzer:
             vlan = vm.group(1) if vm else None
             if ip.startswith("169.254."):
                 ap["total"] += 1
+                self.apipa_ips.add((vlan or dev, ip))
                 if vlan:
                     ap["per_vlan"][vlan] = ap["per_vlan"].get(vlan, 0) + 1
                 continue
@@ -973,6 +978,15 @@ class DuplicateAnalyzer:
         self._seq_delta("mac", "%s|%s" % (rec["vni"], mac), rec["seq"])
         self._apply_mac_sequence_sample(rec)
 
+        # Parity with the mobility active/historical split: a recent zebra
+        # DAD log line whose EVPN sequence is provably flat this cycle is a
+        # settled accumulation, not an active fire.  An unknown delta (first
+        # sample) stays conservative and keeps the event active.
+        rec["dad_event_active"] = bool(
+            rec.get("dad_event")
+            and (rec["delta"] is None or rec["delta"] > 0)
+        )
+
         rec["mobility_only"] = bool(
             rec.get("mobility") and not rec["confirmed_conflict"]
             and not rec["dad_flagged"] and not rec.get("dad_event")
@@ -992,7 +1006,7 @@ class DuplicateAnalyzer:
             rec["incident_type"] = "unknown"
         rec["activity"] = (
             "active" if rec["confirmed_conflict"] or rec["sequence_active"]
-            or rec.get("dad_event") else "settled"
+            or rec.get("dad_event_active") else "settled"
         )
         rec["severity"] = self._mac_sev(rec)
 
@@ -1229,9 +1243,9 @@ class DuplicateAnalyzer:
 
     def _mac_sev(self, rec):
         if (rec.get("confirmed_conflict") or rec.get("sequence_active")
-                or rec.get("dad_event")):
+                or rec.get("dad_event_active")):
             return "CRITICAL"
-        if rec.get("dad_flagged") or rec.get("mobility"):
+        if rec.get("dad_flagged") or rec.get("dad_event") or rec.get("mobility"):
             return "WARNING"
         return "OK"
 
@@ -1276,7 +1290,10 @@ class DuplicateAnalyzer:
             1 for r in mobility_macs if r.get("sequence_active")
         )
         mac_total = len(confirmed_macs)
-        apipa_total = sum(a["total"] for a in self.apipa.values())
+        # Headline = unique DHCP-failed endpoints; the raw per-observer count
+        # is kept separately (10 devices can read as 800+ sightings via EVPN).
+        apipa_total = len(self.apipa_ips)
+        apipa_sightings = sum(a["total"] for a in self.apipa.values())
         vlans = set(r["vlan"] for r in confirmed_ips) | set(r["vlan"] for r in self.mac_dups.values())
         vlans |= set(r["vlan"] for r in arp_observed_ips)
         for h, a in self.apipa.items():
@@ -1301,6 +1318,7 @@ class DuplicateAnalyzer:
             "mac_mobility_active": mobility_active,
             "mac_mobility_settled": len(mobility_macs) - mobility_active,
             "apipa_total": apipa_total,
+            "apipa_sightings": apipa_sightings,
             "vlans": len(vlans), "disabled": disabled,
             "ip_total": ip_active + ip_quiesced,
             "coverage_expected": len(self.coverage["expected"]),
@@ -1358,6 +1376,18 @@ class DuplicateAnalyzer:
         if desc:
             base += "<span class='pdesc'>%s</span>" % html.escape(desc)
         return base
+
+    def _vlan_vni_cell(self, rec):
+        """'vlan X / VNI Y' cell. Kernel-only findings (ARP/FDB) carry the
+        VLAN echoed into the VNI field when no EVPN mapping is known; show
+        'VNI —' there instead of presenting the VLAN number as a real VNI."""
+        vni = rec["vni"]
+        if vni == rec["vlan"] and vni not in self.vni_to_vlan:
+            vni_label = "&mdash;"
+        else:
+            vni_label = html.escape(vni)
+        return "vlan %s<br><span class='dim'>VNI %s</span>" % (
+            html.escape(rec["vlan"]), vni_label)
 
     def _vtep_cell(self, vteps, owner_hosts, port_map=None):
         """Render the conflicting VTEPs as switch names (resolved via vtep2host), dropping the
@@ -1430,7 +1460,7 @@ class DuplicateAnalyzer:
                 for _h, _p in self.fdb_local.get((r["vlan"], _m), {}).items():
                     ip_ports[_h] = _p
             vteps = self._vtep_cell(r["vteps"], r["local_hosts"], ip_ports)
-            vlanvni = "vlan %s<br><span class='dim'>VNI %s</span>" % (html.escape(r["vlan"]), html.escape(r["vni"]))
+            vlanvni = self._vlan_vni_cell(r)
             devs = set(r["local_hosts"]) | set(p.split(":")[0] for p in r["ports"])
             # The contender switches (Conflict VTEP column) must be searchable too.
             for v in r["vteps"]:
@@ -1504,7 +1534,7 @@ class DuplicateAnalyzer:
             cport = dict(self.fdb_local.get((r["vlan"], r["mac"]), {}))
             cport.update(mac_ip_ports.get((r["vlan"], r["mac"]), {}))
             vteps = self._vtep_cell(r["vteps"], set(r["local"].keys()), cport)
-            vlanvni = "vlan %s<br><span class='dim'>VNI %s</span>" % (html.escape(r["vlan"]), html.escape(r["vni"]))
+            vlanvni = self._vlan_vni_cell(r)
             if r.get("classification") == "loop":
                 note = "Possible loop (%d MACs)" % r.get("loop_count", 0)
             elif r.get("confirmed_conflict"):
@@ -1514,7 +1544,9 @@ class DuplicateAnalyzer:
             elif r.get("incident_type") == "dad_flagged_mac":
                 note = "FRR MAC DAD flag (latched; not proven simultaneous)"
             elif r.get("incident_type") == "dad_event_mac":
-                note = "Recent FRR MAC DAD event"
+                note = ("Recent FRR MAC DAD event"
+                        if r.get("dad_event_active")
+                        else "Recent FRR MAC DAD event (sequence settled)")
             elif r.get("incident_type") == "mac_mobility_active":
                 note = "Active MAC mobility at/above DAD move-rate threshold"
             elif r.get("incident_type") == "mac_mobility_historical":
@@ -1582,7 +1614,8 @@ class DuplicateAnalyzer:
         # ---- DAD / multihoming note (shown in the Thresholds modal, not as a banner)
         dad_note = ""
         if s["disabled"]:
-            dad_note = ("<br><b>DAD currently off on:</b> %s (EVPN multihoming active)."
+            dad_note = ("<br><b>DAD currently off on:</b> %s &mdash; expected: FRR disables DAD "
+                        "while EVPN multihoming is active (platform restriction, cannot be enabled)."
                         % html.escape(", ".join(sorted(s["disabled"]))))
         cfg_txt = "n/a"
         for c in self.dup_config.values():
@@ -1607,7 +1640,8 @@ class DuplicateAnalyzer:
              "mobility" if s["mac_mobility_total"] else ""),
             ("card-warning" if s["apipa_total"] else "card-excellent", s["apipa_total"], "APIPA (DHCP FAILED)", "apipa"),
             ("card-info", s["vlans"], "VLANS WITH FINDINGS", ""),
-            ("card-warning" if s["disabled"] else "card-excellent", len(s["disabled"]), "DUP-DETECT DISABLED", "disabled"),
+            # DAD off = FRR's own EVPN-MH restriction, not a finding: informational.
+            ("card-info" if s["disabled"] else "card-excellent", len(s["disabled"]), "DUP-DETECT OFF (EVPN-MH)", "disabled"),
         ]
         cards_html = "".join(
             "<div class='summary-card %s%s'%s><div class='metric'>%s</div><div class='metric-label'>%s</div></div>" % (
@@ -1691,6 +1725,8 @@ class DuplicateAnalyzer:
         html_doc = html_doc.replace("__STALE_DAYS__", str(STALE_AGE_SEC // 86400))
         html_doc = html_doc.replace("__CFG__", html.escape(cfg_txt))
         html_doc = html_doc.replace("__APIPA_CRIT__", str(APIPA_CRITICAL))
+        html_doc = html_doc.replace("__APIPA_UNIQUE__", "{:,}".format(s["apipa_total"]))
+        html_doc = html_doc.replace("__APIPA_SIGHTINGS__", "{:,}".format(s["apipa_sightings"]))
         html_doc = html_doc.replace("__DAD_NOTE__", dad_note)
         html_doc = html_doc.replace("__SEQ_WARN__", str(SEQ_WARN))
         html_doc = html_doc.replace("__SEQ_STORM__", "{:,}".format(SEQ_STORM))
@@ -1866,10 +1902,10 @@ __COVERAGE_BANNER__
   </div>
 </div>
 <div class="dashboard-section">
-  <div class="section-header">APIPA / DHCP-failed (169.254.0.0/16) per switch &amp; VLAN</div>
+  <div class="section-header">APIPA / DHCP-failed (169.254.0.0/16) per switch &amp; VLAN &mdash; __APIPA_UNIQUE__ unique endpoint(s), __APIPA_SIGHTINGS__ sighting(s)</div>
   <div class="section-content">
     <table class="dup-table" id="apt">
-      <thead><tr><th>Severity</th><th>Switch</th><th>VLAN</th><th>APIPA Count</th></tr></thead>
+      <thead><tr><th>Severity</th><th>Switch</th><th>VLAN</th><th>Sightings on switch</th></tr></thead>
       <tbody>__APIPA_ROWS__</tbody>
     </table>
   </div>
@@ -1897,7 +1933,9 @@ __COVERAGE_BANNER__
       <b>Aged</b> &mdash; a quiesced duplicate whose sequence has not moved for &ge;__STALE_DAYS__ days is
       collapsed out of the list (use <i>Show aged</i> to reveal). These persist in FRR until the address is
       removed / re-learned or its DAD flag is cleared &mdash; the tool only mirrors that state.<br>
-      APIPA &mdash; CRITICAL when &ge; __APIPA_CRIT__ APIPA addresses on one switch+VLAN, else WARNING.
+      APIPA &mdash; the headline counts <b>unique</b> DHCP-failed endpoints; the table counts sightings per
+      switch+VLAN (EVPN syncs each neighbour to every VTEP, so one endpoint appears on many switches).
+      CRITICAL when &ge; __APIPA_CRIT__ sightings on one switch+VLAN, else WARNING.
       <h4>Clear a resolved FRR DAD flag</h4>
       After confirming the conflict is resolved, run the targeted command on every VTEP that still reports
       the duplicate. Replace the placeholders with the row's VNI and address:<br>

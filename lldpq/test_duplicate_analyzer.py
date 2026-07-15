@@ -523,6 +523,51 @@ class DuplicateMacClassificationTests(unittest.TestCase):
         self.assertEqual("ip-conflict-participant", rec["classification"])
         self.assertIn("Participant in current authoritative IP DAD finding", self.mac_table_html())
 
+    def test_recent_dad_event_with_flat_sequence_is_settled_warning(self):
+        mac = "00:11:22:33:44:92"
+        observed_at = self.analyzer.analysis_now.timestamp()
+        self.analyzer.prev_state["__mac_observer_state_version__"] = 1
+        state_key = self.analyzer._mac_observer_state_key(self.VNI, mac, "tor-a")
+        self.analyzer.prev_state[state_key] = {
+            "seq": 100,
+            "observed_at": observed_at - 600,
+            "ts": observed_at - 7200,
+        }
+        self.add_dad_flag(mac)
+        self.analyzer.log_events_mac[(self.VNI, mac)] = {
+            "count": 3, "latest": self.analyzer.analysis_now,
+            "vteps": {"10.0.0.13"}, "ips": set(),
+        }
+
+        self.analyzer._finalize()
+
+        rec = self.analyzer.mac_dups[(self.VNI, mac)]
+        self.assertTrue(rec["dad_event"])
+        self.assertEqual(0, rec["delta"])
+        self.assertFalse(rec["dad_event_active"])
+        self.assertEqual("dad_event_mac", rec["incident_type"])
+        self.assertEqual("WARNING", rec["severity"])
+        self.assertEqual("settled", rec["activity"])
+        self.assertIn("sequence settled", self.mac_table_html())
+
+    def test_recent_dad_event_with_unknown_delta_stays_critical(self):
+        mac = "00:11:22:33:44:93"
+        self.analyzer.prev_state["__mac_observer_state_version__"] = 1
+        self.add_dad_flag(mac)
+        self.analyzer.log_events_mac[(self.VNI, mac)] = {
+            "count": 3, "latest": self.analyzer.analysis_now,
+            "vteps": {"10.0.0.13"}, "ips": set(),
+        }
+
+        self.analyzer._finalize()
+
+        rec = self.analyzer.mac_dups[(self.VNI, mac)]
+        self.assertTrue(rec["dad_event"])
+        self.assertIsNone(rec["delta"])
+        self.assertTrue(rec["dad_event_active"])
+        self.assertEqual("CRITICAL", rec["severity"])
+        self.assertEqual("active", rec["activity"])
+
     def test_mac_coverage_is_partial_when_fdb_source_fails(self):
         now = self.analyzer.analysis_now
         good_sources = {
@@ -645,6 +690,38 @@ class VniVlanResolutionTests(unittest.TestCase):
         self.assertEqual([("100008", mac)], list(self.analyzer.mac_dups))
         self.assertEqual("8", self.analyzer.mac_dups[("100008", mac)]["vlan"])
 
+    def test_unmapped_kernel_finding_shows_no_fake_vni(self):
+        # Cross-device ARP finding on a VLAN with no known EVPN mapping:
+        # the VLAN number must not be echoed into the VNI cell.
+        for host, mac in (("a-leaf-01", "aa:bb:cc:dd:ee:01"),
+                          ("z-tor-01", "aa:bb:cc:dd:ee:02")):
+            self.analyzer._parse_neigh(host,
+                "10.3.147.252 dev vlan210 lladdr %s REACHABLE" % mac)
+        self.analyzer._merge_arp_conflicts()
+        self.analyzer._finalize()
+
+        self.assertIn(("210", "10.3.147.252"), self.analyzer.ip_dups)
+        output = Path(self.tmp.name) / "duplicate-analysis.html"
+        self.analyzer.export_html(str(output))
+        report = output.read_text(encoding="utf-8")
+        self.assertIn("vlan 210", report)
+        self.assertIn("VNI &mdash;", report)
+
+    def test_reverse_map_resolves_arp_only_finding_to_real_vni(self):
+        self.analyzer._parse_vni_map([
+            "200210     L2   vxlan48               1        1        "
+            "1               default         210        br_default",
+        ])
+        for host, mac in (("a-leaf-01", "aa:bb:cc:dd:ee:01"),
+                          ("z-tor-01", "aa:bb:cc:dd:ee:02")):
+            self.analyzer._parse_neigh(host,
+                "10.3.147.252 dev vlan210 lladdr %s REACHABLE" % mac)
+        self.analyzer._merge_arp_conflicts()
+
+        rec = self.analyzer.ip_dups[("200210", "10.3.147.252")]
+        self.assertEqual("210", rec["vlan"])
+        self.assertEqual("200210", rec["vni"])
+
     def test_kernel_evidence_folds_into_the_vni_record(self):
         # FDB/ARP evidence only knows VLAN 8; it must join the VNI 100008
         # record instead of opening a parallel VLAN-keyed row.
@@ -660,6 +737,30 @@ class VniVlanResolutionTests(unittest.TestCase):
         self.analyzer._finalize()
 
         self.assertEqual([("100008", mac)], list(self.analyzer.mac_dups))
+
+
+class ApipaCountTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.analyzer = DuplicateAnalyzer(self.tmp.name)
+
+    def test_headline_counts_unique_endpoints_not_sightings(self):
+        # EVPN syncs each APIPA neighbour to every VTEP: 2 endpoints seen by
+        # 3 switches = 6 sightings but only 2 DHCP-failed devices.
+        for host in ("tor-a", "tor-b", "tor-c"):
+            self.analyzer._parse_neigh(host, "\n".join(
+                "169.254.10.%d dev vlan8 lladdr aa:bb:cc:dd:ee:%02x REACHABLE"
+                % (i, i) for i in (1, 2)))
+
+        summary = self.analyzer.summary()
+        self.assertEqual(2, summary["apipa_total"])
+        self.assertEqual(6, summary["apipa_sightings"])
+
+        output = Path(self.tmp.name) / "duplicate-analysis.html"
+        self.analyzer.export_html(str(output))
+        report = output.read_text(encoding="utf-8")
+        self.assertIn("2 unique endpoint(s), 6 sighting(s)", report)
 
 
 if __name__ == "__main__":
