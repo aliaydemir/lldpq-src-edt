@@ -6,6 +6,7 @@ Copyright (c) 2024 LLDPq Project
 Licensed under MIT License - see LICENSE file for details
 """
 
+import hashlib
 import json
 import time
 import re
@@ -14,6 +15,8 @@ import math
 import stat
 import tempfile
 import html
+
+import analysis_sidecar
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
 from enum import Enum
@@ -193,12 +196,12 @@ class BERAnalyzer:
         try:
             # Web-served output: nginx must always retain read access.
             os.fchmod(descriptor, mode | 0o644)
+            # Single-string write: streaming json.dump is several times
+            # slower than dumps on large history documents.
+            payload = json.dumps(value, separators=(",", ":")) + "\n"
             with os.fdopen(descriptor, "w") as stream:
                 descriptor = -1
-                # Single-string write: streaming json.dump is several times
-                # slower than dumps on large history documents.
-                stream.write(json.dumps(value, separators=(",", ":")))
-                stream.write("\n")
+                stream.write(payload)
                 stream.flush()
                 os.fsync(stream.fileno())
             os.replace(temporary, path)
@@ -211,6 +214,11 @@ class BERAnalyzer:
                 os.fsync(directory_fd)
             finally:
                 os.close(directory_fd)
+            # Validation handshake: lets the post-run JSON validator prove
+            # these bytes intact by hash instead of re-parsing the document.
+            analysis_sidecar.publish_digest(
+                path, hashlib.sha256(payload.encode("utf-8")).hexdigest()
+            )
         except Exception:
             if descriptor >= 0:
                 os.close(descriptor)

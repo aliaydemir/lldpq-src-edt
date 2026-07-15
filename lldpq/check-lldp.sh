@@ -42,6 +42,16 @@ case "$MAX_PARALLEL" in
     ''|*[!0-9]*|0) MAX_PARALLEL=100 ;;
 esac
 SSH_TIMEOUT=30    # SSH connection timeout in seconds
+# Ping-failed hosts still get an authoritative SSH attempt, but with a tighter
+# connect bound so silent hosts do not hold dispatch slots for the full
+# SSH_TIMEOUT (the dominant collection cost on fabrics with many down members).
+UNREACHABLE_CONNECT_TIMEOUT="${LLDP_UNREACHABLE_CONNECT_TIMEOUT:-10}"
+case "$UNREACHABLE_CONNECT_TIMEOUT" in
+    ''|*[!0-9]*|0) UNREACHABLE_CONNECT_TIMEOUT=10 ;;
+esac
+if [ "$UNREACHABLE_CONNECT_TIMEOUT" -gt "$SSH_TIMEOUT" ]; then
+    UNREACHABLE_CONNECT_TIMEOUT=$SSH_TIMEOUT
+fi
 
 recover_lldp_outputs() {
     local recovery_marker="$SCRIPT_DIR/lldp-results/.lldpq-lldp-recovery"
@@ -780,12 +790,20 @@ execute_commands_optimized() {
     local device=$1
     local user=$2
     local hostname=$3
-    
+    local ping_reachable=${4:-true}
+    local connect_timeout=$SSH_TIMEOUT
+
     local output_file="$collection_dir/${hostname}_lldp_result.ini"
     local temporary_file="$collection_dir/.${hostname}.tmp.${BASHPID:-$$}"
 
+    if [ "$ping_reachable" = "false" ]; then
+        connect_timeout=$UNREACHABLE_CONNECT_TIMEOUT
+    fi
+
     # Single SSH connection collects everything into this run's private tree.
-    if timeout 180 ssh $SSH_OPTS -T -q "$user@$device" "
+    # The leading -o wins over the ConnectTimeout inside SSH_OPTS (OpenSSH
+    # uses the first obtained value), so ping-failed hosts get the short bound.
+    if timeout 180 ssh -o ConnectTimeout="$connect_timeout" $SSH_OPTS -T -q "$user@$device" "
         echo '=========================================${hostname}========================================='
         echo ''
         
@@ -879,13 +897,13 @@ process_device() {
     local device=$1
     local user=$2
     local hostname=$3
-    local ssh_status
-    
+    local ssh_status ping_reachable=true
+
     # ICMP is only a hint: many otherwise reachable devices intentionally drop
     # echo requests. Always try the authoritative SSH collection before
     # classifying this inventory member as unavailable.
-    ping_test "$device" || true
-    if execute_commands_optimized "$device" "$user" "$hostname"; then
+    ping_test "$device" || ping_reachable=false
+    if execute_commands_optimized "$device" "$user" "$hostname" "$ping_reachable"; then
         ssh_status=0
     else
         ssh_status=$?

@@ -639,13 +639,23 @@ class SetupSafetyRecoverAllTests(unittest.TestCase):
             os.fsync(handle.fileno())
 
         with mock.patch.object(SAFETY, "_is_direct_mount", return_value=True):
+            recover_info = {}
             recovered = SAFETY.recover_all_managed_writes(
-                str(self.lldpq_dir), str(self.web_root)
+                str(self.lldpq_dir), str(self.web_root), result_info=recover_info
             )
 
         self.assertEqual(recovered, [str(target)])
         self.assertEqual(target.read_bytes(), original)
-        self.assertEqual(list(self.journal_root.iterdir()), [])
+        # The divergent (torn) bytes are preserved aside before the restore.
+        aside = self.journal_root / (
+            SAFETY._direct_mount_journal_name(str(target)) + ".divergent"
+        )
+        self.assertEqual(list(self.journal_root.iterdir()), [aside])
+        self.assertEqual(aside.read_bytes(), b"part")
+        self.assertEqual(
+            recover_info,
+            {"divergent_preserved": [{"target": str(target), "preserved": str(aside)}]},
+        )
 
     def test_recover_all_rejects_unknown_hashed_journal(self):
         unknown = self.journal_root / ("f" * 64 + ".json")
@@ -681,7 +691,7 @@ class SetupSafetyRecoverAllTests(unittest.TestCase):
             events.append("inventory")
             return os.open(os.devnull, os.O_RDONLY)
 
-        def recover(_lldpq_dir, _web_root):
+        def recover(_lldpq_dir, _web_root, result_info=None):
             events.append("file-recovery")
             return []
 

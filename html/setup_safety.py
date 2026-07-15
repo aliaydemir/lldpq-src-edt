@@ -42,7 +42,10 @@ DIRECT_MOUNT_JOURNAL_ROOT = os.environ.get(
     "/var/lib/lldpq/provision-state/config-write-journals",
 )
 DIRECT_MOUNT_JOURNAL_STAGE_RE = re.compile(
-    r"^\.(?P<journal>[0-9a-f]{64}\.json)\.tmp\.[0-9a-f]{24}$"
+    r"^\.(?P<journal>[0-9a-f]{64}\.json)(?:\.divergent)?\.tmp\.[0-9a-f]{24}$"
+)
+DIRECT_MOUNT_JOURNAL_DIVERGENT_RE = re.compile(
+    r"^(?P<journal>[0-9a-f]{64}\.json)\.divergent$"
 )
 ALIAS_LIMITS = {
     "interfaces": (2000, 64, 32),
@@ -609,7 +612,7 @@ def update_notifications(
     # Recover before parsing the preservation base, including on a POST with
     # no prior editor GET after a container/process crash.
     existing_text, base_revision, exists = read_managed_text(
-        path, managed_roots=managed_roots
+        path, managed_roots=managed_roots, result_info=result_info
     )
     existing = existing_text if exists else None
     if expected_revision is not None and expected_revision != base_revision:
@@ -690,6 +693,7 @@ def _write_staged(
     metadata: Optional[os.stat_result],
     *,
     world_readable: bool = False,
+    mode_override: Optional[int] = None,
 ) -> str:
     directory = os.path.dirname(path)
     fd, staged = tempfile.mkstemp(prefix="." + os.path.basename(path) + ".tmp.", dir=directory)
@@ -699,7 +703,7 @@ def _write_staged(
             target.flush()
             os.fsync(target.fileno())
         if metadata is not None:
-            mode = stat.S_IMODE(metadata.st_mode)
+            mode = stat.S_IMODE(metadata.st_mode) if mode_override is None else mode_override
             if world_readable:
                 # Floor the group/other read bits so preserving a target that
                 # drifted to a restrictive mode cannot re-infect a web-served
@@ -1105,6 +1109,40 @@ def _retire_direct_mount_journal(path: str) -> None:
         os.close(root_fd)
 
 
+def _preserve_direct_mount_divergence(path: str, divergent: bytes) -> str:
+    """Persist externally changed target bytes aside before restoring a snapshot."""
+    opened_root = _open_direct_mount_journal_root(create=False)
+    if opened_root is None:
+        raise SetupSafetyError("Persistent direct-write recovery journal disappeared")
+    root_fd, root = opened_root
+    aside_name = _direct_mount_journal_name(path) + ".divergent"
+    staged = "." + aside_name + ".tmp." + secrets.token_hex(12)
+    descriptor = -1
+    try:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(staged, flags, 0o600, dir_fd=root_fd)
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "wb") as handle:
+            descriptor = -1
+            handle.write(divergent)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(staged, aside_name, src_dir_fd=root_fd, dst_dir_fd=root_fd)
+        staged = None
+        os.fsync(root_fd)
+        return os.path.join(root, aside_name)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if staged is not None:
+            try:
+                os.unlink(staged, dir_fd=root_fd)
+            except FileNotFoundError:
+                pass
+        os.close(root_fd)
+
+
 def _validate_direct_mount_descriptor(
     path: str,
     metadata: os.stat_result,
@@ -1123,7 +1161,9 @@ def _validate_direct_mount_descriptor(
         raise SetupSafetyError("Direct-mount target inode changed")
 
 
-def _recover_direct_mount_journal_locked(path: str) -> bool:
+def _recover_direct_mount_journal_locked(
+    path: str, result_info: Optional[dict] = None
+) -> bool:
     payload = _load_direct_mount_journal(path)
     if payload is None:
         return False
@@ -1153,6 +1193,16 @@ def _recover_direct_mount_journal_locked(path: str) -> bool:
             if current != payload["original"]:
                 raise SetupSafetyError("Direct-mount recovery digest collision detected")
         else:
+            # Bytes match neither the candidate nor the original: usually a
+            # torn in-place write, but possibly an external/manual edit made
+            # after the interruption.  Preserve the divergent bytes aside
+            # (fsynced, 0600, in the journal root) before restoring so they
+            # stay recoverable, and surface the aside path to the caller.
+            preserved = _preserve_direct_mount_divergence(path, current)
+            if result_info is not None:
+                result_info.setdefault("divergent_preserved", []).append(
+                    {"target": path, "preserved": preserved}
+                )
             _write_descriptor(descriptor, payload["original"])
             restored = os.fstat(descriptor)
             if (
@@ -1180,19 +1230,21 @@ def _recover_direct_mount_journal_locked(path: str) -> bool:
             os.close(descriptor)
 
 
-def recover_direct_mount_write(logical_path: str, managed_roots=None) -> bool:
+def recover_direct_mount_write(
+    logical_path: str, managed_roots=None, result_info: Optional[dict] = None
+) -> bool:
     """Recover one interrupted config-file direct-mount write under its file lock."""
     path = _resolved_regular_target(logical_path, managed_roots)
     lock_path = path + ".lock"
     lock_fd = _open_configuration_lock(lock_path)
     try:
-        return _recover_direct_mount_journal_locked(path)
+        return _recover_direct_mount_journal_locked(path, result_info)
     finally:
         os.close(lock_fd)
 
 
 def _retire_orphan_direct_mount_journal_stage(
-    root_fd: int, name: str, allowed_journals: set[str]
+    root_fd: int, name: str, allowed_journals
 ) -> bool:
     """Remove one killed pre-publication stage after strict inode validation."""
     match = DIRECT_MOUNT_JOURNAL_STAGE_RE.fullmatch(name)
@@ -1233,7 +1285,9 @@ def _retire_orphan_direct_mount_journal_stage(
     return True
 
 
-def recover_all_managed_writes(lldpq_dir: str, web_root: str) -> list[str]:
+def recover_all_managed_writes(
+    lldpq_dir: str, web_root: str, result_info: Optional[dict] = None
+) -> list[str]:
     """Recover only the fixed set of Setup-managed configuration targets."""
     lldpq_dir = os.path.abspath(lldpq_dir)
     web_root = os.path.abspath(web_root)
@@ -1248,18 +1302,18 @@ def recover_all_managed_writes(lldpq_dir: str, web_root: str) -> list[str]:
         (os.path.join(lldpq_dir, "notifications.yaml"), (lldpq_dir,)),
         (os.path.join(web_root, "display-aliases.json"), (web_root, lldpq_dir)),
     )
-    allowed_journals = set()
+    allowed_journals = {}
     recovered = []
     for logical_path, managed_roots in targets:
         resolved = _resolved_regular_target(logical_path, managed_roots)
-        allowed_journals.add(_direct_mount_journal_name(resolved))
+        allowed_journals[_direct_mount_journal_name(resolved)] = resolved
         if recover_direct_mount_write(logical_path, managed_roots=managed_roots):
             recovered.append(resolved)
 
     opened_root = _open_direct_mount_journal_root(create=False)
     if opened_root is None:
         return recovered
-    root_fd, _root = opened_root
+    root_fd, root = opened_root
     try:
         remaining = os.listdir(root_fd)
         unresolved = []
@@ -1269,6 +1323,18 @@ def recover_all_managed_writes(lldpq_dir: str, web_root: str) -> list[str]:
                 root_fd, name, allowed_journals
             ):
                 retired_stage = True
+                continue
+            divergent = DIRECT_MOUNT_JOURNAL_DIVERGENT_RE.fullmatch(name)
+            if divergent is not None:
+                if divergent.group("journal") not in allowed_journals:
+                    raise SetupSafetyError(
+                        "Persistent config-write recovery divergence targets an unknown file"
+                    )
+                if result_info is not None:
+                    result_info.setdefault("divergent_preserved", []).append({
+                        "target": allowed_journals[divergent.group("journal")],
+                        "preserved": os.path.join(root, name),
+                    })
                 continue
             if not re.fullmatch(r"[0-9a-f]{64}\.json", name):
                 raise SetupSafetyError(
@@ -1369,7 +1435,7 @@ def atomic_write_text(
     lock_path = path + ".lock"
     lock_fd = _open_configuration_lock(lock_path)
     try:
-        _recover_direct_mount_journal_locked(path)
+        _recover_direct_mount_journal_locked(path, result_info)
         try:
             metadata = os.stat(path, follow_symlinks=False)
             # Cap before reading so the write path is not weaker than the read
@@ -1397,8 +1463,18 @@ def atomic_write_text(
                         raise SetupSafetyError("Configuration backup target is not a regular file")
                 except FileNotFoundError:
                     backup_metadata = metadata
+                # A backup must never be more permissive than the file it
+                # protects: clamp a stale .bak mode to the target's before the
+                # world-readable floor for web-served files is applied.
+                backup_mode = (
+                    stat.S_IMODE(backup_metadata.st_mode) & stat.S_IMODE(metadata.st_mode)
+                )
                 backup_stage = _write_staged(
-                    backup_path, current, backup_metadata, world_readable=world_readable
+                    backup_path,
+                    current,
+                    backup_metadata,
+                    world_readable=world_readable,
+                    mode_override=backup_mode,
                 )
                 os.replace(backup_stage, backup_path)
                 backup_stage = None
@@ -1473,13 +1549,15 @@ def atomic_write_text(
         os.close(lock_fd)
 
 
-def read_managed_text(logical_path: str, managed_roots=None) -> tuple[str, str, bool]:
+def read_managed_text(
+    logical_path: str, managed_roots=None, result_info: Optional[dict] = None
+) -> tuple[str, str, bool]:
     """Recover any retained direct-mount transaction, then read one stable file."""
     path = _resolved_regular_target(logical_path, managed_roots)
     lock_path = path + ".lock"
     lock_fd = _open_configuration_lock(lock_path)
     try:
-        _recover_direct_mount_journal_locked(path)
+        _recover_direct_mount_journal_locked(path, result_info)
         try:
             descriptor, _metadata = _open_regular_no_follow(path, os.O_RDONLY)
         except FileNotFoundError:
@@ -1549,22 +1627,28 @@ def _main() -> int:
         if args.command == "recover-all":
             if not args.lldpq_dir or not args.web_root:
                 raise SetupSafetyError("Managed LLDPq and web roots are required")
-            recovered = recover_all_managed_writes(args.lldpq_dir, args.web_root)
+            recover_info = {}
+            recovered = recover_all_managed_writes(
+                args.lldpq_dir, args.web_root, result_info=recover_info
+            )
             print(json.dumps({
                 "success": True,
                 "recovered": recovered,
                 "recovered_count": len(recovered),
+                **recover_info,
             }))
             return 0
         if args.command in ("read-text", "read-devices"):
+            read_info = {}
             content, revision, exists = read_managed_text(
-                args.target, managed_roots=args.managed_root
+                args.target, managed_roots=args.managed_root, result_info=read_info
             )
             print(json.dumps({
                 "success": True,
                 "content": content,
                 "revision": revision,
                 "exists": exists,
+                **read_info,
             }))
             return 0
         normalized = None
