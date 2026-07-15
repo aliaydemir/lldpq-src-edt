@@ -16,6 +16,32 @@ LLDPQ_MODE_FLOOR_DEF='def _lldpq_mode_floor(_ffd, _fdst):
     import os as _fos
     _fmode = ((_fos.stat(_fdst).st_mode & 0o777) if _fos.path.exists(_fdst) else 0) | 0o644
     _fos.fchmod(_ffd, _fmode)'
+# Shared two-phase multi-file commit for the inventory-mutating heredocs below
+# (requires LLDPQ_MODE_FLOOR_DEF): dump EVERY payload to a temp file next to
+# its destination first, then rename all back-to-back only after every dump
+# succeeded. Renames are the only non-rollbackable step and are individually
+# atomic, so a failure can no longer leave one file updated while a dependent
+# file (e.g. host_vars referencing a bgp profile) was never written.
+LLDPQ_ATOMIC_WRITE_DEF='def _atomic_write_many(_yaml, _writes):
+    # _writes: list of (data, dst_path); stage all dumps, then rename all
+    import os as _aos
+    import shutil as _ash
+    import tempfile as _atmp
+    _staged = []
+    try:
+        for _data, _dst in _writes:
+            _fd, _tmp = _atmp.mkstemp(dir=_aos.path.dirname(_dst), suffix=".tmp")
+            _staged.append(_tmp)
+            _lldpq_mode_floor(_fd, _dst)
+            with _aos.fdopen(_fd, "w") as _f:
+                _yaml.dump(_data, _f)
+        for (_data, _dst), _tmp in zip(_writes, _staged):
+            _ash.move(_tmp, _dst)
+    except:
+        for _tmp in _staged:
+            if _aos.path.exists(_tmp):
+                _aos.unlink(_tmp)
+        raise'
 # Shared input validators for the inventory-mutating python heredocs below.
 # Every free-form value that a template renders raw must pass one of these
 # before any file is written (returns None/False on invalid input).
@@ -801,6 +827,7 @@ create_vrf() {
     export POST_DATA
     python3 << PYTHON
 $LLDPQ_MODE_FLOOR_DEF
+$LLDPQ_ATOMIC_WRITE_DEF
 $LLDPQ_VALIDATORS_DEF
 $LLDPQ_REF_SCAN_DEF
 import json
@@ -890,13 +917,14 @@ if vrf_name in host_data['vrfs']:
 tenant_profile = None
 shared_profile = None
 leaking_configured = False
+_leak_write = None
 
 if leaking_enabled and leak_from_vrf:
     try:
         with open(bgp_profiles_file, 'r') as f:
             bgp_data = yaml.load(f) or {}
             bgp_profiles = bgp_data.get('bgp_profiles', {})
-            
+
             # Deterministic tenant/shared profile selection (shared helper,
             # identical to create_vrf_bulk); refuse when more than one shared
             # candidate matches instead of guessing by exclusion.
@@ -911,26 +939,21 @@ if leaking_enabled and leak_from_vrf:
                 ipv4_af = bgp_profiles[shared_profile].setdefault('ipv4_unicast_af', {})
                 route_import = ipv4_af.setdefault('route_import', {})
                 from_vrf_list = route_import.setdefault('from_vrf', [])
-                
+
                 if vrf_name not in from_vrf_list:
                     from_vrf_list.append(vrf_name)
-                    
-                    # Write updated bgp_profiles.yaml
-                    _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(bgp_profiles_file), suffix='.tmp')
-                    _lldpq_mode_floor(_tmp_fd, bgp_profiles_file)
-                    try:
-                        with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-                            yaml.dump(bgp_data, _tmp_f)
-                        shutil.move(_tmp_path, bgp_profiles_file)
-                    except:
-                        if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-                        raise
-                    leaking_configured = True
-            
+                    # Stage the write; committed together with host_vars below
+                    # so a failed host_vars write cannot strand a leak entry
+                    # for a VRF that exists nowhere
+                    _leak_write = (bgp_data, bgp_profiles_file)
+                # Entry present (just added or left over from an earlier
+                # attempt) -> leaking IS configured; do not report False
+                leaking_configured = True
+
             # Use tenant_profile if found
             if tenant_profile:
                 bgp_profile = tenant_profile
-                
+
     except Exception as e:
         print(json.dumps({'success': False, 'error': f'Failed to configure leaking: {str(e)}'}))
         sys.exit(0)
@@ -953,17 +976,13 @@ if bgp_asn or bgp_profile:
 
 host_data['vrfs'][vrf_name] = vrf_entry
 
-# Write back
+# Write back: host_vars plus the staged bgp_profiles.yaml leak entry in one
+# two-phase commit (both dumps must succeed before either file is renamed)
 _target_file = host_file if os.path.exists(host_file) else os.path.join(ansible_dir, 'inventory', 'host_vars', f'{device}.yaml')
-_tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(_target_file), suffix='.tmp')
-_lldpq_mode_floor(_tmp_fd, _target_file)
-try:
-    with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-        yaml.dump(host_data, _tmp_f)
-    shutil.move(_tmp_path, _target_file)
-except:
-    if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-    raise
+_writes = [(host_data, _target_file)]
+if _leak_write is not None:
+    _writes.append(_leak_write)
+_atomic_write_many(yaml, _writes)
 
 result = {'success': True, 'vrf_name': vrf_name}
 if leaking_enabled:
@@ -984,6 +1003,7 @@ create_vrf_bulk() {
     export POST_DATA
     python3 << PYTHON
 $LLDPQ_MODE_FLOOR_DEF
+$LLDPQ_ATOMIC_WRITE_DEF
 $LLDPQ_VALIDATORS_DEF
 $LLDPQ_REF_SCAN_DEF
 import json
@@ -1055,14 +1075,15 @@ leaking_configured = False
 tenant_profile = None
 shared_profile = None
 leaking_error = None
+_leak_write = None
 
 if leaking_enabled and leak_from_vrf:
     try:
         with open(bgp_profiles_file, 'r') as f:
             bgp_data = yaml.load(f) or {}
-        
+
         bgp_profiles = bgp_data.get('bgp_profiles', {})
-        
+
         # Deterministic tenant/shared profile selection (shared helper,
         # identical to single-device create_vrf); refuse when more than one
         # shared candidate matches instead of guessing by exclusion.
@@ -1072,25 +1093,19 @@ if leaking_enabled and leak_from_vrf:
             sys.exit(0)
         if _shared_candidates:
             shared_profile = _shared_candidates[0]
-            # Add new VRF to shared profile's from_vrf list
+            # Add new VRF to shared profile's from_vrf list (in memory only;
+            # the write is staged until at least one device got the VRF, so a
+            # run that creates nothing cannot strand a leak entry)
             ipv4_af = bgp_profiles[shared_profile].setdefault('ipv4_unicast_af', {})
             route_import = ipv4_af.setdefault('route_import', {})
             from_vrf_list = route_import.setdefault('from_vrf', [])
             if vrf_name not in from_vrf_list:
                 from_vrf_list.append(vrf_name)
+                _leak_write = (bgp_data, bgp_profiles_file)
+            else:
+                # Already present from an earlier run -> leaking IS configured
                 leaking_configured = True
 
-        if leaking_configured:
-            _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(bgp_profiles_file), suffix='.tmp')
-            _lldpq_mode_floor(_tmp_fd, bgp_profiles_file)
-            try:
-                with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-                    yaml.dump(bgp_data, _tmp_f)
-                shutil.move(_tmp_path, bgp_profiles_file)
-            except:
-                if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-                raise
-        
         if tenant_profile:
             bgp_profile = tenant_profile
     except Exception as e:
@@ -1164,6 +1179,16 @@ for device in devices:
         devices_created.append(device)
     except Exception as e:
         device_errors[device] = str(e)  # Skip failed devices but report them
+
+# Commit the staged bgp_profiles.yaml leak entry only after the VRF was
+# actually created somewhere (dependent shared file goes last, so a device
+# loop that fails everywhere cannot strand a leak entry for a missing VRF)
+if _leak_write is not None and devices_created:
+    try:
+        _atomic_write_many(yaml, [_leak_write])
+        leaking_configured = True
+    except Exception as e:
+        leaking_error = str(e)
 
 result = {
     'success': len(devices_created) > 0,
@@ -2484,6 +2509,7 @@ create_vlan() {
 
     python3 << PYTHON
 $LLDPQ_MODE_FLOOR_DEF
+$LLDPQ_ATOMIC_WRITE_DEF
 $LLDPQ_VALIDATORS_DEF
 import json
 import re
@@ -2600,29 +2626,21 @@ try:
     
     # Add to vlan_profiles
     vlan_config['vlan_profiles'][profile_name] = profile_entry
-    
-    # Write vlan_profiles.yaml
-    _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(vlan_profiles_file), suffix='.tmp')
-    _lldpq_mode_floor(_tmp_fd, vlan_profiles_file)
-    try:
-        with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-            yaml.dump(vlan_config, _tmp_f)
-        shutil.move(_tmp_path, vlan_profiles_file)
-    except:
-        if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-        raise
-    
-    # Load existing port_profiles
+
+    # Load existing port_profiles BEFORE any write: a corrupt/unreadable
+    # sw_port_profiles.yaml must fail the whole action while it is still
+    # retryable (nothing persisted yet)
     port_config = {}
     if os.path.exists(port_profiles_file):
         with open(port_profiles_file, 'r') as f:
             port_config = yaml.load(f) or {}
-    
+
     if 'sw_port_profiles' not in port_config:
         port_config['sw_port_profiles'] = {}
-    
+
     # Create ACCESS_VLAN_{id} profile
     access_profile_name = f'ACCESS_VLAN_{vlan_id}'
+    _writes = [(vlan_config, vlan_profiles_file)]
     if access_profile_name not in port_config['sw_port_profiles']:
         port_config['sw_port_profiles'][access_profile_name] = {
             'description': description,
@@ -2630,18 +2648,12 @@ try:
             'access_vlan': vlan_id,
             'stp_bpduguard': stp_bpduguard
         }
-        
-        # Write port_profiles.yaml
-        _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(port_profiles_file), suffix='.tmp')
-        _lldpq_mode_floor(_tmp_fd, port_profiles_file)
-        try:
-            with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-                yaml.dump(port_config, _tmp_f)
-            shutil.move(_tmp_path, port_profiles_file)
-        except:
-            if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-            raise
-    
+        _writes.append((port_config, port_profiles_file))
+
+    # Two-phase commit: both files are staged first, renamed only after both
+    # dumps succeeded
+    _atomic_write_many(yaml, _writes)
+
     print(json.dumps({
         'success': True,
         'message': f'VLAN {vlan_id} created successfully',
@@ -4189,6 +4201,7 @@ PYTHON
         export POST_DATA
         python3 << PYTHON
 $LLDPQ_MODE_FLOOR_DEF
+$LLDPQ_ATOMIC_WRITE_DEF
 $LLDPQ_VALIDATORS_DEF
 import json
 from ruamel.yaml import YAML
@@ -4227,58 +4240,114 @@ devices_updated = []
 errors = []
 
 try:
+    # Pass 1: load and validate every host_vars file, compute the new content
+    # in memory; nothing is written until every target file staged cleanly
+    _loaded = []
     for yaml_file in glob.glob(f"{host_vars_dir}/*.yaml"):
-        hostname = os.path.basename(yaml_file).replace('.yaml', '')
-        
         with open(yaml_file, 'r') as f:
             content = f.read()
             device_data = yaml.load(content)
-        
+        _loaded.append((yaml_file, device_data))
+
+    # Authoritative 'already leaked elsewhere' check under the lock: the
+    # read-only check-subnet-leak action runs in a SEPARATE request, so two
+    # admins can both pass it and leak the same subnet into two target VRFs.
+    _bgp_file = f"{ansible_dir}/inventory/group_vars/all/bgp_profiles.yaml"
+    _profiles = {}
+    try:
+        with open(_bgp_file, 'r') as _bf:
+            _profiles = (yaml.load(_bf) or {}).get('bgp_profiles', {}) or {}
+    except OSError:
+        _profiles = {}
+    _rm_to_target = {}
+    for yaml_file, device_data in _loaded:
         if not device_data:
             continue
-        
-        policies = device_data.get('policies', {})
-        prefix_lists = policies.get('prefix_list', {})
-        
-        if route_map not in prefix_lists:
+        _vrfs = device_data.get('vrfs', {}) or {}
+        if not hasattr(_vrfs, 'items'):
             continue
-        
+        for _vn, _vc in _vrfs.items():
+            if not hasattr(_vc, 'get'):
+                continue
+            _bp_name = _vc.get('bgp', {}).get('bgp_profile', '') if hasattr(_vc.get('bgp', {}), 'get') else ''
+            _prof = _profiles.get(_bp_name) if hasattr(_profiles, 'get') else None
+            if hasattr(_prof, 'get'):
+                _af = _prof.get('ipv4_unicast_af', {}) or {}
+                _ri = _af.get('route_import', {}) if hasattr(_af, 'get') else {}
+                _rm = _ri.get('route_map', '') if hasattr(_ri, 'get') else ''
+                if _rm:
+                    _rm_to_target[_rm] = _vn
+    for yaml_file, device_data in _loaded:
+        if not device_data:
+            continue
+        _pols = device_data.get('policies', {}) or {}
+        _pls = _pols.get('prefix_list', {}) if hasattr(_pols, 'get') else {}
+        if not hasattr(_pls, 'items'):
+            continue
+        for _pl_name, _pl_entries in _pls.items():
+            if _pl_name == route_map or _pl_name not in _rm_to_target or not hasattr(_pl_entries, 'values'):
+                continue
+            for _entry in _pl_entries.values():
+                if hasattr(_entry, 'get') and _entry.get('match') == subnet:
+                    print(json.dumps({'success': False, 'error': f'Subnet {subnet} is already leaked to {_rm_to_target[_pl_name]} via prefix-list {_pl_name}', 'devices_updated': []}))
+                    sys.exit(0)
+
+    _staged_writes = []
+    _staged_hosts = []
+    for yaml_file, device_data in _loaded:
+        hostname = os.path.basename(yaml_file).replace('.yaml', '')
+
+        if not device_data:
+            continue
+
+        policies = device_data.get('policies', {}) or {}
+        prefix_lists = policies.get('prefix_list', {}) if hasattr(policies, 'get') else {}
+
+        if not hasattr(prefix_lists, 'get') or route_map not in prefix_lists:
+            continue
+
         # This device has the prefix_list, add the subnet
         prefix_list = prefix_lists[route_map]
-        
-        # Find the next sequence number (increment by 10)
-        existing_seqs = [int(seq) for seq in prefix_list.keys()]
-        next_seq = str(max(existing_seqs) + 10) if existing_seqs else "10"
-        
+
+        # A None/list-valued policy cannot carry sequence entries
+        if not hasattr(prefix_list, 'items'):
+            continue
+
+        # Find the next sequence number (increment by 10), skipping
+        # non-numeric bookkeeping keys such as 'type' (ipv6 lists)
+        _seq_keys = [seq for seq in prefix_list.keys() if str(seq).isdigit()]
+        existing_seqs = [int(seq) for seq in _seq_keys]
+        _next_num = max(existing_seqs) + 10 if existing_seqs else 10
+        # Keep the new key the same type as the existing sequence keys
+        if _seq_keys and all(isinstance(_k, int) for _k in _seq_keys):
+            next_seq = _next_num
+        else:
+            next_seq = str(_next_num)
+
         # Check if subnet already exists
         subnet_exists = any(
-            entry.get('match') == subnet 
+            hasattr(entry, 'get') and entry.get('match') == subnet
             for entry in prefix_list.values()
         )
-        
+
         if subnet_exists:
             continue
-        
+
         # Add the new entry (max_prefix_len follows the address family:
         # 32 for IPv4, 128 for IPv6)
         prefix_list[next_seq] = {
             'match': subnet,
             'max_prefix_len': _subnet_net.max_prefixlen
         }
-        
-        # Write back
-        _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(yaml_file), suffix='.tmp')
-        _lldpq_mode_floor(_tmp_fd, yaml_file)
-        try:
-            with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-                yaml.dump(device_data, _tmp_f)
-            shutil.move(_tmp_path, yaml_file)
-        except:
-            if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-            raise
-        
-        devices_updated.append(hostname)
-    
+
+        _staged_writes.append((device_data, yaml_file))
+        _staged_hosts.append(hostname)
+
+    # Pass 2: write all files only after pass 1 succeeded for every device
+    if _staged_writes:
+        _atomic_write_many(yaml, _staged_writes)
+    devices_updated = _staged_hosts
+
     print(json.dumps({
         'success': True,
         'devices_updated': devices_updated,
@@ -4286,7 +4355,7 @@ try:
         'message': f"Subnet {subnet} added to prefix-list {route_map} on {len(devices_updated)} device(s)"
     }))
 except Exception as e:
-    print(json.dumps({'success': False, 'error': str(e)}))
+    print(json.dumps({'success': False, 'error': str(e), 'devices_updated': devices_updated}))
 PYTHON
         ;;
     "save-dhcp-relay")
