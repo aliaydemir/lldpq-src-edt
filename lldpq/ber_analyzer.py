@@ -1254,6 +1254,11 @@ class BERAnalyzer:
         .section-header {{ padding: 12px 16px; background: #333; font-weight: 600; font-size: 14px; color: #76b900; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #404040; }}
         .section-content {{ padding: 16px; }}
         .section-content-table {{ padding: 0; }}
+        .collapsible > .section-header {{ cursor: pointer; user-select: none; }}
+        .collapsible > .section-header:hover {{ background: #3a3a3a; }}
+        .collapsible .collapse-chevron {{ margin-left: auto; flex-shrink: 0; color: #888; transition: transform 0.2s ease; }}
+        .collapsible:not(.collapsed) .collapse-chevron {{ transform: rotate(90deg); }}
+        .collapsible.collapsed > .section-content {{ display: none; }}
         .summary-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }}
         .summary-card {{ background: #252526; padding: 15px; border-radius: 6px; border-left: 3px solid #76b900; cursor: pointer; transition: all 0.2s ease; }}
         .summary-card:hover {{ background: #2d2d2d; transform: translateY(-1px); }}
@@ -1306,10 +1311,18 @@ class BERAnalyzer:
         .detail-reasons {{ margin: 6px 0 0 18px; line-height: 1.7; }}
         .detail-reasons li {{ color: #ffb74d; }}
         .detail-none {{ color: #76b900; }}
-        .anomaly-card {{ margin: 10px 0; padding: 12px 15px; background: #252526; border-radius: 6px; border-left: 3px solid #f44336; }}
+        .anomaly-card {{ margin: 10px 0; padding: 12px 15px; background: #252526; border-radius: 6px; border-left: 3px solid #f44336; cursor: pointer; transition: background 0.15s ease; }}
+        .anomaly-card:hover {{ background: #2f2f30; }}
         .anomaly-card.warning {{ border-left-color: #ff9800; }}
         .anomaly-card h4 {{ color: #d4d4d4; margin-bottom: 8px; font-size: 14px; }}
         .anomaly-card p {{ font-size: 13px; color: #888; margin: 4px 0; }}
+        .anomaly-card .anomaly-meta {{ font-size: 12px; color: #9e9e9e; margin: 2px 0 6px; }}
+        .anomaly-card.anomaly-hidden {{ display: none; }}
+        .anomaly-show-all {{ margin-right: 8px; padding: 4px 10px; background: #3c3c3c; color: #d4d4d4; border: 1px solid #555; border-radius: 4px; cursor: pointer; font-size: 12px; }}
+        .anomaly-show-all:hover {{ background: #4a4a4a; }}
+        .sev-badge {{ font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; }}
+        .sev-badge.sev-crit {{ background: rgba(244,67,54,0.15); color: #ff8a80; border: 1px solid #7a2a24; }}
+        .sev-badge.sev-warn {{ background: rgba(255,152,0,0.15); color: #ffb74d; border: 1px solid #6d511d; }}
         .btn {{ padding: 8px 14px; border: none; border-radius: 4px; font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; gap: 6px; }}
         .btn-primary {{ background: linear-gradient(0deg, #76b900 0%, #5a8c00 100%); color: white; }}
         .btn-primary:hover {{ background: linear-gradient(0deg, #8bd400 0%, #6ba000 100%); }}
@@ -1400,27 +1413,98 @@ class BERAnalyzer:
         
         # Add anomalies section if any
         if anomalies:
+            anomalies = sorted(
+                anomalies,
+                key=lambda a: 0 if str(a.get('severity')) == 'critical' else 1
+            )
+            critical_count = sum(1 for a in anomalies if str(a.get('severity')) == 'critical')
+            warning_count = sum(1 for a in anomalies if str(a.get('severity')) == 'warning')
+            severity_badges = ""
+            if critical_count:
+                severity_badges += f'<span class="sev-badge sev-crit">{critical_count} critical</span>'
+            if warning_count:
+                severity_badges += f'<span class="sev-badge sev-warn">{warning_count} warning</span>'
+
+            def _fmt_e(value):
+                """Scientific notation for positive numeric metrics, else None."""
+                if isinstance(value, (int, float)) and value > 0:
+                    return f"{value:.1e}"
+                return None
+
             html_content += f"""
-    <div class="dashboard-section">
-        <div class="section-header">
+    <div class="dashboard-section collapsible collapsed">
+        <div class="section-header" onclick="this.parentElement.classList.toggle('collapsed')" title="Click to expand/collapse">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
             BER Anomalies Detected ({len(anomalies)})
+            {severity_badges}
+            <svg class="collapse-chevron" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z"/></svg>
         </div>
         <div class="section-content">
 """
-            for anomaly in anomalies[:10]:  # Show top 10 anomalies
+            for idx, anomaly in enumerate(anomalies):
                 severity_class = "warning" if anomaly['severity'] == 'warning' else ""
+                hidden_class = " anomaly-hidden" if idx >= 10 else ""
                 anomaly_device_key = html.escape(str(anomaly['device']), quote=True)
+
+                # Compact evidence row from the already-collected details dict.
+                details = anomaly.get('details') or {}
+                meta_bits = []
+                effective_ber = _fmt_e(details.get('effective_ber'))
+                if effective_ber:
+                    effective_thr = _fmt_e(details.get('effective_phy_ber_threshold'))
+                    meta_bits.append(
+                        f"effective BER {effective_ber} (thr {effective_thr})"
+                        if effective_thr else f"effective BER {effective_ber}"
+                    )
+                raw_ber = _fmt_e(details.get('raw_ber'))
+                if raw_ber:
+                    raw_thr = _fmt_e(details.get('raw_phy_ber_threshold'))
+                    meta_bits.append(
+                        f"raw BER {raw_ber} (thr {raw_thr})" if raw_thr else f"raw BER {raw_ber}"
+                    )
+                frame_density = _fmt_e(details.get('frame_error_density'))
+                if frame_density:
+                    density_thr = _fmt_e(details.get('frame_density_threshold'))
+                    meta_bits.append(
+                        f"error density {frame_density} (thr {density_thr})"
+                        if density_thr else f"error density {frame_density}"
+                    )
+                symbol_delta = details.get('symbol_error_delta')
+                if isinstance(symbol_delta, int) and symbol_delta > 0:
+                    meta_bits.append(f"symbol Δ +{symbol_delta:,}")
+                delta_rx = details.get('delta_rx_errors') or 0
+                delta_tx = details.get('delta_tx_errors') or 0
+                if delta_rx or delta_tx:
+                    meta_bits.append(f"errors Δ RX {delta_rx:,} / TX {delta_tx:,}")
+                change_ratio = details.get('change_ratio')
+                if isinstance(change_ratio, (int, float)) and change_ratio > 0:
+                    meta_bits.append(f"error density ×{change_ratio:.1f} vs baseline")
+
+                # Remote end of the link from LLDP, so both ends of the cable
+                # can be inspected without leaving the page.
+                nbr = lldp_neighbor.get((anomaly['device'], anomaly['interface']))
+                if nbr:
+                    meta_bits.append(f"remote {canonical(nbr[0])}:{nbr[1]}")
+
+                meta_html = ""
+                if meta_bits:
+                    meta_html = (
+                        '<p class="anomaly-meta">'
+                        + " &middot; ".join(html.escape(str(bit)) for bit in meta_bits)
+                        + '</p>'
+                    )
+
                 html_content += f"""
-            <div class="anomaly-card {severity_class}" data-device-key="{anomaly_device_key}">
+            <div class="anomaly-card {severity_class}{hidden_class}" data-device-key="{anomaly_device_key}" onclick="filterFromAnomaly(this)" title="Click to show this device in the table below">
                 <h4>{anomaly['device']}:{anomaly['interface']}</h4>
+                {meta_html}
                 <p>{anomaly['message']}</p>
                 <p><strong>Action:</strong> {anomaly['action']}</p>
             </div>
 """
             if len(anomalies) > 10:
                 html_content += f"""
-            <div class="anomaly-more">Showing the 10 highest-severity of {len(anomalies)} anomalies. All affected ports are listed in the Interface Error Status table below.</div>
+            <div class="anomaly-more"><button class="anomaly-show-all" onclick="showAllAnomalies(this)">Show all {len(anomalies)} anomalies</button> Showing the 10 highest-severity; all affected ports are also listed in the Interface Error Status table below.</div>
 """
             html_content += """
         </div>
@@ -1901,6 +1985,46 @@ class BERAnalyzer:
             document.getElementById('clearSearchBtn').style.display = 'none';
             document.getElementById('filter-info').style.display = 'none';
             allRows.forEach(row => row.style.display = '');
+        }
+
+        // Filter the table from an anomaly card. Matches on data-device-key so
+        // it keeps working when p2p-alias rewrites the displayed device names.
+        function filterFromAnomaly(card) {
+            const deviceKey = card && card.dataset ? card.dataset.deviceKey : '';
+            if (!deviceKey) return;
+            removeBerDetailRows();
+
+            selectedDevice = deviceKey;
+            deviceSearchActive = true;
+
+            // Clear card-based filter
+            currentFilter = 'ALL';
+            document.querySelectorAll('.summary-card').forEach(c => c.classList.remove('active'));
+
+            let matchCount = 0;
+            let displayName = deviceKey;
+            allRows.forEach(row => {
+                if (row.dataset.deviceKey === deviceKey) {
+                    if (matchCount === 0) displayName = row.cells[0]?.textContent?.trim() || deviceKey;
+                    row.style.display = '';
+                    matchCount++;
+                } else {
+                    row.style.display = 'none';
+                }
+            });
+
+            document.getElementById('filter-info').style.display = 'block';
+            document.getElementById('filter-text').textContent = 'Showing interfaces for device: ' + displayName + ' (' + matchCount + ' interfaces)';
+            const clearBtn = document.getElementById('clearSearchBtn');
+            if (clearBtn) clearBtn.style.display = 'inline-block';
+            const table = document.getElementById('ber-table');
+            if (table) table.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        function showAllAnomalies(btn) {
+            document.querySelectorAll('.anomaly-card.anomaly-hidden').forEach(card => card.classList.remove('anomaly-hidden'));
+            const note = btn.closest('.anomaly-more');
+            if (note) note.remove();
         }
         
         // Generic table sorting functionality
