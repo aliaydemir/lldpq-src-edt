@@ -1177,14 +1177,62 @@ class BERAnalyzer:
         if anomalies is None:
             anomalies = self.detect_ber_anomalies(summary)
 
+        # Device names may differ only in case between the monitor-results
+        # filenames and the LLDP report/sidecar spellings; interface names
+        # stay case-sensitive.
+        def _neighbor_key(device_name, port_name):
+            return (str(device_name).strip().casefold(), str(port_name).strip())
+
         lldp_neighbor: Dict[tuple, tuple] = {}
+        # All observed neighbors from the LLDP collection sidecar, including
+        # unmanaged endpoint hosts (servers).  The wiring aggregate loaded
+        # below only carries topology-modeled ports, so host-facing ports
+        # would otherwise stay blank in the table.
+        sidecar_candidates = [
+            os.path.join(os.path.dirname(os.path.abspath(self.data_dir)),
+                         "lldp-results", "lldp_neighbors.json"),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "lldp-results", "lldp_neighbors.json"),
+        ]
+        for _sidecar_path in dict.fromkeys(sidecar_candidates):
+            if not os.path.isfile(_sidecar_path):
+                continue
+            try:
+                with open(_sidecar_path, encoding="utf-8") as _f:
+                    _sidecar = json.load(_f)
+                _devices = _sidecar.get("neighbors")
+                if not isinstance(_devices, dict):
+                    continue
+                for _dev, _ports in _devices.items():
+                    if not isinstance(_ports, dict):
+                        continue
+                    for _port, _nbr in _ports.items():
+                        if not isinstance(_nbr, dict):
+                            continue
+                        _nbr_dev = _nbr.get("device")
+                        _nbr_port = _nbr.get("port")
+                        if _nbr_dev and _nbr_port:
+                            lldp_neighbor[_neighbor_key(_dev, _port)] = (
+                                str(_nbr_dev), str(_nbr_port)
+                            )
+                break
+            except Exception:
+                continue
+        # The validated wiring view wins for topology-modeled ports (it
+        # prefers the expected neighbor when several are advertised).
         lldp_ini = os.path.join(self.data_dir, ".pipeline-inputs", "lldp_results.ini")
         if _HAVE_LLDP_REPORT and os.path.exists(lldp_ini):
             try:
                 with open(lldp_ini, encoding="utf-8") as _f:
                     _report = parse_lldp_report(_f.read())
                 for _row in _report.rows:
-                    lldp_neighbor[(_row.local_device, _row.local_port)] = (
+                    if _row.actual_device in ("", "None", "Unknown"):
+                        continue
+                    if _row.actual_port in ("", "None", "Unknown"):
+                        continue
+                    lldp_neighbor[
+                        _neighbor_key(_row.local_device, _row.local_port)
+                    ] = (
                         _row.actual_device,
                         _row.actual_port,
                     )
@@ -1482,7 +1530,9 @@ class BERAnalyzer:
 
                 # Remote end of the link from LLDP, so both ends of the cable
                 # can be inspected without leaving the page.
-                nbr = lldp_neighbor.get((anomaly['device'], anomaly['interface']))
+                nbr = lldp_neighbor.get(
+                    _neighbor_key(anomaly['device'], anomaly['interface'])
+                )
                 if nbr:
                     meta_bits.append(f"remote {canonical(nbr[0])}:{nbr[1]}")
 
@@ -1629,7 +1679,7 @@ class BERAnalyzer:
             device_key = html.escape(str(device), quote=True)
             port_key = html.escape(str(port_name), quote=True)
 
-            nbr = lldp_neighbor.get((device, interface))
+            nbr = lldp_neighbor.get(_neighbor_key(device, interface))
             nbr_device_display = canonical(nbr[0]) if nbr else "—"
             nbr_port_display = nbr[1] if nbr else "—"
 

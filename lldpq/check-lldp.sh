@@ -1059,6 +1059,18 @@ if ! commit_lldp_outputs; then
     exit 1
 fi
 
+# Neighbor sidecar for analysis pages (BER "Neighbor" columns): every observed
+# LLDP neighbor, including unmanaged endpoint hosts that the wiring aggregate
+# intentionally omits. Display-only enrichment, so it stays outside the
+# rollback-capable LKG transaction above; a failed publication only leaves the
+# previous copy in place.
+if [[ -f "$collection_dir/lldp_neighbors.json" ]]; then
+    if ! publish_web_file "$collection_dir/lldp_neighbors.json" \
+            "$SCRIPT_DIR/lldp-results/lldp_neighbors.json"; then
+        echo "Warning: LLDP neighbor sidecar publication failed; analysis pages keep the previous copy." >&2
+    fi
+fi
+
 # Remove obsolete top-level raw inputs from versions predating private staging,
 # but only after the new local+web+topology generation is fully active.
 find "$SCRIPT_DIR/lldp-results" -maxdepth 1 -type f \
