@@ -2167,7 +2167,7 @@ if action == 'get-notifications':
             'flap_crit': net.get('link_flaps_critical', 20),
             'optical': net.get('optical_power_margin', 3),
             'cpu': hw.get('cpu_temp_critical', 85),
-            'asic': hw.get('asic_temp_critical', 90),
+            'asic': hw.get('asic_temp_critical', 105),
             'disk': sysd.get('disk_usage_critical', 90),
         },
     }
