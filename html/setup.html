@@ -38,7 +38,11 @@
         .su-step .lbl { color:#e0e0e0; font-weight:600; font-size:14px; }
         .su-step .desc { color:#8f8f8f; font-size:11.5px; margin-top:2px; line-height:1.4; }
         .su-step.active .lbl { color:#fff; }
-        .su-danger-separator { margin:18px 14px 8px; color:#8f8f8f; font-size:10px; font-weight:700; letter-spacing:.11em; text-transform:uppercase; }
+        .su-step .lbl .badge { margin-left:6px; font-size:9px; padding:1px 6px; vertical-align:1px; }
+        .su-step .num { position:relative; }
+        .su-step.dirty .num::after { content:''; position:absolute; top:-3px; right:-3px; width:9px; height:9px; border-radius:50%; background:#ffb74d; border:2px solid #252526; }
+        .su-sep { margin:18px 14px 8px; color:#8f8f8f; font-size:10px; font-weight:700; letter-spacing:.11em; text-transform:uppercase; }
+        .su-sep:first-child { margin-top:6px; }
         .su-step.danger .num { background:rgba(244,67,54,.14); color:#ef7770; }
         .su-step.danger .lbl { color:#ef9a94; }
         .su-step.danger:hover { background:#302222; }
@@ -62,6 +66,7 @@
         textarea.su-ta { width:100%; min-height:360px; background:#111; color:#d4d4d4; border:1px solid #333; border-radius:6px;
             padding:14px; font-family:'Cascadia Code',Consolas,monospace; font-size:12.5px; line-height:1.55; resize:vertical; }
         textarea.su-ta:focus { outline:none; border-color:#76b900; }
+        .ta-meta { color:#6f6f6f; font-size:11px; text-align:right; margin-top:4px; font-family:'Cascadia Code',Consolas,monospace; }
         .run-output { background:#0d0d0d; color:#cfe9a0; border:1px solid #333; border-radius:6px; padding:14px; height:380px; overflow:auto; margin:10px 0 0; font-family:'Cascadia Code',Consolas,monospace; font-size:12px; line-height:1.5; white-space:pre-wrap; word-break:break-word; }
         .sched-card { background:#202020; border:1px solid #333; border-radius:8px; padding:12px 16px; margin-bottom:16px; }
         .sched-sel { background:#1a1a1a; color:#d4d4d4; border:1px solid #404040; border-radius:5px; padding:6px 10px; font-size:13px; min-width:170px; }
@@ -76,6 +81,7 @@
         .btn.danger { background:#c9362d; color:#fff; }
         .btn.danger:hover { background:#e0443a; }
         .btn:disabled { opacity:.5; cursor:not-allowed; }
+        .btn.attn { box-shadow:0 0 0 2px rgba(255,183,77,.55); }
 
         .status { font-size:12.5px; margin-top:10px; min-height:18px; }
         .status.ok { color:#76b900; }
@@ -131,6 +137,14 @@
     <link rel="stylesheet" type="text/css" href="/css/mobile.css">
 </head>
 <body>
+    <!-- Shared icon sprite: the repeated toolbar icons live here once; buttons reference them via <use>. -->
+    <svg style="display:none" aria-hidden="true">
+        <symbol id="i-upload" viewBox="0 0 24 24"><path d="M9,16V10H5L12,3L19,10H15V16H9M5,20V18H19V20H5Z"/></symbol>
+        <symbol id="i-reload" viewBox="0 0 24 24"><path d="M17.65,6.35C16.2,4.9 14.21,4 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20C15.73,20 18.84,17.45 19.73,14H17.65C16.83,16.33 14.61,18 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6C13.66,6 15.14,6.69 16.22,7.78L13,11H20V4L17.65,6.35Z"/></symbol>
+        <symbol id="i-download" viewBox="0 0 24 24"><path d="M5,20H19V18H5M19,9H15V3H9V9H5L12,16L19,9Z"/></symbol>
+        <symbol id="i-save" viewBox="0 0 24 24"><path d="M15,9H5V5H15M12,19A3,3 0 0,1 9,16A3,3 0 0,1 12,13A3,3 0 0,1 15,16A3,3 0 0,1 12,19M17,3H5C3.89,3 3,3.9 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V7L17,3Z"/></symbol>
+        <symbol id="i-trash" viewBox="0 0 24 24"><path d="M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z"/></symbol>
+    </svg>
     <div class="su-header">
         <div class="su-title">
             <svg viewBox="0 0 24 24"><path d="M12,15.5A3.5,3.5 0 0,1 8.5,12A3.5,3.5 0 0,1 12,8.5A3.5,3.5 0 0,1 15.5,12A3.5,3.5 0 0,1 12,15.5M19.43,12.97C19.47,12.65 19.5,12.33 19.5,12C19.5,11.67 19.47,11.34 19.43,11L21.54,9.37C21.73,9.22 21.78,8.95 21.66,8.73L19.66,5.27C19.54,5.05 19.27,4.96 19.05,5.05L16.56,6.05C16.04,5.66 15.5,5.32 14.87,5.07L14.5,2.42C14.46,2.18 14.25,2 14,2H10C9.75,2 9.54,2.18 9.5,2.42L9.13,5.07C8.5,5.32 7.96,5.66 7.44,6.05L4.95,5.05C4.73,4.96 4.46,5.05 4.34,5.27L2.34,8.73C2.21,8.95 2.27,9.22 2.46,9.37L4.57,11C4.53,11.34 4.5,11.67 4.5,12C4.5,12.33 4.53,12.65 4.57,12.97L2.46,14.63C2.27,14.78 2.21,15.05 2.34,15.27L4.34,18.73C4.46,18.95 4.73,19.03 4.95,18.95L7.44,17.94C7.96,18.34 8.5,18.68 9.13,18.93L9.5,21.58C9.54,21.82 9.75,22 10,22H14C14.25,22 14.46,21.82 14.5,21.58L14.87,18.93C15.5,18.67 16.04,18.34 16.56,17.94L19.05,18.95C19.27,19.03 19.54,18.95 19.66,18.73L21.66,15.27C21.78,15.05 21.73,14.78 21.54,14.63L19.43,12.97Z"/></svg>
@@ -149,14 +163,15 @@
                     <h2>1. Inventory <span class="p-file">devices.yaml</span></h2>
                     <p class="p-desc">Define every switch LLDPq should reach: management IPs (or hostnames), the default login username, and optional roles/groups. This is the source for collection, assets, key distribution and analysis.</p>
                     <div class="p-toolbar">
-                        <button class="btn secondary" onclick="document.getElementById('up-devices').click()" title="Upload from your computer"><svg viewBox="0 0 24 24"><path d="M9,16V10H5L12,3L19,10H15V16H9M5,20V18H19V20H5Z"/></svg>Upload</button>
+                        <button class="btn secondary" onclick="document.getElementById('up-devices').click()" title="Upload from your computer"><svg viewBox="0 0 24 24"><use href="#i-upload"/></svg>Upload</button>
                         <input type="file" id="up-devices" style="display:none" onchange="uploadFile('devices', this)">
-                        <button class="btn secondary" onclick="loadFile('devices', true)"><svg viewBox="0 0 24 24"><path d="M17.65,6.35C16.2,4.9 14.21,4 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20C15.73,20 18.84,17.45 19.73,14H17.65C16.83,16.33 14.61,18 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6C13.66,6 15.14,6.69 16.22,7.78L13,11H20V4L17.65,6.35Z"/></svg>Reload</button>
-                        <button class="btn secondary" onclick="downloadFile('devices')"><svg viewBox="0 0 24 24"><path d="M5,20H19V18H5M19,9H15V3H9V9H5L12,16L19,9Z"/></svg>Download</button>
+                        <button class="btn secondary" onclick="loadFile('devices', true)"><svg viewBox="0 0 24 24"><use href="#i-reload"/></svg>Reload</button>
+                        <button class="btn secondary" onclick="downloadFile('devices')"><svg viewBox="0 0 24 24"><use href="#i-download"/></svg>Download</button>
                         <div class="spacer"></div>
-                        <button class="btn primary" id="save-devices" onclick="saveFile('devices')"><svg viewBox="0 0 24 24"><path d="M15,9H5V5H15M12,19A3,3 0 0,1 9,16A3,3 0 0,1 12,13A3,3 0 0,1 15,16A3,3 0 0,1 12,19M17,3H5C3.89,3 3,3.9 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V7L17,3Z"/></svg>Save devices.yaml</button>
+                        <button class="btn primary" id="save-devices" onclick="saveFile('devices')"><svg viewBox="0 0 24 24"><use href="#i-save"/></svg>Save devices.yaml</button>
                     </div>
                     <textarea class="su-ta" id="ta-devices" spellcheck="false" placeholder="Loading devices.yaml..."></textarea>
+                    <div class="ta-meta" id="tm-devices"></div>
                     <div class="status info" id="st-devices"></div>
                 </div>
 
@@ -190,7 +205,7 @@
                         <input type="password" id="key-pw" placeholder="switch admin password (only needed to push the key)" autocomplete="new-password">
                         <button class="btn secondary" id="verify-btn" onclick="verifyKeys()"><svg viewBox="0 0 24 24"><path d="M9,20.42L2.79,14.21L5.62,11.38L9,14.77L18.88,4.88L21.71,7.71L9,20.42Z"/></svg>Verify (no password)</button>
                         <button class="btn primary" id="key-btn" onclick="distributeKeys()"><svg viewBox="0 0 24 24"><path d="M7,14A2,2 0 0,1 5,12A2,2 0 0,1 7,10A2,2 0 0,1 9,12A2,2 0 0,1 7,14M12.65,10C11.83,7.67 9.61,6 7,6A6,6 0 0,0 1,12A6,6 0 0,0 7,18C9.61,18 11.83,16.33 12.65,14H17V18H21V14H23V10H12.65Z"/></svg>Distribute to all</button>
-                        <button class="btn secondary" id="key-retry-btn" style="display:none" onclick="retryFailedKeys()" title="Push the key / fix sudo again only on the devices that failed in the last distribution"><svg viewBox="0 0 24 24"><path d="M17.65,6.35C16.2,4.9 14.21,4 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20C15.73,20 18.84,17.45 19.73,14H17.65C16.83,16.33 14.61,18 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6C13.66,6 15.14,6.69 16.22,7.78L13,11H20V4L17.65,6.35Z"/></svg>Retry failed devices</button>
+                        <button class="btn secondary" id="key-retry-btn" style="display:none" onclick="retryFailedKeys()" title="Push the key / fix sudo again only on the devices that failed in the last distribution"><svg viewBox="0 0 24 24"><use href="#i-reload"/></svg>Retry failed devices</button>
                     </div>
                     <div class="status info" id="key-progress"></div>
                     <div class="summary" id="key-summary"></div>
@@ -205,14 +220,15 @@
                     <h2>3. Topology <span class="p-file">topology.dot</span></h2>
                     <p class="p-desc">Describe the expected cabling as a Graphviz <code>.dot</code> graph (<code>"deviceA":"port" -- "deviceB":"port"</code>). LLDP results are validated against this expected wiring.</p>
                     <div class="p-toolbar">
-                        <button class="btn secondary" onclick="document.getElementById('up-topology').click()" title="Upload from your computer"><svg viewBox="0 0 24 24"><path d="M9,16V10H5L12,3L19,10H15V16H9M5,20V18H19V20H5Z"/></svg>Upload</button>
+                        <button class="btn secondary" onclick="document.getElementById('up-topology').click()" title="Upload from your computer"><svg viewBox="0 0 24 24"><use href="#i-upload"/></svg>Upload</button>
                         <input type="file" id="up-topology" style="display:none" onchange="uploadFile('topology', this)">
-                        <button class="btn secondary" onclick="loadFile('topology', true)"><svg viewBox="0 0 24 24"><path d="M17.65,6.35C16.2,4.9 14.21,4 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20C15.73,20 18.84,17.45 19.73,14H17.65C16.83,16.33 14.61,18 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6C13.66,6 15.14,6.69 16.22,7.78L13,11H20V4L17.65,6.35Z"/></svg>Reload</button>
-                        <button class="btn secondary" onclick="downloadFile('topology')"><svg viewBox="0 0 24 24"><path d="M5,20H19V18H5M19,9H15V3H9V9H5L12,16L19,9Z"/></svg>Download</button>
+                        <button class="btn secondary" onclick="loadFile('topology', true)"><svg viewBox="0 0 24 24"><use href="#i-reload"/></svg>Reload</button>
+                        <button class="btn secondary" onclick="downloadFile('topology')"><svg viewBox="0 0 24 24"><use href="#i-download"/></svg>Download</button>
                         <div class="spacer"></div>
-                        <button class="btn primary" id="save-topology" onclick="saveFile('topology')"><svg viewBox="0 0 24 24"><path d="M15,9H5V5H15M12,19A3,3 0 0,1 9,16A3,3 0 0,1 12,13A3,3 0 0,1 15,16A3,3 0 0,1 12,19M17,3H5C3.89,3 3,3.9 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V7L17,3Z"/></svg>Save topology.dot</button>
+                        <button class="btn primary" id="save-topology" onclick="saveFile('topology')"><svg viewBox="0 0 24 24"><use href="#i-save"/></svg>Save topology.dot</button>
                     </div>
                     <textarea class="su-ta" id="ta-topology" spellcheck="false" placeholder="Loading topology.dot..."></textarea>
+                    <div class="ta-meta" id="tm-topology"></div>
                     <div class="status info" id="st-topology"></div>
                 </div>
 
@@ -221,14 +237,15 @@
                     <h2>4. Topology Config <span class="p-file">topology_config.yaml</span></h2>
                     <p class="p-desc">Tune how the topology is rendered &mdash; tier ordering, layer/icon rules and special layout rules (e.g. staggered compute racks). Endpoint hosts are defined in <code>devices.yaml</code>. Optional, but improves the Topology view.</p>
                     <div class="p-toolbar">
-                        <button class="btn secondary" onclick="document.getElementById('up-config').click()" title="Upload from your computer"><svg viewBox="0 0 24 24"><path d="M9,16V10H5L12,3L19,10H15V16H9M5,20V18H19V20H5Z"/></svg>Upload</button>
+                        <button class="btn secondary" onclick="document.getElementById('up-config').click()" title="Upload from your computer"><svg viewBox="0 0 24 24"><use href="#i-upload"/></svg>Upload</button>
                         <input type="file" id="up-config" style="display:none" onchange="uploadFile('config', this)">
-                        <button class="btn secondary" onclick="loadFile('config', true)"><svg viewBox="0 0 24 24"><path d="M17.65,6.35C16.2,4.9 14.21,4 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20C15.73,20 18.84,17.45 19.73,14H17.65C16.83,16.33 14.61,18 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6C13.66,6 15.14,6.69 16.22,7.78L13,11H20V4L17.65,6.35Z"/></svg>Reload</button>
-                        <button class="btn secondary" onclick="downloadFile('config')"><svg viewBox="0 0 24 24"><path d="M5,20H19V18H5M19,9H15V3H9V9H5L12,16L19,9Z"/></svg>Download</button>
+                        <button class="btn secondary" onclick="loadFile('config', true)"><svg viewBox="0 0 24 24"><use href="#i-reload"/></svg>Reload</button>
+                        <button class="btn secondary" onclick="downloadFile('config')"><svg viewBox="0 0 24 24"><use href="#i-download"/></svg>Download</button>
                         <div class="spacer"></div>
-                        <button class="btn primary" id="save-config" onclick="saveFile('config')"><svg viewBox="0 0 24 24"><path d="M15,9H5V5H15M12,19A3,3 0 0,1 9,16A3,3 0 0,1 12,13A3,3 0 0,1 15,16A3,3 0 0,1 12,19M17,3H5C3.89,3 3,3.9 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V7L17,3Z"/></svg>Save topology_config.yaml</button>
+                        <button class="btn primary" id="save-config" onclick="saveFile('config')"><svg viewBox="0 0 24 24"><use href="#i-save"/></svg>Save topology_config.yaml</button>
                     </div>
                     <textarea class="su-ta" id="ta-config" spellcheck="false" placeholder="Loading topology_config.yaml..."></textarea>
+                    <div class="ta-meta" id="tm-config"></div>
                     <div class="status info" id="st-config"></div>
                 </div>
 
@@ -237,12 +254,12 @@
                     <h2>5. Display Aliases <span class="p-file">display-aliases.json</span></h2>
                     <p class="p-desc">Map canonical device and interface names to the P2P / field labels shown in LLDPq. Aliases are display-only: collected source data and topology validation are not changed. This step is optional and can be revisited after discovery.</p>
                     <div class="p-toolbar">
-                        <button class="btn secondary" type="button" onclick="document.getElementById('up-aliases').click()" title="Upload display-aliases.json from your computer"><svg viewBox="0 0 24 24"><path d="M9,16V10H5L12,3L19,10H15V16H9M5,20V18H19V20H5Z"/></svg>Upload</button>
+                        <button class="btn secondary" type="button" onclick="document.getElementById('up-aliases').click()" title="Upload display-aliases.json from your computer"><svg viewBox="0 0 24 24"><use href="#i-upload"/></svg>Upload</button>
                         <input type="file" id="up-aliases" accept=".json,application/json" style="display:none" onchange="uploadAliases(this)">
-                        <button class="btn secondary" type="button" onclick="loadAliases(true)"><svg viewBox="0 0 24 24"><path d="M17.65,6.35C16.2,4.9 14.21,4 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20C15.73,20 18.84,17.45 19.73,14H17.65C16.83,16.33 14.61,18 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6C13.66,6 15.14,6.69 16.22,7.78L13,11H20V4L17.65,6.35Z"/></svg>Reload</button>
-                        <button class="btn secondary" type="button" onclick="downloadAliases()"><svg viewBox="0 0 24 24"><path d="M5,20H19V18H5M19,9H15V3H9V9H5L12,16L19,9Z"/></svg>Download</button>
+                        <button class="btn secondary" type="button" onclick="loadAliases(true)"><svg viewBox="0 0 24 24"><use href="#i-reload"/></svg>Reload</button>
+                        <button class="btn secondary" type="button" onclick="downloadAliases()"><svg viewBox="0 0 24 24"><use href="#i-download"/></svg>Download</button>
                         <div class="spacer"></div>
-                        <button class="btn primary" type="button" id="aliases-save" onclick="saveAliases()"><svg viewBox="0 0 24 24"><path d="M15,9H5V5H15M12,19A3,3 0 0,1 9,16A3,3 0 0,1 12,13A3,3 0 0,1 15,16A3,3 0 0,1 12,19M17,3H5C3.89,3 3,3.9 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V7L17,3Z"/></svg>Save aliases</button>
+                        <button class="btn primary" type="button" id="aliases-save" onclick="saveAliases()"><svg viewBox="0 0 24 24"><use href="#i-save"/></svg>Save aliases</button>
                     </div>
                     <div class="sched-card">
                         <div class="key-row"><span class="k">Device names</span><span class="mono">canonical &rarr; display label</span></div>
@@ -278,7 +295,7 @@
                         <input type="text" id="ans-input" class="sched-sel" style="width:100%; min-width:0;" placeholder="/home/USER/ansible" autocomplete="off" spellcheck="false">
                         <div id="ans-candidates" class="p-desc" style="margin:8px 0 0;"></div>
                         <div class="p-toolbar">
-                            <button class="btn primary" onclick="saveAnsible()"><svg viewBox="0 0 24 24"><path d="M15,9H5V5H15M12,19A3,3 0 0,1 9,16A3,3 0 0,1 12,13A3,3 0 0,1 15,16A3,3 0 0,1 12,19M17,3H5C3.89,3 3,3.9 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V7L17,3Z"/></svg>Use this directory</button>
+                            <button class="btn primary" onclick="saveAnsible()"><svg viewBox="0 0 24 24"><use href="#i-save"/></svg>Use this directory</button>
                             <button class="btn secondary" onclick="disableAnsible()">I don't use Ansible (disable)</button>
                             <button class="btn secondary" onclick="loadAnsible(true)">Refresh</button>
                         </div>
@@ -292,7 +309,15 @@
                     <h2>8. Run LLDPq</h2>
                     <p class="p-desc">Run the full collection pipeline now (<code>lldpq -</code>: assets &rarr; LLDP check &rarr; monitor &rarr; fabric scan &rarr; alerts) and watch the live output. When it finishes, the Fabric, LLDP and Analysis pages are populated. It also runs automatically on the schedule below.</p>
 
-                    <div class="sched-card">
+                    <div class="p-toolbar">
+                        <button class="btn primary" id="run-btn" onclick="runLLDPq()"><svg viewBox="0 0 24 24"><path d="M8,5.14V19.14L19,12.14L8,5.14Z"/></svg>Run LLDPq</button>
+                        <div class="spacer"></div>
+                        <button class="btn secondary" onclick="location.href='start.html'">Open Fabric</button>
+                    </div>
+                    <div class="status info" id="run-status"></div>
+                    <pre id="run-output" class="run-output">Click "Run LLDPq" to start a collection and stream the output here&hellip;</pre>
+
+                    <div class="sched-card" style="margin-top:16px;">
                         <div class="key-row"><span class="k">Dashboard instance name</span></div>
                         <label class="key-lbl" for="lldpq-hostname">Displayed above the main dashboard logo (does not change the operating-system hostname):</label>
                         <input type="text" id="lldpq-hostname" class="sched-sel"
@@ -301,7 +326,7 @@
                                pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,63}"
                                onkeydown="if(event.key==='Enter'){event.preventDefault();saveHostname();}">
                         <div class="p-toolbar" style="margin-top:10px;">
-                            <button class="btn secondary" id="save-hostname-btn" onclick="saveHostname()"><svg viewBox="0 0 24 24"><path d="M15,9H5V5H15M12,19A3,3 0 0,1 9,16A3,3 0 0,1 12,13A3,3 0 0,1 15,16A3,3 0 0,1 12,19M17,3H5C3.89,3 3,3.9 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V7L17,3Z"/></svg>Save dashboard name</button>
+                            <button class="btn secondary" id="save-hostname-btn" onclick="saveHostname()"><svg viewBox="0 0 24 24"><use href="#i-save"/></svg>Save dashboard name</button>
                             <span class="status info" id="hostname-status" style="margin-top:0;"></span>
                         </div>
                     </div>
@@ -326,7 +351,7 @@
                             </select>
                         </div>
                         <div class="p-toolbar" style="margin-top:8px;">
-                            <button class="btn secondary" id="save-sched-btn" onclick="saveSchedules()"><svg viewBox="0 0 24 24"><path d="M15,9H5V5H15M12,19A3,3 0 0,1 9,16A3,3 0 0,1 12,13A3,3 0 0,1 15,16A3,3 0 0,1 12,19M17,3H5C3.89,3 3,3.9 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V7L17,3Z"/></svg>Save schedules</button>
+                            <button class="btn secondary" id="save-sched-btn" onclick="saveSchedules()"><svg viewBox="0 0 24 24"><use href="#i-save"/></svg>Save schedules</button>
                             <span class="status info" id="sched-status" style="margin-top:0;"></span>
                         </div>
                     </div>
@@ -340,18 +365,11 @@
                             <label class="key-lbl" style="margin:0; display:flex; align-items:center; gap:8px;">Get configs <select id="par-getconfigs" class="sched-sel" style="min-width:90px;"></select></label>
                         </div>
                         <div class="p-toolbar" style="margin-top:10px;">
-                            <button class="btn secondary" id="save-parallel-btn" onclick="saveParallel()"><svg viewBox="0 0 24 24"><path d="M15,9H5V5H15M12,19A3,3 0 0,1 9,16A3,3 0 0,1 12,13A3,3 0 0,1 15,16A3,3 0 0,1 12,19M17,3H5C3.89,3 3,3.9 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V7L17,3Z"/></svg>Save parallelism</button>
+                            <button class="btn secondary" id="save-parallel-btn" onclick="saveParallel()"><svg viewBox="0 0 24 24"><use href="#i-save"/></svg>Save parallelism</button>
                             <span class="status info" id="par-status" style="margin-top:0;"></span>
                         </div>
                     </div>
 
-                    <div class="p-toolbar">
-                        <button class="btn primary" id="run-btn" onclick="runLLDPq()"><svg viewBox="0 0 24 24"><path d="M8,5.14V19.14L19,12.14L8,5.14Z"/></svg>Run LLDPq</button>
-                        <div class="spacer"></div>
-                        <button class="btn secondary" onclick="location.href='start.html'">Open Fabric</button>
-                    </div>
-                    <div class="status info" id="run-status"></div>
-                    <pre id="run-output" class="run-output">Click "Run LLDPq" to start a collection and stream the output here&hellip;</pre>
                 </div>
 
                 <!-- Step 11: Update LLDPq -->
@@ -459,9 +477,9 @@
                     </div>
 
                     <div class="p-toolbar">
-                        <button class="btn secondary" onclick="loadNotifications(true)"><svg viewBox="0 0 24 24"><path d="M17.65,6.35C16.2,4.9 14.21,4 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20C15.73,20 18.84,17.45 19.73,14H17.65C16.83,16.33 14.61,18 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6C13.66,6 15.14,6.69 16.22,7.78L13,11H20V4L17.65,6.35Z"/></svg>Reload</button>
+                        <button class="btn secondary" onclick="loadNotifications(true)"><svg viewBox="0 0 24 24"><use href="#i-reload"/></svg>Reload</button>
                         <div class="spacer"></div>
-                        <button class="btn primary" id="nf-save" onclick="saveNotifications()"><svg viewBox="0 0 24 24"><path d="M15,9H5V5H15M12,19A3,3 0 0,1 9,16A3,3 0 0,1 12,13A3,3 0 0,1 15,16A3,3 0 0,1 12,19M17,3H5C3.89,3 3,3.9 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V7L17,3Z"/></svg>Save notifications.yaml</button>
+                        <button class="btn primary" id="nf-save" onclick="saveNotifications()"><svg viewBox="0 0 24 24"><use href="#i-save"/></svg>Save notifications.yaml</button>
                     </div>
                     <div class="status info" id="nf-status"></div>
                 </div>
@@ -473,7 +491,7 @@
                     <div class="sched-card">
                         <label style="display:flex;align-items:center;gap:8px;color:#d4d4d4;font-size:13px;cursor:pointer;margin-bottom:10px;"><input type="checkbox" id="bk-include-key" checked style="width:16px;height:16px;accent-color:#76b900;"> Include the collector SSH key &mdash; complete set for migration <strong style="color:#ffb74d;">(adds the private key)</strong></label>
                         <div class="p-toolbar">
-                            <button class="btn primary" onclick="backupExport()"><svg viewBox="0 0 24 24"><path d="M5,20H19V18H5M19,9H15V3H9V9H5L12,16L19,9Z"/></svg>Download bundle</button>
+                            <button class="btn primary" onclick="backupExport()"><svg viewBox="0 0 24 24"><use href="#i-download"/></svg>Download bundle</button>
                             <span class="status info" id="bk-export-msg"></span>
                         </div>
                     </div>
@@ -497,9 +515,9 @@
                         <div class="key-row"><span class="k">Monitoring data (monitor-results)</span><span id="mt-monitor" class="mono">&mdash;</span></div>
                         <div class="key-row"><span class="k">Old update backups</span><span id="mt-backups" class="mono">&mdash;</span></div>
                         <div class="p-toolbar">
-                            <button class="btn secondary" onclick="loadMaintenance()"><svg viewBox="0 0 24 24"><path d="M17.65,6.35C16.2,4.9 14.21,4 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20C15.73,20 18.84,17.45 19.73,14H17.65C16.83,16.33 14.61,18 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6C13.66,6 15.14,6.69 16.22,7.78L13,11H20V4L17.65,6.35Z"/></svg>Refresh</button>
+                            <button class="btn secondary" onclick="loadMaintenance()"><svg viewBox="0 0 24 24"><use href="#i-reload"/></svg>Refresh</button>
                             <div class="spacer"></div>
-                            <button class="btn danger" id="mt-purge-btn" onclick="purgeBackups()"><svg viewBox="0 0 24 24"><path d="M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z"/></svg>Remove old update backups</button>
+                            <button class="btn danger" id="mt-purge-btn" onclick="purgeBackups()"><svg viewBox="0 0 24 24"><use href="#i-trash"/></svg>Remove old update backups</button>
                         </div>
                         <div class="status info" id="mt-status"></div>
                     </div>
@@ -584,7 +602,7 @@
                                 <label class="key-lbl" for="uninstall-confirm-text">Type <code>UNINSTALL</code> exactly to enable the final action:</label>
                                 <div class="key-input">
                                     <input type="text" id="uninstall-confirm-text" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="UNINSTALL">
-                                    <button class="btn danger" type="button" id="uninstall-start-btn" onclick="startUninstall()" disabled><svg viewBox="0 0 24 24"><path d="M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z"/></svg>Permanently uninstall LLDPq</button>
+                                    <button class="btn danger" type="button" id="uninstall-start-btn" onclick="startUninstall()" disabled><svg viewBox="0 0 24 24"><use href="#i-trash"/></svg>Permanently uninstall LLDPq</button>
                                 </div>
                                 <div class="status info" id="uninstall-launch-status"></div>
                             </div>
@@ -604,14 +622,14 @@
 
 <script>
 const STEPS = [
-    { key:'devices',  label:'Inventory',        desc:'devices.yaml — switches & credentials' },
+    { key:'devices',  label:'Inventory',        desc:'devices.yaml — switches & credentials', group:'Configure' },
     { key:'keys',     label:'SSH Keys',         desc:'Authorize collector key + sudo' },
     { key:'topology', label:'Topology',         desc:'topology.dot — expected cabling' },
     { key:'config',   label:'Topology Config',  desc:'topology_config.yaml — layout rules' },
-    { key:'aliases',  label:'Display Aliases',  desc:'Optional — P2P / field display names' },
-    { key:'ansible',  label:'Integrate Ansible', desc:'Optional — VLAN/VRF/Fabric reports' },
-    { key:'notifications', label:'Notifications', desc:'Slack alerts — webhook, types, thresholds' },
-    { key:'run',      label:'Run LLDPq',        desc:'Collect data & validate (live output)' },
+    { key:'aliases',  label:'Display Aliases',  desc:'P2P / field display names', group:'Optional', optional:true },
+    { key:'ansible',  label:'Integrate Ansible', desc:'VLAN/VRF/Fabric reports', optional:true },
+    { key:'notifications', label:'Notifications', desc:'Slack alerts — webhook, types, thresholds', optional:true },
+    { key:'run',      label:'Run LLDPq',        desc:'Collect data & validate (live output)', group:'Operate' },
     { key:'backup',      label:'Backup & Restore', desc:'Export / import config bundle' },
     { key:'maintenance', label:'Maintenance',      desc:'Disk usage & safe cleanup' },
     { key:'update',   label:'Update LLDPq',     desc:'git pull + reinstall (live output)' },
@@ -729,6 +747,12 @@ function renderSteps() {
     const c = document.getElementById('steps');
     c.replaceChildren();
     STEPS.forEach(function (s, i) {
+        if (s.group) {
+            const sep = document.createElement('div');
+            sep.className = 'su-sep';
+            sep.textContent = s.group;
+            c.appendChild(sep);
+        }
         const step = document.createElement('div');
         step.className = 'su-step';
         step.id = 'step-' + i;
@@ -742,12 +766,17 @@ function renderSteps() {
         num.className = 'num'; num.id = 'num-' + i; num.textContent = String(i + 1);
         const copy = document.createElement('div');
         const label = document.createElement('div'); label.className = 'lbl'; label.textContent = s.label;
+        if (s.optional) {
+            const badge = document.createElement('span');
+            badge.className = 'badge gray'; badge.textContent = 'optional';
+            label.appendChild(badge);
+        }
         const desc = document.createElement('div'); desc.className = 'desc'; desc.textContent = s.desc;
         copy.append(label, desc); step.append(num, copy); c.appendChild(step);
     });
 
     const separator = document.createElement('div');
-    separator.className = 'su-danger-separator';
+    separator.className = 'su-sep';
     separator.textContent = 'Danger Zone';
     const danger = document.createElement('div');
     danger.className = 'su-step danger';
@@ -841,7 +870,19 @@ function initDirtyGuards() {
         const ta = document.getElementById(cfg.ta);
         if (!ta) return;
         ta.addEventListener('input', function () { cfg.dirty = true; cfg.editVersion++; });
+        // Tab indents (two spaces) instead of leaving the editor; Shift+Tab still moves focus out.
+        ta.addEventListener('keydown', function (e) {
+            if (e.key !== 'Tab' || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+            e.preventDefault();
+            ta.setRangeText('  ', ta.selectionStart, ta.selectionEnd, 'end');
+            cfg.dirty = true; cfg.editVersion++;
+            refreshDirtyMarkers();
+        });
     });
+    // Keep the rail's unsaved-change dots in sync with any form edit; per-field
+    // dirty handlers run first, the microtask reads the settled flags.
+    document.addEventListener('input', function () { queueMicrotask(refreshDirtyMarkers); }, true);
+    document.addEventListener('change', function () { queueMicrotask(refreshDirtyMarkers); }, true);
     const nfPanel = document.querySelector('[data-step-key="notifications"]');
     if (nfPanel) nfPanel.querySelectorAll('input,select,textarea').forEach(function (el) {
         const dirty = function () { if (!suppressNotifDirty) { notifDirty = true; notifEditVersion++; } };
@@ -896,11 +937,50 @@ function markDone(stepKey, isDone) {
     done[stepKey] = isDone;
 }
 
+// Unsaved-change indicators: an orange dot on the step number in the rail plus a
+// highlight on the panel's Save button. Unlike the old auto-"done" state this only
+// reflects real unsaved edits, so it cannot mislead.
+const STEP_DIRTY = {
+    devices:       function () { return FILES.devices.dirty; },
+    topology:      function () { return FILES.topology.dirty; },
+    config:        function () { return FILES.config.dirty; },
+    aliases:       function () { return aliasesDirty; },
+    ansible:       function () { return ansibleDirty; },
+    notifications: function () { return notifDirty; },
+    run:           function () { return runSettingsDirty; },
+};
+const STEP_SAVE_BTN = { devices:'save-devices', topology:'save-topology', config:'save-config', aliases:'aliases-save', notifications:'nf-save' };
+
+function refreshDirtyMarkers() {
+    STEPS.forEach(function (s, i) {
+        const isDirty = STEP_DIRTY[s.key] ? !!STEP_DIRTY[s.key]() : false;
+        const el = document.getElementById('step-' + i);
+        if (el) {
+            el.classList.toggle('dirty', isDirty);
+            const num = document.getElementById('num-' + i);
+            if (num) num.title = isDirty ? 'Unsaved changes' : '';
+        }
+        const btn = STEP_SAVE_BTN[s.key] && document.getElementById(STEP_SAVE_BTN[s.key]);
+        if (btn) btn.classList.toggle('attn', isDirty);
+    });
+    Object.keys(FILES).forEach(updateTaMeta);
+}
+
+function updateTaMeta(key) {
+    const meta = document.getElementById('tm-' + key);
+    const ta = document.getElementById(FILES[key].ta);
+    if (!meta || !ta) return;
+    meta.textContent = ta.value ? (ta.value.split('\n').length + ' lines') : '';
+}
+
 function setStatus(id, msg, cls) {
     const el = document.getElementById(id);
     if (!el) return;
     el.className = 'status ' + (cls || 'info');
     el.textContent = msg || '';
+    // Every load/save/import path reports through here right after it settles the
+    // dirty flags, so this is the one chokepoint that keeps the markers fresh.
+    refreshDirtyMarkers();
 }
 
 async function loadFile(key, force) {
@@ -1043,6 +1123,8 @@ function markAliasesDirty() {
     if (suppressAliasDirty) return;
     aliasesDirty = true;
     aliasesEditVersion++;
+    // Row add/remove buttons reach here via click, which the input/change refresh misses.
+    refreshDirtyMarkers();
 }
 
 function createAliasRow(section, real, label) {
