@@ -4459,7 +4459,23 @@ try:
     if giaddr:
         relay_entry['giaddr'] = giaddr
     
-    if index is not None and isinstance(index, int) and 0 <= index < len(host_data['dhcp_relay']):
+    if index is not None:
+        # An explicit index must address an existing entry: falling through
+        # to append on a stale/out-of-range index (e.g. after a concurrent
+        # delete shifted the list) would create a second entry for a VRF,
+        # and dhcp_relay.j2 renders duplicate mapping keys (invalid NVUE YAML)
+        if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < len(host_data['dhcp_relay']):
+            print(json.dumps({'success': False, 'error': 'DHCP relay entry not found (the list may have changed since the page was loaded); reload and retry'}))
+            sys.exit(0)
+
+    # NVUE keys DHCP relays by VRF: refuse a save that would leave two
+    # entries for the same VRF (duplicate mapping key in the rendered config)
+    for _i, _e in enumerate(host_data['dhcp_relay']):
+        if _i != index and hasattr(_e, 'get') and _e.get('vrf') == vrf:
+            print(json.dumps({'success': False, 'error': f'A DHCP relay for VRF {vrf} already exists on this device; edit that entry instead'}))
+            sys.exit(0)
+
+    if index is not None:
         # Update existing
         host_data['dhcp_relay'][index] = relay_entry
     else:
@@ -5346,6 +5362,7 @@ PYTHON
         export POST_DATA
         python3 << PYTHON
 $LLDPQ_MODE_FLOOR_DEF
+$LLDPQ_ATOMIC_WRITE_DEF
 $LLDPQ_VALIDATORS_DEF
 import json
 import re
@@ -5541,35 +5558,15 @@ try:
             }
         }
         
-        # Update VRF to use new profile
+        # Update VRF to use new profile (both files are committed together
+        # at the end, so host_vars can never reference a profile that was
+        # never written to bgp_profiles.yaml)
         if 'bgp' not in vrf_config:
             vrf_config['bgp'] = {}
         vrf_config['bgp']['bgp_profile'] = new_profile_name
         bgp_profile = new_profile_name
         profile_created = True
-        
-        # Save updated host_vars with new bgp_profile
-        _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(host_file), suffix='.tmp')
-        _lldpq_mode_floor(_tmp_fd, host_file)
-        try:
-            with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-                yaml.dump(host_data, _tmp_f)
-            shutil.move(_tmp_path, host_file)
-        except:
-            if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-            raise
-        
-        # Save bgp_profiles with new profile
-        _tmp_fd, _tmp_path = tempfile.mkstemp(dir=os.path.dirname(bgp_profiles_file), suffix='.tmp')
-        _lldpq_mode_floor(_tmp_fd, bgp_profiles_file)
-        try:
-            with os.fdopen(_tmp_fd, 'w') as _tmp_f:
-                yaml.dump(bgp_data, _tmp_f)
-            shutil.move(_tmp_path, bgp_profiles_file)
-        except:
-            if os.path.exists(_tmp_path): os.unlink(_tmp_path)
-            raise
-    
+
     elif not has_external:
         print(json.dumps({'success': False, 'error': f'External peer group not found in profile {bgp_profile}. Enable "Create Border Profile" option.'}))
         exit(0)
