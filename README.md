@@ -188,7 +188,7 @@ access via web UI: `http://<server>/search.html`
 - sortable table columns (click headers)
 - search/filter support
 - CSV export for MAC/ARP tables
-- parallel queries for "All Devices" mode
+- "All Devices" mode serves results from the fabric-scan cache; single-device queries run live over SSH
 - **fast subnet search**: cached-only queries for subnet patterns (e.g. `192.168.64`)
 
 ## [02c] device details & command runner
@@ -198,7 +198,7 @@ access via web UI: `http://<server>/device.html`
 ### tabs
 | Tab | Description |
 |-----|-------------|
-| **Overview** | Device info, uptime, model, serial, OS version |
+| **Overview** | Optical port health and log alert summary cards |
 | **Ports** | Interface status with speed, state, neighbors |
 | **Optical** | SFP/QSFP diagnostics with power levels, temperature |
 | **NVT** | Runs the read-only `nvt` helper with a 45-second timeout and displays a colorized interface summary: admin/oper state, speed, MTU, type, VLANs, VRF, LLDP neighbor/port, description, and IP addresses. It is loaded on first use and can be refreshed independently. |
@@ -240,8 +240,9 @@ access via web UI: `http://<server>/device.html`
 - **page exit warning**: prevents accidental navigation during generation
 
 ### security
-- commands are allowlisted diagnostics, with tightly scoped packet-capture and
-  capture/bundle cleanup operations
+- commands are allowlisted diagnostics, with tightly scoped packet-capture,
+  capture/bundle cleanup, and interface up/down (port bounce) operations used
+  by Fabric Migration
 - switch configuration commands are blocked
 
 > **Authorization:** Device Details—including NVT, Config, and Command
@@ -285,7 +286,7 @@ all path discovery is based on graph analysis — no hardcoded hostnames, IPs, o
 | **core detection** | cross-pod spine tier-2 neighbor bridging |
 | **link health** | LLDP bidirectional link status counting |
 
-works with any Clos topology: 2-tier (leaf-spine), 3-tier (leaf-spine-core), or N-tier.
+works with 2-tier (leaf-spine) and 3-tier (leaf-spine-core) Clos topologies.
 
 ## [02e] duplicate address detection
 
@@ -325,7 +326,7 @@ fabricated from the VLAN number.
   proven flat in the current cycle
 - preserves short-lived IP owner-port context so fast-moving conflicts can still show both locations
 - filters by summary card or device and hides aged findings by default
-- the current **Download CSV** action exports the currently visible rows from the IP duplicate table
+- the current **Download CSV** action exports the currently visible rows from all three tables (IP duplicates, MAC findings, APIPA) into one file
 - the Thresholds dialog documents data sources, grading, EVPN-MH behavior, and targeted FRR DAD-clear commands
 
 ## [02f] Ask-AI (admin only)
@@ -382,7 +383,6 @@ not expose them):
 
 | Key | Purpose |
 |-----|---------|
-| `AI_FALLBACK_MODEL` | Secondary model tried automatically when the primary model call fails; also preferred for the autonomous scan stage when set |
 | `AI_CONTEXT_WINDOW_TOKENS` | Override the assumed context window (tokens) of the primary model |
 | `AI_FALLBACK_CONTEXT_WINDOW_TOKENS` | Same override for the fallback model |
 | `AI_SEARCH_URL` / `AI_SEARCH_KEY` | Separate endpoint and API key for the optional search model; they default to the main endpoint and its key when unset |
@@ -435,7 +435,8 @@ selected output to Ask-AI. A device can be opened directly with
 
 > **Broadcast warning:** Broadcast sends the entered text and Enter
 > immediately to every connected session, without a confirmation dialog. An
-> empty value sends Enter. Disconnected sessions are skipped and reported.
+> empty value is rejected with a warning and nothing is sent. Disconnected
+> sessions are skipped and reported.
 
 > **Privilege warning:** Console is an unrestricted interactive shell, not the
 > allowlisted Device Details command runner. Input is forwarded directly to a
