@@ -1216,9 +1216,9 @@ class DuplicateAnalyzer:
                 rec["classification"] = "ip-conflict-participant"
             elif (not rec.get("confirmed_conflict") and not rec.get("dad_flagged")
                   and len(ep) >= 2
-                  and pair_count.get((vlan, ep), 0) >= LOOP_MIN_MACS):
+                  and pair_count.get((rec["vlan"], ep), 0) >= LOOP_MIN_MACS):
                 rec["classification"] = "loop"
-                rec["loop_count"] = pair_count[(vlan, ep)]
+                rec["loop_count"] = pair_count[(rec["vlan"], ep)]
 
         # Age-out: a quiesced (WARNING) duplicate whose EVPN sequence has not moved for a long time
         # AND has no recent log event is "stale" -- still real, just historical (e.g. storage VIPs
