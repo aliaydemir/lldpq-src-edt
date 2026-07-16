@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -16,20 +17,34 @@ ROOT = Path(__file__).resolve().parents[1]
 FABRIC_API = (ROOT / "html" / "fabric-api.sh").read_text(encoding="utf-8")
 INSTALL = (ROOT / "install.sh").read_text(encoding="utf-8")
 ENTRYPOINT = (ROOT / "docker" / "docker-entrypoint.sh").read_text(encoding="utf-8")
+RUNTIME_PREAMBLE_START = FABRIC_API.index(
+    'FABRIC_LOCK_DIR="${FABRIC_LOCK_DIR:-'
+)
+RUNTIME_PREAMBLE_END = FABRIC_API.index(
+    "acquire_lock() {", RUNTIME_PREAMBLE_START
+)
+RUNTIME_PREAMBLE = FABRIC_API[
+    RUNTIME_PREAMBLE_START:RUNTIME_PREAMBLE_END
+]
 
 
 class FabricLockPermissionTests(unittest.TestCase):
-    def test_runtime_preamble_preserves_shared_group_access(self) -> None:
-        start = FABRIC_API.index('FABRIC_LOCK_DIR="${FABRIC_LOCK_DIR:-')
-        end = FABRIC_API.index("acquire_lock() {", start)
-        preamble = FABRIC_API[start:end]
+    def test_runtime_preamble_declares_shared_group_contract(self) -> None:
+        self.assertIn('chmod 2770 "$FABRIC_LOCK_DIR"', RUNTIME_PREAMBLE)
+        self.assertNotIn('chmod 700 "$FABRIC_LOCK_DIR"', RUNTIME_PREAMBLE)
+        self.assertIn(
+            'chgrp "$FABRIC_LOCK_GROUP" "$FABRIC_LOCK_DIR"', RUNTIME_PREAMBLE
+        )
+        self.assertIn(
+            '(umask 0007; : >>"$FABRIC_LOCK_FILE")', RUNTIME_PREAMBLE
+        )
+        self.assertIn('chmod 660 "$FABRIC_LOCK_FILE"', RUNTIME_PREAMBLE)
 
-        self.assertIn('chmod 2770 "$FABRIC_LOCK_DIR"', preamble)
-        self.assertNotIn('chmod 700 "$FABRIC_LOCK_DIR"', preamble)
-        self.assertIn('chgrp "$FABRIC_LOCK_GROUP" "$FABRIC_LOCK_DIR"', preamble)
-        self.assertIn('(umask 0007; : >>"$FABRIC_LOCK_FILE")', preamble)
-        self.assertIn('chmod 660 "$FABRIC_LOCK_FILE"', preamble)
-
+    @unittest.skipUnless(
+        sys.platform.startswith("linux"),
+        "setgid directory behavior is a GNU/Linux runtime contract",
+    )
+    def test_runtime_preamble_applies_shared_modes_on_linux(self) -> None:
         # Keep the functional probe inside the repository so sandboxed test
         # runners that restrict writes outside the workspace can chmod it.
         with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
@@ -40,7 +55,11 @@ class FabricLockPermissionTests(unittest.TestCase):
                 FABRIC_LOCK_DIR=str(lock_dir),
                 FABRIC_LOCK_GROUP=group,
             )
-            subprocess.run(["bash", "-c", preamble], env=environment, check=True)
+            subprocess.run(
+                ["bash", "-c", RUNTIME_PREAMBLE],
+                env=environment,
+                check=True,
+            )
 
             lock_file = lock_dir / "fabric-api.lock"
             self.assertEqual(stat.S_IMODE(lock_dir.stat().st_mode), 0o2770)
