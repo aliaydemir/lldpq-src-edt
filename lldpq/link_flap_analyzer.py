@@ -90,6 +90,7 @@ class LinkFlapAnalyzer:
         self.prev_sample_time = {}  # port -> timestamp of persisted baseline
         self.flapping_counters = {}  # port -> {period: count}
         self._port_cache = {}  # Cache for calculated port status/counters
+        self._export_rows = None  # Cache for get_export_rows()
         self.thresholds = self.DEFAULT_THRESHOLDS.copy()
         self.collection_coverage = {
             "expected_devices": 0,
@@ -306,6 +307,7 @@ class LinkFlapAnalyzer:
         always 0 while the raw Total counter still showed a value.)"""
         curr_time = time.time()
         self._port_cache = {}
+        self._export_rows = None
 
         # Initialize if new port
         if port_name not in self.carrier_transitions_lookback:
@@ -400,6 +402,7 @@ class LinkFlapAnalyzer:
     def _build_port_cache(self):
         """Build cache of all port statuses and counters - call once before bulk operations"""
         self._port_cache = {}
+        self._export_rows = None
         for port_name in self.carrier_transitions_stats.keys():
             counters = self.calculate_flapping_rate(port_name)
             status = self._status_for_counters(counters)
@@ -518,7 +521,10 @@ class LinkFlapAnalyzer:
         """Flat per-port rows (export_artifacts "flap" schema) built from the
         same cached port objects the HTML table renders, in the same
         problems-first order. Single source for the HTML table and the
-        public machine-readable export."""
+        public machine-readable export. Built once per cache generation and
+        reused across the HTML render and write_export calls."""
+        if self._export_rows is not None:
+            return self._export_rows
         if not self._port_cache:
             self._build_port_cache()
         rows = []
@@ -541,6 +547,7 @@ class LinkFlapAnalyzer:
             0 if row['status'] == FlapStatus.CRITICAL.value else
             1 if row['status'] == FlapStatus.WARNING.value else 2
         ))
+        self._export_rows = rows
         return rows
 
     def export_flap_data_for_web(self, output_file: str):
@@ -608,7 +615,7 @@ class LinkFlapAnalyzer:
     <title>Link Flap Detection Results</title>
     <link rel="shortcut icon" href="/png/favicon.ico">
     <link rel="stylesheet" type="text/css" href="/css/select2.min.css">
-    <link rel="stylesheet" type="text/css" href="/css/table-filter.css?v=20260716-tf-1">
+    <link rel="stylesheet" type="text/css" href="/css/table-filter.css?v=20260716-tf-3">
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #1e1e1e; color: #d4d4d4; padding: 20px; min-height: 100vh; }}
@@ -1720,7 +1727,7 @@ class LinkFlapAnalyzer:
         })();
     </script>
     <script src="/p2p-alias.js"></script>
-    <script src="/css/table-filter.js?v=20260716-tf-1"></script>
+    <script src="/css/table-filter.js?v=20260716-tf-3"></script>
     <script src="/css/analysis-guard.js?v=20260707-scoped-runner-2"></script>
 </body>
 </html>"""

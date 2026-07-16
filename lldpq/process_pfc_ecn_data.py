@@ -33,6 +33,12 @@ from collection_freshness import (
 )
 import export_artifacts
 
+try:
+    from device_names import canonical
+except Exception:
+    def canonical(_n):
+        return _n
+
 
 PORT_RE = re.compile(r"^swp[0-9]+(?:s[0-9]+)?$")
 LEGACY_START_RE = re.compile(
@@ -1049,7 +1055,7 @@ def render_report(
 <title>PFC/ECN Analysis</title>
 <link rel="shortcut icon" href="/png/favicon.ico">
 <link rel="stylesheet" type="text/css" href="/css/select2.min.css">
-<link rel="stylesheet" type="text/css" href="/css/table-filter.css?v=20260716-tf-1">
+<link rel="stylesheet" type="text/css" href="/css/table-filter.css?v=20260716-tf-3">
 <meta name="totalPorts" content="{total}"><meta name="exactPorts" content="{exact}">
 <style>
 *{{margin:0;padding:0;box-sizing:border-box}}
@@ -1463,7 +1469,7 @@ async function runAnalysis() {{
 }}
 </script>
 <script src="/p2p-alias.js"></script>
-<script src="/css/table-filter.js?v=20260716-tf-1"></script>
+<script src="/css/table-filter.js?v=20260716-tf-3"></script>
 <script src="/css/analysis-guard.js?v=20260707-scoped-runner-2"></script>
 </body></html>'''
 
@@ -1800,7 +1806,7 @@ def process_pfc_ecn_data_files(data_dir: str = "monitor-results/pfc-ecn-data") -
         deltas, rates = row["deltas"], row["rates"]
         status = str(row["sample_status"])
         export_rows.append({
-            "device": row["hostname"],
+            "device": canonical(row["hostname"]),
             "interface": row["interface"],
             "status": str(row.get("signal", "quiet")) if status == "analyzed" else status,
             "signal": row.get("signal"),

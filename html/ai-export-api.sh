@@ -28,12 +28,17 @@ esac
 AI_STATE_DIR="${AI_STATE_DIR:-/var/lib/lldpq/ai}"
 ANALYSIS_FILE="$AI_STATE_DIR/analysis.json"
 
+# Check directory traversability first: an untraversable state dir would make
+# the -e test below fail and misreport a permissions problem as "no report".
+# /var/lib/lldpq and /var/lib/lldpq/ai need g+x for www-data (install.sh
+# guarantees this; a tightened deployment lands here instead of a wrong 404).
+if [[ -d "$AI_STATE_DIR" && ! -x "$AI_STATE_DIR" ]]; then
+    json_error "500 Internal Server Error" "AI state directory is not accessible by the web service"
+fi
 if [[ ! -e "$ANALYSIS_FILE" ]]; then
     json_error "404 Not Found" "No AI analysis has been generated yet"
 fi
 if [[ ! -r "$ANALYSIS_FILE" ]]; then
-    # /var/lib/lldpq and /var/lib/lldpq/ai need g+x for www-data (install.sh
-    # guards this); a tightened deployment lands here instead of a bare 500.
     json_error "500 Internal Server Error" "AI analysis file is not readable by the web service"
 fi
 

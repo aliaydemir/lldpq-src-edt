@@ -359,13 +359,20 @@ publish_inventory() {
     fi
 
     # The /transceiver/export_json|csv pair is produced by the same python
-    # step as the inventory; keep the served copies in lockstep with it.
-    local export_file
-    for export_file in "$RESULT_DIR/transceiver-export.json" "$RESULT_DIR/transceiver-export.csv"; do
-        if [ -f "$export_file" ] && ! publish_web_file "$export_file"; then
-            echo "WARN: Could not publish $(basename "$export_file") to $WEB_MONITOR_DIR" >&2
+    # step as the inventory; publish both or neither, so the web tree never
+    # serves a JSON and CSV from different scan generations.
+    local export_json="$RESULT_DIR/transceiver-export.json"
+    local export_csv="$RESULT_DIR/transceiver-export.csv"
+    if [ -f "$export_json" ] && [ -f "$export_csv" ]; then
+        if ! publish_web_file "$export_json"; then
+            echo "ERROR: Could not publish transceiver-export.json to $WEB_MONITOR_DIR" >&2
+            return 1
         fi
-    done
+        if ! publish_web_file "$export_csv"; then
+            echo "ERROR: Could not publish transceiver-export.csv to $WEB_MONITOR_DIR; served pair may be mixed until the next scan" >&2
+            return 1
+        fi
+    fi
     return 0
 }
 

@@ -85,7 +85,7 @@
                 }
                 var hide = false;
                 filters.forEach(function (set, col) {
-                    if (hide || !set || set.size === 0) return;
+                    if (hide || !set) return;
                     if (!set.has(cellValue(row, col))) hide = true;
                 });
                 row.classList.toggle('tf-hidden', hide);
@@ -102,8 +102,7 @@
         for (var i = 0; i < head.cells.length; i++) {
             var btn = head.cells[i].querySelector('.tf-btn');
             if (btn) {
-                var set = st.filters.get(i);
-                btn.classList.toggle('tf-active', !!(set && set.size));
+                btn.classList.toggle('tf-active', st.filters.has(i));
             }
         }
     }
@@ -125,6 +124,7 @@
             btn.setAttribute('aria-label', 'Filter column');
             btn.title = 'Filter';
             btn.innerHTML = FUNNEL_SVG;
+            th.classList.add('tf-th');
             th.appendChild(btn);
         }
         updateButtons(table);

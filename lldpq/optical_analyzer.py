@@ -861,6 +861,13 @@ class OpticalAnalyzer:
 
         return "Check optical diagnostics availability"
 
+    def _ordered_ports(self, summary: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Problems-first port order shared by the HTML table and export rows."""
+        return (summary['critical_ports'] + summary['down_ports'] +
+                summary['warning_ports'] + summary['unplugged_ports'] +
+                summary['unknown_ports'] + summary['good_ports'] +
+                summary['excellent_ports'])
+
     def build_export_rows(self, summary: Dict[str, Any],
                           anomalies: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Flat export rows in the same problems-first order as the HTML table."""
@@ -868,10 +875,7 @@ class OpticalAnalyzer:
         for anomaly in anomalies:
             anomalies_by_port.setdefault(anomaly.get('port', ''), []).append(anomaly)
 
-        all_ports = (summary['critical_ports'] + summary['down_ports'] +
-                     summary['warning_ports'] + summary['unplugged_ports'] +
-                     summary['unknown_ports'] + summary['good_ports'] +
-                     summary['excellent_ports'])
+        all_ports = self._ordered_ports(summary)
 
         rows = []
         for port in all_ports:
@@ -884,7 +888,7 @@ class OpticalAnalyzer:
                 interface_name = port_name
             stats = self.current_optical_stats.get(port_name, {})
             rows.append({
-                'device': device_name,
+                'device': canonical(device_name),
                 'interface': interface_name,
                 'health': port.get('health'),
                 'rx_power_dbm': port.get('rx_power_dbm'),
@@ -995,7 +999,7 @@ class OpticalAnalyzer:
     <title>Optical Diagnostics Analysis</title>
     <link rel="shortcut icon" href="/png/favicon.ico">
     <link rel="stylesheet" type="text/css" href="/css/select2.min.css">
-    <link rel="stylesheet" type="text/css" href="/css/table-filter.css?v=20260716-tf-1">
+    <link rel="stylesheet" type="text/css" href="/css/table-filter.css?v=20260716-tf-3">
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #1e1e1e; color: #d4d4d4; padding: 20px; min-height: 100vh; }}
@@ -1168,10 +1172,7 @@ class OpticalAnalyzer:
 
         # Create one unified table for all monitored ports.  UNKNOWN rows are
         # retained so missing diagnostics cannot improve the visible coverage.
-        all_ports = (summary['critical_ports'] + summary['down_ports'] +
-                     summary['warning_ports'] + summary['unplugged_ports'] +
-                     summary['unknown_ports'] + summary['good_ports'] +
-                     summary['excellent_ports'])
+        all_ports = self._ordered_ports(summary)
 
         # Per-row evidence for the expandable detail panel.  Surfaces the
         # already-computed anomaly messages/actions and the raw per-lane arrays
@@ -2004,7 +2005,7 @@ class OpticalAnalyzer:
         })();
     </script>
     <script src="/p2p-alias.js"></script>
-    <script src="/css/table-filter.js?v=20260716-tf-1"></script>
+    <script src="/css/table-filter.js?v=20260716-tf-3"></script>
     <script src="/css/analysis-guard.js?v=20260707-scoped-runner-2"></script>
 </body>
 </html>"""

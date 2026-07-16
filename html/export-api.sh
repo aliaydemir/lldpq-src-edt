@@ -90,7 +90,10 @@ try:
     aged_out = False
     if completed_at and isinstance(max_age, (int, float)):
         try:
-            completed = datetime.fromisoformat(str(completed_at))
+            # Python <= 3.10 fromisoformat rejects the Z suffix.
+            completed = datetime.fromisoformat(
+                str(completed_at).replace("Z", "+00:00")
+            )
             if completed.tzinfo is None:
                 completed = completed.replace(tzinfo=timezone.utc)
             aged_out = (
@@ -153,13 +156,23 @@ try:
             "available": False,
             "updated": None,
         }
-        payload = read_small_json(monitor_dir / "export" / f"{domain}.json")
+        export_file = monitor_dir / "export" / f"{domain}.json"
+        # Availability/mtime come from stat so a large-but-valid export is
+        # never misreported; the parse below only enriches the entry.
+        try:
+            entry["available"] = export_file.is_file()
+            if entry["available"]:
+                entry["updated"] = iso_utc(export_file.stat().st_mtime)
+        except OSError:
+            pass
+        payload = read_small_json(export_file)
         if payload is not None:
-            entry["available"] = True
-            entry["updated"] = iso_utc(payload.get("generated_at"))
+            entry["updated"] = iso_utc(payload.get("generated_at")) or entry["updated"]
             entry["collection_status"] = payload.get("collection_status")
             entry["counts"] = payload.get("counts")
-            entry["row_count"] = len(payload.get("rows") or [])
+            entry["row_count"] = payload.get(
+                "row_count", len(payload.get("rows") or [])
+            )
         reports.append(entry)
 
     # --- transceiver inventory export ------------------------------------
@@ -170,12 +183,20 @@ try:
         "available": False,
         "updated": None,
     }
-    payload = read_small_json(monitor_dir / "transceiver-export.json")
+    transceiver_file = monitor_dir / "transceiver-export.json"
+    try:
+        entry["available"] = transceiver_file.is_file()
+        if entry["available"]:
+            entry["updated"] = iso_utc(transceiver_file.stat().st_mtime)
+    except OSError:
+        pass
+    payload = read_small_json(transceiver_file)
     if payload is not None:
-        entry["available"] = True
-        entry["updated"] = iso_utc(payload.get("generated_at"))
+        entry["updated"] = iso_utc(payload.get("generated_at")) or entry["updated"]
         entry["counts"] = payload.get("counts")
-        entry["row_count"] = len(payload.get("rows") or [])
+        entry["row_count"] = payload.get(
+            "row_count", len(payload.get("rows") or [])
+        )
     reports.append(entry)
 
     # --- latest AI analysis ------------------------------------------------

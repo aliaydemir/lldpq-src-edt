@@ -29,6 +29,7 @@ Contract rules:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -129,6 +130,11 @@ def display_value(value: Any) -> str:
 
 
 def spreadsheet_safe_value(value: Any) -> str:
+    # Real numbers cannot be formula-injection vectors, and guarding them
+    # would corrupt negative telemetry (optical dBm, counter deltas) into
+    # apostrophe-prefixed strings.  Only untrusted text gets the guard.
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return display_value(value)
     text = display_value(value)
     return f"'{text}" if _FORMULA_GUARD_RE.match(text) else text
 
@@ -170,9 +176,10 @@ def normalize_rows(
     columns = EXPORT_SCHEMAS.get(domain)
     if columns is None:
         raise ExportContractError(f"unknown export domain {domain!r}")
+    column_set = set(columns)
     normalized = []
     for index, row in enumerate(rows):
-        unknown = set(row) - set(columns)
+        unknown = set(row) - column_set
         if unknown:
             raise ExportContractError(
                 f"{domain} export row {index} carries keys outside the "
@@ -233,6 +240,7 @@ def build_payload(
         "generated_at": int(generated_at if generated_at is not None else time.time()),
         "collection_status": collection_status,
         "counts": dict(counts),
+        "row_count": len(normalized),
         "columns": list(EXPORT_SCHEMAS[domain]),
         "rows": normalized,
     }
@@ -268,13 +276,21 @@ def write_export(
         target_dir = target_dir / subdir
     stem = basename if basename is not None else domain
 
+    # Producer-side digests: the content is already in memory, so hash it
+    # here instead of write_sidecar's re-read of the file from disk.
+    json_text = json.dumps(payload, sort_keys=False)
     json_path = target_dir / f"{stem}.json"
-    _atomic_write(json_path, json.dumps(payload, sort_keys=False))
-    analysis_sidecar.write_sidecar(json_path)
+    _atomic_write(json_path, json_text)
+    analysis_sidecar.publish_digest(
+        json_path, hashlib.sha256(json_text.encode("utf-8")).hexdigest()
+    )
 
+    csv_text = render_csv(payload["columns"], payload["rows"])
     csv_path = target_dir / f"{stem}.csv"
-    _atomic_write(csv_path, render_csv(payload["columns"], payload["rows"]))
-    analysis_sidecar.write_sidecar(csv_path)
+    _atomic_write(csv_path, csv_text)
+    analysis_sidecar.publish_digest(
+        csv_path, hashlib.sha256(csv_text.encode("utf-8")).hexdigest()
+    )
 
 
 __all__ = (

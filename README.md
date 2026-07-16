@@ -745,8 +745,10 @@ The complete version-1 registry is:
   `FAILED`, `NO INFO`, `WARNING`, then `SUCCESS`.
 - Missing/empty/`none`/`n/a` values render as `N/A`.
 - Fields use RFC-4180 quoting, CRLF line endings and a trailing CRLF.
-- Values beginning (after trimming) with `=`, `+`, `-`, or `@` are prefixed
-  with `'` to prevent spreadsheet-formula execution.
+- Text values beginning (after trimming) with `=`, `+`, `-`, or `@` are
+  prefixed with `'` to prevent spreadsheet-formula execution. Numeric cells
+  are never guarded, so negative telemetry (optical dBm, counter deltas)
+  stays machine-parseable.
 - Monitor CSV downloads use `lldpq_<domain>_export.csv`; transceiver uses
   `lldpq_transceiver_export.csv`; LLDP uses
   `LLDP_Report_<report-created>.csv`.

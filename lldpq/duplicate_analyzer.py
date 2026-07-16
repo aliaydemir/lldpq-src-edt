@@ -1438,7 +1438,7 @@ class DuplicateAnalyzer:
             if h and h in owner_hosts:
                 continue
             if h:
-                label = "%s:%s" % (h, port_map[h]) if (port_map and port_map.get(h)) else h
+                label = "%s:%s" % (canonical(h), port_map[h]) if (port_map and port_map.get(h)) else canonical(h)
             else:
                 label = v
             if label not in seen:
@@ -1547,8 +1547,11 @@ class DuplicateAnalyzer:
                 "vni": self._vni_export(r),
                 "address": r["ip"],
                 "macs": " ".join(sorted(r["macs"])) or None,
-                "hosts": " ".join(sorted(r["local_hosts"])) or None,
-                "local_ports": " ".join(sorted(r["ports"])) or None,
+                "hosts": " ".join(sorted(canonical(h) for h in r["local_hosts"])) or None,
+                "local_ports": " ".join(sorted(
+                    "%s:%s" % (canonical(p.split(":", 1)[0]), p.split(":", 1)[1])
+                    if ":" in p else canonical(p)
+                    for p in r["ports"])) or None,
                 "vteps": self._vtep_export(r["vteps"], r["local_hosts"], ip_ports),
                 "sequence": r["seq"] or None,
                 "delta": r["delta"],
@@ -1652,9 +1655,9 @@ class DuplicateAnalyzer:
                 "vlan": r["vlan"],
                 "vni": self._vni_export(r),
                 "address": r["mac"],
-                "hosts": " ".join(sorted(r["local"].keys())) or None,
-                "local_ports": " ".join(
-                    "%s:%s" % (h, p) for h, p in sorted(r["local"].items())) or None,
+                "hosts": " ".join(sorted(canonical(h) for h in r["local"])) or None,
+                "local_ports": " ".join(sorted(
+                    "%s:%s" % (canonical(h), p) for h, p in r["local"].items())) or None,
                 "vteps": self._vtep_export(r["vteps"], set(r["local"].keys()), cport),
                 "sequence": r["seq"] or None,
                 "delta": r.get("delta"),
@@ -1689,7 +1692,7 @@ class DuplicateAnalyzer:
                 "finding_type": "apipa",
                 "severity": sev,
                 "vlan": vlan,
-                "hosts": host,
+                "hosts": canonical(host),
                 "count": cnt,
             })
             apipa_html.append("<tr data-devices='%s'><td data-sort='%d'>%s</td><td class='mono'>%s</td><td>vlan %s</td><td class='mono'>%d</td></tr>" % (
@@ -1873,7 +1876,7 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
 <title>Duplicate IP / MAC Analysis</title>
 <link rel="shortcut icon" href="/png/favicon.ico">
 <link rel="stylesheet" type="text/css" href="/css/select2.min.css">
-<link rel="stylesheet" type="text/css" href="/css/table-filter.css?v=20260716-tf-1">
+<link rel="stylesheet" type="text/css" href="/css/table-filter.css?v=20260716-tf-3">
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
 body { font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif; background:#1e1e1e; color:#d4d4d4; padding:20px; min-height:100vh; }
@@ -2243,7 +2246,7 @@ document.addEventListener('DOMContentLoaded', function(){
 });
 </script>
 <script src="/p2p-alias.js"></script>
-<script src="/css/table-filter.js?v=20260716-tf-1"></script>
+<script src="/css/table-filter.js?v=20260716-tf-3"></script>
 <script src="/css/analysis-guard.js?v=20260707-scoped-runner-2"></script>
 </body>
 </html>"""

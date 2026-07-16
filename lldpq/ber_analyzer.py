@@ -1300,7 +1300,7 @@ class BERAnalyzer:
     <title>Link Error / BER Analysis</title>
     <link rel="shortcut icon" href="/png/favicon.ico">
     <link rel="stylesheet" type="text/css" href="/css/select2.min.css">
-    <link rel="stylesheet" type="text/css" href="/css/table-filter.css?v=20260716-tf-1">
+    <link rel="stylesheet" type="text/css" href="/css/table-filter.css?v=20260716-tf-3">
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #1e1e1e; color: #d4d4d4; padding: 20px; min-height: 100vh; }}
@@ -1704,7 +1704,7 @@ class BERAnalyzer:
             except (TypeError, ValueError):
                 ts_sort = 0.0
 
-            port_details[port_name] = {
+            detail = {
                 'status': status,
                 'severity_reasons': port_info.get('severity_reasons') or [],
                 'sample_status': port_info.get('sample_status'),
@@ -1718,26 +1718,26 @@ class BERAnalyzer:
                 'delta_tx_errors': port_info.get('delta_tx_errors', 0),
                 'sample_window': sample_window,
             }
+            port_details[port_name] = detail
 
             self.export_rows.append({
                 'device': canonical(device),
                 'interface': interface,
                 'neighbor_device': canonical(nbr[0]) if nbr else None,
                 'neighbor_port': nbr[1] if nbr else None,
-                'status': status,
-                'sample_status': port_info.get('sample_status'),
-                'raw_ber': port_info.get('raw_ber'),
-                'effective_ber': port_info.get('effective_ber'),
-                'frame_error_density': port_info.get('frame_error_density'),
-                'symbol_errors': port_info.get('symbol_errors'),
-                'symbol_error_delta': port_info.get('symbol_error_delta'),
-                'delta_packets': port_info.get('delta_packets', 0),
-                'delta_rx_errors': port_info.get('delta_rx_errors', 0),
-                'delta_tx_errors': port_info.get('delta_tx_errors', 0),
-                'sample_window': sample_window,
+                'status': detail['status'],
+                'sample_status': detail['sample_status'],
+                'raw_ber': detail['raw_ber'],
+                'effective_ber': detail['effective_ber'],
+                'frame_error_density': detail['frame_error_density'],
+                'symbol_errors': detail['symbol_errors'],
+                'symbol_error_delta': detail['symbol_error_delta'],
+                'delta_packets': detail['delta_packets'],
+                'delta_rx_errors': detail['delta_rx_errors'],
+                'delta_tx_errors': detail['delta_tx_errors'],
+                'sample_window': detail['sample_window'],
                 'severity_reasons': '; '.join(
-                    str(reason)
-                    for reason in (port_info.get('severity_reasons') or [])
+                    str(reason) for reason in detail['severity_reasons']
                 ),
             })
 
@@ -2505,7 +2505,7 @@ class BERAnalyzer:
         })();
     </script>
     <script src="/p2p-alias.js"></script>
-    <script src="/css/table-filter.js?v=20260716-tf-1"></script>
+    <script src="/css/table-filter.js?v=20260716-tf-3"></script>
     <script src="/css/analysis-guard.js?v=20260707-scoped-runner-2"></script>
 </body>
 </html>"""

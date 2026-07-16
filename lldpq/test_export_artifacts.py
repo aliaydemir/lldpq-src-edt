@@ -82,10 +82,18 @@ class CsvSemanticsTests(unittest.TestCase):
         self.assertEqual(export_artifacts.csv_field("=1+1"), "'=1+1")
         self.assertEqual(export_artifacts.csv_field("@cmd"), "'@cmd")
         self.assertEqual(export_artifacts.csv_field("+x"), "'+x")
-        self.assertEqual(export_artifacts.csv_field(-5), "'-5")
         # Leading whitespace is trimmed first (JS String.trim in displayValue),
         # so the guard prefixes the trimmed text.
         self.assertEqual(export_artifacts.csv_field(" =x"), "'=x")
+
+    def test_numeric_cells_are_never_formula_guarded(self):
+        # Real numbers are not injection vectors; guarding them corrupts
+        # negative telemetry (optical dBm, deltas) into strings.
+        self.assertEqual(export_artifacts.csv_field(-5), "-5")
+        self.assertEqual(export_artifacts.csv_field(-3.51), "-3.51")
+        self.assertEqual(export_artifacts.csv_field(0), "0")
+        # Untrusted text that merely looks numeric stays guarded.
+        self.assertEqual(export_artifacts.csv_field("-5"), "'-5")
 
     def test_quoting(self):
         self.assertEqual(export_artifacts.csv_field("a,b"), '"a,b"')

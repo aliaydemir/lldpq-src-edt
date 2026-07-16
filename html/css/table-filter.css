@@ -2,21 +2,31 @@
 
 tr.tf-hidden { display: none !important; }
 
+/* Header cell hosting a filter button: button is absolutely positioned so it
+   adds no inline width and never wraps to a second line in narrow columns. */
+th.tf-th {
+    position: relative !important;
+    padding-right: 18px !important;
+}
+
 .tf-btn {
+    position: absolute;
+    right: 3px;
+    top: 50%;
+    transform: translateY(-50%);
     display: inline-flex;
     align-items: center;
     justify-content: center;
     background: none;
     border: none;
-    padding: 1px 2px;
-    margin-left: 4px;
+    padding: 1px;
     cursor: pointer;
     color: #888;
-    vertical-align: middle;
+    opacity: 0.55;
     line-height: 1;
 }
-.tf-btn:hover { color: #ccc; }
-.tf-btn.tf-active { color: #76b900; }
+.tf-btn:hover { color: #ccc; opacity: 1; }
+.tf-btn.tf-active { color: #76b900; opacity: 1; }
 
 .tf-popup {
     position: fixed;

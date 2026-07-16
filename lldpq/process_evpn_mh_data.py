@@ -27,6 +27,12 @@ from collection_freshness import (
 )
 import export_artifacts
 
+try:
+    from device_names import canonical
+except Exception:
+    def canonical(_n):
+        return _n
+
 
 SECTION_HEADERS = {
     "=== EVPN MH GLOBAL JSON ===": "global",
@@ -488,6 +494,14 @@ def _row_html(row: Mapping[str, Any]) -> str:
 </tr>"""
 
 
+def _export_device(hostname: Any) -> str:
+    """Canonicalize real hostnames only; keep placeholder cells as-is."""
+    name = str(hostname or "")
+    if name in ("", "Not discovered", "—"):
+        return name
+    return canonical(name)
+
+
 def _export_row(row: Mapping[str, Any]) -> Dict[str, Any]:
     """Flatten one correlated ES row with _row_html's first/second convention."""
     first, second = _display_values(row["attachments"])
@@ -495,11 +509,11 @@ def _export_row(row: Mapping[str, Any]) -> Dict[str, Any]:
         "esi": row["esi"],
         "status": row["status"],
         "reason": row.get("reason", ""),
-        "device_a": first.get("hostname", ""),
+        "device_a": _export_device(first.get("hostname", "")),
         "bond_a": first.get("bond", ""),
         "df_a": _df_text(first),
         "lacp_a": first.get("lacp", ""),
-        "device_b": second.get("hostname", ""),
+        "device_b": _export_device(second.get("hostname", "")),
         "bond_b": second.get("bond", ""),
         "df_b": _df_text(second),
         "lacp_b": second.get("lacp", ""),
@@ -607,7 +621,7 @@ def render_report(
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>EVPN Multi-Homing Analysis</title>
-<link rel="stylesheet" type="text/css" href="/css/table-filter.css?v=20260716-tf-1">
+<link rel="stylesheet" type="text/css" href="/css/table-filter.css?v=20260716-tf-3">
 <style>
 * {{ box-sizing:border-box; }}
 body {{ margin:0; padding:14px; background:#1e1e1e; color:#d4d4d4; font-family:'Segoe UI',Tahoma,sans-serif; font-size:13px; }}
@@ -916,7 +930,7 @@ filterRows();
 recountSeverityCards();
 </script>
 <script src="/p2p-alias.js"></script>
-<script src="/css/table-filter.js?v=20260716-tf-1"></script>
+<script src="/css/table-filter.js?v=20260716-tf-3"></script>
 <script src="/css/analysis-guard.js?v=20260710-evpn-mh"></script>
 </body></html>"""
 
@@ -1019,13 +1033,17 @@ def process_evpn_mh_data_files(
             result_dir / "summary" / "evpn-mh-summary.json",
             json.dumps(summary_payload) + "\n",
         )
+        export_counts = {
+            key: value for key, value in summary_payload.items()
+            if key not in ("domain", "generated_at", "collection_status")
+        }
         export_artifacts.write_export(
             result_dir,
             "evpn-mh",
             [_export_row(row) for row in rows],
-            {**counts, "coverage_partial": coverage_status != "current"},
+            export_counts,
             coverage_status,
-            generated_at=int(generated_at.timestamp()),
+            generated_at=summary_payload["generated_at"],
         )
     except OSError as exc:
         print(f"Could not write EVPN-MH report: {exc}", file=sys.stderr)

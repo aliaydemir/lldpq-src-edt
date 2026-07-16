@@ -21,6 +21,12 @@ from collection_freshness import (
     read_asset_snapshot,
 )
 
+try:
+    from device_names import canonical
+except Exception:
+    def canonical(_n):
+        return _n
+
 def process_carrier_transition_files(data_dir="monitor-results/flap-data"):
     """Process carrier transition files and update flap detector"""
     data_dir = os.path.abspath(data_dir)
@@ -264,10 +270,16 @@ def process_carrier_transition_files(data_dir="monitor-results/flap-data"):
         key: value for key, value in flap_summary_payload.items()
         if key not in ("domain", "generated_at", "collection_status")
     }
+    # Export device names use the canonical topology.dot spelling so rows
+    # join across domain exports; the HTML keeps raw hostnames as row keys.
+    export_rows = [
+        dict(row, device=canonical(row['device']))
+        for row in flap_analyzer.get_export_rows()
+    ]
     export_artifacts.write_export(
         result_dir,
         "flap",
-        flap_analyzer.get_export_rows(),
+        export_rows,
         export_counts,
         collection_status,
         generated_at=flap_summary_payload["generated_at"],
