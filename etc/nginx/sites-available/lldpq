@@ -415,13 +415,13 @@ server {
             alias /var/www/html/monitor-results/export/$lldpq_export_domain.json;
             types { }
             default_type "application/json; charset=utf-8";
-            add_header Cache-Control "no-store, no-cache, must-revalidate, max-age=0";
+            add_header Cache-Control "no-store, no-cache, must-revalidate, max-age=0" always;
         }
         location ~ ^/(?<lldpq_export_domain>bgp|evpn-mh|duplicate|flap|optical|ber|pfc-ecn|hardware|log)/export_csv$ {
             alias /var/www/html/monitor-results/export/$lldpq_export_domain.csv;
             types { }
             default_type "text/csv; charset=utf-8";
-            add_header Cache-Control "no-store, no-cache, must-revalidate, max-age=0";
+            add_header Cache-Control "no-store, no-cache, must-revalidate, max-age=0" always;
             add_header Content-Disposition 'attachment; filename="lldpq_${lldpq_export_domain}_export.csv"';
         }
 
@@ -430,13 +430,13 @@ server {
             alias /var/www/html/monitor-results/transceiver-export.json;
             types { }
             default_type "application/json; charset=utf-8";
-            add_header Cache-Control "no-store, no-cache, must-revalidate, max-age=0";
+            add_header Cache-Control "no-store, no-cache, must-revalidate, max-age=0" always;
         }
         location = /transceiver/export_csv {
             alias /var/www/html/monitor-results/transceiver-export.csv;
             types { }
             default_type "text/csv; charset=utf-8";
-            add_header Cache-Control "no-store, no-cache, must-revalidate, max-age=0";
+            add_header Cache-Control "no-store, no-cache, must-revalidate, max-age=0" always;
             add_header Content-Disposition 'attachment; filename="lldpq_transceiver_export.csv"';
         }
 }

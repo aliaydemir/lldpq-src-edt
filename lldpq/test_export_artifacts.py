@@ -20,6 +20,7 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
+ROOT = SCRIPT_DIR.parent
 
 import analysis_sidecar
 import export_artifacts
@@ -27,6 +28,11 @@ import lldp_export
 from lldp_report import parse_lldp_report
 
 MONITOR = SCRIPT_DIR / "monitor.sh"
+EXPORT_CGIS = tuple(
+    ROOT / "html" / name
+    for name in ("export-api.sh", "lldp-export-api.sh", "ai-export-api.sh")
+)
+NGINX_SITE = ROOT / "etc/nginx/sites-available/lldpq"
 
 EXPORT_DOMAIN_FILES = tuple(
     f"export/{domain}.{suffix}"
@@ -106,6 +112,40 @@ class CsvSemanticsTests(unittest.TestCase):
             [{"device": "leaf-01", "status": None}],
         )
         self.assertEqual(text, "device,status\r\nleaf-01,N/A\r\n")
+
+
+class HttpExportContractTests(unittest.TestCase):
+    def test_dynamic_405_advertises_allowed_methods(self):
+        environment = dict(os.environ)
+        environment["REQUEST_METHOD"] = "POST"
+        for script in EXPORT_CGIS:
+            with self.subTest(script=script.name):
+                result = subprocess.run(
+                    ["bash", str(script)],
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                headers, body = result.stdout.split("\n\n", 1)
+                self.assertIn("Status: 405 Method Not Allowed", headers)
+                self.assertIn("Allow: GET, HEAD", headers)
+                self.assertIn("Cache-Control: no-store", headers)
+                payload = json.loads(body)
+                self.assertFalse(payload["success"])
+
+    def test_static_export_cache_header_applies_to_missing_artifacts(self):
+        source = NGINX_SITE.read_text(encoding="utf-8")
+        export_section = source.split(
+            "# ── Public machine-readable exports", 1
+        )[1]
+        cache_line = (
+            'add_header Cache-Control '
+            '"no-store, no-cache, must-revalidate, max-age=0" always;'
+        )
+        # monitor JSON/CSV + transceiver JSON/CSV
+        self.assertEqual(export_section.count(cache_line), 4)
 
 
 class WriteExportTests(unittest.TestCase):

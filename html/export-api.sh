@@ -10,6 +10,9 @@
 json_error() {
     local status=$1 message=$2
     printf 'Status: %s\n' "$status"
+    if [[ "$status" == "405 Method Not Allowed" ]]; then
+        printf 'Allow: GET, HEAD\n'
+    fi
     printf 'Content-Type: application/json; charset=UTF-8\n'
     printf 'Cache-Control: no-store, no-cache, must-revalidate, max-age=0\n\n'
     python3 -c 'import json,sys; print(json.dumps({"success": False, "error": sys.argv[1]}))' \

@@ -824,8 +824,9 @@ exports; they always describe the globally published current generation.
 
 ### Freshness, HTTP and atomicity
 
-- All export responses use `Cache-Control: no-store, no-cache,
-  must-revalidate, max-age=0`.
+- All defined export routes, including dynamic JSON errors and nginx-generated
+  `404` responses for not-yet-published static artifacts, use `Cache-Control:
+  no-store, no-cache, must-revalidate, max-age=0`.
 - Monitor-domain JSON/CSV pairs are generated from the same row objects as the
   HTML tables, validated as required pipeline artifacts, and published in the
   same rollback-safe monitor transaction.
@@ -844,7 +845,7 @@ exports; they always describe the globally published current generation.
 | Condition | Result |
 |---|---|
 | Successful GET/HEAD | `200` with JSON or CSV |
-| Unsupported method on dynamic index/LLDP/AI endpoints | `405` JSON error |
+| Unsupported method on dynamic index/LLDP/AI endpoints | `405` JSON error with `Allow: GET, HEAD` |
 | Monitor/transceiver artifact not published yet | nginx `404`; index reports `available: false` |
 | LLDP report not published yet | `503` JSON error with `Retry-After: 60` |
 | AI state file absent | `404` JSON error |
