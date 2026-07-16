@@ -1300,6 +1300,7 @@ class BERAnalyzer:
     <title>Link Error / BER Analysis</title>
     <link rel="shortcut icon" href="/png/favicon.ico">
     <link rel="stylesheet" type="text/css" href="/css/select2.min.css">
+    <link rel="stylesheet" type="text/css" href="/css/table-filter.css?v=20260716-tf-1">
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #1e1e1e; color: #d4d4d4; padding: 20px; min-height: 100vh; }}
@@ -1623,6 +1624,11 @@ class BERAnalyzer:
         # values the analyzer already computed; nothing new is collected.
         port_details: Dict[str, Any] = {}
 
+        # Flat rows for the public machine-readable export, built from the
+        # same objects (and in the same problems-first order) as the table
+        # above.  Published by process_ber_data.py next to ber-summary.json.
+        self.export_rows: List[Dict[str, Any]] = []
+
         for port_info in sorted_ports:
             port_name = port_info['port']
             device = port_name.split(':')[0] if ':' in port_name else "unknown"
@@ -1712,6 +1718,28 @@ class BERAnalyzer:
                 'delta_tx_errors': port_info.get('delta_tx_errors', 0),
                 'sample_window': sample_window,
             }
+
+            self.export_rows.append({
+                'device': canonical(device),
+                'interface': interface,
+                'neighbor_device': canonical(nbr[0]) if nbr else None,
+                'neighbor_port': nbr[1] if nbr else None,
+                'status': status,
+                'sample_status': port_info.get('sample_status'),
+                'raw_ber': port_info.get('raw_ber'),
+                'effective_ber': port_info.get('effective_ber'),
+                'frame_error_density': port_info.get('frame_error_density'),
+                'symbol_errors': port_info.get('symbol_errors'),
+                'symbol_error_delta': port_info.get('symbol_error_delta'),
+                'delta_packets': port_info.get('delta_packets', 0),
+                'delta_rx_errors': port_info.get('delta_rx_errors', 0),
+                'delta_tx_errors': port_info.get('delta_tx_errors', 0),
+                'sample_window': sample_window,
+                'severity_reasons': '; '.join(
+                    str(reason)
+                    for reason in (port_info.get('severity_reasons') or [])
+                ),
+            })
 
             html_content += f"""
                 <tr class="ber-row" data-device-key="{device_key}" data-status="{status.lower()}" data-port="{port_key}" onclick="toggleBerDetails(this)">
@@ -2398,7 +2426,7 @@ class BERAnalyzer:
 
                 // Process each visible data row (all columns, dynamically)
                 rows.forEach(row => {
-                    if (row.style.display === 'none') return;
+                    if (row.style.display === 'none' || row.classList.contains('tf-hidden')) return;
                     const cells = row.querySelectorAll('td');
                     if (!cells.length) return;
                     const rowData = Array.from(cells).map(function(td){
@@ -2477,6 +2505,7 @@ class BERAnalyzer:
         })();
     </script>
     <script src="/p2p-alias.js"></script>
+    <script src="/css/table-filter.js?v=20260716-tf-1"></script>
     <script src="/css/analysis-guard.js?v=20260707-scoped-runner-2"></script>
 </body>
 </html>"""

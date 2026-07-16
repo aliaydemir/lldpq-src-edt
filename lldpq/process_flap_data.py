@@ -11,6 +11,7 @@ import os
 import sys
 import time
 from datetime import datetime
+import export_artifacts
 from link_flap_analyzer import LinkFlapAnalyzer
 from collection_freshness import (
     asset_snapshot_is_authoritative,
@@ -232,27 +233,44 @@ def process_carrier_transition_files(data_dir="monitor-results/flap-data"):
         collection_status = "partial"
     else:
         collection_status = "current"
+    flap_summary_payload = {
+        "domain": "flap",
+        "generated_at": int(time.time()),
+        "collection_status": collection_status,
+        "coverage_expected": expected_devices,
+        "coverage_current": current_devices,
+        "total_devices": len({
+            port.split(':', 1)[0]
+            for port in flap_analyzer.carrier_transitions_stats
+        }),
+        "total_ports": summary["total_ports"],
+        "stable_ports": len(summary["ok_ports"]),
+        "problematic_ports": total_problematic,
+        "critical_ports": len(summary["critical_ports"]),
+        "warning_ports": len(summary["warning_ports"]),
+        "stability_percent": (
+            round(stability_ratio, 1) if summary["total_ports"] > 0 else None
+        ),
+    }
     flap_analyzer._atomic_json_write(
         os.path.join(result_dir, "summary", "flap-summary.json"),
-        {
-            "domain": "flap",
-            "generated_at": int(time.time()),
-            "collection_status": collection_status,
-            "coverage_expected": expected_devices,
-            "coverage_current": current_devices,
-            "total_devices": len({
-                port.split(':', 1)[0]
-                for port in flap_analyzer.carrier_transitions_stats
-            }),
-            "total_ports": summary["total_ports"],
-            "stable_ports": len(summary["ok_ports"]),
-            "problematic_ports": total_problematic,
-            "critical_ports": len(summary["critical_ports"]),
-            "warning_ports": len(summary["warning_ports"]),
-            "stability_percent": (
-                round(stability_ratio, 1) if summary["total_ports"] > 0 else None
-            ),
-        },
+        flap_summary_payload,
+    )
+
+    # Public machine-readable export: same rows the HTML table embeds
+    # (problems-first order), same headline counts as flap-summary.json.
+    # I/O errors must propagate so the monitor transaction rolls back.
+    export_counts = {
+        key: value for key, value in flap_summary_payload.items()
+        if key not in ("domain", "generated_at", "collection_status")
+    }
+    export_artifacts.write_export(
+        result_dir,
+        "flap",
+        flap_analyzer.get_export_rows(),
+        export_counts,
+        collection_status,
+        generated_at=flap_summary_payload["generated_at"],
     )
 
     coverage_unavailable = bool(expected_hosts and not current_hosts)

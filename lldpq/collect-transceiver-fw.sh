@@ -320,38 +320,53 @@ count_status() {
     printf '%s\n' "$count"
 }
 
+publish_web_file() {
+    # Stage next to the target, then rename so web readers never see a
+    # partially written file.
+    local source=$1 name tmp_target
+    name="$(basename "$source")"
+    tmp_target="$WEB_MONITOR_DIR/.${name}.tmp"
+
+    if mkdir -p "$WEB_MONITOR_DIR" 2>/dev/null && cp "$source" "$tmp_target" 2>/dev/null; then
+        chown "$(whoami):www-data" "$tmp_target" 2>/dev/null || true
+        chmod 664 "$tmp_target" 2>/dev/null || true
+        if mv -f "$tmp_target" "$WEB_MONITOR_DIR/$name" 2>/dev/null; then
+            return 0
+        fi
+        rm -f "$tmp_target" 2>/dev/null || true
+    fi
+
+    if command -v sudo >/dev/null 2>&1 && sudo -n mkdir -p "$WEB_MONITOR_DIR" 2>/dev/null && sudo -n cp "$source" "$tmp_target" 2>/dev/null; then
+        sudo -n chown "${LLDPQ_USER:-$(whoami)}:www-data" "$tmp_target" 2>/dev/null || true
+        sudo -n chmod 664 "$tmp_target" 2>/dev/null || true
+        if sudo -n mv -f "$tmp_target" "$WEB_MONITOR_DIR/$name" 2>/dev/null; then
+            return 0
+        fi
+        sudo -n rm -f "$tmp_target" 2>/dev/null || true
+    fi
+    return 1
+}
+
 publish_inventory() {
     if [ ! -f "$INVENTORY_JSON" ]; then
         echo "ERROR: Inventory JSON was not created: $INVENTORY_JSON" >&2
         return 1
     fi
 
-    # Stage next to the target, then rename so web readers never see a
-    # partially written inventory.
-    local inv_name tmp_target
-    inv_name="$(basename "$INVENTORY_JSON")"
-    tmp_target="$WEB_MONITOR_DIR/.${inv_name}.tmp"
-
-    if mkdir -p "$WEB_MONITOR_DIR" 2>/dev/null && cp "$INVENTORY_JSON" "$tmp_target" 2>/dev/null; then
-        chown "$(whoami):www-data" "$tmp_target" 2>/dev/null || true
-        chmod 664 "$tmp_target" 2>/dev/null || true
-        if mv -f "$tmp_target" "$WEB_MONITOR_DIR/$inv_name" 2>/dev/null; then
-            return 0
-        fi
-        rm -f "$tmp_target" 2>/dev/null || true
+    if ! publish_web_file "$INVENTORY_JSON"; then
+        echo "WARN: Could not publish inventory to $WEB_MONITOR_DIR" >&2
+        return 1
     fi
 
-    if command -v sudo >/dev/null 2>&1 && sudo -n mkdir -p "$WEB_MONITOR_DIR" 2>/dev/null && sudo -n cp "$INVENTORY_JSON" "$tmp_target" 2>/dev/null; then
-        sudo -n chown "${LLDPQ_USER:-$(whoami)}:www-data" "$tmp_target" 2>/dev/null || true
-        sudo -n chmod 664 "$tmp_target" 2>/dev/null || true
-        if sudo -n mv -f "$tmp_target" "$WEB_MONITOR_DIR/$inv_name" 2>/dev/null; then
-            return 0
+    # The /transceiver/export_json|csv pair is produced by the same python
+    # step as the inventory; keep the served copies in lockstep with it.
+    local export_file
+    for export_file in "$RESULT_DIR/transceiver-export.json" "$RESULT_DIR/transceiver-export.csv"; do
+        if [ -f "$export_file" ] && ! publish_web_file "$export_file"; then
+            echo "WARN: Could not publish $(basename "$export_file") to $WEB_MONITOR_DIR" >&2
         fi
-        sudo -n rm -f "$tmp_target" 2>/dev/null || true
-    fi
-
-    echo "WARN: Could not publish inventory to $WEB_MONITOR_DIR" >&2
-    return 1
+    done
+    return 0
 }
 
 if [ ! -d "$RESULT_DIR/optical-data" ]; then
