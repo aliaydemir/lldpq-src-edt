@@ -55,6 +55,25 @@ class BerDropDeltaTests(unittest.TestCase):
         self.assertEqual(0, details['delta_rx_dropped'])
         self.assertEqual(0, details['delta_tx_dropped'])
 
+    def test_export_rows_stay_inside_the_export_registry(self):
+        # The live pipeline failed with "ber export row 0 carries keys outside
+        # the registry" when a new analyzer field missed export_artifacts.py:
+        # exercise the real normalize path against real export rows.
+        import os
+        from export_artifacts import normalize_rows
+
+        self.analyzer.calculate_delta_ber("tor-a", "swp1", _stats())
+        self.analyzer.calculate_delta_ber(
+            "tor-a", "swp1", _stats(dropped=7, packets=500000)
+        )
+        self.analyzer.export_ber_data_for_web(
+            os.path.join(self.tmp.name, "ber-analysis.html")
+        )
+
+        normalized = normalize_rows("ber", self.analyzer.export_rows)
+        if normalized:
+            self.assertIn("delta_rx_dropped", normalized[0])
+
     def test_drop_counter_reset_re_baselines(self):
         self.analyzer.calculate_delta_ber("tor-a", "swp1", _stats(dropped=500))
         self.analyzer.calculate_delta_ber(
