@@ -169,6 +169,14 @@ class RoutesAnalyzerTests(unittest.TestCase):
                     "routes-analysis.html").read_text()
             self.assertIn('data-analysis-summary="routes"', page)
             self.assertIn("VRF disappeared", page)
+            # Row-expand detail panel: real device/VRF rows carry fetch
+            # attributes and the client machinery is embedded.
+            self.assertIn("data-device='Leaf1' data-vrf='default'", page)
+            self.assertIn("toggleRouteDetails", page)
+            self.assertIn("var RT_TABLES_DIR = 'fabric-tables';", page)
+            self.assertIn("tr.detail-row td", page)
+            # Sorting must drop open detail panels before re-appending rows.
+            self.assertIn("removeDetailRows();\n  var rows", page)
 
     def test_missing_scan_still_produces_artifacts(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -364,19 +372,23 @@ class WiringContractTests(unittest.TestCase):
         self.assertIn("config-drift|routes|fabric-check) return 0", self.daemon)
 
     def test_menu_order(self):
+        # Config-Drift lives in DEVICES right under Configs; Fabric-Check
+        # lives in WIRING right under Problems; Routes heads ANALYSIS.
+        configs = self.index.index('href="dev-conf.html"')
         config_drift = self.index.index(
             "/monitor-results/config-drift-analysis.html")
-        routes_item = self.index.index("/monitor-results/routes-analysis.html")
-        bgp = self.index.index("/monitor-results/bgp-analysis.html")
-        pfc = self.index.index("/monitor-results/pfc-ecn-analysis.html")
+        console = self.index.index('href="console.html"')
+        problems = self.index.index('href="lldp-problem.html"')
         fabric = self.index.index(
             "/monitor-results/fabric-check-analysis.html")
-        hardware = self.index.index(
-            "/monitor-results/hardware-analysis.html")
-        self.assertLess(config_drift, routes_item)
+        archive = self.index.index('href="archive.html"')
+        routes_item = self.index.index("/monitor-results/routes-analysis.html")
+        bgp = self.index.index("/monitor-results/bgp-analysis.html")
+        self.assertLess(configs, config_drift)
+        self.assertLess(config_drift, console)
+        self.assertLess(problems, fabric)
+        self.assertLess(fabric, archive)
         self.assertLess(routes_item, bgp)
-        self.assertLess(pfc, fabric)
-        self.assertLess(fabric, hardware)
 
     def test_analysis_guard_registration(self):
         self.assertIn("'config-drift': true", self.guard)

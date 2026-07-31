@@ -465,8 +465,15 @@ class RoutesAnalyzer:
                     delta, cls, delta)
             note = html.escape(row["note"]) if row["note"] else \
                 "<span class='dim'>&mdash;</span>"
+            # Real device/VRF rows are expandable: clicking fetches the
+            # device's fabric-tables snapshot and renders the route table.
+            detail_attrs = ""
+            if row["vrf"] != "-" and row["status"] != "missing":
+                detail_attrs = " data-device='%s' data-vrf='%s'" % (
+                    html.escape(row["host"], quote=True),
+                    html.escape(row["vrf"], quote=True))
             row_html.append(
-                "<tr data-devices='%s' data-severity='%s' data-status='%s'>"
+                "<tr data-devices='%s' data-severity='%s' data-status='%s'%s>"
                 "<td>%s</td><td class='mono'>%s</td><td>%s</td>"
                 "<td data-sort='%d'>%s</td>%s"
                 "<td data-sort='%d'>%s</td><td data-sort='%d'>%s</td>"
@@ -474,7 +481,7 @@ class RoutesAnalyzer:
                 "<td data-sort='%d'>%s</td><td data-sort='%d'>%d</td>"
                 "<td data-sort='%d'>%s</td><td>%s</td></tr>" % (
                     html.escape(row["host"].lower(), quote=True),
-                    row["severity"], row["status"],
+                    row["severity"], row["status"], detail_attrs,
                     html.escape(row["host"]),
                     html.escape(row["vrf"]), badge,
                     row["total"], "{:,}".format(row["total"]), delta_cell,
@@ -613,6 +620,18 @@ table.rt-table { width:100%; border-collapse:collapse; font-size:13px; }
 .badge-red { background:rgba(244,67,54,0.2); color:#ff6b6b; }
 .badge-orange { background:rgba(255,152,0,0.2); color:#ffb74d; }
 .badge-gray { background:rgba(158,158,158,0.2); color:#999; }
+#rtt tbody tr[data-device] { cursor:pointer; }
+tr.detail-row td { padding:0; white-space:normal; text-align:left; background:#202020; }
+tr.tf-hidden + tr.detail-row { display:none !important; }
+.detail-panel { padding:14px 20px 18px; background:#202020; border-left:3px solid #4fc3f7; }
+.detail-title { color:#4fc3f7; font-weight:700; margin-bottom:10px; font-size:13px; }
+.detail-empty { color:#888; }
+.detail-note { color:#888; font-size:11px; margin-top:8px; }
+.detail-table { width:100%; min-width:0; font-size:12px; border-collapse:collapse; }
+.detail-table th, .detail-table td { border:1px solid #383838; padding:5px 8px; white-space:nowrap; text-align:left; }
+.detail-table th { background:#2a2a2a; color:#9ccc65; }
+.detail-table tbody tr { background:#242424; }
+.detail-table td.mono, .detail-table th.mono { font-family:'Consolas','Courier New',monospace; }
 .modal { display:none; position:fixed; z-index:2000; left:0; top:0; width:100%; height:100%; background:rgba(0,0,0,0.7); }
 .modal.show { display:flex; justify-content:center; align-items:center; }
 .modal-box { background:#2d2d2d; border-radius:8px; width:90%; max-width:680px; max-height:82vh; overflow:auto; box-shadow:0 4px 20px rgba(0,0,0,0.5); }
@@ -707,6 +726,10 @@ __COVERAGE_BANNER__
       <code>monitor-results/fabric-tables/</code>. Counts are kernel-derived (what is actually installed
       in the FIB), not FRR RIB entries; <code>linkdown</code>/<code>unreachable</code> routes are excluded
       by the collector.
+      <h4>Row expand</h4>
+      Click any device/VRF row to expand the <b>current route table</b> for that VRF (prefix, protocol,
+      nexthops with ECMP membership, interface, metric), fetched on demand from the latest fabric-scan
+      snapshot. Long tables are capped in the panel; use Search for specific prefix lookups.
       <h4>&#916; and anomalies</h4>
       <b>&#916;</b> compares this sample with the previous analyzer sample per device/VRF.
       A <b>route count drop</b> is flagged when a table that had &ge; __DROP_MIN__ routes loses more than
@@ -728,9 +751,113 @@ __COVERAGE_BANNER__
 <script src="/css/select2.min.js"></script>
 <script>
 var RT_DEVICES = __DEVICES__;
+// Per-device route tables live in the fabric-scan snapshots that are
+// published alongside this page; each device's JSON is fetched on first
+// row expand and cached as a promise to dedupe concurrent clicks.
+var RT_TABLES_DIR = 'fabric-tables';
+var RT_DETAIL_MAX_ROWS = 2000;
+var RT_DETAIL_MAX_NEXTHOPS = 8;
+var rtSnapshotCache = new Map();
+function rtDeviceSnapshot(device){
+  if(!device) return Promise.resolve(null);
+  if(rtSnapshotCache.has(device)) return rtSnapshotCache.get(device);
+  var request = fetch(RT_TABLES_DIR + '/' + encodeURIComponent(device) + '.json', {cache:'no-store'})
+    .then(function(response){
+      if(!response.ok) throw new Error('HTTP ' + response.status);
+      return response.json();
+    })
+    .then(function(snapshot){
+      return (snapshot && typeof snapshot === 'object') ? snapshot : null;
+    })
+    .catch(function(){
+      rtSnapshotCache.delete(device);
+      return null;
+    });
+  rtSnapshotCache.set(device, request);
+  return request;
+}
+function rtEsc(value){
+  return String(value == null ? '' : value).replace(/[&<>"']/g, function(ch){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch];
+  });
+}
+function rtNexthopCell(entry){
+  var hops = Array.isArray(entry.ecmp_nexthops) ? entry.ecmp_nexthops : [];
+  if(hops.length > 1){
+    var shown = hops.slice(0, RT_DETAIL_MAX_NEXTHOPS).map(function(h){
+      if(!h || typeof h !== 'object') return '';
+      var ip = rtEsc(h.ip || ''), iface = rtEsc(h.interface || '');
+      return ip + (iface ? ' (' + iface + ')' : '');
+    }).filter(Boolean).join(', ');
+    var extra = hops.length > RT_DETAIL_MAX_NEXTHOPS
+      ? ' <span class="dim">+' + (hops.length - RT_DETAIL_MAX_NEXTHOPS) + ' more</span>' : '';
+    return 'ECMP &times;' + hops.length + ' &mdash; ' + shown + extra;
+  }
+  var nexthop = rtEsc(entry.nexthop || '');
+  return nexthop || '<span class="dim">direct</span>';
+}
+function removeDetailRows(){
+  document.querySelectorAll('#rtt tr.detail-row').forEach(function(r){ r.remove(); });
+}
+async function toggleRouteDetails(row){
+  var next = row.nextElementSibling;
+  if(next && next.classList.contains('detail-row')){ next.remove(); return; }
+  removeDetailRows();
+  var device = row.getAttribute('data-device') || '';
+  var vrf = row.getAttribute('data-vrf') || '';
+  var detail = document.createElement('tr');
+  detail.className = 'detail-row';
+  detail.innerHTML = '<td colspan="13"><div class="detail-panel">'
+    + '<div class="detail-title">Route table &mdash; ' + rtEsc(device) + ' / VRF ' + rtEsc(vrf) + '</div>'
+    + '<div class="detail-body detail-empty">Loading route table&hellip;</div></div></td>';
+  row.after(detail);
+  var snapshot = await rtDeviceSnapshot(device);
+  var body = detail.isConnected && detail.querySelector('.detail-body');
+  if(!body) return;
+  if(snapshot === null){
+    body.textContent = 'Route table could not be loaded (fabric-scan snapshot unavailable).';
+    return;
+  }
+  var routes = (snapshot.routes && typeof snapshot.routes === 'object') ? snapshot.routes : {};
+  var entries = Array.isArray(routes[vrf]) ? routes[vrf] : [];
+  if(!entries.length){
+    body.textContent = 'No routes in the current snapshot for this VRF.';
+    return;
+  }
+  body.classList.remove('detail-empty');
+  var shown = entries.slice(0, RT_DETAIL_MAX_ROWS);
+  var rowsHtml = shown.map(function(entry){
+    if(!entry || typeof entry !== 'object') return '';
+    return '<tr><td class="mono">' + rtEsc(entry.prefix || '') + '</td>'
+      + '<td>' + rtEsc(entry.protocol || '') + '</td>'
+      + '<td class="mono">' + rtNexthopCell(entry) + '</td>'
+      + '<td class="mono">' + (rtEsc(entry.interface || '') || '<span class="dim">&mdash;</span>') + '</td>'
+      + '<td>' + (rtEsc(entry.metric || '') || '<span class="dim">&mdash;</span>') + '</td></tr>';
+  }).join('');
+  var note = '';
+  if(entries.length > shown.length){
+    note = '<div class="detail-note">Showing first ' + shown.length.toLocaleString()
+      + ' of ' + entries.length.toLocaleString()
+      + ' routes &mdash; use Search for specific prefix lookups.</div>';
+  }
+  var collected = snapshot._collection && snapshot._collection.last_success;
+  if(collected){
+    note += '<div class="detail-note">Snapshot: ' + rtEsc(String(collected).replace('T', ' ').slice(0, 19)) + '</div>';
+  }
+  body.innerHTML = '<table class="detail-table"><thead><tr><th class="mono">Prefix</th>'
+    + '<th>Protocol</th><th>Nexthop(s)</th><th>Interface</th><th>Metric</th></tr></thead>'
+    + '<tbody>' + rowsHtml + '</tbody></table>' + note;
+}
+document.querySelectorAll('#rtt tbody tr[data-device]').forEach(function(row){
+  row.addEventListener('click', function(event){
+    if(window.getSelection && String(window.getSelection())) return;
+    toggleRouteDetails(row);
+  });
+});
 function sortKey(cell){ if(!cell) return ''; var v=cell.getAttribute('data-sort'); return v!==null ? v : (cell.innerText||'').trim(); }
 function sortTable(tid, col, numeric) {
   var t = document.getElementById(tid), tb = t.tBodies[0];
+  removeDetailRows();
   var rows = Array.prototype.slice.call(tb.rows).filter(function(r){return !r.querySelector('.empty');});
   if (!rows.length) return;
   var asc = t.getAttribute('data-sc') != (col+(numeric?'n':''));
@@ -826,7 +953,7 @@ function tableCSV(tid){
   var rows=[Array.prototype.slice.call(t.tHead.rows[0].cells).map(function(c){ return (c.innerText||'').trim().replace(/\\s+/g,' '); })];
   Array.prototype.slice.call(t.tBodies[0].rows).forEach(function(r){
     if(r.style.display==='none' || r.querySelector('.empty')) return;
-    if(r.classList.contains('tf-hidden')) return;
+    if(r.classList.contains('tf-hidden') || r.classList.contains('detail-row')) return;
     rows.push(Array.prototype.slice.call(r.cells).map(function(c){ return (c.innerText||'').trim().replace(/\\s+/g,' '); }));
   });
   return rows;
