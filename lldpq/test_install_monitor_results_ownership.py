@@ -68,6 +68,20 @@ sudo() {
 TEST_USER = "lldpq-test-user"
 
 
+def _find_exec_plus_available() -> bool:
+    """`find -exec ... {} +` needs sysconf(_SC_ARG_MAX), which some sandboxes deny.
+
+    The installer relies on that form, so a runner that cannot use it can only
+    report a false failure for the functional probe below.
+    """
+    with tempfile.TemporaryDirectory(dir=ROOT) as probe:
+        completed = subprocess.run(
+            ["find", probe, "-type", "d", "-exec", "chmod", "775", "{}", "+"],
+            capture_output=True,
+        )
+    return completed.returncode == 0
+
+
 class InstallerRuntimeOwnershipTests(unittest.TestCase):
     def test_install_sh_stays_valid_shell(self):
         subprocess.run(["bash", "-n", str(ROOT / "install.sh")], check=True)
@@ -119,9 +133,19 @@ class InstallerRuntimeOwnershipTests(unittest.TestCase):
 
     def test_the_install_directory_itself_keeps_its_intentional_750(self):
         """Only monitor-results was wrong; the install root stays 750."""
-        self.assertIn('sudo chmod 750 "$LLDPQ_INSTALL_DIR"\n', INSTALL)
+        # Counted rather than matched: a failed assertIn would print all of
+        # install.sh, burying the result it was meant to report.
+        self.assertEqual(
+            INSTALL.count('sudo chmod 750 "$LLDPQ_INSTALL_DIR"\n'),
+            1,
+            "the install root no longer gets its intentional 750",
+        )
 
     # ---------- functional: run the installer's own block ----------
+    @unittest.skipUnless(
+        _find_exec_plus_available(),
+        "runner cannot execute `find -exec ... {} +`",
+    )
     def test_running_the_block_yields_a_shared_writable_tree(self):
         # Keep the probe inside the repository so sandboxed runners that
         # restrict writes outside the workspace can still chmod it.
@@ -177,9 +201,12 @@ class InstallerRuntimeOwnershipTests(unittest.TestCase):
     # ---------- the git hooks must not undo it ----------
     def test_the_git_hooks_stop_resetting_the_tree_to_750(self):
         """post-merge/post-checkout run in the install dir, not the source."""
-        self.assertNotIn(
-            'chmod -R 750 "$(git rev-parse --show-toplevel)/monitor-results"',
-            INSTALL,
+        self.assertEqual(
+            INSTALL.count(
+                'chmod -R 750 "$(git rev-parse --show-toplevel)/monitor-results"'
+            ),
+            0,
+            "a git hook still strips group write from monitor-results",
         )
         hook_fix = (
             'find "$(git rev-parse --show-toplevel)/monitor-results" -type d \\\n'
@@ -188,30 +215,48 @@ class InstallerRuntimeOwnershipTests(unittest.TestCase):
             "        -exec chmod 664 {} + 2>/dev/null || true"
         )
         # One copy is written on update (restored .git), one on fresh install.
-        self.assertEqual(INSTALL.count(hook_fix), 2)
+        self.assertEqual(
+            INSTALL.count(hook_fix), 2, "both hook copies must apply 775/664"
+        )
 
     def test_the_hooks_still_pin_the_install_root_at_750(self):
         self.assertEqual(
-            INSTALL.count('chmod 750 "$(git rev-parse --show-toplevel)"'), 2
+            INSTALL.count('chmod 750 "$(git rev-parse --show-toplevel)"'),
+            2,
+            "the hooks no longer pin the install root at 750",
         )
 
     # ---------- the guarantee must not depend on the install mode ----------
     def test_the_update_path_still_enforces_the_same_contract(self):
         for tree in RUNTIME_TREES:
             with self.subTest(tree=tree):
-                self.assertIn(
-                    f'sudo chown -R "$LLDPQ_USER:www-data" '
-                    f'"$LLDPQ_INSTALL_DIR/{tree}"',
-                    INSTALL,
+                self.assertGreaterEqual(
+                    INSTALL.count(
+                        f'sudo chown -R "$LLDPQ_USER:www-data" '
+                        f'"$LLDPQ_INSTALL_DIR/{tree}"'
+                    ),
+                    1,
+                    f"the update restore no longer chowns {tree}",
                 )
 
     def test_the_container_and_the_native_install_agree(self):
         """Docker already pre-created these; native had to catch up."""
         for tree in RUNTIME_TREES:
             with self.subTest(tree=tree):
-                self.assertRegex(ENTRYPOINT, rf"/lldpq/{re.escape(tree)}\b")
-        self.assertIn("chown -R lldpq:www-data", ENTRYPOINT)
-        self.assertIn("chmod 775", ENTRYPOINT)
+                self.assertIsNotNone(
+                    re.search(rf"/lldpq/{re.escape(tree)}\b", ENTRYPOINT),
+                    f"the container no longer prepares {tree}",
+                )
+        self.assertGreaterEqual(
+            ENTRYPOINT.count("chown -R lldpq:www-data"),
+            1,
+            "the container no longer applies the shared owner",
+        )
+        self.assertGreaterEqual(
+            ENTRYPOINT.count("chmod 775"),
+            1,
+            "the container no longer applies the shared mode",
+        )
 
 
 if __name__ == "__main__":
