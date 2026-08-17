@@ -1181,7 +1181,7 @@
             <div style="flex: 1; min-width: 300px;">
                 <label style="font-size: 11px; color: #888; display: block; margin-bottom: 4px;">PUBLIC KEY</label>
                 <div style="display: flex; gap: 8px;">
-                    <input type="text" class="form-input" id="ztpSSHKey" readonly style="flex:1; font-family:'Cascadia Code','Consolas',monospace; font-size:11px; background:#252526;" placeholder="No key generated yet...">
+                    <input type="text" class="form-input" id="ztpSSHKey" readonly autocomplete="off" style="flex:1; font-family:'Cascadia Code','Consolas',monospace; font-size:11px; background:#252526;" placeholder="No key generated yet...">
                     <button class="btn btn-secondary btn-sm" onclick="copySSHKey()" title="Copy public key">Copy</button>
                 </div>
             </div>
@@ -1213,18 +1213,21 @@
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px;">
             <div>
                 <label style="font-size: 11px; color: #888; display: block; margin-bottom: 4px;">TARGET OS VERSION</label>
-                <input type="text" class="form-input" id="ztpTargetOS" style="width: 100%;" placeholder="e.g. 5.14.0">
+                <input type="text" class="form-input" id="ztpTargetOS" autocomplete="off" style="width: 100%;" placeholder="e.g. 5.14.0">
             </div>
             <div>
                 <label style="font-size: 11px; color: #888; display: block; margin-bottom: 4px;">DEFAULT PASSWORD</label>
-                <div style="position: relative;">
-                    <input type="password" class="form-input" id="ztpPassword" style="width: 100%; padding-right: 36px;" placeholder="Default password" autocomplete="off">
-                    <button onclick="togglePasswordVisibility()" style="position:absolute; right:4px; top:50%; transform:translateY(-50%); background:none; border:none; color:#888; cursor:pointer; padding:4px;" title="Show/Hide" id="pwToggle"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg></button>
-                </div>
+                <!-- Own form: keeps the only password field on this page out of the
+                     implicit form that holds every other input, so a password
+                     manager cannot treat an unrelated field as the username slot. -->
+                <form onsubmit="return false;" autocomplete="off" style="position: relative;">
+                    <input type="password" class="form-input" id="ztpPassword" style="width: 100%; padding-right: 36px;" placeholder="Default password" autocomplete="new-password">
+                    <button type="button" onclick="togglePasswordVisibility()" style="position:absolute; right:4px; top:50%; transform:translateY(-50%); background:none; border:none; color:#888; cursor:pointer; padding:4px;" title="Show/Hide" id="pwToggle"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg></button>
+                </form>
             </div>
             <div>
                 <label style="font-size: 11px; color: #888; display: block; margin-bottom: 4px;">IMAGE SERVER IP</label>
-                <input type="text" class="form-input input-ip" id="ztpImageServer" oninput="syncUpgradeServerIPFromZTP()" style="width: 100%;" placeholder="e.g. 192.168.100.200">
+                <input type="text" class="form-input input-ip" id="ztpImageServer" oninput="syncUpgradeServerIPFromZTP()" autocomplete="off" style="width: 100%;" placeholder="e.g. 192.168.100.200">
             </div>
         </div>
         <button class="btn btn-secondary btn-sm" style="margin-top: 10px;" onclick="applyQuickSettings()">Apply to Script</button>
@@ -1347,16 +1350,16 @@
         </div>
         <div>
             <label style="font-size:11px;color:#888;display:block;margin-bottom:4px;">TARGET VERSION</label>
-            <input type="text" class="form-input" id="upgradeTargetVersion" oninput="renderUpgradeTable()" style="width:100%;" placeholder="e.g. 5.16.1">
+            <input type="text" class="form-input" id="upgradeTargetVersion" oninput="renderUpgradeTable()" autocomplete="off" style="width:100%;" placeholder="e.g. 5.16.1">
         </div>
         <div>
             <label style="font-size:11px;color:#888;display:block;margin-bottom:4px;">IMAGE SERVER IP</label>
-            <input type="text" class="form-input input-ip" id="upgradeServerIP" readonly style="width:100%; background:#252526;" placeholder="Uses ZTP Image Server IP">
+            <input type="text" class="form-input input-ip" id="upgradeServerIP" readonly autocomplete="off" style="width:100%; background:#252526;" placeholder="Uses ZTP Image Server IP">
             <div id="upgradeServerInfo" style="font-size:11px;color:#666;margin-top:4px;">Uses ZTP Quick Settings IMAGE SERVER IP</div>
         </div>
         <div>
             <label style="font-size:11px;color:#888;display:block;margin-bottom:4px;">BATCH SIZE</label>
-            <input type="number" class="form-input" id="upgradeBatchSize" min="1" max="100" value="1" style="width:100%;">
+            <input type="number" class="form-input" id="upgradeBatchSize" min="1" max="100" value="1" autocomplete="off" style="width:100%;">
         </div>
     </div>
 
@@ -1470,15 +1473,15 @@
         <h3 id="modalTitle">Add Binding</h3>
         <div class="modal-field">
             <label>Hostname</label>
-            <input type="text" id="modalHostname" placeholder="e.g. leaf-01">
+            <input type="text" id="modalHostname" placeholder="e.g. leaf-01" autocomplete="off">
         </div>
         <div class="modal-field">
             <label>MAC Address</label>
-            <input type="text" id="modalMAC" class="mono" placeholder="Leave empty if unknown (Planned)" oninput="formatMAC(this)">
+            <input type="text" id="modalMAC" class="mono" placeholder="Leave empty if unknown (Planned)" oninput="formatMAC(this)" autocomplete="off">
         </div>
         <div class="modal-field">
             <label>IP Address</label>
-            <input type="text" id="modalIP" class="mono" placeholder="e.g. 192.168.100.11">
+            <input type="text" id="modalIP" class="mono" placeholder="e.g. 192.168.100.11" autocomplete="off">
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
             <div class="modal-field" style="margin-bottom:0;">
@@ -4078,8 +4081,8 @@ function renderSerialMapping() {
     tbody.innerHTML = serialMappings.map((m, i) => {
         const hasConfig = configSet.has(m.hostname);
         return `<tr>
-            <td><input type="text" class="form-input" value="${escHtml(m.serial)}" onchange="serialMappings[${i}].serial=this.value;document.getElementById('serialMappingStatus').textContent='Unsaved changes — click Save';document.getElementById('serialMappingStatus').style.color='#ff8c00';" style="width:100%;font-family:'Cascadia Code','Consolas',monospace;font-size:12px;" placeholder="Serial number"></td>
-            <td><input type="text" class="form-input" value="${escHtml(m.hostname)}" onchange="serialMappings[${i}].hostname=this.value;document.getElementById('serialMappingStatus').textContent='Unsaved changes — click Save';document.getElementById('serialMappingStatus').style.color='#ff8c00';" style="width:100%;font-size:12px;" placeholder="Hostname"></td>
+            <td><input type="text" class="form-input" value="${escHtml(m.serial)}" onchange="serialMappings[${i}].serial=this.value;document.getElementById('serialMappingStatus').textContent='Unsaved changes — click Save';document.getElementById('serialMappingStatus').style.color='#ff8c00';" autocomplete="off" style="width:100%;font-family:'Cascadia Code','Consolas',monospace;font-size:12px;" placeholder="Serial number"></td>
+            <td><input type="text" class="form-input" value="${escHtml(m.hostname)}" onchange="serialMappings[${i}].hostname=this.value;document.getElementById('serialMappingStatus').textContent='Unsaved changes — click Save';document.getElementById('serialMappingStatus').style.color='#ff8c00';" autocomplete="off" style="width:100%;font-size:12px;" placeholder="Hostname"></td>
             <td style="text-align:center;">${hasConfig ? '<span style="color:#76b900;" title="Config available">&#10004;</span>' : '<span style="color:#666;" title="No config file">&#8212;</span>'}</td>
             <td style="text-align:center;"><button class="btn btn-sm" onclick="serialMappings.splice(${i},1);renderSerialMapping();document.getElementById('serialMappingStatus').textContent='Unsaved changes — click Save';document.getElementById('serialMappingStatus').style.color='#ff8c00';" style="color:#ff4444;background:none;border:none;cursor:pointer;font-size:16px;" title="Remove">&times;</button></td>
         </tr>`;
