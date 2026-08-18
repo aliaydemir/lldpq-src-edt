@@ -19,10 +19,20 @@ The installer only ever added www-data to the install user's group inside the
 `ANSIBLE_DIR` block, so deployments without Ansible integration had nothing
 granting traversal, and deployments with it were fixed by accident.
 
-These tests pin the surgical grant (an ACL for www-data alone, only on closed
-components), the ordering against the ownership block, the post-install proof
-that www-data can read the tree, and the web API probe that stops the installer
-from reporting success over a UI that cannot authenticate.
+Reaching the tree is only half of it. Provision and Setup replace devices.yaml
+atomically, staging a temporary file next to it and renaming it over the target,
+which needs write permission on the *directory*. Mode 750 with group www-data
+grants read and traverse only, so the rename failed and `atomic_write_text` fell
+through to a branch that blamed a root-owned target - for a file that was never
+root-owned. Any chmod of that directory also recalculates the ACL mask and clips
+the grant, including the permission hook that runs after every git pull.
+
+These tests pin the surgical grants (ACLs for www-data alone: search on closed
+ancestors, write on the install directory), their ordering against every chmod,
+the post-install proofs that www-data can both read and stage files, the hook
+restoring the mask it would otherwise clip, the honest failure message, and the
+web API probe that stops the installer from reporting success over a UI that
+cannot authenticate.
 """
 
 from __future__ import annotations
@@ -37,6 +47,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 INSTALL = (ROOT / "install.sh").read_text(encoding="utf-8")
 SETUP_API = (ROOT / "html" / "setup-api.sh").read_text(encoding="utf-8")
+PROVISION_API = (ROOT / "html" / "provision-api.sh").read_text(encoding="utf-8")
 
 
 def _extract_function(name: str) -> str:
@@ -206,6 +217,102 @@ class WebReadProofTests(unittest.TestCase):
         block = INSTALL[start : start + 600]
         removed = re.findall(r'"\$LLDPQ_INSTALL_DIR/([A-Za-z0-9_.-]+\.py)"', block)
         self.assertNotIn("parse_devices.py", removed)
+
+
+class WriteGrantTests(unittest.TestCase):
+    """Atomic devices.yaml saves need directory write, not just file write."""
+
+    def test_the_web_user_is_granted_write_on_the_install_directory(self) -> None:
+        _require('sudo setfacl -m u:www-data:rwx "$LLDPQ_INSTALL_DIR"')
+
+    def test_the_write_grant_runs_after_the_directory_mode_is_set(self) -> None:
+        needle = 'sudo chmod 750 "$LLDPQ_INSTALL_DIR"'
+        _require(needle)
+        chmod = INSTALL.rindex(needle)
+        grant = _require('sudo setfacl -m u:www-data:rwx "$LLDPQ_INSTALL_DIR"')
+        self.assertLess(
+            chmod, grant, "chmod recalculates the mask and would clip the grant"
+        )
+
+    def test_a_failed_write_grant_stops_the_installer(self) -> None:
+        start = _require('if ! sudo setfacl -m u:www-data:rwx "$LLDPQ_INSTALL_DIR"')
+        tail = INSTALL[start:]
+        block = tail[: _require("fi\n", tail, "the write grant") + 3]
+        self.assertIn("exit 1", block)
+
+    def test_the_write_is_proven_functionally_as_the_web_user(self) -> None:
+        _require('sudo -u www-data touch "$_web_write_probe"')
+
+    def test_a_failed_write_probe_stops_the_installer(self) -> None:
+        start = _require('if ! sudo -u www-data touch "$_web_write_probe"')
+        tail = INSTALL[start:]
+        block = tail[: _require("fi\n", tail, "the write probe") + 3]
+        self.assertIn("exit 1", block)
+
+    def test_the_probe_file_is_removed_before_and_after_the_attempt(self) -> None:
+        start = _require('_web_write_probe="$LLDPQ_INSTALL_DIR/')
+        block = INSTALL[start : start + 800]
+        self.assertGreaterEqual(block.count('sudo rm -f "$_web_write_probe"'), 2)
+
+
+class GitHookMaskTests(unittest.TestCase):
+    """The permission hook must not clip the grant on every pull."""
+
+    RESTORE = 'setfacl -m u:www-data:rwx "$(git rev-parse --show-toplevel)"'
+
+    def test_both_hook_copies_restore_the_grant(self) -> None:
+        self.assertEqual(
+            INSTALL.count(self.RESTORE),
+            2,
+            "the update-mode and fresh-install hook copies both need the restore",
+        )
+
+    def test_the_restore_follows_the_chmod_in_every_hook(self) -> None:
+        chmods = [
+            match.start()
+            for match in re.finditer(
+                r'chmod 750 "\$\(git rev-parse --show-toplevel\)"', INSTALL
+            )
+        ]
+        self.assertTrue(chmods, "the hook no longer chmods the toplevel")
+        for index in chmods:
+            self.assertIn(self.RESTORE, INSTALL[index : index + 500])
+
+    def test_the_restore_tolerates_a_host_without_setfacl(self) -> None:
+        start = _require(self.RESTORE)
+        self.assertIn("command -v setfacl", INSTALL[max(0, start - 250) : start])
+
+
+class AtomicWriteErrorTests(unittest.TestCase):
+    """The failure has to name the real cause, not a presumed one."""
+
+    def test_the_misleading_root_owned_message_is_gone(self) -> None:
+        stale = "Atomic replacement is not permitted for root-owned"
+        self.assertEqual(
+            PROVISION_API.count(stale),
+            0,
+            f"html/provision-api.sh still blames a root-owned target: {stale!r}",
+        )
+
+    def test_the_real_error_is_reported(self) -> None:
+        _require(
+            "Could not atomically replace {path}: {primary_error}",
+            PROVISION_API,
+            "html/provision-api.sh",
+        )
+
+    def test_the_first_failure_is_captured_rather_than_discarded(self) -> None:
+        _require(
+            "except (OSError, subprocess.SubprocessError) as exc:",
+            PROVISION_API,
+            "html/provision-api.sh",
+        )
+        _require("primary_error = exc", PROVISION_API, "html/provision-api.sh")
+
+    def test_the_message_names_the_directory_that_needs_write(self) -> None:
+        _require(
+            "must be writable by this user", PROVISION_API, "html/provision-api.sh"
+        )
 
 
 class WebApiProbeTests(unittest.TestCase):
