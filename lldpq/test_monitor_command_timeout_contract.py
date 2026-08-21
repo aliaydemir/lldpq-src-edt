@@ -20,6 +20,7 @@ import process_optical_data as optical
 
 
 MONITOR = SCRIPT_DIR / "monitor.sh"
+TRANSCEIVER_FW = SCRIPT_DIR / "collect-transceiver-fw.sh"
 ROOT = MONITOR.parent.parent
 
 
@@ -618,6 +619,58 @@ class MonitorCommandTimeoutContractTests(unittest.TestCase):
             with self.subTest(relative=relative):
                 content = (ROOT / relative).read_text(encoding="utf-8")
                 self.assertIn(expected, content)
+
+
+class TransceiverFwStagingContractTests(unittest.TestCase):
+    """collect-transceiver-fw.sh must never stage inside monitor-results.
+
+    monitor.sh publishes monitor-results with cp -a: a staging directory
+    living inside that tree either fails the publish mid-copy (rolling back a
+    healthy generation) or gets copied into the web tree, and a plain '>'
+    rewrite of a per-host file can publish a torn artifact.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.source = TRANSCEIVER_FW.read_text(encoding="utf-8")
+
+    def test_staging_dir_is_created_outside_result_dir(self):
+        self.assertIn(
+            'STATUS_DIR=$(mktemp -d "${TMPDIR:-/tmp}/'
+            'lldpq-transceiver-status.XXXXXX")',
+            self.source,
+        )
+        self.assertNotIn('mktemp -d "$RESULT_DIR', self.source)
+        # The EXIT trap must clean the relocated staging dir (bash runs EXIT
+        # traps on TERM/INT too, so EXIT-only is sufficient).
+        self.assertIn("trap 'rm -rf \"$STATUS_DIR\"' EXIT", self.source)
+
+    def test_per_host_files_land_via_sibling_tmp_then_rename(self):
+        # Success payloads and skip markers both stage next to the target and
+        # rename into place, so readers and the monitor publish copy never see
+        # a partially written per-host file.
+        self.assertIn(
+            "printf '%s\\n' \"$output\" > \"$tmp_outfile\""
+            ' && mv -f "$tmp_outfile" "$outfile"',
+            self.source,
+        )
+        self.assertIn(
+            "printf '# %s\\n' \"$reason\" > \"$tmp_target\""
+            ' && mv -f "$tmp_target" "$target"',
+            self.source,
+        )
+        self.assertNotIn("printf '%s\\n' \"$output\" > \"$outfile\"", self.source)
+
+    def test_last_run_gate_validates_content_and_writes_atomically(self):
+        # Empty/garbage timestamp content is gate-unknown -> proceed instead
+        # of erroring the -gt test, and the start-of-run write repairs it.
+        self.assertIn("''|*[!0-9]*) last_run=0 ;;", self.source)
+        self.assertIn(
+            'echo "$now" > "${LAST_RUN_FILE}.tmp"'
+            ' && mv -f "${LAST_RUN_FILE}.tmp" "$LAST_RUN_FILE"',
+            self.source,
+        )
+        self.assertNotIn('echo "$now" > "$LAST_RUN_FILE"', self.source)
 
 
 if __name__ == "__main__":

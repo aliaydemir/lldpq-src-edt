@@ -49,6 +49,11 @@ fi
 now=$(date +%s)
 last_run=0
 [ -f "$LAST_RUN_FILE" ] && last_run=$(cat "$LAST_RUN_FILE" 2>/dev/null || echo 0)
+# Empty/garbage content (e.g. a torn write) must not error the -gt test:
+# treat it as gate-unknown and proceed; the write below repairs the file.
+case "$last_run" in
+    ''|*[!0-9]*) last_run=0 ;;
+esac
 if [ "$TRANSCEIVER_FW_MIN_INTERVAL" -gt 0 ] && [ "$last_run" -gt 0 ] && [ $((now - last_run)) -lt "$TRANSCEIVER_FW_MIN_INTERVAL" ]; then
     wait_left=$((TRANSCEIVER_FW_MIN_INTERVAL - (now - last_run)))
     echo "ERROR: Last transceiver firmware collection was too recent. Wait ${wait_left}s or set TRANSCEIVER_FW_MIN_INTERVAL=0." >&2
@@ -88,7 +93,10 @@ case "$MAX_PARALLEL" in
 esac
 
 mkdir -p "$TRANSCEIVER_DIR"
-STATUS_DIR=$(mktemp -d "$RESULT_DIR/transceiver-status.XXXXXX")
+# Stage outside monitor-results: monitor.sh publishes that tree with cp -a,
+# so a live stage dir there either fails the publish mid-copy (rolling back
+# a healthy generation) or leaks into the web tree.
+STATUS_DIR=$(mktemp -d "${TMPDIR:-/tmp}/lldpq-transceiver-status.XXXXXX") || exit 1
 trap 'rm -rf "$STATUS_DIR"' EXIT
 
 status_file_for() {
@@ -108,7 +116,10 @@ write_status() {
 write_transceiver_marker() {
     local hostname=$1
     local reason=$2
-    printf '# %s\n' "$reason" > "$TRANSCEIVER_DIR/${hostname}_transceiver.txt"
+    local target="$TRANSCEIVER_DIR/${hostname}_transceiver.txt"
+    local tmp_target="$TRANSCEIVER_DIR/.${hostname}_transceiver.txt.tmp"
+    # Stage next to the target, then rename so a torn file is never published.
+    printf '# %s\n' "$reason" > "$tmp_target" && mv -f "$tmp_target" "$target" || rm -f "$tmp_target"
 }
 
 is_unknown_model() {
@@ -151,6 +162,7 @@ collect_fw() {
     local hostname=$3
     local known_model=${4:-}
     local outfile="$TRANSCEIVER_DIR/${hostname}_transceiver.txt"
+    local tmp_outfile="$TRANSCEIVER_DIR/.${hostname}_transceiver.txt.tmp"
     local output
     local ssh_status
     local first_line
@@ -296,7 +308,8 @@ REMOTE_SCRIPT
     esac
 
     if [ -n "$output" ]; then
-        printf '%s\n' "$output" > "$outfile"
+        # Stage next to the target, then rename so a torn file is never published.
+        printf '%s\n' "$output" > "$tmp_outfile" && mv -f "$tmp_outfile" "$outfile" || rm -f "$tmp_outfile"
         write_status "$hostname" "ok" "$(printf '%s\n' "$output" | wc -l | xargs)"
         echo "  $hostname: $(echo "$output" | wc -l) modules"
     else
@@ -446,7 +459,9 @@ if [ ! -d "$RESULT_DIR/optical-data" ]; then
     exit 1
 fi
 
-echo "$now" > "$LAST_RUN_FILE"
+# Atomic tmp+rename: ENOSPC/kill mid-write must not leave an empty file that
+# would bypass the min-interval gate on the next run.
+echo "$now" > "${LAST_RUN_FILE}.tmp" && mv -f "${LAST_RUN_FILE}.tmp" "$LAST_RUN_FILE" || rm -f "${LAST_RUN_FILE}.tmp"
 echo "Collecting transceiver firmware versions..."
 queued=0
 pids=()

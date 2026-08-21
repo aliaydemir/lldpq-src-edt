@@ -23,8 +23,16 @@ from pathlib import Path
 
 try:
     from .lldp_report import LLDPReportError, parse_lldp_report
+    from .collection_freshness import (
+        asset_timestamp_tolerance_seconds,
+        parse_created_timestamp,
+    )
 except ImportError:  # Direct script execution has no package context.
     from lldp_report import LLDPReportError, parse_lldp_report
+    from collection_freshness import (
+        asset_timestamp_tolerance_seconds,
+        parse_created_timestamp,
+    )
 
 
 DEFAULT_LOAD_PER_CORE_WARNING = 1.0
@@ -1476,13 +1484,18 @@ class LLDPqAlerts:
             if (len(nonempty) < 3 or
                     tuple(nonempty[1].split()) != tuple(expected_header.split())):
                 raise ValueError("missing or invalid assets header")
-            created = datetime.datetime.strptime(
+            # Shared fold-aware parser: the naive Created time is ambiguous
+            # during the DST fall-back hour; also honors the shared
+            # ASSET_TIMESTAMP_TOLERANCE_SECONDS knob instead of a local 120.
+            snapshot_time = parse_created_timestamp(
                 nonempty[0].removeprefix("Created on "),
-                "%Y-%m-%d %H-%M-%S",
+                file_mtime,
+                asset_timestamp_tolerance_seconds(),
             )
-            snapshot_time = created.timestamp()
-            if abs(file_mtime - snapshot_time) > 120:
-                raise ValueError("assets Created time does not match file mtime")
+            if snapshot_time is None:
+                raise ValueError(
+                    "assets Created time is invalid or does not match file mtime"
+                )
             age = time.time() - snapshot_time
             if age < -300 or age > max_age_seconds:
                 raise ValueError("assets snapshot is stale or from the future")
