@@ -848,6 +848,96 @@ class AskAiApiContractTest(unittest.TestCase):
         out = ns["run_p2p_lookup"]("SP-01")
         self.assertIn("2 link(s)", out)
 
+    def test_diff_tool_is_registered_with_instructions_and_budget(self):
+        # The [DIFF:] tool is described to the model, parsed as an
+        # alone-on-a-line tag, billed against its own per-question budget,
+        # and stripped/neutralized everywhere the other tags are.
+        self.assertIn("=== STORED CONFIG-CHANGE DIFFS ===", PYTHON_TEXT)
+        self.assertIn("[DIFF: <device> [<count>]]", PYTHON_TEXT)
+        self.assertIn("MAX_DIFF = 2", PYTHON_TEXT)
+        self.assertRegex(PYTHON_TEXT, r"\(\?m\)\^\\s\*\\\[DIFF:")
+        # Finalize guard + visible-answer strip know the tag.
+        self.assertIn("PATH|SEARCH|P2P|IPAM|KB|DIFF):", PYTHON_TEXT)
+        self.assertIn("PATH|SEARCH|P2P|IPAM|KB|DIFF|FIX|NEXT|CONSOLE):", PYTHON_TEXT)
+        # Observed/collected data cannot forge an executable [DIFF:] tag.
+        self.assertIn("P2P|IPAM|KB|DIFF|FIX|NEXT|CONSOLE)\\s*:", PYTHON_TEXT)
+
+    def test_diff_tool_advertisement_is_gated_on_stored_history(self):
+        # Both the instructions block and the tag parser are conditional on a
+        # non-empty config_drift_history.json, mirroring the [P2P:] gating.
+        self.assertIn(
+            "if _drift_history_available:\n"
+            "    TOOL_INSTRUCTIONS += DIFF_INSTRUCTIONS",
+            PYTHON_TEXT,
+        )
+        self.assertIn(") if _drift_history_available else []", PYTHON_TEXT)
+        self.assertIn(
+            "_drift_history_available = os.path.getsize(_drift_history_path()) > 0",
+            PYTHON_TEXT,
+        )
+
+    def test_config_diff_tool_returns_stored_events_newest_first(self):
+        ns = load_symbols("DIFF_RESULT_MAX_CHARS", "run_config_diff")
+        with tempfile.TemporaryDirectory() as temporary:
+            history_path = Path(temporary) / "config_drift_history.json"
+            history_path.write_text(json.dumps({"version": 1, "events": [
+                {"ts": 100, "host": "devA", "type": "modified", "added": 1,
+                 "removed": 0, "summary": "+ nv set vrf A-OLD",
+                 "diff": ["--- previous", "+++ current", "+nv set vrf A-OLD"]},
+                {"ts": 200, "host": "devA", "type": "modified", "added": 1,
+                 "removed": 1, "summary": "+ nv set vrf A-NEW",
+                 "diff": ["-nv set vrf A-OLD", "+nv set vrf A-NEW"]},
+                # A diffless event must never consume a requested slot.
+                {"ts": 300, "host": "devA", "type": "modified", "added": 0,
+                 "removed": 0, "summary": "content changed", "diff": []},
+                {"ts": 150, "host": "devB", "type": "modified", "added": 1,
+                 "removed": 0, "summary": "+ nv set devB-only",
+                 "diff": ["+nv set devB-only"]},
+                {"ts": 500, "host": "devC", "type": "modified", "added": 400,
+                 "removed": 0, "summary": "+ mtu sweep",
+                 "diff": ["+nv set interface swp%d mtu 9216 pad-%s" % (n, "x" * 20)
+                          for n in range(400)],
+                 "diff_truncated": True},
+            ]}), encoding="utf-8")
+            ns.update({
+                "_load_json_file": lambda path: json.loads(
+                    Path(path).read_text(encoding="utf-8")),
+                "_drift_history_path": lambda: str(history_path),
+            })
+            run = ns["run_config_diff"]
+
+            out = run("devA", 2)
+            self.assertIn("2 event(s)", out)
+            # Newest first, only diff-bearing events, only the asked device.
+            self.assertLess(out.index("A-NEW"), out.index("+nv set vrf A-OLD"))
+            self.assertNotIn("devB-only", out)
+            self.assertNotIn("content changed", out)
+
+            # Unknown device -> clean one-line notice, never an error.
+            self.assertEqual(
+                run("no-such-dev", 1),
+                "no stored config-change events for no-such-dev",
+            )
+
+            # Count is clamped to 1..3 (0 and garbage -> 1; 99 -> 3).
+            clamped_low = run("devA", 0)
+            self.assertIn("1 event(s)", clamped_low)
+            self.assertIn("A-NEW", clamped_low)
+            self.assertNotIn("+nv set vrf A-OLD", clamped_low)
+            self.assertIn("1 event(s)", run("devA", "junk"))
+            self.assertIn("2 event(s)", run("devA", 99))
+
+            # Tolerant device resolution: case-insensitive, then squashed.
+            self.assertIn("A-NEW", run("DEVA", 1))
+            self.assertIn("A-NEW", run("dev-a", 1))
+
+            # The char budget truncates with an explicit marker and keeps the
+            # stored-truncation note out of scope when the budget cuts first.
+            budget = ns["DIFF_RESULT_MAX_CHARS"]
+            big = run("devC", 1)
+            self.assertLessEqual(len(big), budget + 40)
+            self.assertIn("... (truncated)", big)
+
 
 if __name__ == "__main__":
     unittest.main()

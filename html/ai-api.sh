@@ -431,7 +431,7 @@ _BEARER_RE = re.compile(r'(?i)\b(authorization\s*:\s*(?:bearer|basic)\s+)(\S+)')
 _URI_CREDENTIAL_RE = re.compile(r'(?i)(https?://[^\s/@:]+:)([^\s/@]+)(@)')
 _URL_KEY_RE = re.compile(r'(?i)([?&](?:key|api[-_]?key|token)=)[^&\s]+')
 _TOOL_TAG_RE = re.compile(
-    r'\[(DRYRUN|RUNALL|RUN|AUDIT|PROMQLRANGE|PROMQL|PATH|SEARCH|P2P|IPAM|KB|FIX|NEXT|CONSOLE)\s*:',
+    r'\[(DRYRUN|RUNALL|RUN|AUDIT|PROMQLRANGE|PROMQL|PATH|SEARCH|P2P|IPAM|KB|DIFF|FIX|NEXT|CONSOLE)\s*:',
     re.IGNORECASE,
 )
 _OBSERVATION_BOUNDARY_RE = re.compile(
@@ -3564,6 +3564,21 @@ def build_recent_changes_context(changed_devices=None):
             "Devices whose collected running config changed since the last "
             "analysis snapshot: " + ', '.join(changed_devices[:40])
         )
+        # A small change set is cheap to show in full: the drift analyzer's
+        # stored diff answers "what changed" directly (bounded per device;
+        # silently absent when no event is stored yet).
+        if len(changed_devices) <= 2 and _drift_history_available:
+            for host in changed_devices[:2]:
+                try:
+                    diff_out = run_config_diff(host, 1)
+                except Exception:
+                    continue
+                if diff_out.startswith(('no stored config-change events',
+                                        'usage:')):
+                    continue
+                if len(diff_out) > 2000:
+                    diff_out = diff_out[:2000] + '\n... (truncated)'
+                parts.append(diff_out)
     if not parts:
         return ''
     return (
@@ -5178,6 +5193,38 @@ if _kb_sections_for_keys is not None:
     TOOL_INSTRUCTIONS += KB_INSTRUCTIONS
 
 
+def _drift_history_path():
+    """Config-drift event log written by process_config_drift_data.py."""
+    return _mr_path('config_drift_history.json')
+
+
+# Total [DIFF:] result budget per tag (mirrors the KB inject cap style); the
+# oldest event's diff is truncated first when the requested events exceed it.
+DIFF_RESULT_MAX_CHARS = 6000
+
+# Advertised only when the config-drift analyzer has recorded history; a
+# leftover [DIFF:] tag without the history file is ignored like [P2P:].
+DIFF_INSTRUCTIONS = """
+=== STORED CONFIG-CHANGE DIFFS ===
+To see WHAT actually changed on a device — when investigating why something
+broke or what changed recently — pull the config-drift analyzer's stored
+unified-diff excerpt(s) on its own line:
+[DIFF: <device> [<count>]]
+  - Returns the most recent stored config-change diff(s) for that device from
+    the drift history (previous vs current collected `nv config` snapshot).
+  - <count> = optional number of most recent change events, 1..3 (default 1),
+    e.g. [DIFF: tan-leaf-01 2].
+  - Local history only: costs one tool slot, never touches a device. If the
+    device has no recorded change events you get a short notice — say so.
+"""
+try:
+    _drift_history_available = os.path.getsize(_drift_history_path()) > 0
+except OSError:
+    _drift_history_available = False
+if _drift_history_available:
+    TOOL_INSTRUCTIONS += DIFF_INSTRUCTIONS
+
+
 def _policy_block_hint(command, error):
     """Nearest policy-allowed alternative for a blocked command so the model's
     next round self-corrects instead of resending the same request."""
@@ -6308,6 +6355,75 @@ def run_ipam_lookup(target):
     return '\n'.join(lines)
 
 
+def run_config_diff(device, count=1):
+    """N most recent stored config-change diffs for one device from the
+    config-drift analyzer's history log. Read-only; never touches a device."""
+    try:
+        count = int(count)
+    except (TypeError, ValueError):
+        count = 1
+    count = max(1, min(3, count))
+    target = str(device or '').strip()
+    if not target:
+        return 'usage: [DIFF: <device> [<count>]]'
+    history = _load_json_file(_drift_history_path())
+    raw_events = history.get('events') if isinstance(history, dict) else None
+    events = [event for event in raw_events if isinstance(event, dict)] \
+        if isinstance(raw_events, list) else []
+    hosts = {str(event.get('host') or '') for event in events} - {''}
+    # Tolerant resolution mirroring [RUN:] targets: exact, then
+    # case-insensitive, then dash/dot-squashed (only when unambiguous).
+    resolved = target if target in hosts else None
+    if resolved is None:
+        by_lower = {host.lower(): host for host in hosts}
+        resolved = by_lower.get(target.lower())
+    if resolved is None:
+        squashed = re.sub(r'[^a-z0-9]+', '', target.lower())
+        matches = {host for host in hosts
+                   if re.sub(r'[^a-z0-9]+', '', host.lower()) == squashed} \
+            if squashed else set()
+        if len(matches) == 1:
+            resolved = next(iter(matches))
+    if resolved is None:
+        return 'no stored config-change events for %s' % target
+    matched = sorted(
+        (event for event in events if event.get('host') == resolved
+         and any(str(line).strip() for line in (event.get('diff') or []))),
+        key=lambda event: int(event.get('ts') or 0), reverse=True,
+    )[:count]
+    if not matched:
+        return 'no stored config-change events for %s' % resolved
+    blocks = []
+    for index, event in enumerate(matched, 1):
+        ts = int(event.get('ts') or 0)
+        when = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ts)) \
+            if ts else 'unknown time'
+        diff_text = '\n'.join(str(line) for line in (event.get('diff') or []))
+        if event.get('diff_truncated'):
+            diff_text += '\n... (diff stored truncated by the analyzer)'
+        header = ('--- event %d/%d — detected %s (%s, +%s/-%s lines): %s' % (
+            index, len(matched), when, event.get('type') or 'modified',
+            event.get('added') or 0, event.get('removed') or 0,
+            str(event.get('summary') or '').strip()))
+        blocks.append(header + '\n' + diff_text)
+    parts = ['STORED CONFIG-DRIFT EVENTS for %s — %d event(s), newest first '
+             '(unified diff: previous vs current collected config):'
+             % (resolved, len(matched))]
+    used = len(parts[0])
+    for block in blocks:
+        remaining = DIFF_RESULT_MAX_CHARS - used
+        if len(block) + 2 > remaining:
+            # Budget exhausted: the oldest included event loses diff tail first.
+            if remaining > 0:
+                parts.append(block[:remaining] + '\n... (truncated)')
+            else:
+                parts.append('... (truncated)')
+            break
+        parts.append(block)
+        used += len(block) + 2
+    return '\n\n'.join(parts)
+
+
 def action_chat():
     """Handle chat message — synchronous response (fcgiwrap doesn't support SSE streaming)."""
     try:
@@ -6612,6 +6728,7 @@ def action_chat():
     DISPATCH_DEVICE_CAP = 120     # total devices across all dispatches
     MAX_PROMQL = 4                # [PROMQL: ...] live telemetry queries per question
     MAX_SEARCH = 2                # [SEARCH: ...] web-research queries per question
+    MAX_DIFF = 2                  # [DIFF: ...] stored config-diff lookups per question
     # Reserve the tail of the 210s budget for the guaranteed tool-free final
     # synthesis so a slow last tool round cannot leave it a few seconds.
     FINALIZE_RESERVE_SECONDS = 45
@@ -6620,6 +6737,7 @@ def action_chat():
     dispatch_dev_total = 0
     promql_used = 0
     searches_used = 0
+    diffs_used = 0
     response = ''
     tools_used = []
     # Capability/meta questions make the model quote tag syntax as EXAMPLES;
@@ -6714,7 +6832,11 @@ def action_chat():
         kbs = re.findall(
             r'(?m)^\s*\[KB:\s*([^\]\r\n]+)\]\s*$', response or ''
         ) if _kb_sections_for_keys is not None else []
-        round_requested = sum(map(len, (runs, runalls, audits, promqls, promranges, paths, searches, dryruns, p2ps, ipams, kbs)))
+        # Stored config-drift diffs (local history only, no device access).
+        diffs = re.findall(
+            r'(?m)^\s*\[DIFF:\s*(\S+)(?:\s+(\d{1,3}))?\s*\]\s*$', response or ''
+        ) if _drift_history_available else []
+        round_requested = sum(map(len, (runs, runalls, audits, promqls, promranges, paths, searches, dryruns, p2ps, ipams, kbs, diffs)))
         if round_requested == 0 or time.monotonic() > deadline:
             if (round_requested == 0 and not phantom_nudged
                     and deadline - time.monotonic() > FINALIZE_RESERVE_SECONDS
@@ -6762,6 +6884,7 @@ def action_chat():
                 + [f"[P2P: {t}]" for t in p2ps]
                 + [f"[IPAM: {t}]" for t in ipams]
                 + [f"[KB: {t}]" for t in kbs]
+                + [f"[DIFF: {d}{(' ' + c) if c else ''}]" for d, c in diffs]
             )
             tools_used.append({
                 'dispatch': 'not-executed',
@@ -7168,6 +7291,33 @@ def action_chat():
                 'ok': kb_ok,
             })
             results.append(f"[KB: {keys_raw.strip()}]\n{out}")
+        # Stored config-drift diffs (local history file only; no device
+        # access). Diff content is collected device data: untrusted.
+        for dev_name, count_raw in diffs[:MAX_TOOLS_PER_ROUND]:
+            if (round_tools >= MAX_TOOLS_PER_ROUND or total_tools >= MAX_TOTAL_TOOLS
+                    or diffs_used >= MAX_DIFF or time.monotonic() > deadline
+                    or _job_cancelled()):
+                break
+            dev_name = dev_name.strip()
+            count = count_raw.strip() if count_raw else '1'
+            dedup_key = ('diff', dev_name.lower(), count)
+            if dedup_key in seen_this_round:
+                round_requested -= 1
+                continue
+            seen_this_round.add(dedup_key)
+            total_tools += 1
+            round_tools += 1
+            diffs_used += 1
+            out = run_config_diff(dev_name, count)
+            diff_ok = not str(out).startswith(
+                ('no stored config-change events', 'usage:')
+            )
+            tools_used.append({
+                'device': 'config-drift',
+                'command': 'stored change diff(s): %s' % dev_name[:120],
+                'ok': diff_ok,
+            })
+            results.append(f"[DIFF: {dev_name}]\n{out}")
         if round_tools < round_requested:
             tools_used.append({
                 'dispatch': 'not-executed',
@@ -7220,7 +7370,7 @@ def action_chat():
                 "Request more data only if needed; otherwise give the final answer "
                 "with no [RUN: ...] / [RUNALL: ...] / [AUDIT: ...] / [PROMQL: ...] / "
                 "[PROMQLRANGE: ...] / [PATH: ...] / [SEARCH: ...] / [P2P: ...] / "
-                "[IPAM: ...] / [KB: ...] / [DRYRUN: ...] lines."
+                "[IPAM: ...] / [KB: ...] / [DIFF: ...] / [DRYRUN: ...] lines."
             ),
             "context_group": tool_group,
             "context_pin": True,
@@ -7249,7 +7399,7 @@ def action_chat():
     # Stop request), force one final answer. Meta/capability answers are
     # exempt: their tags are illustrative examples, not pending requests.
     if (not meta_question and time.monotonic() < deadline
-            and re.search(r'\[(?:DRYRUN|RUN(?:ALL)?|AUDIT|PROMQLRANGE|PROMQL|PATH|SEARCH|P2P|IPAM|KB):', response or '')):
+            and re.search(r'\[(?:DRYRUN|RUN(?:ALL)?|AUDIT|PROMQLRANGE|PROMQL|PATH|SEARCH|P2P|IPAM|KB|DIFF):', response or '')):
         # Rebuild the system message WITHOUT the tool catalog for this last
         # call; an instruction alone does not reliably stop tag emission.
         system_message['content'] = system_prompt_core
@@ -7280,7 +7430,7 @@ def action_chat():
                 "Stop using tools. Give your final answer now from the retained "
                 "results above; do not emit any data-tool lines "
                 "([RUN:]/[RUNALL:]/[AUDIT:]/[PROMQL:]/[PROMQLRANGE:]/[PATH:]/[SEARCH:]/"
-                "[P2P:]/[IPAM:]/[KB:]/[DRYRUN:]). "
+                "[P2P:]/[IPAM:]/[KB:]/[DIFF:]/[DRYRUN:]). "
                 "You MAY include [FIX: ...], [NEXT: ...] and [CONSOLE: ...] suggestions."
                 + skipped_note
             ),
@@ -7331,7 +7481,7 @@ def action_chat():
     else:
         final = '\n'.join(
             ln for ln in (response or '').splitlines()
-            if not re.search(r'\[(?:DRYRUN|RUN(?:ALL)?|AUDIT|PROMQLRANGE|PROMQL|PATH|SEARCH|P2P|IPAM|KB|FIX|NEXT|CONSOLE):', ln)
+            if not re.search(r'\[(?:DRYRUN|RUN(?:ALL)?|AUDIT|PROMQLRANGE|PROMQL|PATH|SEARCH|P2P|IPAM|KB|DIFF|FIX|NEXT|CONSOLE):', ln)
         ).strip()
     
     if not final:
