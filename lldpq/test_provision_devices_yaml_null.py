@@ -35,6 +35,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -409,6 +410,157 @@ class LldpqConfDuplicateHealTests(unittest.TestCase):
         self.conf.write_text("LLDPQ_DIR=/home/lldpq/lldpq\n", encoding="utf-8")
         self.assertEqual(
             self.api['read_lldpq_conf_key']('SCAN_INTERVAL', '300'), '300')
+
+
+# In dependency order.
+ZTP_IMAGE_NAMES = (
+    'is_current_ztp_template', 'ztp_script_static_setting',
+    'image_version_from_name', 'valid_os_image_name', 'resolve_os_image_path',
+    'list_os_image_objects', 'bind_ztp_image_name',
+)
+
+ZTP_TEMPLATE = (ROOT / "html" / "cumulus-ztp.sh").read_text(encoding="utf-8")
+
+
+class ZtpImageNameBindingTests(unittest.TestCase):
+    """ZTP must fetch the image that is actually served, not a derived name.
+
+    Uploads keep the client filename verbatim (-mlnx-/custom suffixes pass
+    valid_os_image_name), while the v2 template derived the stock -mlx- name
+    from CUMULUS_TARGET_RELEASE — a nonexistent URL, so onie-install 404'd.
+    The v3 template carries CUMULUS_IMAGE_NAME (empty falls back to the old
+    derived name for hand-edited scripts) and the API binds it to the single
+    uploaded image matching the target release.  Deployed v2 scripts must
+    stay valid to the template validator.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.upload_dir = Path(self._tmp.name) / "provision-uploads"
+        self.web_root = Path(self._tmp.name) / "web"
+        self.upload_dir.mkdir()
+        self.web_root.mkdir()
+        namespace = {
+            "os": os, "re": re, "shlex": shlex,
+            "PROVISION_UPLOAD_DIR": str(self.upload_dir),
+            "WEB_ROOT": str(self.web_root),
+        }
+        for name in ZTP_IMAGE_NAMES:
+            exec(compile(extract_source(name), "provision-api.sh", "exec"),
+                 namespace)
+        self.api = namespace
+
+    def add_image(self, name):
+        (self.upload_dir / name).write_bytes(b"image")
+
+    def filled_template(self, target="5.9.2", image=""):
+        content = ZTP_TEMPLATE.replace("__IMAGE_SERVER_IP__", "192.168.100.200")
+        content = content.replace("__TARGET_OS_VERSION__", target)
+        if image:
+            content = content.replace(
+                'CUMULUS_IMAGE_NAME=""', f'CUMULUS_IMAGE_NAME="{image}"')
+        return content
+
+    def v2_shaped(self, target="5.9.2"):
+        """A deployed pre-image-name script: v2 marker, no CUMULUS_IMAGE_NAME."""
+        content = self.filled_template(target)
+        content = content.replace(
+            "# LLDPQ_ZTP_TEMPLATE_VERSION=3", "# LLDPQ_ZTP_TEMPLATE_VERSION=2")
+        return "\n".join(
+            line for line in content.splitlines()
+            if "CUMULUS_IMAGE_NAME" not in line) + "\n"
+
+    def image_url(self, target, image):
+        """Run the template's real IMAGE_SERVER construction block in bash."""
+        block = re.search(
+            r'^    if \[ -n "\$CUMULUS_IMAGE_NAME" \]; then\n.*?^    fi\n',
+            ZTP_TEMPLATE, re.MULTILINE | re.DOTALL)
+        self.assertIsNotNone(block, "image URL construction block missing")
+        harness = (
+            "IMAGE_SERVER_HOSTNAME=192.168.100.200\n"
+            f"CUMULUS_TARGET_RELEASE={shlex.quote(target)}\n"
+            f"CUMULUS_IMAGE_NAME={shlex.quote(image)}\n"
+            "main() {\n" + block.group(0) + 'echo "$IMAGE_SERVER"\n}\nmain\n'
+        )
+        result = subprocess.run(["bash", "-c", harness],
+                                capture_output=True, text=True)
+        return result.returncode, result.stdout.strip()
+
+    # ---------- shipped template ----------
+
+    def test_shipped_template_declares_the_image_name_setting(self):
+        self.assertIn('    CUMULUS_IMAGE_NAME=""\n', ZTP_TEMPLATE)
+        version = re.search(r'LLDPQ_ZTP_TEMPLATE_VERSION=(\d+)', ZTP_TEMPLATE)
+        self.assertGreaterEqual(int(version.group(1)), 3)
+
+    def test_url_prefers_the_image_name_and_falls_back_when_empty(self):
+        self.assertEqual(
+            self.image_url("5.9.2", "cumulus-linux-5.9.2-mlnx-amd64.bin"),
+            (0, "http://192.168.100.200/cumulus-linux-5.9.2-mlnx-amd64.bin"))
+        self.assertEqual(
+            self.image_url("5.9.2", ""),
+            (0, "http://192.168.100.200/cumulus-linux-5.9.2-mlx-amd64.bin"))
+
+    def test_url_construction_rejects_an_unsafe_image_name(self):
+        returncode, _ = self.image_url("5.9.2", "evil name.bin")
+        self.assertNotEqual(returncode, 0)
+
+    # ---------- template validator ----------
+
+    def test_validator_accepts_the_shipped_v3_template(self):
+        self.assertTrue(self.api['is_current_ztp_template'](ZTP_TEMPLATE))
+
+    def test_validator_still_accepts_a_v2_shaped_script(self):
+        self.assertTrue(self.api['is_current_ztp_template'](self.v2_shaped()))
+
+    def test_validator_requires_the_image_name_in_v3(self):
+        without_setting = "\n".join(
+            line for line in ZTP_TEMPLATE.splitlines()
+            if "CUMULUS_IMAGE_NAME" not in line) + "\n"
+        self.assertFalse(self.api['is_current_ztp_template'](without_setting))
+
+    # ---------- server-side binding ----------
+
+    def test_save_binds_the_single_matching_uploaded_image(self):
+        self.add_image("cumulus-linux-5.9.2-mlnx-amd64.bin")
+        bound = self.api['bind_ztp_image_name'](self.filled_template("5.9.2"))
+        self.assertEqual(
+            self.api['ztp_script_static_setting'](bound, 'CUMULUS_IMAGE_NAME'),
+            "cumulus-linux-5.9.2-mlnx-amd64.bin")
+        self.assertTrue(self.api['is_current_ztp_template'](bound))
+        check = subprocess.run(["bash", "-n"], input=bound,
+                               capture_output=True, text=True)
+        self.assertEqual(check.returncode, 0, check.stderr)
+
+    def test_binding_leaves_a_v2_script_untouched(self):
+        self.add_image("cumulus-linux-5.9.2-mlnx-amd64.bin")
+        content = self.v2_shaped("5.9.2")
+        self.assertEqual(self.api['bind_ztp_image_name'](content), content)
+
+    def test_binding_stays_empty_when_the_target_is_ambiguous(self):
+        self.add_image("cumulus-linux-5.9.2-mlnx-amd64.bin")
+        self.add_image("cumulus-linux-5.9.2-custom-amd64.bin")
+        content = self.filled_template("5.9.2")
+        self.assertEqual(self.api['bind_ztp_image_name'](content), content)
+
+    def test_binding_keeps_an_existing_valid_choice(self):
+        self.add_image("cumulus-linux-5.9.2-mlnx-amd64.bin")
+        self.add_image("cumulus-linux-5.9.2-custom-amd64.bin")
+        content = self.filled_template(
+            "5.9.2", "cumulus-linux-5.9.2-custom-amd64.bin")
+        self.assertEqual(self.api['bind_ztp_image_name'](content), content)
+
+    def test_binding_replaces_a_stale_name_after_a_new_upload(self):
+        # The previously bound image was deleted; a fresh upload for the same
+        # target release must win (the upload hook re-binds best-effort).
+        self.add_image("cumulus-linux-5.9.2-mlnx-amd64.bin")
+        content = self.filled_template(
+            "5.9.2", "cumulus-linux-5.9.2-deleted-amd64.bin")
+        bound = self.api['bind_ztp_image_name'](content)
+        self.assertEqual(
+            self.api['ztp_script_static_setting'](bound, 'CUMULUS_IMAGE_NAME'),
+            "cumulus-linux-5.9.2-mlnx-amd64.bin")
 
 
 if __name__ == "__main__":

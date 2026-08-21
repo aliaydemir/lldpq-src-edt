@@ -833,6 +833,7 @@ mkdir -p /var/lib/lldpq/ai
 mkdir -p /var/lib/lldpq/provision-jobs
 mkdir -p /var/lib/lldpq/lldp-jobs
 mkdir -p /var/lib/lldpq/assets-jobs
+mkdir -p /var/lib/lldpq/triggers
 # Keep the persistent Provision state out of the broad runtime-state chown.
 # In particular, config-write recovery journals must retain their lldpq owner
 # across container recreation.  Do not recursively rewrite unrelated files in
@@ -847,12 +848,14 @@ chown lldpq:www-data /var/lib/lldpq/ai
 chown lldpq:www-data /var/lib/lldpq/provision-jobs
 chown lldpq:www-data /var/lib/lldpq/lldp-jobs
 chown lldpq:www-data /var/lib/lldpq/assets-jobs
+chown lldpq:www-data /var/lib/lldpq/triggers
 chmod 700 /var/lib/lldpq/sessions
 chmod 775 /var/lib/lldpq/upgrade-jobs
 chmod 2770 /var/lib/lldpq/ai
 chmod 2770 /var/lib/lldpq/provision-jobs
 chmod 2770 /var/lib/lldpq/lldp-jobs
 chmod 2770 /var/lib/lldpq/assets-jobs
+chmod 2770 /var/lib/lldpq/triggers
 
 _prepare_shared_lock_files /var/lib/lldpq/ssh-key.lock
 

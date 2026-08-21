@@ -3513,6 +3513,12 @@ def is_current_ztp_template(content):
     version = re.search(r'LLDPQ_ZTP_TEMPLATE_VERSION=(\d+)', content or '')
     if not version or int(version.group(1)) < 2:
         return False
+    # v3 templates additionally carry the selected image filename; v2 scripts
+    # (release-derived image URL only) stay valid so deployed ZTP keeps working.
+    if int(version.group(1)) >= 3 and not re.search(
+        r'^\s*CUMULUS_IMAGE_NAME=', content, re.MULTILINE
+    ):
+        return False
     required_functions = (
         'get_current_release',
         'is_valid_serial',
@@ -3579,6 +3585,52 @@ def ztp_script_static_setting(content, name):
     return assignments[0] if len(assignments) == 1 else ''
 
 
+def bind_ztp_image_name(content):
+    """Bind CUMULUS_IMAGE_NAME to the uploaded image matching the ZTP target.
+
+    Uploads keep the client filename verbatim (-mlnx-/custom suffixes), so v3
+    templates carry the selected filename instead of deriving the stock -mlx-
+    name from the release. Leaves the script untouched when it has no
+    CUMULUS_IMAGE_NAME setting (v2/hand-edited), when the current value
+    already names a matching uploaded image, or when the target release does
+    not identify exactly one uploaded image.
+    """
+    if not re.search(r'^\s*CUMULUS_IMAGE_NAME=', content or '', re.MULTILINE):
+        return content
+    target = ztp_script_static_setting(content, 'CUMULUS_TARGET_RELEASE')
+    if not target:
+        return content
+    current = ztp_script_static_setting(content, 'CUMULUS_IMAGE_NAME')
+    if (current and image_version_from_name(current) == target
+            and resolve_os_image_path(current)):
+        return content
+    matches = sorted({
+        img['name'] for img in list_os_image_objects()
+        if img.get('version') == target and valid_os_image_name(img['name'])
+    })
+    if len(matches) != 1:
+        return content
+    return re.sub(
+        r'^(\s*)CUMULUS_IMAGE_NAME=.*$',
+        lambda m: f'{m.group(1)}CUMULUS_IMAGE_NAME="{matches[0]}"',
+        content, count=1, flags=re.MULTILINE,
+    )
+
+
+def refresh_ztp_image_binding():
+    """Best-effort re-bind of the saved ZTP script after an image upload."""
+    try:
+        if not os.path.exists(ZTP_SCRIPT_FILE):
+            return
+        with open(ZTP_SCRIPT_FILE, 'r') as f:
+            content = f.read()
+        updated = bind_ztp_image_name(content)
+        if updated != content:
+            write_managed_text(ZTP_SCRIPT_FILE, updated, 0o775)
+    except Exception:
+        pass
+
+
 def action_save_ztp_script():
     try:
         data = json.loads(POST_DATA)
@@ -3598,6 +3650,7 @@ def action_save_ztp_script():
             'success': False, 'error_code': 'invalid_ztp_script',
             'error': f'ZTP script was not saved: {exc}',
         })
+    content = bind_ztp_image_name(content)
 
     filepath = ZTP_SCRIPT_FILE
 
@@ -7773,6 +7826,7 @@ def action_upload_os_image():
         os.chmod(stage, 0o664)
         final_size = publish_uploaded_image(stage, dest, filename, file_size)
         stage = None
+        refresh_ztp_image_binding()
         result_json({"success": True, "message": f"Uploaded {filename}", "size": final_size})
     except PermissionError:
         # Repair legacy upload-directory ownership, then retain the same staged
@@ -7817,6 +7871,7 @@ def action_upload_os_image():
             stage = None
         except Exception as exc:
             error_json(f"Write failed: {exc}")
+        refresh_ztp_image_binding()
         result_json({"success": True, "message": f"Uploaded {filename} (via sudo)",
                      "size": final_size})
     except Exception as e:

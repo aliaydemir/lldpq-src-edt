@@ -21,9 +21,12 @@ eval "$LLDPQ_CONFIG_ASSIGNMENTS" || \
     trigger_fatal "runtime configuration could not be applied"
 unset LLDPQ_CONFIG_ASSIGNMENTS
 LLDPQ_DIR="${LLDPQ_DIR:-$HOME/lldpq}"
-MONITOR_TRIGGER_FILE="${LLDPQ_MONITOR_TRIGGER_FILE:-/tmp/.monitor_web_trigger}"
-CONFIGS_TRIGGER_FILE="/tmp/.configs_web_trigger"
-TRANSCEIVER_TRIGGER_FILE="/tmp/.transceiver_web_trigger"
+# Web trigger tokens live outside sticky /tmp so an unprivileged local user
+# cannot pre-create the fixed filenames and pin the CGI's rename to EPERM.
+TRIGGER_TOKEN_DIR="/var/lib/lldpq/triggers"
+MONITOR_TRIGGER_FILE="${LLDPQ_MONITOR_TRIGGER_FILE:-$TRIGGER_TOKEN_DIR/.monitor_web_trigger}"
+CONFIGS_TRIGGER_FILE="$TRIGGER_TOKEN_DIR/.configs_web_trigger"
+TRANSCEIVER_TRIGGER_FILE="$TRIGGER_TOKEN_DIR/.transceiver_web_trigger"
 DAEMON_PID_FILE="${LLDPQ_TRIGGER_DAEMON_PID_FILE:-/tmp/lldp_trigger_daemon.pid}"
 DAEMON_LOCK_FILE="${LLDPQ_TRIGGER_DAEMON_LOCK_FILE:-/tmp/lldpq-trigger-daemon.lock}"
 CONFIGS_LOCK_FILE="/tmp/configs_running.lock"
@@ -301,6 +304,14 @@ ensure_assets_job_dir() {
     [[ -d "$ASSETS_JOB_DIR" && -r "$ASSETS_JOB_DIR" && -w "$ASSETS_JOB_DIR" ]]
 }
 
+# Mutual lldpq/www-data group membership makes 2770 sufficient for the CGIs
+# to write tokens here without a chown this unprivileged account cannot do.
+ensure_trigger_token_dir() {
+    mkdir -p -m 2770 "$TRIGGER_TOKEN_DIR" 2>/dev/null || return 1
+    chmod 2770 "$TRIGGER_TOKEN_DIR" 2>/dev/null || true
+    [[ -d "$TRIGGER_TOKEN_DIR" && -r "$TRIGGER_TOKEN_DIR" && -w "$TRIGGER_TOKEN_DIR" ]]
+}
+
 # Atomically publish one complete token-specific lifecycle snapshot.  Readers
 # therefore see either the previous state or the next state, never a partially
 # rewritten file while the daemon is transitioning queued/running/failure.
@@ -558,6 +569,12 @@ ensure_lldp_job_dir || \
     trigger_fatal "LLDP job directory is missing or not writable: $LLDP_JOB_DIR"
 ensure_assets_job_dir || \
     trigger_fatal "Assets job directory is missing or not writable: $ASSETS_JOB_DIR"
+# Defensive bootstrap for hosts upgraded before install.sh created the
+# directory. Non-fatal: a missing token directory only idles the on-demand
+# refresh buttons, never the job queues above.
+ensure_trigger_token_dir || \
+    printf 'lldpq-trigger: WARNING: trigger token directory unavailable: %s\n' \
+        "$TRIGGER_TOKEN_DIR" >&2
 
 # Hold one kernel lock for the daemon's entire lifetime.  A PID
 # check-then-write is not atomic and PID reuse can reject the real successor;
