@@ -1089,20 +1089,26 @@ PYTHON
 run_fabric_scan() {
     local lldpq_dir="${LLDPQ_DIR:-$HOME/lldpq}"
     local scan_script="$lldpq_dir/fabric-scan.sh"
-    
+    # Word-boundary + end anchor: match live scan processes only (web launch
+    # "bash /path/fabric-scan.sh", cron launch "bash ./fabric-scan.sh"), not
+    # the cron sh -c wrapper sleeping before its dispatch, editors, or the
+    # /tmp/fabric-scan.log readers a bare substring pattern would catch.
+    local scan_pattern='(^|[ /])fabric-scan\.sh$'
+
     if [[ ! -f "$scan_script" ]]; then
         echo '{"success": false, "error": "fabric-scan.sh not found"}'
         return
     fi
-    
+
     # Check if already running
-    if pgrep -f "fabric-scan.sh" > /dev/null; then
-        echo '{"success": false, "error": "Scan already in progress"}'
+    if pgrep -f "$scan_pattern" > /dev/null; then
+        echo '{"success": false, "started": false, "reason": "already-running", "error": "Scan already in progress"}'
         return
     fi
-    
+
     # Run scan in background. The explicit operator action overrides a
-    # configured SKIP_FABRIC_SCAN (the script self-gates on the toggle).
+    # configured SKIP_FABRIC_SCAN and the min-interval freshness gate (the
+    # script self-gates on both unless forced).
     if ! cd "$lldpq_dir"; then
         echo '{"success": false, "error": "LLDPq directory is unavailable"}'
         return
@@ -1110,21 +1116,30 @@ run_fabric_scan() {
     sudo -u "$LLDPQ_USER" nohup env LLDPQ_FABRIC_SCAN_FORCE=1 bash "$scan_script" > /tmp/fabric-scan.log 2>&1 &
     local scan_pid=$!
 
-    # Confirm the detached launch actually took before reporting success: the
-    # launcher (or the scan process it started) must still be alive shortly
-    # after backgrounding. ps works regardless of the sudo uid switch.
-    local started=false
+    # Watch the launcher briefly: alive after the probe window means the scan
+    # is underway; an early exit means sudo has already propagated
+    # fabric-scan.sh's status, so reap it instead of guessing from pgrep. ps
+    # works regardless of the sudo uid switch.
+    local started=true
     for _ in 1 2 3 4 5; do
         sleep 0.2
-        if ps -p "$scan_pid" > /dev/null 2>&1 || pgrep -f "fabric-scan.sh" > /dev/null 2>&1; then
-            started=true
+        if ! ps -p "$scan_pid" > /dev/null 2>&1; then
+            started=false
             break
         fi
     done
-    if [[ "$started" == true ]]; then
-        echo '{"success": true, "message": "Fabric scan started"}'
+    local scan_rc=0
+    if [[ "$started" != true ]]; then
+        wait "$scan_pid" || scan_rc=$?
+    fi
+    if [[ "$started" == true || "$scan_rc" -eq 0 ]]; then
+        echo '{"success": true, "started": true, "message": "Fabric scan started"}'
+    elif [[ "$scan_rc" -eq 75 ]]; then
+        # fabric-scan.sh exits 75 when the pipeline lock or another scan is
+        # active: a self-gated no-op, not a launch failure.
+        echo '{"success": false, "started": false, "reason": "busy", "error": "Fabric scan skipped: LLDPq collection or another scan is currently running; try again in a few minutes"}'
     else
-        echo '{"success": false, "error": "Fabric scan failed to launch; check /tmp/fabric-scan.log on the server"}'
+        echo '{"success": false, "started": false, "reason": "launch-failed", "error": "Fabric scan failed to launch; check /tmp/fabric-scan.log on the server"}'
     fi
 }
 

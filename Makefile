@@ -1,5 +1,6 @@
 # LLDPq test entrypoint. Test deps: pytest, pyyaml, requests, jinja2
 # (install them in whatever python3 environment is on PATH; no venv is assumed).
+# The node test legs use the built-in node:test runner and require Node >= 18.
 
 .PHONY: test lint
 

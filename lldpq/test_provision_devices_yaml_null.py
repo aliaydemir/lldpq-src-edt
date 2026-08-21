@@ -416,10 +416,39 @@ class LldpqConfDuplicateHealTests(unittest.TestCase):
 ZTP_IMAGE_NAMES = (
     'is_current_ztp_template', 'ztp_script_static_setting',
     'image_version_from_name', 'valid_os_image_name', 'resolve_os_image_path',
-    'list_os_image_objects', 'bind_ztp_image_name',
+    'list_os_image_objects', 'rewrite_ztp_image_name', 'bind_ztp_image_name',
+    'unbind_ztp_image_name',
 )
 
 ZTP_TEMPLATE = (ROOT / "html" / "cumulus-ztp.sh").read_text(encoding="utf-8")
+PROVISION_HTML = (ROOT / "html" / "provision.html").read_text(encoding="utf-8")
+
+
+def render_ui_ztp_template(os_version, pw, ip, key_var):
+    """Evaluate generateZTPTemplate's template literal the way JS would."""
+    match = re.search(
+        r"function generateZTPTemplate\(os, pw, ip, key\) \{\n"
+        r".*?return `(.*?)`;\n\}",
+        PROVISION_HTML, re.DOTALL)
+    assert match, "generateZTPTemplate template literal not found"
+    literal = match.group(1)
+    values = {'os': os_version, 'pw': pw, 'ip': ip, 'keyVar': key_var}
+    rendered = []
+    i = 0
+    while i < len(literal):
+        char = literal[i]
+        if char == '\\':
+            # JS identity escapes: \\ -> \, \$ -> $, \` -> `.
+            rendered.append(literal[i + 1])
+            i += 2
+        elif char == '$' and literal[i + 1] == '{':
+            end = literal.index('}', i)
+            rendered.append(values[literal[i + 2:end]])
+            i = end + 1
+        else:
+            rendered.append(char)
+            i += 1
+    return ''.join(rendered)
 
 
 class ZtpImageNameBindingTests(unittest.TestCase):
@@ -431,7 +460,11 @@ class ZtpImageNameBindingTests(unittest.TestCase):
     The v3 template carries CUMULUS_IMAGE_NAME (empty falls back to the old
     derived name for hand-edited scripts) and the API binds it to the single
     uploaded image matching the target release.  Deployed v2 scripts must
-    stay valid to the template validator.
+    stay valid to the template validator.  Deleting the bound image drops
+    the script back to the legacy fallback so ZTP does not 404 against a
+    missing file, and the UI's embedded template must stay in step with
+    the shipped cumulus-ztp.sh so an upgrade through the editor does not
+    regenerate a pre-image-name script.
     """
 
     def setUp(self):
@@ -441,10 +474,18 @@ class ZtpImageNameBindingTests(unittest.TestCase):
         self.web_root = Path(self._tmp.name) / "web"
         self.upload_dir.mkdir()
         self.web_root.mkdir()
+        self.ztp_script = Path(self._tmp.name) / "cumulus-ztp.sh"
+
+        def write_managed_text(path, content, mode=0o664):
+            with open(path, 'w') as handle:
+                handle.write(content)
+
         namespace = {
             "os": os, "re": re, "shlex": shlex,
             "PROVISION_UPLOAD_DIR": str(self.upload_dir),
             "WEB_ROOT": str(self.web_root),
+            "ZTP_SCRIPT_FILE": str(self.ztp_script),
+            "write_managed_text": write_managed_text,
         }
         for name in ZTP_IMAGE_NAMES:
             exec(compile(extract_source(name), "provision-api.sh", "exec"),
@@ -561,6 +602,68 @@ class ZtpImageNameBindingTests(unittest.TestCase):
         self.assertEqual(
             self.api['ztp_script_static_setting'](bound, 'CUMULUS_IMAGE_NAME'),
             "cumulus-linux-5.9.2-mlnx-amd64.bin")
+
+    # ---------- UI-embedded template ----------
+
+    def test_ui_template_matches_the_shipped_settings_block(self):
+        # An upgrade through the editor regenerates from the UI's embedded
+        # template; a stale v2 copy would silently drop CUMULUS_IMAGE_NAME.
+        rendered = render_ui_ztp_template(
+            "5.14.0", "Nvidia@123", "192.168.100.200", 'KEY=""')
+        shipped = self.filled_template(target="5.14.0")
+        block = re.compile(
+            r'^    IMAGE_SERVER_HOSTNAME=.*?^    ZTP_URL=[^\n]*\n',
+            re.MULTILINE | re.DOTALL)
+        rendered_block = block.search(rendered)
+        shipped_block = block.search(shipped)
+        self.assertIsNotNone(rendered_block)
+        self.assertIsNotNone(shipped_block)
+        self.assertEqual(rendered_block.group(0), shipped_block.group(0))
+        self.assertIn('# LLDPQ_ZTP_TEMPLATE_VERSION=3\n', rendered)
+        self.assertIn('    CUMULUS_IMAGE_NAME=""\n', rendered)
+
+    def test_ui_template_passes_the_server_side_validator(self):
+        rendered = render_ui_ztp_template(
+            "5.14.0", "Nvidia@123", "192.168.100.200", 'KEY=""')
+        self.assertTrue(self.api['is_current_ztp_template'](rendered))
+        check = subprocess.run(["bash", "-n"], input=rendered,
+                               capture_output=True, text=True)
+        self.assertEqual(check.returncode, 0, check.stderr)
+
+    def test_ui_upgrade_gate_requires_version_3(self):
+        # ztpTemplateNeedsUpgrade compares against this constant, so a v2
+        # script must be offered the upgrade (version < 3).
+        self.assertIn('const ZTP_TEMPLATE_VERSION = 3;', PROVISION_HTML)
+
+    # ---------- delete unbind ----------
+
+    def test_delete_unbinds_a_v3_script_bound_to_the_deleted_image(self):
+        self.ztp_script.write_text(self.filled_template(
+            "5.9.2", "cumulus-linux-5.9.2-mlnx-amd64.bin"), encoding="utf-8")
+        self.assertTrue(self.api['unbind_ztp_image_name'](
+            "cumulus-linux-5.9.2-mlnx-amd64.bin"))
+        content = self.ztp_script.read_text(encoding="utf-8")
+        self.assertIn('    CUMULUS_IMAGE_NAME=""\n', content)
+        self.assertTrue(self.api['is_current_ztp_template'](content))
+
+    def test_delete_of_an_unrelated_image_leaves_the_binding(self):
+        bound = self.filled_template(
+            "5.9.2", "cumulus-linux-5.9.2-mlnx-amd64.bin")
+        self.ztp_script.write_text(bound, encoding="utf-8")
+        self.assertFalse(self.api['unbind_ztp_image_name'](
+            "cumulus-linux-5.10.1-mlnx-amd64.bin"))
+        self.assertEqual(self.ztp_script.read_text(encoding="utf-8"), bound)
+
+    def test_delete_leaves_a_v2_script_untouched(self):
+        content = self.v2_shaped("5.9.2")
+        self.ztp_script.write_text(content, encoding="utf-8")
+        self.assertFalse(self.api['unbind_ztp_image_name'](
+            "cumulus-linux-5.9.2-mlnx-amd64.bin"))
+        self.assertEqual(self.ztp_script.read_text(encoding="utf-8"), content)
+
+    def test_delete_action_invokes_the_unbind_helper(self):
+        self.assertIn('unbind_ztp_image_name(name)',
+                      extract_source('action_delete_os_image'))
 
 
 if __name__ == "__main__":

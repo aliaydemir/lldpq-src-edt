@@ -13,6 +13,7 @@ if [[ -x /usr/local/bin/lldpq-config ]]; then
     eval "$(/usr/local/bin/lldpq-config 2>/dev/null)" || true
 fi
 WEB_ROOT="${WEB_ROOT:-/var/www/html}"
+LLDPQ_DIR="${LLDPQ_DIR:-$SCRIPT_DIR}"
 
 source "$SCRIPT_DIR/load_devices.sh"
 if ! load_devices "$SCRIPT_DIR/parse_devices.py"; then
@@ -28,8 +29,10 @@ RESULT_DIR="$SCRIPT_DIR/monitor-results"
 TRANSCEIVER_DIR="$RESULT_DIR/transceiver-data"
 INVENTORY_JSON="$RESULT_DIR/transceiver_inventory.json"
 WEB_MONITOR_DIR="$WEB_ROOT/monitor-results"
-LOCK_FILE="$RESULT_DIR/collect-transceiver-fw.lock"
-LAST_RUN_FILE="$RESULT_DIR/.collect-transceiver-fw-last-run"
+# Lock and last-run gate live at the LLDPQ_DIR root: monitor.sh publishes
+# monitor-results with cp -a, so anything in that tree leaks into the web tree.
+LOCK_FILE="$LLDPQ_DIR/.collect-transceiver-fw.lock"
+LAST_RUN_FILE="$LLDPQ_DIR/.collect-transceiver-fw-last-run"
 TRANSCEIVER_FW_MIN_INTERVAL="${TRANSCEIVER_FW_MIN_INTERVAL:-1800}"
 case "$TRANSCEIVER_FW_MIN_INTERVAL" in
     ''|*[!0-9]*) TRANSCEIVER_FW_MIN_INTERVAL=1800 ;;
@@ -45,6 +48,15 @@ if ! flock -n 9; then
     echo "ERROR: collect-transceiver-fw.sh is already running" >&2
     exit 1
 fi
+
+# Pre-relocation runs kept the lock and last-run gate inside monitor-results.
+# Adopt the old timestamp so an upgrade does not reset the min-interval gate,
+# then drop the old files best-effort so they stop leaking into the web tree.
+OLD_LAST_RUN_FILE="$RESULT_DIR/.collect-transceiver-fw-last-run"
+if [ -f "$OLD_LAST_RUN_FILE" ] && [ ! -f "$LAST_RUN_FILE" ]; then
+    cp "$OLD_LAST_RUN_FILE" "$LAST_RUN_FILE" 2>/dev/null || true
+fi
+rm -f "$OLD_LAST_RUN_FILE" "$RESULT_DIR/collect-transceiver-fw.lock" 2>/dev/null || true
 
 now=$(date +%s)
 last_run=0

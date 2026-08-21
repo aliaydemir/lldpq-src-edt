@@ -156,7 +156,15 @@ LLDPQ_REF_SCAN_DEF='def _iter_inventory_var_files(_inventory_base, _include_grou
     import glob as _rglob
     import os as _ros
     _hv_dir = _ros.path.join(_inventory_base, "host_vars")
-    _files = _rglob.glob(_ros.path.join(_hv_dir, "*.yaml")) + _rglob.glob(_ros.path.join(_hv_dir, "*.yml"))
+    # a host may carry both extensions; .yaml wins when both exist
+    _files = []
+    _seen_stems = set()
+    for _hp in _rglob.glob(_ros.path.join(_hv_dir, "*.yaml")) + _rglob.glob(_ros.path.join(_hv_dir, "*.yml")):
+        _hstem = _ros.path.splitext(_ros.path.basename(_hp))[0]
+        if _hstem in _seen_stems:
+            continue
+        _seen_stems.add(_hstem)
+        _files.append(_hp)
     if _include_group_vars:
         _files += _rglob.glob(_ros.path.join(_inventory_base, "group_vars", "**", "*.yaml"), recursive=True)
         _files += _rglob.glob(_ros.path.join(_inventory_base, "group_vars", "**", "*.yml"), recursive=True)
@@ -840,11 +848,16 @@ ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
 host_vars_dir = os.path.join(ansible_dir, 'inventory', 'host_vars')
 
 # Collect all unique VRFs from all devices
+# (host_vars may use either extension; .yaml wins when both exist)
 vrfs = {}
 parse_errors = {}
+seen_hosts = set()
 
 for host_file in glob.glob(os.path.join(host_vars_dir, '*.yaml')) + glob.glob(os.path.join(host_vars_dir, '*.yml')):
     hostname = os.path.basename(host_file).rsplit('.', 1)[0]
+    if hostname in seen_hosts:
+        continue
+    seen_hosts.add(hostname)
     
     try:
         with open(host_file, 'r') as f:
@@ -1345,9 +1358,15 @@ if 'vrfs' not in host_data:
     host_data['vrfs'] = {}
 
 # Find VRF configs from other devices
+# (host_vars may use either extension; .yaml wins when both exist)
 all_vrf_configs = {}
 _harvest_errors = {}
+_seen_hosts = set()
 for hf in glob.glob(os.path.join(host_vars_dir, '*.yaml')) + glob.glob(os.path.join(host_vars_dir, '*.yml')):
+    _stem = os.path.splitext(os.path.basename(hf))[0]
+    if _stem in _seen_hosts:
+        continue
+    _seen_hosts.add(_stem)
     try:
         with open(hf, 'r') as f:
             hd = yaml.load(f) or {}
@@ -1625,7 +1644,7 @@ for host_file in glob.glob(os.path.join(host_vars_dir, '*.yaml')) + glob.glob(os
             except:
                 if os.path.exists(_tmp_path): os.unlink(_tmp_path)
                 raise
-            hostname = os.path.basename(host_file).replace('.yaml', '').replace('.yml', '')
+            hostname = os.path.basename(host_file).rsplit('.', 1)[0]
             devices_updated.append(hostname)
     except Exception as e:
         file_errors[os.path.basename(host_file)] = str(e)
@@ -1707,12 +1726,17 @@ ansible_dir = os.environ.get('ANSIBLE_DIR', os.path.expanduser('~/ansible'))
 host_vars_dir = os.path.join(ansible_dir, 'inventory', 'host_vars')
 
 # Collect all VRFs from all devices
+# (host_vars may use either extension; .yaml wins when both exist)
 vrfs = {}
 unique_devices = set()
 parse_errors = {}
+seen_hosts = set()
 
 for host_file in glob.glob(os.path.join(host_vars_dir, '*.yaml')) + glob.glob(os.path.join(host_vars_dir, '*.yml')):
     hostname = os.path.basename(host_file).rsplit('.', 1)[0]
+    if hostname in seen_hosts:
+        continue
+    seen_hosts.add(hostname)
     
     try:
         with open(host_file, 'r') as f:
@@ -1780,10 +1804,15 @@ for vlan_name, vlan_data in vlan_profiles.items():
 vlan_device_map = {vlan_name: [] for vlan_name in vlan_profiles.keys()}
 unique_devices = set()
 parse_errors = {}
+seen_hosts = set()
 
 # Scan all host_vars files for vlan_templates
+# (host_vars may use either extension; .yaml wins when both exist)
 for host_file in glob.glob(os.path.join(host_vars_dir, '*.yaml')) + glob.glob(os.path.join(host_vars_dir, '*.yml')):
     hostname = os.path.basename(host_file).rsplit('.', 1)[0]
+    if hostname in seen_hosts:
+        continue
+    seen_hosts.add(hostname)
     
     try:
         with open(host_file, 'r') as f:
@@ -1867,10 +1896,16 @@ if os.path.exists(vlan_profiles_file):
 ports = []
 devices = set()
 parse_errors = {}
+# (host_vars may use either extension; .yaml wins when both exist,
+# because "foo.yaml" sorts before "foo.yml")
+seen_hosts = set()
 
 for host_file in sorted(glob.glob(os.path.join(host_vars_dir, '*.yaml')) +
                         glob.glob(os.path.join(host_vars_dir, '*.yml'))):
     hostname = os.path.basename(host_file).rsplit('.', 1)[0]
+    if hostname in seen_hosts:
+        continue
+    seen_hosts.add(hostname)
     try:
         with open(host_file, 'r') as f:
             host_data = yaml.load(f, Loader=yaml.CSafeLoader) or {}

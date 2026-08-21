@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Contracts for search-api.sh audit fixes (query parsing, MAC bond ports,
-ARP remote exit status, route table ECMP accounting) and the related UI
-wiring in search.html and tracepath.html."""
+ARP remote exit status, route table ECMP accounting, run-scan launch
+truthfulness) and the related UI wiring in search.html and tracepath.html."""
 
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -366,6 +367,93 @@ class SearchApiFixesTests(unittest.TestCase):
             '"detect-vrfs")',
         ):
             self.assertNotIn(action, self.api)
+
+    # ── run-scan launch truthfulness ──
+
+    def _run_scan_launcher(self, *, pgrep_rc=1, ps_rc=1, launch_rc=0):
+        """Run run_fabric_scan with stubbed pgrep/ps/sudo/sleep.
+
+        launch_rc is what the backgrounded sudo stub exits with, i.e. the
+        status fabric-scan.sh would propagate (75 = self-gated on a lock).
+        """
+        func = extract_function(self.api, "run_fabric_scan")
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "fabric-scan.sh").write_text("#!/bin/bash\n", encoding="utf-8")
+            script = (
+                f"LLDPQ_DIR={shlex.quote(tmp)}\n"
+                "LLDPQ_USER=nobody\n"
+                f"pgrep() {{ return {pgrep_rc}; }}\n"
+                f"ps() {{ return {ps_rc}; }}\n"
+                "sleep() { :; }\n"
+                f"sudo() {{ return {launch_rc}; }}\n"
+                + func
+                + "\nrun_fabric_scan\n"
+            )
+            result = subprocess.run(
+                ["bash", "-c", script], capture_output=True, text=True, check=False
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(result.stdout)
+
+    def test_run_scan_reports_self_gated_scan_as_busy_not_started(self):
+        # fabric-scan.sh exits 75 when the pipeline lock or another scan is
+        # held; that is a no-op, not a launch failure.
+        data = self._run_scan_launcher(launch_rc=75)
+        self.assertFalse(data["success"])
+        self.assertIs(data["started"], False)
+        self.assertEqual(data["reason"], "busy")
+        self.assertNotIn("failed to launch", data["error"])
+
+    def test_run_scan_reports_real_launch_failure(self):
+        data = self._run_scan_launcher(launch_rc=1)
+        self.assertFalse(data["success"])
+        self.assertIs(data["started"], False)
+        self.assertEqual(data["reason"], "launch-failed")
+
+    def test_run_scan_reports_live_launch_as_started(self):
+        data = self._run_scan_launcher(ps_rc=0)
+        self.assertTrue(data["success"])
+        self.assertIs(data["started"], True)
+
+    def test_run_scan_instant_clean_exit_is_not_a_failure(self):
+        data = self._run_scan_launcher(launch_rc=0)
+        self.assertTrue(data["success"])
+        self.assertIs(data["started"], True)
+
+    def test_run_scan_already_running_branch_reports_reason(self):
+        data = self._run_scan_launcher(pgrep_rc=0)
+        self.assertFalse(data["success"])
+        self.assertIs(data["started"], False)
+        self.assertEqual(data["reason"], "already-running")
+
+    def _run_scan_pgrep_pattern(self):
+        func = extract_function(self.api, "run_fabric_scan")
+        marker = "local scan_pattern='"
+        start = func.index(marker) + len(marker)
+        return func[start:func.index("'", start)]
+
+    def test_run_scan_uses_anchored_pgrep_pattern(self):
+        func = extract_function(self.api, "run_fabric_scan")
+        self.assertIn('pgrep -f "$scan_pattern"', func)
+        self.assertNotIn('pgrep -f "fabric-scan.sh"', func)
+
+    def test_run_scan_pgrep_pattern_matches_only_live_scan_processes(self):
+        pattern = self._run_scan_pgrep_pattern()
+        for cmdline in (
+            "bash /opt/lldpq/fabric-scan.sh",
+            "bash ./fabric-scan.sh",
+            "sudo -u lldpq nohup env LLDPQ_FABRIC_SCAN_FORCE=1 bash /opt/lldpq/fabric-scan.sh",
+        ):
+            self.assertIsNotNone(re.search(pattern, cmdline), cmdline)
+        for cmdline in (
+            # cron's sh -c wrapper sleeps 30s before dispatch; matching it
+            # made run-scan claim "already in progress" with no scan running.
+            "/bin/sh -c /bin/sleep 30 && cd /opt/lldpq && ./fabric-scan.sh >/dev/null 2>&1",
+            "tail -f /tmp/fabric-scan.log",
+            "vi /opt/lldpq/fabric-scan.sh.bak",
+            "bash /opt/lldpq/fabric-scanXsh",
+        ):
+            self.assertIsNone(re.search(pattern, cmdline), cmdline)
 
     # ── UI contracts ──
 

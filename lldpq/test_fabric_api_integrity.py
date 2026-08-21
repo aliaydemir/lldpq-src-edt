@@ -2,8 +2,9 @@
 """Regression tests for fabric-api.sh backend integrity fixes.
 
 Covers heredoc-embedded python bodies and source contracts:
-- .yml host_vars coverage: list-vtep-devices and the subnet-leak scans must
-  see *.yml files (and process a host only once when both extensions exist).
+- .yml host_vars coverage: list-vtep-devices, the subnet-leak scans and the
+  get-available-vrfs / get-vrf-report enumerations must see *.yml files (and
+  process a host only once when both extensions exist).
 - create_port_profile: a non-numeric access_vlan must produce a JSON error
   body instead of an empty CGI response.
 - list-external-peers: a null-valued interface stanza (``swp10:``) must not
@@ -66,6 +67,10 @@ LIST_EXTERNAL_PEERS_BODY = _heredoc_body(
     "    list-external-peers)", opener="python3 << 'PYTHON'\n")
 GET_ALL_LEAKED_SUBNETS_BODY = _heredoc_body(
     '"get-all-leaked-subnets")', opener="python3 << 'PYTHON'\n")
+GET_AVAILABLE_VRFS_BODY = _heredoc_body(
+    "get_available_vrfs() {", opener="python3 << 'PYTHON'\n")
+GET_VRF_REPORT_BODY = _heredoc_body(
+    "get_vrf_report() {", opener="python3 << 'PYTHON'\n")
 CREATE_PORT_PROFILE_BODY = _heredoc_body("create_port_profile() {")
 
 
@@ -127,6 +132,43 @@ class YmlHostVarsCoverageTest(unittest.TestCase):
         self.assertTrue(result.get("success"), result)
         hostnames = [d["hostname"] for d in result["devices"]]
         self.assertEqual(hostnames.count("dev-both"), 1, result)
+
+    def test_both_extension_device_counted_once_by_get_available_vrfs(self):
+        # .yaml is first-seen and must win over a stale .yml twin
+        (self.host_vars / "dev-both.yaml").write_text(textwrap.dedent("""\
+            vrfs:
+              BLUE:
+                l3vni: 4001
+        """))
+        (self.host_vars / "dev-both.yml").write_text(textwrap.dedent("""\
+            vrfs:
+              BLUE:
+                l3vni: 9999
+        """))
+        result = run_action(GET_AVAILABLE_VRFS_BODY, {}, self.ansible_dir)
+        self.assertTrue(result.get("success"), result)
+        blue = next(v for v in result["vrfs"] if v["name"] == "BLUE")
+        self.assertEqual(blue["device_count"], 1, result)
+        self.assertEqual(blue["devices"], ["dev-both"], result)
+        self.assertEqual(blue["l3vni"], 4001, result)
+
+    def test_both_extension_device_listed_once_by_get_vrf_report(self):
+        (self.host_vars / "dev-both.yaml").write_text(textwrap.dedent("""\
+            vrfs:
+              BLUE:
+                l3vni: 4001
+        """))
+        (self.host_vars / "dev-both.yml").write_text(textwrap.dedent("""\
+            vrfs:
+              BLUE:
+                l3vni: 9999
+        """))
+        result = run_action(GET_VRF_REPORT_BODY, {}, self.ansible_dir)
+        self.assertTrue(result.get("success"), result)
+        blue = result["vrfs"]["BLUE"]
+        self.assertEqual(blue["devices"], ["dev-both"], result)
+        self.assertEqual(blue["l3vni"], 4001, result)
+        self.assertEqual(result["device_count"], 1, result)
 
     def test_yml_only_device_seen_by_leak_scan(self):
         (self.group_all / "bgp_profiles.yaml").write_text(textwrap.dedent("""\

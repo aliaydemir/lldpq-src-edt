@@ -672,6 +672,42 @@ class TransceiverFwStagingContractTests(unittest.TestCase):
         )
         self.assertNotIn('echo "$now" > "$LAST_RUN_FILE"', self.source)
 
+    def test_lock_and_last_run_live_outside_monitor_results(self):
+        # The flock inode and min-interval gate live at the LLDPQ_DIR root:
+        # a lock or dotfile inside monitor-results gets cp -a'd into the
+        # web-served tree by every monitor.sh publish.
+        self.assertIn(
+            'LOCK_FILE="$LLDPQ_DIR/.collect-transceiver-fw.lock"', self.source
+        )
+        self.assertIn(
+            'LAST_RUN_FILE="$LLDPQ_DIR/.collect-transceiver-fw-last-run"',
+            self.source,
+        )
+        # flock semantics are unchanged: same fd, non-blocking.
+        self.assertIn('exec 9>"$LOCK_FILE"', self.source)
+        self.assertIn("flock -n 9", self.source)
+        # No live lock/last-run assignment may point back under RESULT_DIR;
+        # the migration block only reads/removes the old files there.
+        self.assertNotIn('LOCK_FILE="$RESULT_DIR', self.source)
+        self.assertNotIn('\nLAST_RUN_FILE="$RESULT_DIR', self.source)
+
+    def test_old_monitor_results_state_is_adopted_then_removed(self):
+        # Upgrade path: adopt the pre-relocation timestamp so the
+        # min-interval gate is not reset, then drop the old files.
+        self.assertIn(
+            'OLD_LAST_RUN_FILE="$RESULT_DIR/.collect-transceiver-fw-last-run"',
+            self.source,
+        )
+        self.assertIn(
+            '[ -f "$OLD_LAST_RUN_FILE" ] && [ ! -f "$LAST_RUN_FILE" ]',
+            self.source,
+        )
+        self.assertIn(
+            'rm -f "$OLD_LAST_RUN_FILE"'
+            ' "$RESULT_DIR/collect-transceiver-fw.lock"',
+            self.source,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

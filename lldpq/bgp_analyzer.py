@@ -270,6 +270,10 @@ class BGPAnalyzer:
             self.thresholds["bgp_flaps_critical"],
             self.thresholds["bgp_flaps_warning"],
         )
+        self.thresholds["bgp_update_storm_critical"] = max(
+            self.thresholds["bgp_update_storm_critical"],
+            self.thresholds["bgp_update_storm_warning"],
+        )
 
     def load_bgp_history(self):
         """Load historical BGP data"""

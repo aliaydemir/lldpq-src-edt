@@ -94,7 +94,7 @@ RUN MONACO_VERSION="0.45.0" && TMP_DIR=$(mktemp -d) && \
     mkdir -p /var/www/html/monaco && \
     cp -r "$TMP_DIR/monaco/min/vs" /var/www/html/monaco/ && \
     rm -rf "$TMP_DIR" && \
-    curl -sL "https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js" \
+    curl -fsSL "https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js" \
         -o /var/www/html/css/js-yaml.min.js
 
 # Copy lldpq scripts

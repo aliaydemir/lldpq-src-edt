@@ -3585,6 +3585,15 @@ def ztp_script_static_setting(content, name):
     return assignments[0] if len(assignments) == 1 else ''
 
 
+def rewrite_ztp_image_name(content, image_name):
+    """Rewrite the first CUMULUS_IMAGE_NAME assignment to the given value."""
+    return re.sub(
+        r'^(\s*)CUMULUS_IMAGE_NAME=.*$',
+        lambda m: f'{m.group(1)}CUMULUS_IMAGE_NAME="{image_name}"',
+        content, count=1, flags=re.MULTILINE,
+    )
+
+
 def bind_ztp_image_name(content):
     """Bind CUMULUS_IMAGE_NAME to the uploaded image matching the ZTP target.
 
@@ -3610,11 +3619,7 @@ def bind_ztp_image_name(content):
     })
     if len(matches) != 1:
         return content
-    return re.sub(
-        r'^(\s*)CUMULUS_IMAGE_NAME=.*$',
-        lambda m: f'{m.group(1)}CUMULUS_IMAGE_NAME="{matches[0]}"',
-        content, count=1, flags=re.MULTILINE,
-    )
+    return rewrite_ztp_image_name(content, matches[0])
 
 
 def refresh_ztp_image_binding():
@@ -3629,6 +3634,30 @@ def refresh_ztp_image_binding():
             write_managed_text(ZTP_SCRIPT_FILE, updated, 0o775)
     except Exception:
         pass
+
+
+def unbind_ztp_image_name(deleted_name):
+    """Best-effort unbind of the saved ZTP script after an image delete.
+
+    A v3 script still bound to the deleted filename would 404 at install
+    time, so drop it back to the empty legacy release-derived fallback
+    until a new upload re-binds it.
+    """
+    try:
+        if not os.path.exists(ZTP_SCRIPT_FILE):
+            return False
+        with open(ZTP_SCRIPT_FILE, 'r') as f:
+            content = f.read()
+        if ztp_script_static_setting(
+                content, 'CUMULUS_IMAGE_NAME') != deleted_name:
+            return False
+        updated = rewrite_ztp_image_name(content, '')
+        if updated == content:
+            return False
+        write_managed_text(ZTP_SCRIPT_FILE, updated, 0o775)
+        return True
+    except Exception:
+        return False
 
 
 def action_save_ztp_script():
@@ -7938,8 +7967,14 @@ def action_delete_os_image():
         root_alias = os.path.join(WEB_ROOT, alias)
         if os.path.islink(root_alias) and os.path.basename(os.readlink(root_alias)) == name:
             remove_path(root_alias)
-    
-    result_json({"success": True, "message": f"Deleted {name}"})
+
+    payload = {"success": True, "message": f"Deleted {name}"}
+    if unbind_ztp_image_name(name):
+        payload["ztp_note"] = (
+            'ZTP script was bound to the deleted image; reset to the '
+            'release-derived default filename'
+        )
+    result_json(payload)
 
 # ======================== SERIAL MAPPING ========================
 

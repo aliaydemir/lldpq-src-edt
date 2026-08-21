@@ -385,6 +385,24 @@ class BgpFlapDetectionTests(unittest.TestCase):
         self.assertIsNone(analyzer.flap_severity(4))
         self.assertEqual("critical", analyzer.flap_severity(5))
 
+    def test_inverted_storm_thresholds_are_clamped(self):
+        # storm_severity checks critical first: an inverted config
+        # (warning > critical) would silently kill the warning tier.
+        config = Path(self.tmp.name) / "notifications.yaml"
+        config.write_text(
+            "thresholds:\n  network:\n"
+            "    bgp_update_storm_warning: 80\n"
+            "    bgp_update_storm_critical: 40\n",
+            encoding="utf-8")
+        with mock.patch.dict(
+            "os.environ", {"LLDPQ_NOTIFICATIONS_FILE": str(config)}
+        ):
+            analyzer = BGPAnalyzer(self.tmp.name)
+        self.assertEqual(80, analyzer.thresholds["bgp_update_storm_warning"])
+        self.assertEqual(80, analyzer.thresholds["bgp_update_storm_critical"])
+        self.assertIsNone(analyzer.storm_severity(79))
+        self.assertEqual("critical", analyzer.storm_severity(80))
+
 
 class BgpStaleRecoveryCarryoverTests(unittest.TestCase):
     """down_since must survive a stale/missed collection cycle.

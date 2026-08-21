@@ -53,6 +53,25 @@ def offline_script_literal():
     return candidates[0]
 
 
+def git_update_script_literal():
+    """Return the evaluated git-update SCRIPT string (the generated
+    update-run.sh text for action=update, marker-substitution aside)."""
+    candidates = []
+    for node in ast.walk(ast.parse(embedded_python_source())):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(t, ast.Name) and t.id == "SCRIPT" for t in node.targets):
+            continue
+        value = ast.literal_eval(node.value)
+        if isinstance(value, str) and "git pull" in value:
+            candidates.append(value)
+    if len(candidates) != 1:
+        raise AssertionError(
+            "expected exactly one git-update SCRIPT literal, found %d" % len(candidates)
+        )
+    return candidates[0]
+
+
 def pysafe_body(script):
     lines = script.splitlines()
     start = next(
@@ -75,6 +94,21 @@ class OfflineUpdateScriptGenerationTests(unittest.TestCase):
     def test_unsafe_name_checks_survive_escape_processing(self):
         # The generated extractor must keep both checks as source text.
         self.assertIn(r'"\\" in name or "\x00" in name', self.script)
+
+    def test_printf_newlines_stay_escape_sequences(self):
+        # A real newline inside the printf format is benign for output but
+        # means the source forgot the extra escaping layer.
+        self.assertIn(r"printf '%s %s %s\n'", self.script)
+        self.assertIn(r"printf '%s %s\n'", self.script)
+        self.assertIn(r"printf '__LLDPQ_DONE__:%s\n'", self.script)
+
+
+class GitUpdateScriptGenerationTests(unittest.TestCase):
+    """The action=update (git pull) SCRIPT is a non-raw literal like the
+    offline one, so its printf escapes must be doubled the same way."""
+
+    def setUp(self):
+        self.script = git_update_script_literal()
 
     def test_printf_newlines_stay_escape_sequences(self):
         # A real newline inside the printf format is benign for output but

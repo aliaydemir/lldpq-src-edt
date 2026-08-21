@@ -6365,6 +6365,9 @@ if [[ "$INSTALL_MODE" == "fresh" ]]; then
             rm -f "$_compose_tmp"
         fi
 
+        # Serialize with Setup saves: the web UI and cron are already live at
+        # this point in a fresh install; see the --enable-telemetry note.
+        acquire_update_config_lock || exit 1
         if grep -q "^TELEMETRY_ENABLED=" /etc/lldpq.conf 2>/dev/null; then
             sudo sed -i 's/^TELEMETRY_ENABLED=.*/TELEMETRY_ENABLED=true/' /etc/lldpq.conf
         else
@@ -6374,6 +6377,7 @@ if [[ "$INSTALL_MODE" == "fresh" ]]; then
         if ! grep -q "^PROMETHEUS_URL=" /etc/lldpq.conf 2>/dev/null; then
             echo "PROMETHEUS_URL=http://localhost:9090" | sudo tee -a /etc/lldpq.conf > /dev/null
         fi
+        release_update_config_lock
 
         echo ""
         echo "  Telemetry support enabled!"
@@ -6422,11 +6426,14 @@ if [[ "$INSTALL_MODE" == "fresh" ]]; then
     else
         echo "  Telemetry skipped. Enable later with: ./install.sh --enable-telemetry"
 
+        # Serialize with Setup saves; see the matching --enable-telemetry note.
+        acquire_update_config_lock || exit 1
         if grep -q "^TELEMETRY_ENABLED=" /etc/lldpq.conf 2>/dev/null; then
             sudo sed -i 's/^TELEMETRY_ENABLED=.*/TELEMETRY_ENABLED=false/' /etc/lldpq.conf
         else
             echo "TELEMETRY_ENABLED=false" | sudo tee -a /etc/lldpq.conf > /dev/null
         fi
+        release_update_config_lock
     fi
 
     step "SSH Key Setup Required"
