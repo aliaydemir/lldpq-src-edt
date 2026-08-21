@@ -2462,7 +2462,10 @@ def generate_hardware_html(collection_unavailable=False):
                 const table = document.getElementById('hardware-table');
                 const tbody = table.querySelector('tbody');
                 const rows = tbody.querySelectorAll('tr.hw-row');
-                const visibleCount = Array.from(rows).filter(r => r.style.display !== 'none').length;
+                // table-filter.js funnels hide rows via the tf-hidden class, never via
+                // style.display; the export must honor both so it matches the visible table.
+                const visibleCount = Array.from(rows).filter(
+                    r => r.style.display !== 'none' && !r.classList.contains('tf-hidden')).length;
                 const filtered = visibleCount !== rows.length;
 
                 // Comment header first so parsers that honor a leading '#' never
@@ -2482,9 +2485,9 @@ def generate_hardware_html(collection_unavailable=False):
                 // Column header follows the comment block.
                 csvContent += headers.join(',') + '\\n';
 
-                // Process each visible row
+                // Process each visible row (same predicate as visibleCount above)
                 rows.forEach(row => {
-                    if (row.style.display !== 'none') {
+                    if (row.style.display !== 'none' && !row.classList.contains('tf-hidden')) {
                         const cells = row.querySelectorAll('td');
                         if (cells.length >= 10) {
                             const rowData = [

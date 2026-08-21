@@ -396,6 +396,10 @@
             mixedFwModels = summary.mixed_fw_models || [];
             fwByModel = summary.fw_versions || {};
 
+            // last_update is aware UTC ("+00:00") from current collectors, but
+            // may still be a naive local string from a pre-upgrade inventory;
+            // new Date() covers both (an offset-less string parses as local,
+            // preserving the old behavior during the transition).
             document.getElementById('last-updated').textContent = data.last_update
                 ? 'Last Updated: ' + new Date(data.last_update).toLocaleString('sv-SE').replace('T', ' ')
                 : '';

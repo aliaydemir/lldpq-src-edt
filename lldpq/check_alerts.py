@@ -722,20 +722,27 @@ class LLDPqAlerts:
                     )
 
         # Check fan speeds
-        fan_matches = re.findall(r'fan\d+:\s*(\d+)\s*RPM', hardware_data, re.IGNORECASE)
+        fan_matches = re.findall(r'(fan\d+):\s*(\d+)\s*RPM', hardware_data, re.IGNORECASE)
         if fan_matches:
             fan_critical = thresholds.get('fan_rpm_critical', 3000)
             fan_warning = thresholds.get('fan_rpm_warning', 4000)
-            
+
             failed_fans = []
             warning_fans = []
-            
-            for i, rpm_str in enumerate(fan_matches, 1):
+
+            # Report the real sensor label: positional Fan{i} renumbering named
+            # the wrong FRU with non-contiguous numbering or multiple hwmon
+            # chips. A label repeated across chips gets an ordinal suffix.
+            label_counts = {}
+            for label, rpm_str in fan_matches:
+                label_counts[label] = label_counts.get(label, 0) + 1
+                if label_counts[label] > 1:
+                    label = f"{label}#{label_counts[label]}"
                 rpm = int(rpm_str)
                 if rpm < fan_critical:
-                    failed_fans.append(f"Fan{i}: {rpm} RPM")
+                    failed_fans.append(f"{label}: {rpm} RPM")
                 elif rpm < fan_warning:
-                    warning_fans.append(f"Fan{i}: {rpm} RPM")
+                    warning_fans.append(f"{label}: {rpm} RPM")
             
             if failed_fans:
                 current_state = "CRITICAL"
@@ -3208,9 +3215,21 @@ Excellent: {ber_stats['excellent']}     Good: {ber_stats['good']}     Warnings: 
             )
             # Naive legacy timestamps deliberately retain the historical local
             # timezone interpretation.  ISO headers carry their explicit offset.
-            created_time = report.created_at.timestamp()
             file_mtime = lldp_file.stat().st_mtime
-            if abs(file_mtime - created_time) > 120:
+            tolerance = asset_timestamp_tolerance_seconds()
+            if report.timestamp_is_timezone_aware:
+                created_time = report.created_at.timestamp()
+                if abs(file_mtime - created_time) > tolerance:
+                    created_time = None
+            else:
+                # Shared fold-aware parser: naive Created times are ambiguous
+                # during the DST fall-back hour (same contract as assets.ini).
+                created_time = parse_created_timestamp(
+                    report.created_at.strftime("%Y-%m-%d %H-%M-%S"),
+                    file_mtime,
+                    tolerance,
+                )
+            if created_time is None:
                 print("    ❌ lldp_results.ini Created time does not match file mtime")
                 return {}
             lldp_age = time.time() - created_time

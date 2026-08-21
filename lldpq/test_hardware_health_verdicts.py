@@ -207,5 +207,34 @@ class CollectionUnavailableExportTests(unittest.TestCase):
         self.assertIn("if all_devices_unavailable:", source)
 
 
+class CsvExportContractTests(unittest.TestCase):
+    """The CSV export must exclude rows the table-filter funnels hid.
+
+    table-filter.js hides rows via the tf-hidden class, never via
+    style.display, so both the row filter and the '# Rows exported' count
+    in downloadCSV must check that class or the export silently includes
+    devices the operator filtered out.
+    """
+
+    def setUp(self):
+        self.source = (SCRIPT_DIR / "generate_hardware_html.py").read_text(
+            encoding="utf-8"
+        )
+
+    def test_the_row_filter_excludes_tf_hidden_rows(self):
+        self.assertIn(
+            "if (row.style.display !== 'none' && "
+            "!row.classList.contains('tf-hidden')) {",
+            self.source,
+        )
+
+    def test_the_exported_count_excludes_tf_hidden_rows(self):
+        self.assertIn(
+            "r => r.style.display !== 'none' && "
+            "!r.classList.contains('tf-hidden')).length;",
+            self.source,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

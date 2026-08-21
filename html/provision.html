@@ -2924,8 +2924,7 @@ function renderBindings() {
             va = order[a.inv_status] ?? 3; vb = order[b.inv_status] ?? 3;
             return bindSortAsc ? va - vb : vb - va;
         }
-        va = va.toLowerCase(); vb = vb.toLowerCase();
-        const cmp = va < vb ? -1 : va > vb ? 1 : 0;
+        const cmp = String(va).localeCompare(String(vb), undefined, { numeric: true, sensitivity: 'base' });
         return bindSortAsc ? cmp : -cmp;
     });
 
@@ -3889,8 +3888,7 @@ function renderDiscovered() {
         if (discSortCol === 'ip') {
             return discSortAsc ? ipToNum(va) - ipToNum(vb) : ipToNum(vb) - ipToNum(va);
         }
-        va = String(va).toLowerCase(); vb = String(vb).toLowerCase();
-        const cmp = va < vb ? -1 : va > vb ? 1 : 0;
+        const cmp = String(va).localeCompare(String(vb), undefined, { numeric: true, sensitivity: 'base' });
         return discSortAsc ? cmp : -cmp;
     });
 
