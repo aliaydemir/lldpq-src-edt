@@ -77,6 +77,14 @@
 # │   • Initialize git repository + hooks                    │
 # └──────────────────────────────────────────────────────────┘
 
+# Non-root Debian sessions commonly omit /usr/sbin and /sbin even though apt
+# installs service binaries there.  Dependency checks must not report an
+# installed nginx/dhcpd as missing merely because the invoking shell has a
+# desktop-oriented PATH.  Put trusted system locations first while retaining
+# any explicit operator additions for optional tooling used later.
+PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
+export PATH
+
 set -e
 
 # Root/system services and the web backup/uninstall workflows must never
@@ -5177,20 +5185,31 @@ if [[ -L "$_backup_helper_dir" ]] || \
     echo "[!] Refusing unsafe backup helper directory: $_backup_helper_dir" >&2
     exit 1
 fi
-if [[ ! -f lldpq/backup_import.py || -L lldpq/backup_import.py ]]; then
-    echo "[!] Packaged backup/import helper is missing or is a symlink" >&2
+if [[ ! -f lldpq/backup_import.py || -L lldpq/backup_import.py ]] || \
+   ! python3 -c 'import pathlib,sys; compile(pathlib.Path(sys.argv[1]).read_bytes(), sys.argv[1], "exec")' \
+        lldpq/backup_import.py; then
+    echo "[!] Packaged backup/import helper is missing, linked, or invalid" >&2
     exit 1
 fi
 sudo install -d -o root -g root -m 0755 "$_backup_helper_dir"
-sudo install -o root -g root -m 0755 -- \
-    lldpq/backup_import.py "$LLDPQ_BACKUP_IMPORT_HELPER"
+_backup_helper_stage="${LLDPQ_BACKUP_IMPORT_HELPER}.lldpq-new"
+sudo rm -f -- "$_backup_helper_stage"
+if ! sudo install -o root -g root -m 0755 -- \
+        lldpq/backup_import.py "$_backup_helper_stage" || \
+   ! sudo mv -fT -- "$_backup_helper_stage" "$LLDPQ_BACKUP_IMPORT_HELPER"; then
+    sudo rm -f -- "$_backup_helper_stage" 2>/dev/null || true
+    echo "[!] Could not install the root-owned backup/import helper" >&2
+    exit 1
+fi
 _backup_helper_dir_metadata=$(sudo stat -c '%u:%g:%a' -- "$_backup_helper_dir" 2>/dev/null || true)
-_backup_helper_metadata=$(sudo stat -c '%u:%g:%a' -- "$LLDPQ_BACKUP_IMPORT_HELPER" 2>/dev/null || true)
+_backup_helper_metadata=$(sudo stat -c '%u:%g:%a:%h' -- \
+    "$LLDPQ_BACKUP_IMPORT_HELPER" 2>/dev/null || true)
 if [[ -L "$_backup_helper_dir" ]] || \
    [[ "$_backup_helper_dir_metadata" != "0:0:755" ]] || \
    [[ -L "$LLDPQ_BACKUP_IMPORT_HELPER" ]] || \
    [[ ! -f "$LLDPQ_BACKUP_IMPORT_HELPER" ]] || \
-   [[ "$_backup_helper_metadata" != "0:0:755" ]]; then
+   [[ "$_backup_helper_metadata" != "0:0:755:1" ]] || \
+   ! sudo cmp -s -- lldpq/backup_import.py "$LLDPQ_BACKUP_IMPORT_HELPER"; then
     echo "[!] Root-owned backup/import helper verification failed" >&2
     exit 1
 fi
