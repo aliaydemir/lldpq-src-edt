@@ -377,7 +377,8 @@ def correlate_snapshots(
             and df_count == 2 and not bypass_active
         )
         no_df_conflict = (
-            len(attachments) == 2 and all_oper and all_remote and df_count == 0
+            len(attachments) == 2 and all_oper and all_remote
+            and df_count == 0 and not bypass_active
         )
         lacp_degraded = any(
             item["lacp"] not in {"Synced", "Bypass", "Static"} for item in attachments

@@ -164,7 +164,13 @@ _COMPARABLE_FEC = frozenset(("rs", "llrs", "baser", "fc", "none", "off"))
 def _comparable_fec(value):
     """Casefolded FEC encoding, or None when not genuinely comparable."""
     token = str(value or "").casefold()
-    return token if token in _COMPARABLE_FEC else None
+    if token not in _COMPARABLE_FEC:
+        return None
+    # "None" and "Off" are driver-dependent spellings of the same state
+    # (kernel ETHTOOL_FEC_NONE_BIT vs ETHTOOL_FEC_OFF_BIT): both mean no
+    # active FEC, so they must never be reported as a mismatch.  Raw
+    # per-side strings stay untouched for display.
+    return "off" if token == "none" else token
 
 
 class FabricCheckAnalyzer:

@@ -198,8 +198,12 @@ def process_carrier_transition_files(data_dir="monitor-results/flap-data"):
     if flap_analyzer.check_flapping():
         print("link flapping detected!")
     
-    # Save updated flap history
-    flap_analyzer.save_flap_history()
+    # Save updated flap history. A failed save is a structural failure: the
+    # stale previous flap_history.json would keep passing the size check below
+    # while every later cycle computes deltas against a frozen baseline.
+    if not flap_analyzer.save_flap_history():
+        print("Flap history could not be saved")
+        return False
     history_file = os.path.join(result_dir, "flap_history.json")
     if not os.path.isfile(history_file) or os.path.getsize(history_file) == 0:
         print("Flap history could not be saved")

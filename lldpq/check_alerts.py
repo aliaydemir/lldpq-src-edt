@@ -1300,6 +1300,15 @@ class LLDPqAlerts:
             counts = {}
             for port, interface, entries in index.get(device, []):
                 total = 0
+                window_measurable = False
+                saw_entry = False
+                # Mirror of link_flap_analyzer's rate-equivalent severity:
+                # a poll interval of one hour or longer can never fit the
+                # 1h window, so alerting would stay OK forever at a slow
+                # cadence. When no recorded interval fits the requested
+                # window, grade from the smallest wider window (12h, then
+                # 24h) scaled back to the requested window.
+                fallback_totals = {43200.0: 0, 86400.0: 0}
                 if not isinstance(entries, list):
                     raise ValueError(f"invalid flap history for {port}")
                 for entry in entries:
@@ -1309,17 +1318,35 @@ class LLDPqAlerts:
                     flap_count = int(entry[2])
                     if not math.isfinite(timestamp) or timestamp > now + 300:
                         raise ValueError(f"invalid flap timestamp for {port}")
+                    saw_entry = True
                     if len(entry) >= 5:
                         interval_seconds = max(float(entry[4]), 0.0)
                         if not math.isfinite(interval_seconds):
                             raise ValueError(f"invalid flap interval for {port}")
                         fits_window = now - timestamp + interval_seconds <= window
+                        if interval_seconds < window:
+                            window_measurable = True
+                        elif flap_count > 0:
+                            for wider in fallback_totals:
+                                if (wider > window and
+                                        now - timestamp + interval_seconds <= wider):
+                                    fallback_totals[wider] += flap_count
                     else:
                         # Legacy samples do not say which poll interval produced
                         # the delta. Never assign those deltas to a short window.
                         fits_window = window >= 3600 and timestamp >= cutoff
+                        window_measurable = True
                     if fits_window and flap_count > 0:
                         total += flap_count
+                if saw_entry and not window_measurable:
+                    for wider in sorted(fallback_totals):
+                        if fallback_totals[wider]:
+                            scaled = fallback_totals[wider] * window / wider
+                            total = (
+                                int(scaled) if float(scaled).is_integer()
+                                else round(scaled, 1)
+                            )
+                            break
                 counts[interface] = total
             return counts
         except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
