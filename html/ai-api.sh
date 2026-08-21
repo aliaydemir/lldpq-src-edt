@@ -101,6 +101,11 @@ export AI_FALLBACK_MODEL AI_STATE_DIR
 export AI_CONTEXT_WINDOW_TOKENS AI_FALLBACK_CONTEXT_WINDOW_TOKENS
 export AI_SEARCH_MODEL AI_SEARCH_URL AI_SEARCH_KEY
 export POST_DATA POST_DATA_FILE ACTION AI_WORKER_JOB AI_ANALYZE_WORKER_JOB
+# lldpq-config emits plain KEY=value assignments (no export), so the optional
+# freshness ceiling must be exported explicitly to reach the Python heredoc.
+if [[ -n "${MONITOR_DATA_MAX_AGE_MINUTES:-}" ]]; then
+    export MONITOR_DATA_MAX_AGE_MINUTES
+fi
 
 python3 << 'PYTHON_SCRIPT'
 import json

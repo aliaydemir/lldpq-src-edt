@@ -1947,9 +1947,9 @@ PIDFILE="__PID__"
 JOB_ID="__JOB__"
 START_TIME=$(awk '{print $22}' "/proc/$$/stat" 2>/dev/null || true)
 if [[ "$START_TIME" =~ ^[1-9][0-9]*$ ]]; then
-    printf '%s %s %s\n' "$JOB_ID" "$$" "$START_TIME" > "$PIDFILE"
+    printf '%s %s %s\\n' "$JOB_ID" "$$" "$START_TIME" > "$PIDFILE"
 else
-    printf '%s %s\n' "$JOB_ID" "$$" > "$PIDFILE"
+    printf '%s %s\\n' "$JOB_ID" "$$" > "$PIDFILE"
 fi
 cleanup_update_job() { rc=$?; case "${TARBALL:-}" in /tmp/lldpq-upload-src.*.tar.gz) rm -f -- "$TARBALL";; esac; exec 8>"${ACTIVE%.active}.start.lock"; if flock -x 8; then current=$(cat "$ACTIVE/job_id" 2>/dev/null || true); if [ "$current" = "$JOB_ID" ]; then rm -f "$PIDFILE" "$ACTIVE/job_id" "$ACTIVE/created"; rmdir "$ACTIVE" 2>/dev/null || true; fi; fi; trap - EXIT; exit "$rc"; }
 trap cleanup_update_job EXIT
@@ -1979,7 +1979,7 @@ max_total_bytes = 1024 * 1024 * 1024
 seen = set()
 
 def safe_parts(name):
-    if not isinstance(name, str) or not name or "\\" in name or "\x00" in name:
+    if not isinstance(name, str) or not name or "\\\\" in name or "\\x00" in name:
         raise ValueError("archive contains an unsafe member name")
     path = pathlib.PurePosixPath(name)
     parts = tuple(part for part in path.parts if part not in ("", "."))
@@ -2062,7 +2062,7 @@ PYSAFE
   exit "$install_rc"
 ) >> "$LOG" 2>&1
 rc=$?
-printf '__LLDPQ_DONE__:%s\n' "$rc" >> "$LOG"
+printf '__LLDPQ_DONE__:%s\\n' "$rc" >> "$LOG"
 exit "$rc"
 '''
     script = (SCRIPT.replace('__TARBALL__', tarball)

@@ -1445,7 +1445,9 @@ class LLDPqAlerts:
                 "DEVICE-NAME IP ETH0-MAC SERIAL MODEL RELEASE UPTIME "
                 "STATUS LAST-SEEN"
             )
-            if len(nonempty) < 3 or nonempty[1] != expected_header:
+            # assets.sh writes a column-padded header; compare tokens, not text.
+            if (len(nonempty) < 3 or
+                    tuple(nonempty[1].split()) != tuple(expected_header.split())):
                 raise ValueError("missing or invalid assets header")
             created = datetime.datetime.strptime(
                 nonempty[0].removeprefix("Created on "),

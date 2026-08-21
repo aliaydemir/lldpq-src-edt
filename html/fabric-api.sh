@@ -5577,8 +5577,18 @@ try:
             if 'subinterfaces' not in host_data['interfaces'][parent_if]:
                 host_data['interfaces'][parent_if]['subinterfaces'] = {}
             
-            subif = host_data['interfaces'][parent_if]['subinterfaces'].get(sub_id, {})
-            
+            # YAML keys subinterfaces as int (unquoted) or str; edit whichever
+            # form exists so the update cannot land in a duplicate parallel key
+            _subs = host_data['interfaces'][parent_if]['subinterfaces']
+            sub_key = sub_id
+            if sub_id not in _subs:
+                try:
+                    if int(sub_id) in _subs:
+                        sub_key = int(sub_id)
+                except ValueError:
+                    pass
+            subif = _subs.get(sub_key, {})
+
             # Update VLAN ID
             vlan_id = data.get('vlan_id', '')
             if vlan_id:
@@ -5608,7 +5618,7 @@ try:
             elif 'vrf' in subif:
                 del subif['vrf']
             
-            host_data['interfaces'][parent_if]['subinterfaces'][sub_id] = subif
+            host_data['interfaces'][parent_if]['subinterfaces'][sub_key] = subif
             
             # Update parent description
             if description:
@@ -6308,6 +6318,20 @@ try:
             print(json.dumps({'success': False, 'error': f'Subinterface {interface} already belongs to VRF {_owner}; refusing to overwrite it'}))
             sys.exit(0)
 
+        # A bare local_ip (the UI strips the prefix for display) must not
+        # shrink an existing non-/31 subnet: keep the current subinterface's
+        # prefix length; the /31 default only applies when there is no
+        # existing entry (same semantics as add-external-peer)
+        if '/' not in str(local_ip) and hasattr(_cur, 'get'):
+            _cur_ip = str(_cur.get('ip', '') or '')
+            if '/' in _cur_ip:
+                _cand = f"{local_ip}/{_cur_ip.rsplit('/', 1)[1]}"
+                try:
+                    ipaddress.ip_interface(_cand)
+                    local_ip_norm = _cand
+                except ValueError:
+                    pass
+
         # When the interface field changed, drop the old subinterface in the
         # same write so no stale L3 config (and its IP) is left behind.
         if original_interface and original_interface != interface and '.' in original_interface and original_interface != 'lo':
@@ -6668,6 +6692,7 @@ try:
                             'peer_group': ext_pg['pg_name'],
                             'interface': interface_name,
                             'local_ip': local_ip.split('/')[0] if local_ip else '',
+                            'local_ip_cidr': local_ip if local_ip else '',
                             'remote_peer': str(peer_ip),
                             'weight': peer_info.get('weight'),
                             'policy_name': peer_info.get('policy_name'),

@@ -1678,6 +1678,10 @@ def render_inventory_devices_yaml(bindings):
             else:
                 lines.append(f"  {entry['ip']}: {entry['hostname']}{suffix}")
                 active_count += 1
+    if active_count == 0:
+        # Comment-only output would safe_load as devices: null and crash
+        # every consumer that iterates the map; keep it an empty dict.
+        lines[lines.index('devices:')] = 'devices: {}'
     if endpoint_hosts:
         lines.extend(('', 'endpoint_hosts:'))
         for endpoint in endpoint_hosts:
@@ -1884,8 +1888,14 @@ def sync_bindings_to_devices_yaml(bindings, remove_hostnames, write=True):
         with open(devices_file, 'r') as f:
             ddata = pyyaml.safe_load(f) or {}
         yaml = None
-    
-    devices = ddata.get('devices', ddata)
+
+    # Legacy flat files keep the map at top level ('devices' key absent);
+    # a rebuilt all-planned file carries devices: null. Normalize both.
+    raw = ddata.get('devices', ddata)
+    devices = raw if isinstance(raw, dict) else {}
+    if devices is not raw and 'devices' in ddata:
+        # Reattach so additions below land in the dumped document.
+        ddata['devices'] = devices
     added = 0
     updated = 0
     removed = 0
@@ -4806,14 +4816,17 @@ def action_list_devices():
     try:
         import yaml
         with open(devices_file, 'r') as f:
-            data = yaml.safe_load(f)
+            data = yaml.safe_load(f) or {}
     except Exception as e:
         error_json(str(e))
-    
+
     defaults = data.get('defaults', {})
     default_username = defaults.get('username', 'cumulus')
-    
-    devices_section = data.get('devices', data)
+
+    # Legacy flat files keep the map at top level; a rebuilt all-planned
+    # file carries devices: null. Normalize both to a dict.
+    raw_section = data.get('devices', data)
+    devices_section = raw_section if isinstance(raw_section, dict) else {}
     devices = []
     
     groups = {}  # role -> [devices]
@@ -8250,17 +8263,23 @@ def action_update_role():
         
         if not ddata:
             ddata = {}
-        
-        devices = ddata.get('devices', ddata)
-        
+
+        # Legacy flat files keep the map at top level; a rebuilt all-planned
+        # file carries devices: null. Normalize both to a dict.
+        raw = ddata.get('devices', ddata)
+        devices = raw if isinstance(raw, dict) else {}
+        if devices is not raw and 'devices' in ddata:
+            ddata['devices'] = devices
+
         # Find the device by hostname
         found = False
         for dev_ip, info in devices.items():
             if dev_ip in ('defaults', 'endpoint_hosts'):
                 continue
             if isinstance(info, str):
-                # Parse "Hostname @role" format
-                import re
+                # Parse "Hostname @role" format. Uses the module-level re: a
+                # function-local import would shadow it and break the hostname
+                # validation above with UnboundLocalError.
                 m = re.match(r'^(.+?)\s+@([A-Za-z0-9_.-]+)$', info.strip())
                 h = m.group(1).strip() if m else info.strip()
                 if h == hostname:
@@ -8308,14 +8327,16 @@ def action_update_role():
         import yaml as pyyaml
         with open(devices_file, 'r') as f:
             ddata = pyyaml.safe_load(f) or {}
-        
-        devices = ddata.get('devices', ddata)
+
+        raw = ddata.get('devices', ddata)
+        devices = raw if isinstance(raw, dict) else {}
+        if devices is not raw and 'devices' in ddata:
+            ddata['devices'] = devices
         found = False
         for dev_ip, info in list(devices.items()):
             if dev_ip in ('defaults', 'endpoint_hosts'):
                 continue
             if isinstance(info, str):
-                import re
                 m = re.match(r'^(.+?)\s+@([A-Za-z0-9_.-]+)$', info.strip())
                 h = m.group(1).strip() if m else info.strip()
                 if h == hostname:
@@ -8446,7 +8467,12 @@ def action_rebuild_devices_yaml():
             else:
                 lines.append(f"  {e['ip']}: {e['hostname']}{role_suffix}")
                 active_count += 1
-    
+
+    if active_count == 0:
+        # Comment-only output would safe_load as devices: null and crash
+        # every consumer that iterates the map; keep it an empty dict.
+        lines[lines.index('devices:')] = 'devices: {}'
+
     # Preserve endpoint_hosts
     if endpoint_hosts:
         lines.append('')

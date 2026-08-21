@@ -111,6 +111,16 @@ class AskAiApiContractTest(unittest.TestCase):
                 ns["_pipeline_generation_state"]({"leaf1", "leaf2"})["current"]
             )
 
+    def test_operator_freshness_ceiling_is_exported_to_python(self):
+        # lldpq-config emits plain KEY=value assignments (no export); without
+        # this conditional export the heredoc's _max_collection_age_seconds
+        # always falls back to 30 minutes regardless of /etc/lldpq.conf.
+        self.assertIn(
+            'if [[ -n "${MONITOR_DATA_MAX_AGE_MINUTES:-}" ]]; then\n'
+            "    export MONITOR_DATA_MAX_AGE_MINUTES\nfi",
+            SCRIPT_TEXT,
+        )
+
     def test_partial_coverage_persists_report_but_not_trusted_snapshot(self):
         # The persist gate now also re-validates the generation right before
         # the write (a new collection may have started during the LLM ladder).
