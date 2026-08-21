@@ -200,6 +200,15 @@ DHCP_VALIDATION_LOCK_FILE = os.environ.get(
     'LLDPQ_DHCP_VALIDATION_LOCK_FILE', f'{WEB_ROOT}/.dhcp-validate.lock'
 )
 DHCP_VALIDATION_LOCK_WAIT_SECONDS = 10
+# CGI writers must not wait forever for .inventory.lock: detached discovery/
+# upgrade workers hold rolling shared locks across per-device SSH deploys and
+# flock keeps granting new shared locks past a queued exclusive waiter, which
+# would starve the request into the nginx 504 instead of a JSON refusal.
+try:
+    INVENTORY_LOCK_WAIT_SECONDS = float(
+        os.environ.get('LLDPQ_INVENTORY_LOCK_WAIT_SECONDS', '30'))
+except ValueError:
+    INVENTORY_LOCK_WAIT_SECONDS = 30.0
 DHCP_DESIRED_STATE_FILE = os.environ.get(
     'LLDPQ_DHCP_DESIRED_STATE_FILE',
     '/var/lib/lldpq/provision-state/dhcp-desired-state',
@@ -378,11 +387,34 @@ def exclusive_file_lock(path):
             os.chmod(path, 0o664)
         except OSError:
             pass
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        if path == INVENTORY_LOCK_FILE:
+            # Only CGI writers take the inventory lock through this manager;
+            # bound the wait so rolling worker shared locks cannot starve
+            # the request into the nginx 504. Worker job locks stay unbounded.
+            flock_inventory_exclusive(handle)
+        else:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         yield
     finally:
         fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
         handle.close()
+
+
+def flock_inventory_exclusive(handle):
+    """Bounded LOCK_EX for CGI inventory writers; workers wait unbounded."""
+    deadline = time.monotonic() + INVENTORY_LOCK_WAIT_SECONDS
+    while True:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                result_json({
+                    'success': False,
+                    'error_code': 'inventory_busy',
+                    'error': 'Inventory lock is busy, please retry',
+                })
+            time.sleep(0.2)
 
 
 @contextmanager
@@ -912,7 +944,7 @@ def rollback_provision_transaction(journal):
     _clear_provision_transaction()
 
 
-def recover_pending_provision_transaction():
+def recover_pending_provision_transaction(bounded=False):
     """Recover a crash-interrupted inventory/DHCP transaction on re-entry."""
     os.makedirs(os.path.dirname(DHCP_OPERATION_LOCK_FILE) or '.', exist_ok=True)
     os.makedirs(os.path.dirname(INVENTORY_LOCK_FILE) or '.', exist_ok=True)
@@ -924,7 +956,10 @@ def recover_pending_provision_transaction():
         # transaction that is just about to publish its durable authority.
         fcntl.flock(dhcp_lock.fileno(), fcntl.LOCK_EX)
         lock = open(INVENTORY_LOCK_FILE, 'a+')
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        if bounded:
+            flock_inventory_exclusive(lock)
+        else:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         if not os.path.exists(PROVISION_TRANSACTION_FILE):
             return False
         journal = _load_provision_transaction()
@@ -1717,7 +1752,13 @@ def _action_save_bindings_locked():
         os.chmod(INVENTORY_LOCK_FILE, 0o664)
     except OSError:
         pass
-    fcntl.flock(inventory_lock.fileno(), fcntl.LOCK_EX)
+    # Bounded in production; standalone test extraction runs this function
+    # without the helper against an uncontended lock, where plain flock is
+    # equivalent.
+    if 'flock_inventory_exclusive' in globals():
+        flock_inventory_exclusive(inventory_lock)
+    else:
+        fcntl.flock(inventory_lock.fileno(), fcntl.LOCK_EX)
     initial_revision = inventory_revision()
     filepath = get_dhcp_hosts_path()
     content, skipped = generate_dhcp_hosts(bindings)
@@ -2748,6 +2789,8 @@ def run_subnet_scan(apply_post_provision=True, heartbeat=None):
             # provisioning run.  A changed local sw-base manifest is an
             # upgrade concern and must not turn a routine Scan into a rollout
             # across every existing device.
+            # Legacy LLDPQ_LEGACY_BASE markers are trusted as-is; deployed
+            # files are never re-verified or migrated to the manifest marker.
             base_complete = bool(
                 entry.get('base_manifest') or entry.get('legacy_base')
             )
@@ -4571,7 +4614,13 @@ def _action_save_dhcp_config_locked():
         os.chmod(INVENTORY_LOCK_FILE, 0o664)
     except OSError:
         pass
-    fcntl.flock(inventory_lock.fileno(), fcntl.LOCK_EX)
+    # Bounded in production; standalone test extraction runs this function
+    # without the helper against an uncontended lock, where plain flock is
+    # equivalent.
+    if 'flock_inventory_exclusive' in globals():
+        flock_inventory_exclusive(inventory_lock)
+    else:
+        fcntl.flock(inventory_lock.fileno(), fcntl.LOCK_EX)
 
     try:
         live_pools, live_pools_error = read_live_dhcp_pools()
@@ -4933,75 +4982,6 @@ def base_config_manifest(files):
     return selected, digest.hexdigest()
 
 
-def verify_and_migrate_legacy_base_state(
-        ip, username, files, manifest, expected_mac='', expected_serial=''):
-    """Verify legacy deployments before adopting the new manifest marker."""
-    expectations = []
-    for filename in files:
-        source = os.path.join(BASE_CONFIG_DIR, filename)
-        if not os.path.isfile(source):
-            return False
-        source_hash = sha256_file(source)
-        for target in FILE_DEPLOY_MAP.get(filename, []):
-            expectations.append((
-                target['dest'], target['mode'], source_hash,
-            ))
-    if not expectations:
-        return False
-
-    identity_guard = remote_identity_guard_shell(expected_mac, expected_serial)
-    commands = ['set -e', identity_guard]
-    for index, (destination, _mode, _digest) in enumerate(expectations):
-        quoted = shlex.quote(destination)
-        commands.append(
-            f"printf 'LLDPQ_CHECK_{index}='; "
-            f"sudo sha256sum -- {quoted} | awk '{{printf $1}}'; "
-            f"printf ':'; sudo stat -c '%a\\n' -- {quoted}"
-        )
-    try:
-        result = subprocess.run(
-            [
-                'sudo', '-u', LLDPQ_USER, 'ssh', '-o', 'BatchMode=yes',
-                '-o', 'ConnectTimeout=5', '-o', 'StrictHostKeyChecking=no',
-                '-o', 'UserKnownHostsFile=/dev/null', '-o', 'LogLevel=ERROR',
-                f'{username}@{ip}', '; '.join(commands),
-            ],
-            capture_output=True, text=True, timeout=45,
-        )
-    except Exception:
-        return False
-    if result.returncode != 0:
-        return False
-
-    observed = {}
-    for line in result.stdout.splitlines():
-        match = re.fullmatch(r'LLDPQ_CHECK_(\d+)=([0-9a-f]{64}):([0-7]{3,4})', line.strip())
-        if match:
-            observed[int(match.group(1))] = (match.group(2), match.group(3).lstrip('0') or '0')
-    for index, (_destination, mode, digest) in enumerate(expectations):
-        expected_mode = mode.lstrip('0') or '0'
-        if observed.get(index) != (digest, expected_mode):
-            return False
-
-    quoted_manifest = shlex.quote(manifest)
-    command = (
-        f"set -e; {identity_guard}; printf '%s\\n' {quoted_manifest} | "
-        f"sudo tee {BASE_STATE_FILE} >/dev/null; "
-        f"test \"$(sudo cat {BASE_STATE_FILE})\" = {quoted_manifest}"
-    )
-    try:
-        migrated = subprocess.run(
-            [
-                'sudo', '-u', LLDPQ_USER, 'ssh', '-o', 'BatchMode=yes',
-                '-o', 'ConnectTimeout=5', '-o', 'StrictHostKeyChecking=no',
-                '-o', 'UserKnownHostsFile=/dev/null', '-o', 'LogLevel=ERROR',
-                f'{username}@{ip}', command,
-            ],
-            capture_output=True, text=True, timeout=20,
-        )
-        return migrated.returncode == 0
-    except Exception:
-        return False
 
 def _deploy_to_device(device, files, disable_ztp):
     """Deploy base config files to a single device via SCP + SSH.
@@ -5400,7 +5380,13 @@ def publish_uploaded_image(stage, destination, filename, expected_size):
 
         try:
             os.replace(stage, destination)
-            os.chmod(destination, 0o664)
+            try:
+                os.chmod(destination, 0o664)
+            except PermissionError:
+                # The sudo fallback publishes an lldpq-owned stage that
+                # www-data cannot chmod; the privileged step already set 0664.
+                if stat.S_IMODE(os.stat(destination).st_mode) != 0o664:
+                    raise
             actual_size = os.path.getsize(destination)
             if actual_size != expected_size:
                 raise RuntimeError(
@@ -8250,7 +8236,13 @@ def action_update_role():
     # This endpoint terminates via result_json/error_json, so the short-lived
     # CGI process releases this handle on every response path.
     role_lock = open(INVENTORY_LOCK_FILE, 'a+')
-    fcntl.flock(role_lock.fileno(), fcntl.LOCK_EX)
+    # Bounded in production; standalone test extraction runs this function
+    # without the helper against an uncontended lock, where plain flock is
+    # equivalent.
+    if 'flock_inventory_exclusive' in globals():
+        flock_inventory_exclusive(role_lock)
+    else:
+        fcntl.flock(role_lock.fileno(), fcntl.LOCK_EX)
     
     try:
         # Read with ruamel.yaml to preserve comments
@@ -8775,7 +8767,11 @@ def action_load_ztp_tab():
 # If the previous writer was killed after publishing its durable marker, finish
 # that recovery before readers, schedulers or workers consume mixed generations.
 try:
-    recover_pending_provision_transaction()
+    # Detached workers can wait out an active transaction; CGI requests get
+    # the bounded wait so they refuse with busy JSON instead of a nginx 504.
+    recover_pending_provision_transaction(
+        bounded=ACTION not in ('discovery-worker', 'discovery-schedule',
+                               'upgrade-resume', 'upgrade-worker'))
 except Exception as recovery_exc:
     if ACTION in ('discovery-worker', 'discovery-schedule', 'upgrade-resume',
                   'upgrade-worker'):

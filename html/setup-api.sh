@@ -477,6 +477,15 @@ def ensure_ssh_key_lock():
     fcntl.flock(descriptor, fcntl.LOCK_EX)
     _SSH_KEY_LOCK_HANDLE = os.fdopen(descriptor, 'r+')
 
+def ensure_restore_locks():
+    """Restores replace/retire collector SSH keys, and restore_bundle's
+    lock-first recovery can replay a retained key transaction before the new
+    bundle is even parsed, so backup-import unconditionally extends the shared
+    order to config -> inventory -> ssh-key (mirroring a key-bearing export
+    and serializing against the fan-outs that hold only the ssh-key lock)."""
+    ensure_backup_locks()
+    ensure_ssh_key_lock()
+
 def release_configuration_lock():
     """Drop the global configuration lock before a long per-device fan-out.
 
@@ -2527,7 +2536,7 @@ if action == 'backup-import':
         result = importer.restore_bundle(
             b64, lldpq_user=lldpq_user, lldpq_dir=lldpq_dir, web_root=web_root,
             pref_keys=LLDPQ_PREF_KEYS, validate_cron=valid_cron_schedule,
-            acquire_lock=ensure_backup_locks,
+            acquire_lock=ensure_restore_locks,
         )
     except Exception as exc:
         print(json.dumps({'success': False, 'error': 'Backup restore failed: ' + str(exc)[:300]}))

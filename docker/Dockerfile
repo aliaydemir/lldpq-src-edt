@@ -233,4 +233,11 @@ RUN chmod +x /docker-entrypoint.sh
 
 EXPOSE 80 2033
 
+# Full-chain health probe: nginx -> fcgiwrap -> CGI. auth-api action=check is
+# deliberately session-exempt and answers 200 {"authenticated": false} without
+# a cookie, so a JSON body proves fcgiwrap serves CGI behind nginx. Probing
+# 127.0.0.1:80 works in both bridge and host-network compose modes.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -fsS 'http://127.0.0.1:80/auth-api?action=check' | grep -q '"authenticated"' || exit 1
+
 ENTRYPOINT ["/docker-entrypoint.sh"]

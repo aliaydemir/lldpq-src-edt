@@ -1120,12 +1120,19 @@
 
         function setP2pDesignStatus(status) {
             p2pDesignStatus = status;
+            updateCsvExportAvailability();
+        }
+
+        // The scoped-CSV click hook (lifecycle-scope.js) snapshots hidden rows
+        // before downloadCSV flushes pending chunks, so rows flushed by the
+        // export itself would bypass the Analysis Scope. Keep the button
+        // disabled until the chunked render has fully landed.
+        function updateCsvExportAvailability() {
             const button = document.getElementById('download-csv');
-            if (button) {
-                const loading = status === 'loading';
-                button.disabled = loading;
-                button.setAttribute('aria-busy', loading ? 'true' : 'false');
-            }
+            if (!button) return;
+            const loading = p2pDesignStatus === 'loading' || pendingConnectionsRender !== null;
+            button.disabled = loading;
+            button.setAttribute('aria-busy', loading ? 'true' : 'false');
         }
 
         function escHtml(v) {
@@ -1572,6 +1579,7 @@
                 requestAnimationFrame(appendConnectionsChunk);
             } else {
                 pendingConnectionsRender = null;
+                updateCsvExportAvailability();
             }
         }
 
@@ -1602,6 +1610,7 @@
             tbody.innerHTML = '';
             pendingConnectionsRender = { generation, ordered, next: 0 };
             appendConnectionsChunk();
+            updateCsvExportAvailability();
         }
 
         function parseLLDPReportData(data) {
@@ -2145,6 +2154,40 @@
             }
         }
 
+        function dismissLLDPTracking() {
+            lldpPollGeneration += 1;
+            activeLLDPJobToken = null;
+            if (lldpPollTimer) {
+                clearTimeout(lldpPollTimer);
+                lldpPollTimer = null;
+            }
+            setStoredLLDPToken('');
+            setLLDPButton('idle', true);
+            updateLLDPNotification('queued', 'LLDP Tracking Dismissed',
+                'Stopped tracking the previous LLDP check request.',
+                'You can start a new check whenever you are ready.');
+            autoHideLLDPNotification();
+        }
+
+        function showLLDPDismissAction() {
+            if (!lldpStatusNotification) return;
+            const action = document.createElement('button');
+            action.type = 'button';
+            action.textContent = 'Dismiss tracking';
+            action.style.cssText = `
+                margin-top: 10px;
+                background: #404040;
+                color: #d4d4d4;
+                border: none;
+                padding: 6px 12px;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 12px;
+            `;
+            action.addEventListener('click', dismissLLDPTracking);
+            lldpStatusNotification.append(document.createElement('br'), action);
+        }
+
         function scheduleLLDPStatusPoll(token, generation, delayMs) {
             if (token !== activeLLDPJobToken || generation !== lldpPollGeneration) return;
             if (lldpPollTimer) clearTimeout(lldpPollTimer);
@@ -2214,8 +2257,10 @@
                 const statusAge = data.updated_at ? nowSeconds - data.updated_at : 0;
                 const retryOverdue = data.status === 'failure' && data.retry_scheduled &&
                     data.next_retry_at && nowSeconds - data.next_retry_at > 300;
-                const queueDelayed = data.status === 'queued' && statusAge > 120;
-                const workerStalled = (data.status === 'running' && statusAge > 3600) || retryOverdue;
+                const queueStalled = data.status === 'queued' && statusAge > 1800;
+                const queueDelayed = data.status === 'queued' && statusAge > 120 && !queueStalled;
+                const workerStalled = (data.status === 'running' && statusAge > 3600) ||
+                    queueStalled || retryOverdue;
                 if (queueDelayed) {
                     // Assets and LLDP share one serialized trigger daemon.  A
                     // legitimate Assets collection can keep this request queued
@@ -2227,9 +2272,14 @@
                     return;
                 }
                 if (workerStalled) {
+                    // A dead trigger daemon can leave a token queued/running
+                    // indefinitely. Enable retry and offer an explicit escape
+                    // from tracking so the Run LLDP Check button can never be
+                    // disabled permanently.
                     setLLDPButton('failure', true);
                     updateLLDPNotification('failure', 'LLDP Worker Appears Stalled', reason,
                         'No timely lifecycle update was received. The job was not cancelled and this report is not considered complete.');
+                    showLLDPDismissAction();
                     scheduleLLDPStatusPoll(token, generation, 15000);
                     return;
                 }

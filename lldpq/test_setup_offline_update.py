@@ -141,5 +141,47 @@ class OfflineUpdateExtractorEndToEndTests(unittest.TestCase):
         self.assertEqual(list(destination.iterdir()), [])
 
 
+class BackupImportLockingTests(unittest.TestCase):
+    """Source pins: backup-import must serialize against SSH key transactions.
+
+    restore_bundle replaces/retires ~lldpq/.ssh key material (and its
+    lock-first recovery can replay a retained key transaction before the new
+    bundle is parsed), while the Setup key fan-outs hold ONLY
+    /var/lib/lldpq/ssh-key.lock during their multi-minute SSH phase — so the
+    import path must extend the shared order to config -> inventory ->
+    ssh-key instead of stopping at the config+inventory pair.
+    """
+
+    def setUp(self):
+        self.tree = ast.parse(embedded_python_source())
+
+    def test_restore_bundle_uses_key_aware_lock_callback(self):
+        callbacks = [
+            keyword.value.id
+            for node in ast.walk(self.tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "restore_bundle"
+            for keyword in node.keywords
+            if keyword.arg == "acquire_lock" and isinstance(keyword.value, ast.Name)
+        ]
+        self.assertEqual(callbacks, ["ensure_restore_locks"])
+
+    def test_restore_lock_callback_takes_ssh_key_lock(self):
+        functions = [
+            node for node in ast.walk(self.tree)
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "ensure_restore_locks"
+        ]
+        self.assertEqual(len(functions), 1)
+        called = {
+            call.func.id
+            for call in ast.walk(functions[0])
+            if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+        }
+        self.assertIn("ensure_backup_locks", called)
+        self.assertIn("ensure_ssh_key_lock", called)
+
+
 if __name__ == "__main__":
     unittest.main()
