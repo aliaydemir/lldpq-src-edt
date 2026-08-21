@@ -47,6 +47,22 @@ def extract_remote_script(func_text):
     return func_text[start:end]
 
 
+def extract_stdin_python_heredoc(func_text):
+    """Return the python source inside a <<'PYTHON' heredoc fed to python3 -."""
+    start = func_text.index("<<'PYTHON'\n") + len("<<'PYTHON'\n")
+    end = func_text.index("\nPYTHON", start)
+    return func_text[start:end]
+
+
+def extract_python_def(source, name):
+    """Return one top-level def from extracted python heredoc source."""
+    start = source.index(f"\ndef {name}(")
+    end = source.find("\ndef ", start + 1)
+    if end < 0:
+        end = len(source)
+    return source[start:end]
+
+
 class SearchApiFixesTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -142,6 +158,25 @@ class SearchApiFixesTests(unittest.TestCase):
         self.assertIn("/sys/class/net/*/bonding/slaves", remote)
         self.assertTrue(remote.rstrip().endswith("exit 0"))
 
+    # ── live get-mac alignment with the cached fabric-scan parser ──
+
+    def test_live_mac_parser_keeps_physical_permanent_as_static(self):
+        payload = (
+            "aa:bb:cc:dd:ee:01 dev swp7 vlan 100 master br_default permanent\n"
+            "aa:bb:cc:dd:ee:02 dev br_default vlan 1 master br_default permanent\n"
+            "aa:bb:cc:dd:ee:03 dev swp5 vlan 200 master br_default\n"
+            "aa:bb:cc:dd:ee:04 dev br_default self\n"
+        )
+        data = self._run_mac_parser(payload)
+        self.assertTrue(data["success"], data)
+        by_iface = {entry["interface"]: entry for entry in data["entries"]}
+        # Permanent entry on a physical port survives, tagged static —
+        # matching the cached parser in lldpq/fabric-scan.sh.
+        self.assertEqual(by_iface["swp7"]["type"], "static")
+        self.assertEqual(by_iface["swp5"]["type"], "dynamic")
+        # Bridge-local rows (the switch's own MACs) are still dropped.
+        self.assertEqual(set(by_iface), {"swp7", "swp5"})
+
     # ── get-arp remote script exit status ──
 
     def test_arp_remote_script_exits_zero_on_success(self):
@@ -221,6 +256,116 @@ class SearchApiFixesTests(unittest.TestCase):
         self.assertNotIn("10.9.9.9/32", routes)
         self.assertEqual(routes["10.0.0.0/24"]["ecmp"], 2)
         self.assertEqual(routes["10.0.1.0/24"]["ecmp"], 1)
+
+    def test_route_parser_keeps_sharp_and_unknown_codes(self):
+        payload = (
+            "VRF default:\n"
+            "B>* 10.0.0.0/24 [20/0] via 10.1.1.1, swp1, weight 1, 01w0d01h\n"
+            "D>* 10.7.7.7/32 [150/0] via 10.1.1.1, swp1, weight 1, 01w0d01h\n"
+            "F>* 10.8.8.8/32 [200/0] via 10.1.1.1, swp1, weight 1, 01w0d01h\n"
+        )
+        data = self._run_route_parser(payload)
+        self.assertTrue(data["success"], data)
+        routes = {r["prefix"]: r for r in data["vrf_tables"]["default"]}
+        # D routes were mapped to SHARP but excluded from the parse regex.
+        self.assertEqual(routes["10.7.7.7/32"]["protocol"], "SHARP")
+        # Codes without a route_codes mapping are kept as-is, not dropped.
+        self.assertEqual(routes["10.8.8.8/32"]["protocol"], "F")
+
+    # ── legacy trace-path nexthop VRF scoping ──
+
+    def _load_find_device_by_nexthop(self):
+        func = extract_heredoc_function(self.api, "trace_path")
+        source = extract_stdin_python_heredoc(func)
+        namespace = {}
+        exec(
+            "import ipaddress\n"
+            + extract_python_def(source, "prefix_match")
+            + extract_python_def(source, "find_device_by_nexthop"),
+            namespace,
+        )
+        return namespace["find_device_by_nexthop"]
+
+    def test_find_device_by_nexthop_prefers_requested_vrf(self):
+        find_device_by_nexthop = self._load_find_device_by_nexthop()
+        all_data = {
+            "wrong-tenant-leaf": {"routes": {"blue": [
+                {"prefix": "172.16.1.0/24", "protocol": "connected", "nexthop": "connected"},
+            ]}},
+            "right-tenant-leaf": {"routes": {"red": [
+                {"prefix": "172.16.1.0/24", "protocol": "connected", "nexthop": "connected"},
+            ]}},
+        }
+        self.assertEqual(
+            find_device_by_nexthop("172.16.1.2", all_data, set(), "red"),
+            "right-tenant-leaf",
+        )
+
+    def test_find_device_by_nexthop_never_hops_via_other_tenant_vrf(self):
+        find_device_by_nexthop = self._load_find_device_by_nexthop()
+        all_data = {
+            "wrong-tenant-leaf": {"routes": {"blue": [
+                {"prefix": "172.16.1.0/24", "protocol": "connected", "nexthop": "connected"},
+            ]}},
+        }
+        self.assertIsNone(find_device_by_nexthop("172.16.1.2", all_data, set(), "red"))
+
+    def test_find_device_by_nexthop_resolves_evpn_underlay_via_default(self):
+        find_device_by_nexthop = self._load_find_device_by_nexthop()
+        all_data = {
+            "vtep-leaf": {"routes": {"default": [
+                {"prefix": "10.10.10.1/32", "protocol": "local", "nexthop": "connected"},
+            ]}},
+        }
+        self.assertEqual(
+            find_device_by_nexthop("10.10.10.1", all_data, set(), "red"),
+            "vtep-leaf",
+        )
+
+    # ── graph tracer host classification ──
+
+    def _load_build_host_set(self):
+        func = extract_heredoc_function(self.api, "trace_path_ip")
+        source = extract_stdin_python_heredoc(func)
+        namespace = {}
+        exec(extract_python_def(source, "build_host_set"), namespace)
+        return namespace["build_host_set"]
+
+    def test_build_host_set_does_not_prefix_match_device_names(self):
+        build_host_set = self._load_build_host_set()
+        all_data = {"leaf-1": {"bonds": {"bond10": "swp31 swp32"}}}
+        # leaf-1 has no LLDP section; leaf-10 must NOT be borrowed for it.
+        port_neighbors = {"leaf-10": {"swp31": "spine-1", "swp32": "spine-2"}}
+        self.assertEqual(build_host_set(all_data, port_neighbors), set())
+
+    def test_build_host_set_exact_match_still_finds_hosts(self):
+        build_host_set = self._load_build_host_set()
+        all_data = {"leaf-1": {"bonds": {"bond10": "swp31 swp32"}}}
+        port_neighbors = {
+            "leaf-1": {"swp31": "server-1", "swp1": "spine-1"},
+            "leaf-10": {"swp31": "spine-2"},
+        }
+        self.assertEqual(build_host_set(all_data, port_neighbors), {"server-1"})
+
+    # ── dispatch hygiene ──
+
+    def test_trace_path_dispatch_uses_exact_parser(self):
+        dispatch = self.api[self.api.index('"trace-path")'):]
+        dispatch = dispatch[:dispatch.index(";;")]
+        for key in ("ip", "vrf", "source"):
+            self.assertIn(f"$(get_query_param {key})", dispatch)
+        self.assertNotIn("grep -oE", dispatch)
+
+    def test_caller_less_actions_are_removed(self):
+        for action in (
+            '"get-all-mac")',
+            '"get-all-arp")',
+            '"get-bond-members")',
+            '"search-cached-vtep")',
+            '"search-cached-lldp")',
+            '"detect-vrfs")',
+        ):
+            self.assertNotIn(action, self.api)
 
     # ── UI contracts ──
 

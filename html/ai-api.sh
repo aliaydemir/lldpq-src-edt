@@ -954,6 +954,9 @@ def _job_emit(event, events_path=None):
         payload.setdefault('ts', round(time.time(), 3))
         line = json.dumps(payload) + '\n'
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o660)
+        # O_CREAT's 0o660 is masked by the process umask (022 -> 0640); force
+        # the group-rw contract the shared job dir relies on.
+        os.fchmod(descriptor, 0o660)
         try:
             os.write(descriptor, line.encode('utf-8'))
         finally:
@@ -2616,6 +2619,12 @@ def _append_learning_event(event):
         descriptor = os.open(
             LEARNINGS_EVENTS_FILE, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o660
         )
+        try:
+            # umask masks the create mode (022 -> 0640); EPERM if the other
+            # AI_STATE identity already owns the file — keep appending then.
+            os.fchmod(descriptor, 0o660)
+        except OSError:
+            pass
         with os.fdopen(descriptor, 'w') as log:
             log.write(json.dumps(event, ensure_ascii=False) + '\n')
     except Exception:
@@ -2691,6 +2700,13 @@ def _locked_learnings_update(mutate):
     import fcntl
     _ensure_state_dir()
     descriptor = os.open(LEARNINGS_FILE + '.lock', os.O_RDWR | os.O_CREAT, 0o660)
+    try:
+        # umask masks the create mode (022 -> 0640), which would deny the
+        # other AI_STATE identity O_RDWR on this lock; EPERM when a non-owner
+        # touches an already-0660 lock is fine.
+        os.fchmod(descriptor, 0o660)
+    except OSError:
+        pass
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX)
         return mutate(load_learnings())
@@ -2974,6 +2990,13 @@ def _locked_state_file_update(path, mutate):
     import fcntl
     _ensure_state_dir()
     descriptor = os.open(path + '.lock', os.O_RDWR | os.O_CREAT, 0o660)
+    try:
+        # umask masks the create mode (022 -> 0640): a 0640 lock owned by one
+        # identity (cron vs www-data) locks the other out of O_RDWR entirely.
+        # EPERM from a non-owner on an already-0660 lock is fine.
+        os.fchmod(descriptor, 0o660)
+    except OSError:
+        pass
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX)
         return mutate(_load_json_file(path))
@@ -4018,8 +4041,9 @@ def build_device_list(devices, device_health):
     This saves ~80% tokens for large fabrics while preserving all actionable info."""
     
     problems = []   # devices with issues — full detail
+    problem_index = {}  # exact hostname → index into problems
     healthy_by_role = {}  # role → count of healthy devices
-    
+
     for ip, dev in sorted(devices.items(), key=lambda x: x[1]['hostname']):
         h = device_health.get(dev['hostname'], {})
         status = h.get('status', 'unknown')
@@ -4043,6 +4067,7 @@ def build_device_list(devices, device_health):
         
         if has_problem:
             tags = ' '.join(issue_tags)
+            problem_index[dev['hostname']] = len(problems)
             problems.append(f"  {dev['hostname']} ({ip}) role={role} {tags} release={release} uptime={uptime}")
         else:
             healthy_by_role[role] = healthy_by_role.get(role, 0) + 1
@@ -4066,19 +4091,21 @@ def build_device_list(devices, device_health):
                         # Find this device in our list
                         dev_entry = next((f"  {d['hostname']} ({ip})" for ip, d in devices.items() if d['hostname'] == device_name), None)
                         if dev_entry:
-                            bgp_line = f"{dev_entry} BGP_DOWN:{down_count}_sessions"
-                            # Add if not already in problems
-                            if not any(device_name in p for p in problems):
-                                h = device_health.get(device_name, {})
+                            # Exact-hostname index: substring matching would tag
+                            # a prefix name's line (leaf-1 vs leaf-10).
+                            if device_name not in problem_index:
                                 ip_addr = next((ip for ip, d in devices.items() if d['hostname'] == device_name), '?')
                                 role = next((d['role'] for d in devices.values() if d['hostname'] == device_name), '?')
+                                problem_index[device_name] = len(problems)
                                 problems.append(f"  {device_name} ({ip_addr}) role={role} BGP_DOWN:{down_count}_sessions")
+                                # Counted healthy in the first pass — move it out.
+                                if healthy_by_role.get(role, 0) > 1:
+                                    healthy_by_role[role] -= 1
+                                else:
+                                    healthy_by_role.pop(role, None)
                             else:
                                 # Append BGP info to existing problem line
-                                for i, p in enumerate(problems):
-                                    if device_name in p:
-                                        problems[i] += f" BGP_DOWN:{down_count}_sessions"
-                                        break
+                                problems[problem_index[device_name]] += f" BGP_DOWN:{down_count}_sessions"
     except Exception:
         pass
     
@@ -4478,6 +4505,12 @@ def _record_provider_usage(provider, model, result):
             usage_path,
             os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o660,
         )
+        try:
+            # umask masks the create mode (022 -> 0640); both the cron and
+            # www-data identities append here. EPERM from a non-owner is fine.
+            os.fchmod(descriptor, 0o660)
+        except OSError:
+            pass
         try:
             os.write(descriptor, (record + '\n').encode())
         finally:
@@ -6116,6 +6149,32 @@ def _display_alias_variants(device, port):
     return variants[:6]
 
 
+# Precise-first port resolution: ai_p2p.lookup expands ambiguous three-part
+# 'X/Y/Z' design ports to every candidate lane (swp1s0 matches both 1/1/1 and
+# 1/2/1), so the group-fitted index must answer first. Single-slot memo keyed
+# by design object identity — the v2 path reuses one object for every endpoint
+# (the memoized reference keeps the identity stable, like _JSON_MEMO).
+_P2P_INDEX_MEMO = {'conns': None, 'index': None}
+
+
+def _p2p_precise_entry(conns, device, port):
+    """One group-fitted design row for device:port via ai_p2p's precise index,
+    or None (callers fall back to the broad lookup only on None)."""
+    if not port or not isinstance(conns, dict) or _p2p_module is None:
+        return None
+    build = getattr(_p2p_module, 'build_port_index', None)
+    find = getattr(_p2p_module, 'lookup_by_device_port', None)
+    if not callable(build) or not callable(find):
+        return None
+    try:
+        if _P2P_INDEX_MEMO['conns'] is not conns:
+            _P2P_INDEX_MEMO['index'] = build(conns)
+            _P2P_INDEX_MEMO['conns'] = conns
+        return find(_P2P_INDEX_MEMO['index'], device, port)
+    except Exception:
+        return None
+
+
 def run_p2p_lookup(target):
     """Design peer + cable/bundle/rack/transceiver for 'device[:port]' from the
     active P2P design. Read-only; never touches a device."""
@@ -6130,20 +6189,28 @@ def run_p2p_lookup(target):
         device, port = device.strip(), port.strip()
     else:
         device, port = raw, None
-    try:
-        entries = _p2p_module.lookup(conns, device, port or None)
-    except Exception as exc:
-        return 'P2P lookup failed: ' + redact_secrets(str(exc))
+    precise = _p2p_precise_entry(conns, device, port)
+    if precise is not None:
+        entries = [precise]
+    else:
+        try:
+            entries = _p2p_module.lookup(conns, device, port or None)
+        except Exception as exc:
+            return 'P2P lookup failed: ' + redact_secrets(str(exc))
     src = conns.get('source_file', '') if isinstance(conns, dict) else ''
     label = device + ((':' + port) if port else '')
     if not entries:
         # The design may use the P2P label for a device/port the operator named
         # by its live spelling (or vice versa) — retry via display aliases.
         for alt_dev, alt_port in _display_alias_variants(device, port):
-            try:
-                entries = _p2p_module.lookup(conns, alt_dev, alt_port or None)
-            except Exception:
-                entries = []
+            precise = _p2p_precise_entry(conns, alt_dev, alt_port)
+            if precise is not None:
+                entries = [precise]
+            else:
+                try:
+                    entries = _p2p_module.lookup(conns, alt_dev, alt_port or None)
+                except Exception:
+                    entries = []
             if entries:
                 label = '%s (alias of %s)' % (
                     alt_dev + ((':' + alt_port) if alt_port else ''), label)
@@ -7500,6 +7567,7 @@ def action_chat_poll():
     done = False
     result = None
     events = []
+    resume_index = None  # first event line the 500-cap dropped, if any
     for index, line in enumerate(lines):
         try:
             event = json.loads(line)
@@ -7518,6 +7586,10 @@ def action_chat_poll():
                       'error': str(event.get('error') or 'chat job failed')}
         if index >= cursor and len(events) < 500:
             events.append(event)
+        elif index >= cursor and resume_index is None:
+            # Cap hit: remember where to resume so the cursor never advances
+            # past events that were not returned (they would be lost forever).
+            resume_index = index
     if not done:
         # Heartbeats arrive every ~15s; prolonged silence means the detached
         # worker died without a terminal event. Fail the job explicitly so
@@ -7546,7 +7618,8 @@ def action_chat_poll():
                                 'returning a result.'},
                       events_path=events_path)
     response = {"success": True, "job_id": job_id, "events": events,
-                "cursor": len(lines), "done": done,
+                "cursor": len(lines) if resume_index is None else resume_index,
+                "done": done,
                 "cancelled": os.path.exists(cancel_path)}
     if done:
         response["result"] = result
@@ -7995,13 +8068,18 @@ def _v2_installed_transceivers():
 def _v2_design_endpoint(p2p_conns, device, port):
     """(rack, ru, cable_meta, transceiver) for device:port from the active P2P
     design; empty strings when there is no design or no match. Port matching is
-    the tolerant alias match ai_p2p.lookup already implements."""
+    precise-first (group-fitted breakout index), with ai_p2p.lookup's tolerant
+    alias match as the fallback."""
     if not p2p_conns or _p2p_module is None:
         return '', '', '', ''
-    try:
-        entries = _p2p_module.lookup(p2p_conns, device, port)
-    except Exception:
-        return '', '', '', ''
+    precise = _p2p_precise_entry(p2p_conns, device, port)
+    if precise is not None:
+        entries = [precise]
+    else:
+        try:
+            entries = _p2p_module.lookup(p2p_conns, device, port)
+        except Exception:
+            return '', '', '', ''
     for entry in entries:
         rack = str(entry.get('rack') or '').strip()
         ru = str(entry.get('ru') or '').strip()

@@ -692,6 +692,162 @@ class AskAiApiContractTest(unittest.TestCase):
         ))
         self.assertEqual(fitted[-1]["content"], "current question")
 
+    def test_device_list_attributes_bgp_down_to_exact_hostname(self):
+        ns = load_symbols("build_device_list")
+        ns.update({
+            "_load_json_cached": lambda _path: {"devices": {}},
+            "_mr_path": lambda *parts: "/nonexistent",
+            "_bgp_neighbor_rows": lambda _stats: [],
+            "_nonnegative_int": lambda value, default=0: (
+                int(value) if value is not None else default
+            ),
+            "_bgp_state_established": lambda _state: True,
+        })
+        devices = {
+            "10.0.0.1": {"hostname": "leaf-1", "role": "leaf"},
+            "10.0.0.10": {"hostname": "leaf-10", "role": "leaf"},
+        }
+        device_health = {
+            "leaf-1": {"status": "ok", "uptime": "5 days", "release": "5.9"},
+            "leaf-10": {"status": "down", "uptime": "?", "release": "5.9"},
+        }
+
+        # leaf-1 (healthy, BGP down) is a substring of leaf-10 (down, BGP ok):
+        # the BGP problem must land on leaf-1's own line, never leaf-10's.
+        ns["_current_bgp_stats"] = lambda _bgp: {"leaf-1": {"down_neighbors": 2}}
+        text = ns["build_device_list"](devices, device_health)
+        self.assertIn("PROBLEM DEVICES (2):", text)
+        self.assertIn("leaf-1 (10.0.0.1) role=leaf BGP_DOWN:2_sessions", text)
+        leaf10_line = next(
+            line for line in text.splitlines() if "leaf-10 (" in line
+        )
+        self.assertNotIn("BGP_DOWN", leaf10_line)
+        # The BGP-only problem device is no longer counted healthy.
+        self.assertIn("HEALTHY: 0/2 devices", text)
+        self.assertNotIn("1 leaf", text)
+
+        # Same-device merge: BGP info is appended to the existing problem line.
+        ns["_current_bgp_stats"] = lambda _bgp: {"leaf-10": {"down_neighbors": 3}}
+        text = ns["build_device_list"](devices, device_health)
+        self.assertIn("PROBLEM DEVICES (1):", text)
+        leaf10_line = next(
+            line for line in text.splitlines() if "leaf-10 (" in line
+        )
+        self.assertIn("STATUS:down", leaf10_line)
+        self.assertIn("BGP_DOWN:3_sessions", leaf10_line)
+        self.assertIn("HEALTHY: 1/2 devices (1 leaf)", text)
+
+    def test_shared_state_files_force_group_rw_after_create(self):
+        # os.open's 0o660 create mode is masked by the process umask (022 ->
+        # 0640): whichever AI_STATE identity (cron vs www-data) did not create
+        # a lazily-created lock/append file gets PermissionError, silently
+        # losing findings classification and usage accounting. Every such
+        # os.open must fchmod the descriptor back to 0o660.
+        creators = (
+            "os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o660)",
+            "LEARNINGS_EVENTS_FILE, os.O_WRONLY | os.O_CREAT | os.O_APPEND",
+            "os.open(LEARNINGS_FILE + '.lock', os.O_RDWR | os.O_CREAT, 0o660)",
+            "os.open(path + '.lock', os.O_RDWR | os.O_CREAT, 0o660)",
+            "os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o660",
+        )
+        for snippet in creators:
+            with self.subTest(snippet=snippet):
+                index = PYTHON_TEXT.index(snippet)
+                self.assertIn(
+                    "os.fchmod(descriptor, 0o660)",
+                    PYTHON_TEXT[index:index + 500],
+                )
+
+    def test_chat_poll_cursor_stops_at_last_returned_event(self):
+        ns = load_symbols("action_chat_poll")
+
+        def run_poll(job_dir, events_path, cancel_path, cursor):
+            captured = {}
+
+            def capture(payload):
+                captured.update(payload)
+                raise SystemExit(0)
+
+            def refuse(message):
+                raise AssertionError(message)
+
+            ns.update({
+                "os": os,
+                "_job_request_params": lambda: {"job_id": "job-1",
+                                                "cursor": cursor},
+                "_valid_job_id": lambda _job_id: True,
+                "_job_paths": lambda _job_id: (job_dir, events_path,
+                                               cancel_path),
+                "_job_access_error": lambda _job_dir: "",
+                "_job_emit": lambda *_args, **_kwargs: None,
+                "JOB_STALL_SECONDS": 3600,
+                "error_json": refuse,
+                "result_json": capture,
+            })
+            with self.assertRaises(SystemExit):
+                ns["action_chat_poll"]()
+            return captured
+
+        with tempfile.TemporaryDirectory() as temporary:
+            events_path = os.path.join(temporary, "events.jsonl")
+            cancel_path = os.path.join(temporary, "cancel")
+            with open(events_path, "w", encoding="utf-8") as events_file:
+                for index in range(505):
+                    events_file.write(
+                        json.dumps({"event": "tool", "n": index}) + "\n"
+                    )
+            first = run_poll(temporary, events_path, cancel_path, 0)
+            self.assertEqual(len(first["events"]), 500)
+            self.assertFalse(first["done"])
+            # The cursor must not advance past the capped tail — events 501+
+            # would otherwise be skipped forever.
+            self.assertEqual(first["cursor"], 500)
+            second = run_poll(temporary, events_path, cancel_path,
+                              first["cursor"])
+            self.assertEqual([event["n"] for event in second["events"]],
+                             [500, 501, 502, 503, 504])
+            self.assertEqual(second["cursor"], 505)
+
+    def test_p2p_lookup_prefers_group_fitted_breakout_row(self):
+        import ai_p2p
+
+        ns = load_symbols(
+            "_P2P_INDEX_MEMO",
+            "_p2p_precise_entry",
+            "_fmt_design_kv",
+            "run_p2p_lookup",
+        )
+
+        def design_row(port, peer):
+            return {
+                "source_name": "SP-01", "source_port": port,
+                "dest_name": peer, "dest_port": "49",
+                "connection_type": "converged", "network_type": "eth",
+                "unresolved": False,
+            }
+
+        conns = {
+            "source_file": "design.xlsx",
+            "total_connections": 2,
+            # The ambiguous 1/2/1 row (whose tolerant aliases include swp1s0)
+            # comes first: the broad lookup would answer with peer-b.
+            "connections": [design_row("1/2/1", "peer-b"),
+                            design_row("1/1/1", "peer-a")],
+        }
+        ns.update({
+            "_p2p_module": ai_p2p,
+            "_load_active_p2p": lambda: (conns, ""),
+            "_display_alias_variants": lambda _device, _port: [],
+            "redact_secrets": lambda value: value,
+        })
+        out = ns["run_p2p_lookup"]("SP-01:swp1s0")
+        self.assertIn("1 link(s)", out)
+        self.assertIn("peer-a", out)
+        self.assertNotIn("peer-b", out)
+        # Device-wide queries still take the broad path (all links listed).
+        out = ns["run_p2p_lookup"]("SP-01")
+        self.assertIn("2 link(s)", out)
+
 
 if __name__ == "__main__":
     unittest.main()
