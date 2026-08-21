@@ -27,6 +27,8 @@ from __future__ import annotations
 import ast
 import contextlib
 import fcntl
+import importlib.machinery
+import importlib.util
 import io
 import ipaddress
 import json
@@ -34,6 +36,8 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
+import subprocess
 import sys
 import tempfile
 import time
@@ -291,6 +295,120 @@ class LegacyFlatFileTests(DevicesYamlFixture):
         self.assertEqual(by_ip['10.0.0.1']['hostname'], 'leaf01')
         self.assertEqual(by_ip['10.0.0.1']['role'], 'leaf')
         self.assertEqual(by_ip['10.0.0.2']['hostname'], 'leaf02')
+
+
+def _load_config_helper():
+    """Load the real bin/lldpq-config module (extensionless source file)."""
+    loader = importlib.machinery.SourceFileLoader(
+        "lldpq_config_helper", str(ROOT / "bin" / "lldpq-config"))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+_CONFIG_HELPER = _load_config_helper()
+
+# In dependency order.
+CONF_NAMES = (
+    '_read_text_with_privileged_fallback', 'update_lldpq_conf_values',
+    'read_lldpq_conf_key',
+)
+
+
+class LldpqConfDuplicateHealTests(unittest.TestCase):
+    """Provision conf saves must agree with the last-wins runtime parser.
+
+    bin/lldpq-config is explicitly last-wins and the shared writer
+    (html/lldpq_config_write._render_updates) drops later duplicates so a
+    saved value cannot be shadowed.  The provision updater used to rewrite
+    only the first KEY= line — a duplicated key made every Provision save
+    invisible to each shell entrypoint's `eval $(lldpq-config)` — and
+    read_lldpq_conf_key returned the first occurrence.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.conf = Path(self._tmp.name) / "lldpq.conf"
+
+        def atomic_write_text(path, content, mode=0o664):
+            with open(path, 'w') as handle:
+                handle.write(content)
+            os.chmod(path, mode)
+
+        @contextlib.contextmanager
+        def exclusive_regular_lock(path, production_path):
+            yield
+
+        namespace = {
+            "os": os, "re": re, "stat": stat, "subprocess": subprocess,
+            "LLDPQ_CONF_FILE": str(self.conf),
+            "CONFIG_LOCK_FILE": str(Path(self._tmp.name) / "lldpq.conf.lock"),
+            "DEFAULT_CONFIG_LOCK_FILE": "/etc/lldpq.conf.lock",
+            "_exclusive_regular_lock": exclusive_regular_lock,
+            "atomic_write_text": atomic_write_text,
+        }
+        for name in CONF_NAMES:
+            exec(compile(extract_source(name), "provision-api.sh", "exec"),
+                 namespace)
+        self.api = namespace
+
+    def parse(self):
+        """The canonical runtime parse every shell entrypoint evals."""
+        return _CONFIG_HELPER.parse_config(self.conf)
+
+    def test_save_heals_duplicates_and_the_runtime_parser_sees_the_value(self):
+        self.conf.write_text(
+            "LLDPQ_DIR=/home/lldpq/lldpq\n"
+            "DISCOVERY_RANGE=10.0.0.1-10.0.0.9\n"
+            "SCAN_INTERVAL=300\n"
+            "DISCOVERY_RANGE=10.9.9.1-10.9.9.9\n",
+            encoding="utf-8")
+        self.api['update_lldpq_conf_values'](
+            {'DISCOVERY_RANGE': '10.1.1.1-10.1.1.50'})
+        content = self.conf.read_text(encoding="utf-8")
+        # The file self-heals: exactly one line for the updated key.
+        self.assertEqual(content.count('DISCOVERY_RANGE='), 1)
+        self.assertIn('DISCOVERY_RANGE=10.1.1.1-10.1.1.50\n', content)
+        self.assertIn('SCAN_INTERVAL=300\n', content)
+        self.assertEqual(self.parse()['DISCOVERY_RANGE'],
+                         '10.1.1.1-10.1.1.50')
+        self.assertEqual(self.api['read_lldpq_conf_key']('DISCOVERY_RANGE'),
+                         '10.1.1.1-10.1.1.50')
+
+    def test_duplicates_of_keys_not_being_updated_are_left_alone(self):
+        self.conf.write_text(
+            "SCAN_INTERVAL=300\n"
+            "SCAN_INTERVAL=600\n"
+            "DISCOVERY_RANGE=10.0.0.1-10.0.0.9\n",
+            encoding="utf-8")
+        self.api['update_lldpq_conf_values'](
+            {'DISCOVERY_RANGE': '10.1.1.1-10.1.1.50'})
+        content = self.conf.read_text(encoding="utf-8")
+        self.assertEqual(content.count('SCAN_INTERVAL='), 2)
+        self.assertEqual(content.count('DISCOVERY_RANGE='), 1)
+
+    def test_missing_key_is_appended(self):
+        self.conf.write_text("LLDPQ_DIR=/home/lldpq/lldpq\n", encoding="utf-8")
+        self.api['update_lldpq_conf_values']({'SCAN_INTERVAL': '900'})
+        self.assertIn('SCAN_INTERVAL=900\n',
+                      self.conf.read_text(encoding="utf-8"))
+        self.assertEqual(self.parse()['SCAN_INTERVAL'], '900')
+
+    def test_read_key_is_last_wins_before_any_heal(self):
+        # A file duplicated by a hand edit and not yet rewritten must read
+        # the same value the runtime parser serves.
+        self.conf.write_text("SCAN_INTERVAL=300\nSCAN_INTERVAL=600\n",
+                             encoding="utf-8")
+        self.assertEqual(self.api['read_lldpq_conf_key']('SCAN_INTERVAL'),
+                         '600')
+        self.assertEqual(self.parse()['SCAN_INTERVAL'], '600')
+
+    def test_read_key_default_when_absent(self):
+        self.conf.write_text("LLDPQ_DIR=/home/lldpq/lldpq\n", encoding="utf-8")
+        self.assertEqual(
+            self.api['read_lldpq_conf_key']('SCAN_INTERVAL', '300'), '300')
 
 
 if __name__ == "__main__":

@@ -286,14 +286,23 @@ def update_lldpq_conf_values(updates):
         original = _read_text_with_privileged_fallback(
             LLDPQ_CONF_FILE, missing_ok=True
         )
-        lines = original.splitlines(keepends=True)
+        lines = []
         found = set()
-        for index, line in enumerate(lines):
-            for key, value in normalized.items():
-                if key not in found and line.startswith(f'{key}='):
-                    lines[index] = f'{key}={value}\n'
-                    found.add(key)
+        for line in original.splitlines(keepends=True):
+            matched = None
+            for key in normalized:
+                if line.startswith(f'{key}='):
+                    matched = key
                     break
+            if matched is None:
+                lines.append(line)
+            elif matched not in found:
+                lines.append(f'{matched}={normalized[matched]}\n')
+                found.add(matched)
+            # Drop later duplicates of updated keys, mirroring
+            # lldpq_config_write._render_updates: the runtime parser
+            # (bin/lldpq-config) is last-wins, so a kept duplicate would
+            # shadow the newly saved value for every shell entrypoint.
         if lines and not lines[-1].endswith(('\n', '\r')):
             lines[-1] += '\n'
         for key, value in normalized.items():
@@ -313,15 +322,17 @@ def update_lldpq_conf(key, value):
     update_lldpq_conf_values({key: value})
 
 def read_lldpq_conf_key(key, default=''):
-    """Read a single key from /etc/lldpq.conf."""
+    """Read a single key from /etc/lldpq.conf (last duplicate wins,
+    matching the bin/lldpq-config runtime parser)."""
+    value = default
     try:
         with open(LLDPQ_CONF_FILE, 'r') as f:
             for line in f:
                 if line.startswith(f'{key}='):
-                    return line.strip().split('=', 1)[1]
+                    value = line.strip().split('=', 1)[1]
     except Exception:
         pass
-    return default
+    return value
 
 def ip_range_to_list(range_str):
     """Parse comma-separated IP ranges and single IPs to list of IPs.
