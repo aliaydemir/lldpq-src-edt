@@ -226,12 +226,74 @@ class DeploymentTests(unittest.TestCase):
         self.assertNotIn('touch /tmp/not-executed', script)
         self.assertLess(script.index('EXPECTED_MAC='), script.index('sudo nv config replace'))
 
-    def test_generated_config_ipv4_keeps_http_transport(self):
+    def test_generated_config_ipv4_uses_verified_snapshot(self):
+        self.api['get_server_ip'] = mock.Mock(side_effect=AssertionError('Config must not require HTTP'))
         result = self.action('action_deploy_generated_config', {'devices': [self.devices[1]]})
         self.assertEqual(result['summary']['ok'], 1, result)
         script = next(kwargs['input'] for _, kwargs in self.calls if 'LLDPQ_CONFIG_OK' in (kwargs.get('input') or ''))
-        self.assertIn('http://192.0.2.250/generated_config_folder/leaf-v4.yaml', script)
-        self.assertIn('curl -sf', script)
+        self.assertNotIn('curl ', script)
+        self.assertIn(base64.b64encode(b'set: []\n').decode(), script)
+        digest = hashlib.sha256(b'set: []\n').hexdigest()
+        self.assertIn(digest, script)
+        self.assertEqual(result['results'][0]['config_sha256'], digest)
+        self.assertLess(script.index('sha256sum -c'), script.index('sudo nv config replace'))
+
+    def test_generated_config_batch_pins_all_content_before_workers_start(self):
+        original = self.api['deploy_config_to_device']
+        snapshots = []
+        def deploy(device, server, content):
+            snapshots.append(content)
+            # Upload after job submission, before this worker can send data.
+            for path in self.generated.glob('*.yaml'):
+                path.write_bytes(b'set: [changed]\n')
+            return original(device, server, content)
+        self.api['deploy_config_to_device'] = deploy
+        result = self.action('action_deploy_generated_config', {'devices': self.devices[:2]})
+        self.assertEqual(result['summary']['ok'], 2, result)
+        self.assertEqual(snapshots, [b'set: []\n', b'set: []\n'])
+        scripts = [kwargs['input'] for _, kwargs in self.calls
+                   if 'LLDPQ_CONFIG_OK' in (kwargs.get('input') or '')]
+        self.assertEqual(len(scripts), 2)
+        for script in scripts:
+            self.assertIn(base64.b64encode(b'set: []\n').decode(), script)
+            self.assertNotIn(base64.b64encode(b'set: [changed]\n').decode(), script)
+
+    def test_fabric_job_blocks_provision_before_ssh(self):
+        import fcntl
+        lock = self.web / '.locks/fabric-api.lock'
+        lock.parent.mkdir()
+        with lock.open('a+') as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            result = self.action('action_deploy_generated_config', {'devices': [self.devices[0]]})
+        self.assertEqual(result['summary']['fail'], 1, result)
+        self.assertIn('operation is running', result['results'][0]['error'])
+        self.assertFalse(any('ssh' in args for args, _ in self.calls))
+
+    def test_upgrade_worker_holds_global_lock_between_polls_and_releases_it(self):
+        import fcntl
+        job_id = '12345678-1234-1234-1234-123456789abc'
+        complete = False
+        self.api['load_upgrade_job'] = lambda _: {'complete': complete, 'devices': []}
+        self.api['save_upgrade_job'] = mock.Mock()
+        lock = self.web / '.locks/fabric-api.lock'
+        def assert_blocked():
+            with lock.open('a+') as handle:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+        def update(job):
+            assert_blocked()
+            with self.api['canonical_device_mutation'](self.devices[0]):
+                assert_blocked()
+            return job
+        def sleep(_):
+            nonlocal complete
+            assert_blocked()
+            complete = True
+        self.api['update_upgrade_job'] = update
+        with mock.patch('time.sleep', side_effect=sleep):
+            self.api['run_upgrade_worker'](job_id)
+        with lock.open('a+') as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
 
     def test_generated_config_duplicate_equivalent_targets_are_rejected(self):
         result = self.action('action_deploy_generated_config', {'devices': [
