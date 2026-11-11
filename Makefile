@@ -8,7 +8,7 @@ test:
 	python3 -m pytest lldpq/ -q
 	node --test lldpq/test_*.mjs
 	@# bash -n sweep over shell entrypoints; bin/lldpq-* includes python scripts, so gate on the shebang.
-	@for f in install.sh uninstall.sh lldpq/*.sh html/*.sh bin/lldpq bin/lldpq-* docker/docker-entrypoint.sh; do \
+	@for f in install.sh uninstall.sh lldpq/*.sh html/*.sh bin/lldpq bin/lldpq-* docker/docker-entrypoint.sh docker/lldpq-vrf docker/curl-vrf; do \
 		head -1 "$$f" | grep -q bash || continue; \
 		bash -n "$$f" || { echo "bash -n failed: $$f"; exit 1; }; \
 	done
